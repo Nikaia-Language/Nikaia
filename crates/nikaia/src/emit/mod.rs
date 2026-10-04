@@ -1383,6 +1383,8 @@ struct Emitter<'p> {
     /// ([ADR-283](../../docs/specification/adr/adr-283.md)): the keep plan,
     /// computed once over the unit against the package's ledger.
     keep_plans: HashMap<String, crate::contracts::keep::Plan>,
+    /// `check::Checked::lent_list_reads`.
+    lent_list_reads: std::collections::BTreeSet<(usize, String)>,
     /// `check::Checked::view_fallbacks`.
     view_fallbacks: std::collections::BTreeSet<usize>,
     /// `check::Checked::view_coalesces`.
@@ -2627,6 +2629,7 @@ impl<'p> Emitter<'p> {
                 .map(|plan| (plan.key.clone(), plan))
                 .collect(),
             preluded: std::cell::RefCell::new(HashSet::new()),
+            lent_list_reads: propagation.lent_list_reads,
             view_fallbacks: propagation.view_fallbacks,
             view_coalesces: propagation.view_coalesces,
             lent_map_fallbacks: propagation.lent_map_fallbacks,
@@ -9024,6 +9027,14 @@ impl<'p> Emitter<'p> {
                     return Ok(());
                 }
                 out.push("nikaia_std::index::or(");
+                // **A list's optional text is lent** (#342): the read is a
+                // place, and `&` in front of it borrows the element.
+                if self
+                    .lent_list_reads
+                    .contains(&(flow.statement, crate::check::argument_shape(expr)))
+                {
+                    out.push("&");
+                }
                 self.expr(out, value, depth, flow)?;
                 out.push(", || ");
                 // **A name lent beside what a map holds**

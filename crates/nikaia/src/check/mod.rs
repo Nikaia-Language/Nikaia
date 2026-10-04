@@ -1067,6 +1067,10 @@ pub struct Checked {
     /// `String?` is a `String` - and on a `ref String?` that conversion is the
     /// one thing the language below cannot resolve: *type annotations needed*
     /// about `m["host"] ?? "-"` over a map of views.
+    /// **`ys[i] ?? "…"` over a list of `String?`** (#342), by statement and
+    /// shape: the read is lent - the list keeps its text - and the answer is a
+    /// view, as a map's is (ADR-293 D28).
+    pub lent_list_reads: BTreeSet<(usize, String)>,
     pub view_fallbacks: BTreeSet<usize>,
     /// Per function - by the name the ledger records it under - where its
     /// method calls went (ADR-288).
@@ -1908,6 +1912,8 @@ pub struct Propagation {
     pub array_literals: BTreeSet<usize>,
     /// [`Checked::owned_texts`].
     pub owned_texts: BTreeSet<usize>,
+    /// [`Checked::lent_list_reads`].
+    pub lent_list_reads: BTreeSet<(usize, String)>,
     /// [`Checked::view_fallbacks`].
     pub view_fallbacks: BTreeSet<usize>,
     /// [`Checked::lent_args`].
@@ -2142,6 +2148,7 @@ pub fn propagation_against(
         viewed_numbers: checked.viewed_numbers,
         array_literals: checked.array_literals,
         owned_texts: checked.owned_texts,
+        lent_list_reads: checked.lent_list_reads,
         view_fallbacks: checked.view_fallbacks,
         lent_args: checked.lent_args,
         lookup_keys: checked.lookup_keys,
@@ -6468,6 +6475,56 @@ impl<'a> Checker<'a> {
                  always has a value."
             )],
             help: Some(format!("Write `{plain}`.")),
+            labels: Vec::new(),
+        });
+    }
+
+    /// **`NK1211`: `??` after a value that is never absent**
+    /// ([ADR-279](../../docs/specification/adr/adr-279.md) D12, #342).
+    ///
+    /// `xs[2] ?? return false` over a `Vec[i64]`, or `x ?? 0` over an `i64`:
+    /// the left side always has a value, so `??` has nothing to replace, and
+    /// the line reached `rustc` as *mismatched types* or *`i64: Or` is not
+    /// satisfied* (Part III C.1). `NK1121`'s counterpart for `?.`.
+    ///
+    /// **The type decides, not the shape**: an index into a list of `T?` is a
+    /// `T?`, and `??` after it replaces a `null` element. **Only where the left
+    /// side's type is known** (C.4): a type this checker could not work out, or
+    /// a type variable, is left alone.
+    fn nothing_to_fall_back_from(&mut self, value: &Expr, left: &Ty, span: &Span) {
+        let never_absent = match left.unseen() {
+            Ty::Named { name, .. } => crate::contracts::ty::base(&name) != "Option",
+            Ty::Tuple(_) => true,
+            _ => false,
+        };
+        if !never_absent {
+            return;
+        }
+        let shown = written(self.parsed, value);
+        let index = matches!(value, Expr::Index { .. });
+        self.checked.findings.push(Finding {
+            severity: Severity::Error,
+            span: *span,
+            code: "NK1211",
+            message: format!("`{shown}` always has a value, so `??` has nothing to replace."),
+            notes: vec![match index {
+                true => "A list read never comes back empty: an index that does not fit \
+                         stops the program, and `??` only replaces a `null`."
+                    .to_string(),
+                false => format!(
+                    "`??` replaces a `null`, and a value of type `{}` is never `null`: \
+                     only a type written with `?` can be.",
+                    left.unseen()
+                ),
+            }],
+            help: Some(match (index, value) {
+                (true, Expr::Index { base, index }) => format!(
+                    "Check the length first: `if {} < {}.len()`.",
+                    written(self.parsed, index),
+                    written(self.parsed, base)
+                ),
+                _ => "Remove `??` and what follows it.".to_string(),
+            }),
             labels: Vec::new(),
         });
     }
@@ -12362,6 +12419,7 @@ impl<'a> Checker<'a> {
                 let outer = std::mem::replace(&mut self.read_a_map, false);
                 let left = self.expr(value, span);
                 let read_now = std::mem::replace(&mut self.read_a_map, outer);
+                self.nothing_to_fall_back_from(value, &left, span);
                 // **A map read, or a name a `let` bound to one** (#297): the
                 // left side is a view of what the map keeps either way.
                 let from_a_map = match &**value {
@@ -12457,6 +12515,21 @@ impl<'a> Checker<'a> {
                         self.checked
                             .view_fallbacks
                             .insert(self.text_at(*at as usize));
+                        return Ty::view("str");
+                    }
+                    // **And a list's** (#342, ADR-279 D12): `ys[1] ?? "none"`
+                    // over a `Vec[String?]` is a view - the read is written as
+                    // the element lent, not moved out of the list.
+                    if **inner == Ty::named("String")
+                        && !from_a_map
+                        && matches!(&**value, Expr::Index { .. })
+                    {
+                        self.checked
+                            .view_fallbacks
+                            .insert(self.text_at(*at as usize));
+                        self.checked
+                            .lent_list_reads
+                            .insert((span.at(), argument_shape(expr)));
                         return Ty::view("str");
                     }
                 }
@@ -21984,8 +22057,16 @@ impl<'a> Checker<'a> {
         // answers it, and two walks over one expression must not both have an
         // opinion about the same call.
         let outside = std::mem::replace(&mut self.inside_a_comptime, true);
+        let walked_from = self.checked.findings.len();
         let found = self.expr(value, span);
         self.inside_a_comptime = outside;
+        // **A name nothing declares is the one error** (ADR-287 D19, #380):
+        // `comptime D = C + 1` above `comptime C = 1` in a body is `NK1117`,
+        // because a body is read top to bottom. `NK1127` beside it - *can't be
+        // computed while the program is built* - named the wrong cause.
+        let said_a_name = self.checked.findings[walked_from..]
+            .iter()
+            .any(|f| f.code == "NK1117");
         let bound = self.parsed.text(name).to_string();
         self.nameable(&bound, span, "a `comptime`");
         let want = ty.as_ref().map(|ty| self.declared(ty, span));
@@ -22235,7 +22316,7 @@ impl<'a> Checker<'a> {
             // …and nothing at all where the refusal has already been made by
             // name: `NK1152` and `NK1165` each say what `NK1127` would, with
             // the part that matters in it.
-            _ if said || said_a_type || said_a_table || said_a_part => {}
+            _ if said || said_a_type || said_a_table || said_a_part || said_a_name => {}
             _ => self.checked.findings.push(Finding {
                 code: "NK1127",
                 severity: Severity::Error,

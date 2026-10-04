@@ -493,6 +493,16 @@ impl<'a> Or<&'a str> for Option<&'a String> {
     }
 }
 
+/// **A list's optional text, read, with a literal after `??`** (#342,
+/// ADR-279 D12): the list keeps its `String`, so the read is lent -
+/// `get(&ys, 1)` - and what it and the literal can both be is a view of text,
+/// as a map's is (ADR-293 D28).
+impl<'a> Or<&'a str> for &'a Option<String> {
+    fn or(self, fallback: impl FnOnce() -> &'a str) -> &'a str {
+        self.as_deref().unwrap_or_else(fallback)
+    }
+}
+
 /// The emitted spelling: `nikaia_std::index::or(value, || fallback)`.
 ///
 /// A **free function** and not a method, because `Option` has an inherent `or`

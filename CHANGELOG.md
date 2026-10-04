@@ -4,6 +4,23 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.456] — 2026-10-04
+
+**`??` after a value that is never absent is `NK1211`** (ADR-279 D12, #342).
+`xs[2] ?? return false` over a `Vec[i64]`, or `x ?? 0` over an `i64`, reached
+`rustc` as *mismatched types* or *`i64: Or` is not satisfied*. It is refused
+now: the left side always has a value, and after a list's index the help names
+the length check. An index into a list of `T?` keeps its `??`, which replaces a
+`null` element; one past the end still stops. And `ys[1] ?? "none"` over a
+`Vec[String?]` no longer moves the element out of the list: it is lent, and the
+answer is a view, as a map's is.
+
+**A forward reference to a `comptime` in a body is `NK1117` alone** (ADR-287
+D19, #380). `comptime D = C + 1` above `comptime C = 1` also said *`D` can't be
+computed while the program is built*, which named the wrong cause. Tests hold
+the other three rows: forward references at item level, an item-level ring
+(`NK1168`), and a body constant reading an item constant.
+
 ## [0.0.455] — 2026-10-04
 
 **An `assert` is a contract, on the README and the home page.** "An assert is a
