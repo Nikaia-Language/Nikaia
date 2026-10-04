@@ -5,14 +5,14 @@
   <p>
     Write it like a script. State what must hold with a plain <code>assert</code>: the
     compiler <b>proves</b> what it can, <b>refuses to build</b> what it shows false, and
-    checks the rest when the program runs. Where a proof removes a check, the program can
-    run <b>faster than the safe Rust you would have written by hand</b>.
+    checks the rest when the program runs. The result is <b>as lean as tuned Rust</b>,
+    without a line of <code>unsafe</code>.
   </p>
 
   <p>
     <a href="#the-idea">The idea</a> •
     <a href="#an-assert-is-a-contract">An assert is a contract</a> •
-    <a href="#faster-than-the-rust-you-would-write">Faster than hand-written Rust</a> •
+    <a href="#as-lean-as-tuned-rust-without-writing-it">As lean as tuned Rust</a> •
     <a href="#hello-world">Hello, world</a> •
     <a href="#built-in-the-open-at-full-speed">Progress</a> •
     <a href="guide/getting-started.md">Getting started</a> •
@@ -61,10 +61,11 @@ That shows up in a few concrete ways:
   that do. What it cannot prove yet it checks when the program runs, so a claim that is merely
   hard to prove never stops your build.
   [More below](#an-assert-is-a-contract).
-* **Safety that makes the program faster, not slower.** The same prover shows that an index
-  stays inside its list or a sum inside its type, and then the check is not emitted. On the
-  inner loops of an SMT solver, Nikaia's output runs **up to 34 % fewer instructions than the
-  same algorithm written by hand in safe Rust**. [The numbers](#faster-than-the-rust-you-would-write).
+* **Safety that need not cost speed.** The same prover shows that an index stays inside
+  its list or a sum inside its type, and a build that asks for it drops that check. On the
+  One Billion Row Challenge, Nikaia runs fewer instructions and half the mispredicted
+  branches of tuned `unsafe` Rust, from a quarter less source.
+  [The numbers](#as-lean-as-tuned-rust-without-writing-it).
 * **Waiting is not your problem.** A program that reads files or talks to the network is
   written like any other program. There are no special keywords for "this might wait", and
   the program still never sits idle while it waits.
@@ -164,42 +165,30 @@ The rules are [ADR-269](docs/specification/adr/adr-269.md); the solver is
 
 ---
 
-## Faster than the Rust you would write
+## As lean as tuned Rust, without writing it
 
-Rust checks every `xs[i]` and, in debug builds, every `a + b`, unless LLVM happens to prove
-the check away in the code it can see. Removing the rest means `unsafe` and
-`get_unchecked`, which nobody wants in application code. Nikaia keeps every check by
-default, and with `--optimization=remove-bounds-checks:aggressive` and
-`remove-overflow-checks:aggressive` its prover removes each one it can **prove** cannot
-fail. Nothing is assumed: a check without a proof stays, at every level, so the program
-means exactly the same. Removing is something a build asks for, not the default: a check
-removed on a wrong proof would turn a clean stop into a silently wrong result, so the
-compiler's proofs have to earn that trust first
-([ADR-306](docs/specification/adr/adr-306.md) D14).
+The fair comparison is not the loop a beginner writes but the Rust a specialist tunes,
+`unsafe` included. On the [One Billion Row Challenge](benches/brc/README.md), against a
+single-core entry that maps the file, skips UTF-8 validation and hashes a word at a time:
 
-Measured on the inner loops of a CDCL(T) solver, against the same algorithms written by hand
-in safe Rust, with link-time optimisation on both sides and every program printing the same
-checksum. The Nikaia programs keep their overflow checks on; the Rust ones have them on only
-where the row says so
-([`benches/solver-kernels.nika`](benches/solver-kernels.nika),
-[method and tables](docs/solver-workload.md#8-the-solvers-kernels-lowered-from-nikaia)):
+| 1BRC, per row | Nikaia, [`examples/1brc.nika`](examples/1brc.nika) | Rust, tuned |
+| :--- | ---: | ---: |
+| instructions | **300** | 313 |
+| mispredicted branches | **1.58** | 3.61 |
+| tokens of source, `use` included | **618** | 809 |
+| `unsafe` | **0** | 1 |
+| UTF-8 checked | **yes** | no |
+| overflow checked | **yes** | no |
+| the same file on every core | **yes** | no |
 
-| kernel, instructions retired | Rust by hand | Nikaia, checks proved away | |
-| :--- | ---: | ---: | ---: |
-| big-integer multiplication | 1 088 M | **720 M** | **−34 %** |
-| unit propagation over watch lists, overflow checks on in both | 10.69 M | **9.41 M** | **−12 %** |
-| sparse-row combination | 966 M | **947 M** | **−2 %** |
+Both are release builds at `opt-level = 3`, neither with link-time optimisation, on one
+core, with the same output byte for byte. Counted with callgrind over a million rows, never
+with a clock: on a shared machine a time says less than a count. Nikaia's overflow checks
+cost 1.9 of its 300 instructions.
 
-And on the [One Billion Row Challenge](benches/brc/README.md), a grammar that describes the
-whole file beats the loop a competent Rust programmer writes first, on one core: **0.49 s
-against 0.74 s**. A tuned single-core 1BRC entry that skips UTF-8 validation is still faster
-(0.22 s); [the benchmark's README](benches/brc/README.md) says why, where the rest goes, and how
-it was measured.
-
-The claim is not that Nikaia beats the best Rust a specialist can write with `unsafe`. It is
-that the **safe** program you write in Nikaia without thinking about it can beat the safe
-program you would write in Rust, because the compiler can prove what Rust's compiler has to
-check. The decision is [ADR-306](docs/specification/adr/adr-306.md).
+Where a proof shows an index or overflow check cannot fail, a build that asks for it
+(`--optimization`, [ADR-306](docs/specification/adr/adr-306.md)) drops the check, so the
+safety a program keeps costs it nothing where the compiler can prove it.
 
 ---
 

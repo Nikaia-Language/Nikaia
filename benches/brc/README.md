@@ -306,6 +306,28 @@ setting changed that (#433: 16 or 1 codegen unit and thin LTO 319.1, fat LTO
 D41). Callgrind, 1 M rows, the project built as `brc.sh` builds it, the same
 output: 319.1 → **300.1** instructions a row.
 
+## What the overflow checks cost, and how long each program is (0.0.458)
+
+Callgrind, 1 M rows, per row, release builds as above, the same output from all
+three. The Nikaia build without overflow checks is the same project with
+`RUSTFLAGS="-C overflow-checks=off"`:
+
+| | instructions | mispredictions |
+|---|---:|---:|
+| Rust, `tuned` | 312.7 | 3.61 |
+| **Nikaia** | **300.1** | **1.58** |
+| Nikaia, overflow checks off | 298.2 | 1.58 |
+
+The checks the language keeps cost 1.9 instructions a row and no misprediction.
+
+**Length in tokens**, counted the same way for both languages: an identifier or
+keyword, a number, a literal (a string is one), an operator (`::`, `->`, `..<`,
+`??` are one each); comments and whitespace are not tokens, `use` lines are.
+`examples/1brc.nika`, the whole file: **618**. `tuned` as a program of its own -
+its two `use` lines, a `main` that takes the path, the hasher, `tuned` and
+`report`: **809**. The Nikaia file also carries the fold that runs it on every
+core, which `tuned` has no counterpart for.
+
 ## What is left to build
 
 Against `tuned`, as of 0.0.440: 300 against 313 instructions a row, 1.58

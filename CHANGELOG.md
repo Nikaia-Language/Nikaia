@@ -4,6 +4,17 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.458] — 2026-10-04
+
+**The README and the home page measure against tuned Rust, in counts.** Their
+performance sections compared Nikaia with loops this project wrote itself; they
+now compare `examples/1brc.nika` with the single-core `tuned` entry that maps
+the file and skips UTF-8 validation: 300 against 313 instructions a row, 1.58
+against 3.61 mispredictions, 618 against 809 tokens of source, no `unsafe`
+against one. Release builds, no LTO on either side, callgrind over a million
+rows. The benchmark page records the overflow checks' cost (1.9 instructions a
+row) and how the tokens are counted.
+
 ## [0.0.457] — 2026-10-04
 
 **Performance is counted, not timed.** On a shared machine the same binaries

@@ -3,7 +3,7 @@ layout: home
 title: Nikaia
 description: >-
   A programming language where you write what should happen and the compiler
-  decides how: an assert is a proof, safe code can beat hand-written Rust,
+  decides how: an assert is a contract, safe code is as lean as tuned Rust,
   no async/await, no garbage collector, data races refused before the
   program runs.
 ---
@@ -24,9 +24,9 @@ description: >-
         Nikaia reads like a scripting language and compiles like a systems language.
         Formal verification is a plain <code>assert</code>: the compiler proves what it can
         while it builds, refuses what it shows false, and checks the rest when the program
-        runs. Ask it to, and every check it proves unneeded disappears, so safe Nikaia can beat
-        the safe Rust you would have written by hand. No <code>async</code>/<code>await</code>, no
-        garbage collector, and data races are refused before the program runs.
+        runs. On the One Billion Row Challenge, safe Nikaia runs fewer instructions than
+        tuned <code>unsafe</code> Rust. No <code>async</code>/<code>await</code>, no garbage
+        collector, and data races are refused before the program runs.
       </p>
       <div class="hero-actions">
         <a class="button button-primary" href="{{ "/guide/getting-started.html" | relative_url }}">Get started</a>
@@ -94,36 +94,35 @@ fn main() {
 
 <section class="home-section home-section-alt" id="performance">
   <div class="home-inner">
-    <p class="home-eyebrow home-eyebrow-center">Safety that makes code faster</p>
-    <h2 class="home-heading">Faster than the Rust you would write</h2>
+    <p class="home-eyebrow home-eyebrow-center">Safety that need not cost speed</p>
+    <h2 class="home-heading">As lean as tuned Rust, without writing it</h2>
     <p class="home-intro">
-      Rust checks every index unless LLVM happens to see why it cannot fail; the rest takes
-      <code>unsafe</code>. Asked to, Nikaia's prover removes every index and overflow check it
-      can <em>prove</em> cannot fail, and keeps the others; it is not the default until the
-      proofs have earned that trust. Measured against the same algorithms
-      written by hand in safe Rust, same output, link-time optimisation on both sides.
+      Measured against the Rust a specialist tunes, <code>unsafe</code> included: a
+      One Billion Row Challenge entry that maps the file, skips UTF-8 validation and hashes a
+      word at a time. Release builds on both sides, one core, the same output, counted per row
+      with callgrind, never with a clock.
     </p>
     <div class="stats">
       <div class="stat">
-        <p class="stat-value">−34&nbsp;%</p>
-        <p class="stat-label">instructions on big-integer multiplication</p>
-        <p class="stat-detail">720 M against 1 088 M for Rust by hand, with Nikaia's overflow checks still on</p>
+        <p class="stat-value">300&nbsp;/&nbsp;313</p>
+        <p class="stat-label">instructions per row, Nikaia against tuned Rust</p>
+        <p class="stat-detail">with UTF-8 and every overflow checked</p>
       </div>
       <div class="stat">
-        <p class="stat-value">−12&nbsp;%</p>
-        <p class="stat-label">on an SMT solver's unit propagation</p>
-        <p class="stat-detail">9.41 M against 10.69 M, overflow checks on in both</p>
+        <p class="stat-value">1.58&nbsp;/&nbsp;3.61</p>
+        <p class="stat-label">mispredicted branches per row</p>
+        <p class="stat-detail">less than half</p>
       </div>
       <div class="stat">
-        <p class="stat-value">0.46&nbsp;s</p>
-        <p class="stat-label">One Billion Row Challenge, one core</p>
-        <p class="stat-detail">against 0.75 s for the Rust loop a competent programmer writes first</p>
+        <p class="stat-value">618&nbsp;/&nbsp;809</p>
+        <p class="stat-label">tokens of source, and 0 against 1 <code>unsafe</code></p>
+        <p class="stat-detail">and the Nikaia file also runs on every core</p>
       </div>
     </div>
     <p class="home-footnote">
-      Not a claim against the best <code>unsafe</code> Rust a specialist can write: a tuned
-      1BRC entry is still faster, and the benchmark says why.
-      <a href="{{ "/docs/solver-workload.html#8-the-solvers-kernels-lowered-from-nikaia" | relative_url }}">Method and full tables →</a>
+      Where a proof shows an index or overflow check cannot fail, a build that asks for it drops
+      the check.
+      <a href="https://github.com/Nikaia-Language/Nikaia/tree/main/benches/brc">Method and full tables →</a>
     </p>
   </div>
 </section>
