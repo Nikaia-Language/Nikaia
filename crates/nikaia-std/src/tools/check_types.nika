@@ -1,0 +1,267 @@
+// crates/nikaia-std/src/tools/check_types.nika
+//
+// **What the checker asks of one type by itself** - whether handing it out
+// takes it away or copies it, what a view of it is and what a view is of, what
+// a hull holds, whether a value goes into one, which types are lists,
+// collections or text, and the one way out a mismatch offers - moved from the
+// compiler's checker (ADR-294, #125). Each answers from the type alone; what
+// needs a ledger or the program stays with the checker.
+
+/// The numbers Part I 2.2 offers, by name.
+pub fn a_number_name(name: ref String) -> bool {
+    return name == "i8" || name == "i16" || name == "i32" || name == "i64" || name == "isize" || name == "u8" || name == "u16" || name == "u32" || name == "u64" || name == "usize" || name == "f32" || name == "f64"
+}
+
+/// A name's last segment: `fs::Root` is `Root`.
+fn type_last_segment(name: ref String) -> String {
+    let parts: Vec[ref String] = name.split("::").collect()
+    return parts[parts.len() - 1].clone()
+}
+
+/// **A view of a type**: a view of text is `str`, a view of anything else is
+/// the same type read through `ref`, and a view of a `T?` is a `T?` of views.
+pub fn view_of_type(inner: ref Ty) -> Ty {
+    return match inner {
+        Ty::Named { name, args, view } => if view { inner.clone() } else { if args.len() == 0 && name == "String" { Ty::Named { name: "str", args: [], view: true } } else { Ty::Named { name: name.clone(), args: args.clone(), view: true } } },
+        Ty::Nullable(held) => Ty::Nullable(view_of_type(held)),
+        else => Ty::Unknown,
+    }
+}
+
+/// **What a view may be a view of**: `str` of `String`, any other view of the
+/// same type held.
+pub fn viewed_from_type(view: ref Ty) -> Vec[Ty] {
+    return match view {
+        Ty::Named { name, args, view } => if !view { [] } else { if args.len() == 0 && name == "str" { [Ty::Named { name: "String", args: [], view: false }] } else { [Ty::Named { name: name.clone(), args: args.clone(), view: false }] } },
+        else => [],
+    }
+}
+
+/// The type itself, read without `ref`.
+pub fn unviewed_type(ty: ref Ty) -> Ty {
+    return match ty {
+        Ty::Named { name, args, .. } => Ty::Named { name: name.clone(), args: args.clone(), view: false },
+        else => ty.clone(),
+    }
+}
+
+/// A view of a number, a `bool` or a `char`: read, it is the same value.
+pub fn copies_as_a_view(ty: ref Ty) -> bool {
+    return match ty {
+        Ty::Named { name, args, view } => view && args.len() == 0 && (a_number_name(name) || name == "bool" || name == "char"),
+        else => false,
+    }
+}
+
+/// The value such a view reads as, and any other type as it is.
+pub fn value_of_a_copy(ty: ref Ty) -> Ty {
+    if copies_as_a_view(ty) {
+        return unviewed_type(ty)
+    }
+    return ty.clone()
+}
+
+/// A view of text, however the name is written.
+pub fn is_a_view_of_a_string(ty: ref Ty) -> bool {
+    return match ty {
+        Ty::Named { name, args, view } => view && args.len() == 0 && type_last_segment(name) == "String",
+        else => false,
+    }
+}
+
+/// A number, a `bool` or a `char`, held and not viewed.
+pub fn a_copy_by_value(ty: ref Ty) -> bool {
+    return match ty {
+        Ty::Named { name, args, view } => !view && args.len() == 0 && (a_number_name(name) || name == "bool" || name == "char"),
+        else => false,
+    }
+}
+
+/// **Whether handing a value of this type out takes it away** - what is not a
+/// number, a `bool`, a `char`, a view or a handle is moved; an array, a tuple
+/// and a `T?` by what they hold (ADR-152 D2).
+pub fn moves_away(ty: ref Ty) -> bool {
+    return match ty {
+        Ty::Named { name, args, view } => if name == ARRAY { any_moves_away(args) } else { !view && !a_number_name(name) && name != "bool" && name != "char" && name != "Shared" && name != "SharedMut" },
+        Ty::Nullable(inner) => moves_away(inner),
+        Ty::Tuple(parts) => any_moves_away(parts),
+        else => false,
+    }
+}
+
+fn any_moves_away(types: ref Array[Ty]) -> bool {
+    for ty in types {
+        if moves_away(ty) {
+            return true
+        }
+    }
+    return false
+}
+
+/// **Whether handing a value of this type out takes nothing away**: Part I
+/// 2.2's numbers, `bool`, `char` and any view - `moves_away`'s other half.
+pub fn copies_plainly(ty: ref Ty) -> bool {
+    return match ty {
+        Ty::Named { name, args, view } => if name == ARRAY { all_copy(args) } else { view || name == "i32" || name == "i64" || name == "u8" || name == "u32" || name == "u64" || name == "f64" || name == "bool" || name == "char" },
+        else => false,
+    }
+}
+
+fn all_copy(types: ref Array[Ty]) -> bool {
+    for ty in types {
+        if !copies_plainly(ty) {
+            return false
+        }
+    }
+    return true
+}
+
+/// Whether a type holds an `Array` anywhere inline.
+pub fn holds_an_array(ty: ref Ty) -> bool {
+    return match ty {
+        Ty::Named { name, args, .. } => name == ARRAY || any_holds_an_array(args),
+        Ty::Tuple(parts) => any_holds_an_array(parts),
+        Ty::Nullable(inner) => holds_an_array(inner),
+        else => false,
+    }
+}
+
+fn any_holds_an_array(types: ref Array[Ty]) -> bool {
+    for ty in types {
+        if holds_an_array(ty) {
+            return true
+        }
+    }
+    return false
+}
+
+/// A list: what `[…]` makes, and what `Vec()` builds.
+pub fn is_a_list_type(ty: ref Ty) -> bool {
+    return match ty.unseen() {
+        Ty::Named { name, .. } => name == "Vec" || name == "List" || name == "Array",
+        else => false,
+    }
+}
+
+/// A list, a map or a set - the types Part I gives no operator.
+pub fn is_a_collection_type(ty: ref Ty) -> bool {
+    if is_a_list_type(ty) {
+        return true
+    }
+    return match ty.unseen() {
+        Ty::Named { name, .. } => {
+            let last = type_last_segment(name)
+            last == "HashMap" || last == "HashSet" || last == "BTreeMap" || last == "BTreeSet" || last == "TrustedMap" || last == "TrustedSet"
+        }
+        else => false,
+    }
+}
+
+/// Whether a type is one this language calls text: `String` and a view of
+/// it, and nothing else - a `T?` is not text (Part I 2.3).
+pub fn is_text_type(ty: ref Ty) -> bool {
+    return match ty {
+        Ty::Named { name, args, .. } => args.len() == 0 && (name == "String" || name == "str"),
+        else => false,
+    }
+}
+
+// --- Hulls (ADR-037 D7) ---
+
+/// `Shared[T]`, `SharedMut[T]`, `Locked[T]`: a value held where more than
+/// one place may reach it.
+pub fn is_a_hull(name: ref String) -> bool {
+    return name == "Shared" || name == "SharedMut" || name == "Locked"
+}
+
+/// What a hull a body may change holds: `SharedMut[T]` or `Locked[T]`'s `T`.
+pub fn locked_content_of(ty: ref Ty) -> Ty? {
+    return match ty {
+        Ty::Named { name, args, .. } => if (name == "SharedMut" || name == "Locked") && args.len() > 0 { args[0].clone() } else { null },
+        else => null,
+    }
+}
+
+/// A handle that is shared: `Shared[T]` or `SharedMut[T]`, held.
+pub fn is_a_handle(ty: ref Ty) -> bool {
+    return match ty {
+        Ty::Named { name, view, .. } => !view && (name == "Shared" || name == "SharedMut"),
+        else => false,
+    }
+}
+
+/// What a `Locked[T]` holds, and any other type as it is.
+pub fn locked_content(ty: ref Ty) -> Ty {
+    return match ty {
+        Ty::Named { name, args, view } => if name == "Locked" && !view && args.len() == 1 { args[0].clone() } else { ty.clone() },
+        else => ty.clone(),
+    }
+}
+
+/// **A value that goes into a hull it fits**: `Shared(x)` where `x` is the
+/// held type, or what a `Locked` inside it holds.
+pub fn becomes_shared(found: ref Ty, want: ref Ty) -> bool {
+    return match want {
+        Ty::Named { name, args, view } => {
+            if !is_a_hull(name) || view || args.len() != 1 || found.is_unknown() {
+                false
+            } else {
+                found.fits(args[0]) || found.fits(locked_content(args[0]))
+            }
+        }
+        else => false,
+    }
+}
+
+/// **The one way out of a mismatch** (Part III C.2): wrap it in its hull,
+/// declare a part of a list as one, clone a view, lend text, convert a number
+/// - or the two declarations, either of which may be the wrong one.
+pub fn way_out_of_a_mismatch(found: ref Ty, want: ref Ty) -> String {
+    if becomes_shared(found, want) {
+        let hull = match want {
+            Ty::Named { name, .. } => name.clone(),
+            else => "",
+        }
+        return f"Wrap it: `{hull}(…)`."
+    }
+    let element = part_of_a_list(found, want)
+    if element != null {
+        let written = element ?? "?"
+        return f"This is part of a list. Declare the parameter `ref Array[{written}]` to take a part or a whole list alike."
+    }
+    let found_text = found.text()
+    let want_text = want.text()
+    if found_text == "ref String" && want_text == "String" {
+        return "Write `.clone()` to turn this view into text of its own."
+    }
+    if found_text == "String" && want_text == "ref String" {
+        return "Write `ref` in front of it to pass a view of it."
+    }
+    if a_number_name(found_text) && a_number_name(want_text) {
+        return f"Convert it with `as {want_text}`. Nikaia never converts numbers on its own."
+    }
+    let article = if want_text.starts_with("i") || want_text.starts_with("a") || want_text.starts_with("e") || want_text.starts_with("o") || want_text.starts_with("I") || want_text.starts_with("A") || want_text.starts_with("E") || want_text.starts_with("O") { "an" } else { "a" }
+    return f"Make it {article} `{want_text}`, or change the declaration to `{found_text}`."
+}
+
+/// A view of a run handed where a `Vec` is wanted: the element's text.
+fn part_of_a_list(found: ref Ty, want: ref Ty) -> String? {
+    let run = match found {
+        Ty::Named { name, args, view } => view && name == ARRAY && args.len() == 1,
+        else => false,
+    }
+    if !run {
+        return null
+    }
+    let (name, args) = match want {
+        Ty::Named { name, args, .. } => (name, args),
+        else => return null,
+    }
+    if type_last_segment(name) != "Vec" {
+        return null
+    }
+    if args.len() == 0 {
+        return "?"
+    }
+    return args[0].text()
+}
