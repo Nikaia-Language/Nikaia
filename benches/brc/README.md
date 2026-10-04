@@ -85,7 +85,7 @@ move.
 | Rust, `naive` | 1 | 0.74 s | 3.4× |
 | **Nikaia, `user-parallelism = "no"`** | 1 | **0.49 s** | **2.2×** |
 | Rust, `tuned` | 1 | 0.22 s | 1.0 |
-| Nikaia, `user-parallelism = "yes"` | 4 | 0.31 s | 1.4× |
+| Nikaia, `user-parallelism = "yes"` | 3 | 0.31 s | 1.4× |
 
 The same programs pinned to one core, binaries run directly, interleaved, best
 of 25 - so without `nikaia run`'s check, and without the cores `fs::map`
@@ -256,23 +256,51 @@ as `tuned` does, would take the grammar reading bytes and the text check moved
 to what becomes text - here only the names, and of those only each distinct one
 - which ADR-016 §4 defers as a decision about what a view is.
 
+## The hash of a name (0.0.430)
+
+`nikaia_std::hash::FxHasher` finished a key with three branches on what was
+left of its length, and a station name's length changes from row to row. Text
+is now folded into one word by the byte hash of `rustc-hash` 2 first, which
+reads a key of up to 16 bytes as two overlapping words; numbers keep the Fx
+step they had ([ADR-316](../../docs/specification/adr/adr-316.md) D5).
+Callgrind, output compared first and the same everywhere:
+
+| `Trusted` hash of text | 1BRC, per row | `k-nucleotide`, whole run | `nikaia lower ty.nika` |
+|---|---:|---:|---:|
+| Fx, three tail branches (before) | 364.9 instr, 3.42 mispred. | 1292 M, 3.26 M | 383.4 M, 3.20 M |
+| Fx with an overlapping tail of its own | 340.2, 1.57 | 1228 M, **4.47 M** | |
+| `foldhash`, fixed seed | 356.7, 1.63 | **1347 M**, 1.27 M | |
+| `rustc-hash` 2, whole | 345.8, 1.62 | 1208 M, 1.32 M | |
+| **`rustc-hash` 2's byte hash, Fx for numbers** | **344.1, 1.58** | **1204 M, 1.29 M** | **383.3 M, 3.20 M** |
+| the same, 4-16 bytes read without a branch (wyhash's offsets) | 371.2, 1.28 | 1452 M, 1.48 M | |
+| …and no second multiply after the byte hash | 370.0, 1.28 | 1441 M, 1.35 M | |
+
+`k-nucleotide` is the second program because its keys are text of one length
+per table, where the old branches were always predicted; the copy the
+measurement used maps `dna.fasta` instead of reading standard input, since
+valgrind does not run the original to its end. Its keys are text of a length
+the compiler does not know, the same shape as 1BRC's names, so one function
+serves both and both got better. The two tuned rows were tried for 1BRC
+alone: reading every key of 4 to 16 bytes without a branch takes 0.30
+mispredictions a row off, and adds 27 instructions and a fifth to
+`k-nucleotide`, so they are not in.
+
 ## What is left to build
 
-Against `tuned`, as of 0.0.424: 365 against 313 instructions a row, 3.42
+Against `tuned`, as of 0.0.430: 344 against 313 instructions a row, 1.58
 against 3.61 mispredictions, taken as the tables above say. In the
 order they are to be done; the figures are what callgrind attributes today,
 not what a change has been measured to save.
 
 | | what | today | where | issue |
 |---|---|---|---|---|
-| 1 | the hash of a name branches three times on its length; `tuned` copies the tail into a word | +0.79 mispredictions a row | `nikaia_std::hash` | [#419](https://github.com/Nikaia-Language/Nikaia/issues/419) |
-| 2 | the `par_fold` loop pays per item for what only a failure needs (checkpoint, two position reads) | ~21 instructions a row | `winnow-grammar` `rt.rs` | [winnow-grammar#22](https://github.com/keywan-ghadami/winnow-grammar/issues/22) |
-| 3 | a `&str` cut is checked for a character boundary the generator already knows; fewer cuts, and letting LLVM see the byte, without `unsafe` | ~27 instructions a row | `winnow-grammar` | [winnow-grammar#23](https://github.com/keywan-ghadami/winnow-grammar/issues/23) |
-| 4 | updating the stats: the `and_modify` / `or_insert_with` chain, beside overflow checks that are the language's | 23 against 11 | the lowering | [#420](https://github.com/Nikaia-Language/Nikaia/issues/420) |
-| 5 | ADR-314, decided and not built: what a grammar matched and what a callee promises prove `TENTHS`'s overflow checks away at `aggressive` | a few instructions a row | the prover | [#421](https://github.com/Nikaia-Language/Nikaia/issues/421) |
-| 6 | last: a grammar over bytes, with only what becomes text checked as UTF-8 (ADR-016 §4) | ~10 instructions a row | language, `winnow-grammar`, `std` | [#422](https://github.com/Nikaia-Language/Nikaia/issues/422) |
+| 1 | the `par_fold` loop pays per item for what only a failure needs (checkpoint, two position reads) | ~21 instructions a row | `winnow-grammar` `rt.rs` | [winnow-grammar#22](https://github.com/keywan-ghadami/winnow-grammar/issues/22) |
+| 2 | a `&str` cut is checked for a character boundary the generator already knows; fewer cuts, and letting LLVM see the byte, without `unsafe` | ~27 instructions a row | `winnow-grammar` | [winnow-grammar#23](https://github.com/keywan-ghadami/winnow-grammar/issues/23) |
+| 3 | updating the stats: the `and_modify` / `or_insert_with` chain, beside overflow checks that are the language's | 23 against 11 | the lowering | [#420](https://github.com/Nikaia-Language/Nikaia/issues/420) |
+| 4 | ADR-314, decided and not built: what a grammar matched and what a callee promises prove `TENTHS`'s overflow checks away at `aggressive` | a few instructions a row | the prover | [#421](https://github.com/Nikaia-Language/Nikaia/issues/421) |
+| 5 | last: a grammar over bytes, with only what becomes text checked as UTF-8 (ADR-016 §4) | ~10 instructions a row | language, `winnow-grammar`, `std` | [#422](https://github.com/Nikaia-Language/Nikaia/issues/422) |
 
-Not on the list, because measured or reasoned out of it: finding the `;` and the
+Not on the list, because measured or reasoned out of it: the hash of a name, done in 0.0.430 (#419); finding the `;` and the
 line's end, where one `memchr2` a line already beats `tuned`'s search and walk
 back (ADR 24 §9); accumulating `dec`'s value inside the fixed-width match,
 which came out even with `dec` as it is (ADR 24 §8b); and the mispredictions

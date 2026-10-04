@@ -4,6 +4,20 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.430] — 2026-10-04
+
+**A trusted map hashes text with `rustc-hash` 2's byte hash** (ADR-316 D5,
+#419). `nikaia_std::hash::FxHasher` finished a key with three branches on its
+remaining length, which a station name's changing length mispredicted. Text now
+goes through the byte hash `rustc-hash` 2 uses - a key of up to 16 bytes read as
+two overlapping words, the length mixed in - before the Fx step, copied with its
+origin and held to the crate by a test. Numbers keep the Fx step alone. With
+callgrind, output equal: 1BRC 364.9 → 344.1 instructions and 3.42 → 1.58
+mispredictions a row, below `tuned`'s 3.61; `k-nucleotide` 1292 M → 1204 M
+instructions and 3.26 M → 1.29 M mispredictions; `nikaia lower` unchanged.
+Measured against Fx with an overlapping tail of its own, `foldhash`, all of
+`rustc-hash` 2 and two variants tuned for 1BRC, in `benches/brc/README.md`.
+
 ## [0.0.429] — 2026-10-04
 
 **A call's `(` is on the line of what it calls** (ADR-317, Part I 5.1, #426).

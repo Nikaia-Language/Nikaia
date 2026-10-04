@@ -70,3 +70,7 @@ file-ring = { path = "../unsafe/file-ring" }
 # `toml`, `sha2` and `nikaia` itself among them. The Nikaia half is lowered at
 # release time now and the `.rs` is committed beside the `.nika`, so building
 # `std` needs nothing but `rustc`.
+
+[dev-dependencies]
+# `hash.rs` copies its byte hash; a test holds the copy to it.
+rustc-hash = "=2.1.1"
