@@ -160,6 +160,7 @@ implementation.
 | ADR | Decides | Status | Built |
 | :--- | :--- | :--- | :--- |
 | [010](adr-010.md) | Whether input is trusted is a property of its source that the compiler tracks, and what it chooses with it is the hasher. | Accepted | partly: D3's `trusted:` argument, D4's `@untrusted` grammar, D5's refusal without entropy |
+| [316](adr-316.md) | A map's hasher is chosen by its keys' trust first and their shape second (a fixed-width type, text of a known length, text of unknown length), never weakening trust. The choice shows only in `--trust` and the ledger, a program may name any hasher with `hasher:` at construction, and a shape gets its own function only once a real program of that shape is measured better. | Accepted | no |
 | [017](adr-017.md) | Escaping is the template's contract, not the caller's discipline. | Accepted | yes |
 
 ### `std` and the language surface

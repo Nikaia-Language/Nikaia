@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part III: Tooling, Ecosystem & Interoperability**
-**Version:** 0.0.426 (Draft)
+**Version:** 0.0.427 (Draft)
 **Date:** 2026-10-04
 
 ---
@@ -1176,7 +1176,7 @@ Every input carries a **provenance**, because the compiler knows where a buffer 
 
 A value inherits the provenance of the buffer it comes from, and a collection takes the most cautious provenance of everything put into it. Where the compiler cannot tell, across a dynamic call or from a foreign library, the answer is Untrusted.
 
-The hasher follows from the provenance: untrusted keys get a keyed hash with a per-process random seed, and trusted keys get a fast one. Nothing else about the map changes: same table, same API, and keys are always compared in full.
+The hasher follows from the provenance: untrusted keys get a keyed hash with a per-process random seed, and trusted keys get a fast one. Within that, the keys' shape picks the function: a fixed-width type, text of a known length, or text of unknown length. A program may name its own with `hasher:` where it makes the map, and `--trust` lists the choice for every map ([ADR-316](adr/adr-316.md)). *Decided, not built yet.* Nothing else about the map changes: same table, same API, and keys are always compared in full.
 
 **User code has the last word, at the place the data enters:**
 

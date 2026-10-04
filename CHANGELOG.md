@@ -4,6 +4,19 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.427] — 2026-10-04
+
+**A map's hasher follows its keys' trust and shape** (ADR-316). There is no
+hasher that is best for every map: Fx's tail branches cost 1BRC mispredictions
+on names of varying length and cost `k-nucleotide`'s keys of one length nothing.
+Trust (ADR-010) still decides the class, and the keys' shape, as the compiler
+knows it (a fixed-width type, text of a known length, text of unknown length),
+chooses the function within it, never weakening trust. The choice shows only in
+`--trust` and the ledger. A program may name any hasher with `hasher:` where it
+makes the map, and that override is recorded. A shape gets its own function only
+once a real program of that shape is measured better. Until then nothing
+changes. #419 is narrowed to the first shape, 1BRC's names. Decided, not built.
+
 ## [0.0.426] — 2026-10-04
 
 **A number that does not fit is said in Nikaia, and counted as one**
