@@ -4,6 +4,16 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.409] — 2026-10-04
+
+**What a build says about pausing, and a test build's dispatcher, are
+Nikaia** (ADR-269 D1, ADR-288, ADR-294, #125). The notes on `pub` functions
+that never pause, or pause only where their lambdas do, and do not promise it
+(D29); the call path and the unplaced form of the warning that one which could
+not pause now can (`NK2211`, D32); a test's function name; and the dispatcher
+a test build appends to its entry move into `tools/modules.nika`. 27.7 % of
+the toolchain is Nikaia.
+
 ## [0.0.408] — 2026-10-04
 
 **A package's ledger is taken in and published in Nikaia** (ADR-100,

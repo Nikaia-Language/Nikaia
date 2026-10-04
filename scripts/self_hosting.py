@@ -68,7 +68,7 @@ COMPILER_NIKA = {
     "tether.nika": "contracts::tether: the states a signature's views solve to, a parse that views its input, a body that makes a buffer of its own (0.0.374)",
     "sharing.nika": "contracts::sharing: the reasons a count stays atomic, the decisions and their report, the slot keys, what holds a `Shared` and what a hull lowers to, the classes the handles join and what each one gets, and what the walk asks of one expression (0.0.375, 0.0.377, 0.0.387), and the walk that joins every handle into its allocation class (0.0.401)",
     "keep.nika": "contracts::keep: which types hold a view and why one cannot go into a handle, the methods that keep, drop, take or own, the keeping method's key, a callee's and a local's name (0.0.376)",
-    "modules.nika": "modules: the names a file declares, and the refusal for a `use` that names a path, a name twice, or a package the file cannot reach (0.0.379)",
+    "modules.nika": "modules: the names a file declares, and the refusal for a `use` that names a path, a name twice, or a package the file cannot reach (0.0.379); what a build says about its `pub` functions' pausing, and a test build's dispatcher (0.0.409)",
     "tiers.nika": "text_tiers: what a method's name says about the text it hands back, and which containers text is followed into (0.0.383)",
     "lends.nika": "contracts::keeps: whether a callee lends a parameter, whether a ledger says a type copies, and whether a value moves (0.0.384), and the least fixpoint of what each function keeps (0.0.399)",
     "assets.nika": "assets: why a read at build time is refused and the way out, the allowlist's lines, a path that leaves the root, the entries nothing read (0.0.389)",
