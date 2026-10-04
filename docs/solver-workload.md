@@ -410,7 +410,7 @@ Rust, callgrind over a million rows of `benches/brc`'s generator: 481.3 M
 instructions to 476.5 M, **4.8 a row (1.0 %)**. `examples/calc`'s actions
 compute on numbers read from the input and can overflow; no proof applies.
 
-### 8.5 Counted again, with `--bounds` (0.0.450)
+### 8.5 Counted again, with `--bounds` (0.0.453)
 
 `nikaia lower --bounds` (#389) over every `.nika` file of the repository that
 lowers alone (`tests/errors` aside), at `aggressive`, counted rather than read

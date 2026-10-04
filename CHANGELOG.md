@@ -4,6 +4,26 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.453] — 2026-10-04
+
+**ADR-306 D12 and D13 are built: a length is below 2^60 where its elements take
+space** (#383). `len()` of a list, text, `Bytes`, a map or a set whose elements
+take at least a byte is a fact the walk starts from. A list of a zero-sized type
+is bounded by how it was built, and `extend(other)` now adds `other`'s length.
+`x.len() + 1`, a sum and a difference of lengths are proved; a product of two
+(#386) is not.
+
+Found building it, and fixed (#444): **no `i64` or `u64` operation had ever
+been proved.** The solver counts in `i64`, and the goal `term <= i64::MAX`,
+negated, is 2^63. A proof now states its goal inside ±2^62, a sub-range of the
+type. Over the repository's `.nika` files, the checks left standing at
+`aggressive` went from 551 to 442 (`docs/solver-workload.md` §8.5).
+
+The code reached `develop` in 024e7ab without this heading, with a conflict in
+ADR-306 left unresolved: D12 and D13 had been written there at the same time
+(0.0.451). This package resolves it to that text, with a note on how it was
+built.
+
 ## [0.0.452] — 2026-10-04
 
 **The specification states rules, not their status; the README's version badge
