@@ -4,6 +4,15 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.410] — 2026-10-04
+
+**An expression is written back in Nikaia** (ADR-269 D2, ADR-294, #125). The
+checker's `written` and `written_pattern` - an expression or a pattern as the
+source wrote it, with parentheses where the tree needs them and nowhere else,
+for an `assert`'s failure and a refusal's quote - move into
+`tools/written.nika`. The first of the checker's own helpers to move. 28.0 %
+of the toolchain is Nikaia.
+
 ## [0.0.409] — 2026-10-04
 
 **What a build says about pausing, and a test build's dispatcher, are

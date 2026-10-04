@@ -82,6 +82,7 @@ COMPILER_NIKA = {
     "ledger_text.nika": "contracts: a ledger as it is written out - `nikaia.contracts`, the record of what it was derived from, and a description's header - and the `throws` list a diagnostic quotes (0.0.406)",
     "declared.nika": "contracts: what a declaration says before any body is read - the type a `.nika` declaration names, and the entry a function's and a trait method's declaration makes (0.0.407, 0.0.408)",
     "ledger_ops.nika": "contracts: what a build does with a package's ledger as a whole - the entries it publishes, whether it may be believed against its sources, and taking it in under the names a caller writes (0.0.408)",
+    "written.nika": "check: an expression or a pattern written back the way the source wrote it, for an `assert`'s failure and a refusal's quote (0.0.410)",
 }
 
 
