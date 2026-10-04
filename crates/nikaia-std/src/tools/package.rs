@@ -15550,6 +15550,160 @@ fn stores_maybe(unit: &Unit, asked: &Asked<'_>, expr: Option<&Expr>, span: &Span
 fn walk_maybe_block(unit: &Unit, asked: &Asked<'_>, block: Option<&Block>, own_buffer: &impl Fn(&Expr) -> bool, here: &mut Here) { walk_block(unit, asked, match block { Some(__nikaia_value) => __nikaia_value, None => return }, false, own_buffer, here); }
 
 
+// --- written.nika ---
+
+pub fn written_expression(names: &winnow_grammar::InternerContext, expr: &Expr) -> String {
+    match expr {
+        Expr::LitInt { value, negative } => { let negative = *negative; let value = *value; if negative && value > 0u64 { format!("-{}", value) } else { format!("{}", value) } },
+        Expr::LitFloat(text) => text.to_owned(),
+        Expr::LitBool(value) => { let value = *value; if value { String::from("true") } else { String::from("false") } },
+        Expr::LitChar(text) => format!("'{}'", text),
+        Expr::LitStr { text, .. } => format!("\"{}\"", text),
+        Expr::LitInterpolated { parts } => {
+            let mut body: String = String::from("");
+            for part in parts.iter() {
+                match part {
+                    FPart::Text(text) => body.push_str(text),
+                    FPart::Hole { expr, spec, .. } => body.push_str(&hole_written(names, expr, (spec).as_deref())),
+                }
+            }
+            format!("f\"{}\"", body)
+        },
+        Expr::LitNull => String::from("null"),
+        Expr::Variable(name) => { let name = *name; names.resolve(name).to_owned() },
+        Expr::Path(segments) => path_written(names, segments),
+        Expr::Field { base, name } => { let base = nikaia_std::boxed::open(base); let name = *name; format!("{}.{}", operand(names, base), names.resolve(name)) },
+        Expr::SafeField { base, name } => { let base = nikaia_std::boxed::open(base); let name = *name; format!("{}?.{}", operand(names, base), names.resolve(name)) },
+        Expr::Index { base, index } => { let base = nikaia_std::boxed::open(base); let index = nikaia_std::boxed::open(index); format!("{}[{}]", operand(names, base), written_expression(names, index)) },
+        Expr::Call { func, args, config } => { let func = nikaia_std::boxed::open(func); format!("{}{}", written_expression(names, func), call_written(names, args, config)) },
+        Expr::MethodCall { receiver, method, args, config } => { let receiver = nikaia_std::boxed::open(receiver); let method = *method; format!("{}.{}{}", operand(names, receiver), names.resolve(method), call_written(names, args, config)) },
+        Expr::SafeMethod { receiver, method, args, config } => { let receiver = nikaia_std::boxed::open(receiver); let method = *method; format!("{}?.{}{}", operand(names, receiver), names.resolve(method), call_written(names, args, config)) },
+        Expr::Unary { op, expr } => { let expr = nikaia_std::boxed::open(expr); format!("{}{}", unary_word(op), operand(names, expr)) },
+        Expr::Binary { op, lhs, rhs, .. } => {
+            let lhs = nikaia_std::boxed::open(lhs); let rhs = nikaia_std::boxed::open(rhs);
+            let here = binds(op);
+            format!("{} {} {}", side(names, lhs, here, false), binary_word(op), side(names, rhs, here, true))
+        },
+        Expr::Coalesce { value, fallback } => { let value = nikaia_std::boxed::open(value); let fallback = nikaia_std::boxed::open(fallback); format!("{} ?? {}", operand(names, value), operand(names, fallback)) },
+        Expr::Tuple(items) => format!("({})", all_written(names, items)),
+        Expr::ListLit { items, .. } => format!("[{}]", all_written(names, items)),
+        Expr::Range { start, end, inclusive } => {
+            let start = nikaia_std::boxed::open(start); let end = nikaia_std::boxed::open(end); let inclusive = *inclusive;
+            let dots = if inclusive { ".." } else { "..<" };
+            format!("{}{}{}", operand(names, start), dots, operand(names, end))
+        },
+        _ => String::from("…"),
+    }
+}
+
+fn hole_written(names: &winnow_grammar::InternerContext, expr: &Expr, spec: Option<&str>) -> String {
+    let format = match spec { Some(__nikaia_value) => __nikaia_value, None => return format!("{{{}}}", written_expression(names, expr)) };
+    format!("{{{}:{}}}", written_expression(names, expr), format)
+}
+
+fn path_written(names: &winnow_grammar::InternerContext, segments: &[winnow_grammar::Symbol]) -> String {
+    let mut parts: Vec<String> = vec![];
+    for segment in segments.iter() { parts.push(names.resolve(*segment).to_owned()); }
+    parts.join("::")
+}
+
+fn all_written(names: &winnow_grammar::InternerContext, items: &[Expr]) -> String {
+    let mut parts: Vec<String> = vec![];
+    for item in items.iter() { parts.push(written_expression(names, item)); }
+    parts.join(", ")
+}
+
+fn call_written(names: &winnow_grammar::InternerContext, args: &[Expr], config: &[ConfigArg]) -> String {
+    if config.is_empty() { return format!("({})", all_written(names, args)); }
+    let mut options: Vec<String> = vec![];
+    for option in config.iter() { options.push(format!("{}: {}", names.resolve(option.name), written_expression(names, &option.value))); }
+    if args.is_empty() { return format!("(; {})", options.join(", ")); }
+    format!("({}; {})", all_written(names, args), options.join(", "))
+}
+
+fn operand(names: &winnow_grammar::InternerContext, expr: &Expr) -> String {
+    match expr {
+        Expr::Binary { .. } => format!("({})", written_expression(names, expr)),
+        Expr::Coalesce { .. } => format!("({})", written_expression(names, expr)),
+        Expr::Cast { .. } => format!("({})", written_expression(names, expr)),
+        _ => written_expression(names, expr),
+    }
+}
+
+fn side(names: &winnow_grammar::InternerContext, expr: &Expr, here: i64, right: bool) -> String {
+    match expr {
+        Expr::Binary { op, .. } => {
+            let inner = binds(op);
+            if inner < here || right && inner == here { format!("({})", written_expression(names, expr)) } else { written_expression(names, expr) }
+        },
+        _ => operand(names, expr),
+    }
+}
+
+fn binds(op: &BinaryOp) -> i64 {
+    match op {
+        BinaryOp::Or => 1,
+        BinaryOp::And => 2,
+        BinaryOp::Eq => 3,
+        BinaryOp::Ne => 3,
+        BinaryOp::Lt => 3,
+        BinaryOp::Le => 3,
+        BinaryOp::Gt => 3,
+        BinaryOp::Ge => 3,
+        BinaryOp::BitOr => 4,
+        BinaryOp::BitXor => 5,
+        BinaryOp::BitAnd => 6,
+        BinaryOp::Shl => 7,
+        BinaryOp::Shr => 7,
+        BinaryOp::Add => 8,
+        BinaryOp::Sub => 8,
+        BinaryOp::Mul => 9,
+        BinaryOp::Div => 9,
+        BinaryOp::Rem => 9,
+    }
+}
+
+fn binary_word(op: &BinaryOp) -> String {
+    match op {
+        BinaryOp::Add => String::from("+"),
+        BinaryOp::Sub => String::from("-"),
+        BinaryOp::Mul => String::from("*"),
+        BinaryOp::Div => String::from("/"),
+        BinaryOp::Rem => String::from("%"),
+        BinaryOp::Eq => String::from("=="),
+        BinaryOp::Ne => String::from("!="),
+        BinaryOp::Lt => String::from("<"),
+        BinaryOp::Le => String::from("<="),
+        BinaryOp::Gt => String::from(">"),
+        BinaryOp::Ge => String::from(">="),
+        BinaryOp::And => String::from("&&"),
+        BinaryOp::Or => String::from("||"),
+        BinaryOp::BitAnd => String::from("&"),
+        BinaryOp::BitOr => String::from("|"),
+        BinaryOp::BitXor => String::from("^"),
+        BinaryOp::Shl => String::from("<<"),
+        BinaryOp::Shr => String::from(">>"),
+    }
+}
+
+fn unary_word(op: &UnaryOp) -> String {
+    match op {
+        UnaryOp::Neg => String::from("-"),
+        UnaryOp::Not => String::from("!"),
+        UnaryOp::Ref => String::from("&"),
+    }
+}
+
+pub fn written_pattern(names: &winnow_grammar::InternerContext, pattern: &MatchPattern) -> String {
+    match pattern {
+        MatchPattern::Path(path) => path_written(names, path),
+        MatchPattern::Tuple { path, .. } => format!("{}(…)", path_written(names, path)),
+        MatchPattern::Named { path, .. } => format!("{} {{ … }}", path_written(names, path)),
+        _ => String::from("this pattern"),
+    }
+}
+
+
 pub mod assets {
     #[allow(unused_imports)]
     pub use super::{Denied, allowlist_entries, leaves_the_root, unused_entries, why_not_read, way_out_of_a_read};
@@ -15757,4 +15911,8 @@ pub mod types {
 pub mod views {
     #[allow(unused_imports)]
     pub use super::{Stored, Destination, Asked, views_stored, views_checked, holds_view, written_type};
+}
+pub mod written {
+    #[allow(unused_imports)]
+    pub use super::{written_expression, written_pattern};
 }
