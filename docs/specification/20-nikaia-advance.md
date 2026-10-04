@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part II: Advanced Features & Metaprogramming**
-**Version:** 0.0.449 (Draft)
+**Version:** 0.0.450 (Draft)
 **Date:** 2026-10-04
 
 ---
@@ -100,8 +100,10 @@ recurse with a base case, and it may loop: a `for` over a range, a `while`,
 the build's own parameters. A callee that fails either condition is refused with
 `NK1152`. `NK1127` says *not yet*; `NK1152` says *not allowed*.
 
-A `comptime` may read one declared below it: a constant is an **item**, and
-items are order-independent. A ring of them is refused with `NK1168`.
+A `comptime` at item level may read one declared below it; a ring of them is
+refused with `NK1168`. A `comptime` inside a function body is read in written
+order, as a `let` is: one declared further down is `NK1117`. It may read an
+item-level one.
 
 A loop has no step budget. A `while` that does not end hangs the build. Call
 depth is bounded, so an unbounded recursion does not exhaust the compiler's

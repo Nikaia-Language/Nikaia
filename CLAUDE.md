@@ -56,6 +56,15 @@ What the owner expects from such a round:
   how other languages and tools do it, options with their consequences, the
   measurements still owed, and a recommendation.
 * **Do not ask which issue to take next**: the order is arbitrary, pick one.
-* **Record each decision in its issue** in a form another session can build
-  from: the decision, the reasons, and a numbered *To build* list with tests.
-  Leave the issue open until it is built.
+* **A decision lands in three places, each with its own job: the ADR says
+  why, the specification says what, the issue tells the history.** The
+  deciding session writes the ADR (a new D, or a new record) and the
+  specification's text (including Part III's code table) itself, in the same
+  round - not left to whoever builds it. An ADR states the reasons and the
+  rejected alternatives, not how the question was found or what was broken
+  before; that is the issue's. The specification states the rule and nothing
+  else: no status, no history, no reasons, no padding.
+* **The issue gets the history and the build order**: how the question came up,
+  what was checked, the decision in short with links to the ADR and the
+  specification, and a numbered *To build* list with tests that another session
+  can build from. Leave the issue open until it is built.

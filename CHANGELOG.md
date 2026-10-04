@@ -4,6 +4,16 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.450] — 2026-10-04
+
+**Two decisions written into the records and the specification.** ADR-287
+D19 (#380): a `comptime` at item level may read one declared below it, a ring
+is `NK1168`, and one inside a body is read in written order as a `let` is.
+ADR-279 D12 (#342): `??` after a type that is not `T?` is refused with the new
+`NK1211`; a list's index is a `T`, and over a list of `T?` the index is a `T?`
+and `??` replaces a `null` element. Part III's `NK1188` row now says what
+ADR-204 D1 says since 0.0.445. The compiler side of both is open in its issue.
+
 ## [0.0.449] — 2026-10-04
 
 **`--bounds`: every check the optimizations may drop, and what became of it**

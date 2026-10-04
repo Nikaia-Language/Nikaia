@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part I: The Language Core**
-**Version:** 0.0.449 (Draft)
+**Version:** 0.0.450 (Draft)
 **Date:** 2026-10-04
 
 ---
@@ -952,6 +952,12 @@ The compiler decides which case applies from the declared type.
 
 **`?.` through a type that cannot be absent is refused** with `NK1121`. A type
 that is not `T?` always has a value, and the plain `.` reaches it.
+
+**`??` after a type that cannot be absent is refused** with `NK1211`. The left
+side's type decides: a list's index is a `T` (4.5), so `xs[i] ?? 0` over a
+`Vec[i64]` is refused; over a `Vec[i64?]` the index is an `i64?`, and `??`
+replaces a `null` element. `??` never guards an index: one past the end stops
+the program.
 
 **`?.` takes nothing.** It reaches through a view of its receiver, so `user` is
 usable on the line after `user?.name`. What comes out is a copy where the
