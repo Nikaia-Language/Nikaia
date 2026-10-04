@@ -1699,6 +1699,118 @@ fn names_a_variant(names: &winnow_grammar::InternerContext, name: &str, own: &Le
 }
 
 
+// --- check_calls.nika ---
+
+pub fn call_arguments(signature: &Signature) -> Vec<(String, Ty)> {
+    let mut out: Vec<(String, Ty)> = vec![];
+    let mut first = true;
+    for (name, ty) in signature.params.iter() {
+        if first && name == "self" {
+            first = false;
+            continue;
+        }
+        first = false;
+        out.push((name.to_owned(), ty.clone()));
+    }
+    out
+}
+
+pub fn expected_arguments(contract: &FnContract) -> Vec<Ty> {
+    let mut out: Vec<Ty> = vec![];
+    let signature = match contract.signature.as_ref() { Some(__nikaia_value) => __nikaia_value, None => return out };
+    for (_, ty) in call_arguments(signature) { out.push(ty.clone()); }
+    out
+}
+
+pub fn receiver_bindings(contract: &FnContract, receiver: &Ty) -> collections::BTreeMap<String, Ty> {
+    let mut bound: collections::BTreeMap<String, Ty> = collections::BTreeMap::new();
+    let signature = match contract.signature.as_ref() { Some(__nikaia_value) => __nikaia_value, None => return bound };
+    if !signature.params.is_empty() && nikaia_std::index::get(&signature.params, 0).0 == "self" { bind(&nikaia_std::index::get(&signature.params, 0).1, receiver, &mut bound); }
+    bound
+}
+
+pub fn argument_bindings(contract: &FnContract, found: &[Ty]) -> collections::BTreeMap<String, Ty> {
+    let mut bound: collections::BTreeMap<String, Ty> = collections::BTreeMap::new();
+    let signature = match contract.signature.as_ref() { Some(__nikaia_value) => __nikaia_value, None => return bound };
+    let arguments = call_arguments(signature);
+    let mut at: i64 = 0;
+    while ((at) as usize) < arguments.len() && ((at) as usize) < found.len() {
+        bind(&nikaia_std::index::get(&arguments, (at) as usize).1, nikaia_std::index::get(&found, (at) as usize), &mut bound);
+        at += 1;
+    }
+    bound
+}
+
+pub fn walks_by_value(contract: &FnContract) -> bool {
+    let signature = match contract.signature.as_ref() { Some(__nikaia_value) => __nikaia_value, None => return false };
+    if signature.params.is_empty() { return false; }
+    matches!(nikaia_std::index::get(&signature.params, 0).1, Ty::Seq { .. })
+}
+
+pub fn shape_through(contract: &FnContract, receiver: &Ty, found: &[Ty], result: Ty) -> Ty {
+    let (item, is_sync, pauses, can_throw, parallel, written) = match result {
+        Ty::Seq { ref item, is_sync, pauses, can_throw, parallel, shape } => { let item = nikaia_std::boxed::open(item); (item.clone(), is_sync, pauses, can_throw, parallel, shape.clone()) },
+        _ => return result,
+    };
+    let mut ends = true;
+    let mut sized = true;
+    if contract.signature.is_some() {
+        let signature = nikaia_std::index::or(match contract.signature.as_ref() {
+            Some(__nikaia_it) => Some(__nikaia_it.clone()),
+            None => None,
+        }, || Signature::empty());
+        if !signature.params.is_empty() && nikaia_std::index::get(&signature.params, 0).0 == "self" && a_sequence_type(&nikaia_std::index::get(&signature.params, 0).1) {
+            ends = ends && shape_ends(receiver);
+            sized = sized && shape_sized(receiver);
+        }
+        let arguments = call_arguments(&signature);
+        let mut at: i64 = 0;
+        while ((at) as usize) < arguments.len() && ((at) as usize) < found.len() {
+            if a_sequence_type(&nikaia_std::index::get(&arguments, (at) as usize).1) {
+                ends = ends && shape_ends(nikaia_std::index::get(&found, (at) as usize));
+                sized = sized && shape_sized(nikaia_std::index::get(&found, (at) as usize));
+            }
+            at += 1;
+        }
+    }
+    ends = ends && (!contract.ends_by_length || sized);
+    Ty::Seq { item: Box::new(item), is_sync, pauses, can_throw, parallel, shape: Shape { ends: written.ends && ends, sized: written.sized && sized, replays: written.replays } }
+}
+
+fn shape_ends(ty: &Ty) -> bool {
+    match ty {
+        Ty::Seq { shape, .. } => shape.ends,
+        _ => false,
+    }
+}
+
+fn shape_sized(ty: &Ty) -> bool {
+    match ty {
+        Ty::Seq { shape, .. } => shape.sized,
+        _ => false,
+    }
+}
+
+pub fn a_paused_chain(key: &str, on: &Ty) -> bool {
+    let a_step = key == "Seq::map" || key == "Seq::filter" || key == "Seq::take" || key == "Seq::skip" || key == "Seq::step_by" || key == "Seq::zip";
+    a_step && match on {
+        Ty::Seq { pauses, .. } => { let pauses = *pauses; pauses },
+        _ => false,
+    }
+}
+
+pub fn a_pausing_sequence(result: Ty, on: &Ty) -> Ty {
+    let fails = match on {
+        Ty::Seq { can_throw, .. } => { let can_throw = *can_throw; can_throw },
+        _ => false,
+    };
+    match result {
+        Ty::Seq { ref item, can_throw, parallel, shape, .. } => { let item = nikaia_std::boxed::open(item); Ty::Seq { item: Box::new(item.clone()), is_sync: false, pauses: true, can_throw: can_throw || fails, parallel, shape: Shape { ends: false, sized: false, replays: shape.replays } } },
+        _ => result,
+    }
+}
+
+
 // --- check_types.nika ---
 
 pub fn a_number_name(name: &str) -> bool { name == "i8" || name == "i16" || name == "i32" || name == "i64" || name == "isize" || name == "u8" || name == "u16" || name == "u32" || name == "u64" || name == "usize" || name == "f32" || name == "f64" }
@@ -1889,6 +2001,47 @@ fn part_of_a_list(found: &Ty, want: &Ty) -> Option<String> {
     if type_last_segment(name) != "Vec" { return None; }
     if args.is_empty() { return Some(String::from("?")); }
     Some((*nikaia_std::index::get(&args, 0)).text())
+}
+
+pub fn element_walked(over: &Ty, bindings: i64) -> Ty {
+    if bindings != 1 { return Ty::Unknown; }
+    match over {
+        Ty::Named { name, args, view } => {
+            let view = *view;
+            let last = type_last_segment(name);
+            if args.len() == 1 { if last == "Vec" || last == "List" || last == "BTreeSet" || last == "HashSet" { (*nikaia_std::index::get(&args, 0)).clone() } else { Ty::Unknown } } else if !args.is_empty() && !view && name == ARRAY { (*nikaia_std::index::get(&args, 0)).clone() } else { Ty::Unknown }
+        },
+        Ty::Pointed { item, slice, mutable } => { let item = nikaia_std::boxed::open(item); let mutable = *mutable; let slice = *slice; if slice && !mutable { item.clone() } else { Ty::Unknown } },
+        Ty::Seq { item, .. } => { let item = nikaia_std::boxed::open(item); item.clone() },
+        _ => Ty::Unknown,
+    }
+}
+
+pub fn elements_walked(over: &Ty, bindings: i64) -> Vec<Ty> {
+    if bindings == 1 { return vec![element_walked(over, 1)]; }
+    let parts = parts_walked(over, bindings);
+    if (parts.len() as i64) == bindings { return parts; }
+    let mut unknown: Vec<Ty> = vec![];
+    for _ in 0..bindings { unknown.push(Ty::Unknown); }
+    unknown
+}
+
+fn parts_walked(over: &Ty, bindings: i64) -> Vec<Ty> {
+    match over {
+        Ty::Named { name, args, .. } => {
+            let last = type_last_segment(name);
+            if (last == "HashMap" || last == "Map" || last == "BTreeMap" || last == "TrustedMap") && args.len() == 2 && bindings == 2 { vec![(*nikaia_std::index::get(&args, 0)).clone(), (*nikaia_std::index::get(&args, 1)).clone()] } else if (last == "Vec" || last == "List" || last == "BTreeSet" || last == "HashSet") && args.len() == 1 || name == ARRAY && !args.is_empty() { tuple_parts(nikaia_std::index::get(&args, 0)) } else { vec![] }
+        },
+        Ty::Seq { item, .. } => { let item = nikaia_std::boxed::open(item); tuple_parts(item) },
+        _ => vec![],
+    }
+}
+
+fn tuple_parts(ty: &Ty) -> Vec<Ty> {
+    match ty {
+        Ty::Tuple(parts) => parts.to_owned(),
+        _ => vec![],
+    }
 }
 
 
@@ -16031,9 +16184,13 @@ pub mod calls {
     #[allow(unused_imports)]
     pub use super::{Callee, callee_of, callee_named};
 }
+pub mod check_calls {
+    #[allow(unused_imports)]
+    pub use super::{call_arguments, expected_arguments, receiver_bindings, argument_bindings, walks_by_value, shape_through, a_paused_chain, a_pausing_sequence};
+}
 pub mod check_types {
     #[allow(unused_imports)]
-    pub use super::{a_number_name, view_of_type, viewed_from_type, unviewed_type, copies_as_a_view, value_of_a_copy, is_a_view_of_a_string, a_copy_by_value, moves_away, copies_plainly, holds_an_array, is_a_list_type, is_a_collection_type, is_text_type, is_a_hull, locked_content_of, is_a_handle, locked_content, becomes_shared, way_out_of_a_mismatch};
+    pub use super::{a_number_name, view_of_type, viewed_from_type, unviewed_type, copies_as_a_view, value_of_a_copy, is_a_view_of_a_string, a_copy_by_value, moves_away, copies_plainly, holds_an_array, is_a_list_type, is_a_collection_type, is_text_type, is_a_hull, locked_content_of, is_a_handle, locked_content, becomes_shared, way_out_of_a_mismatch, element_walked, elements_walked};
 }
 pub mod check_words {
     #[allow(unused_imports)]

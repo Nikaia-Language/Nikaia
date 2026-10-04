@@ -265,3 +265,73 @@ fn part_of_a_list(found: ref Ty, want: ref Ty) -> String? {
     }
     return args[0].text()
 }
+
+// --- What a `for` binds (ADR-105, ADR-152 D4) ---
+
+/// **The element one binding of a `for` takes**: a list's or a set's one
+/// argument, an array's first, a run's item, a sequence's item - and
+/// `Unknown` where none of these is what is walked.
+pub fn element_walked(over: ref Ty, bindings: i64) -> Ty {
+    if bindings != 1 {
+        return Ty::Unknown
+    }
+    return match over {
+        Ty::Named { name, args, view } => {
+            let last = type_last_segment(name)
+            // One argument is a list's or a set's element and nothing else's:
+            // an `Array` written with one is a run, read as `Pointed`.
+            if args.len() == 1 {
+                if last == "Vec" || last == "List" || last == "BTreeSet" || last == "HashSet" { args[0].clone() } else { Ty::Unknown }
+            } else if args.len() > 0 && !view && name == ARRAY {
+                args[0].clone()
+            } else {
+                Ty::Unknown
+            }
+        }
+        Ty::Pointed { item, slice, mutable } => if slice && !mutable { item.clone() } else { Ty::Unknown },
+        Ty::Seq { item, .. } => item.clone(),
+        else => Ty::Unknown,
+    }
+}
+
+/// **What the bindings of a `for` take**, one type each: a map's key and
+/// value for two, the parts of a pair a list, a set, an array or a sequence
+/// holds - and `Unknown` for each where the shape is not one of these.
+pub fn elements_walked(over: ref Ty, bindings: i64) -> Vec[Ty] {
+    if bindings == 1 {
+        return [element_walked(over, 1)]
+    }
+    let parts = parts_walked(over, bindings)
+    if parts.len() == bindings {
+        return parts
+    }
+    let mut unknown: Vec[Ty] = []
+    for _ in 0..<bindings {
+        unknown.push(Ty::Unknown)
+    }
+    return unknown
+}
+
+fn parts_walked(over: ref Ty, bindings: i64) -> Vec[Ty] {
+    return match over {
+        Ty::Named { name, args, .. } => {
+            let last = type_last_segment(name)
+            if (last == "HashMap" || last == "Map" || last == "BTreeMap" || last == "TrustedMap") && args.len() == 2 && bindings == 2 {
+                [args[0].clone(), args[1].clone()]
+            } else if ((last == "Vec" || last == "List" || last == "BTreeSet" || last == "HashSet") && args.len() == 1) || (name == ARRAY && args.len() > 0) {
+                tuple_parts(args[0])
+            } else {
+                []
+            }
+        }
+        Ty::Seq { item, .. } => tuple_parts(item),
+        else => [],
+    }
+}
+
+fn tuple_parts(ty: ref Ty) -> Vec[Ty] {
+    return match ty {
+        Ty::Tuple(parts) => parts.clone(),
+        else => [],
+    }
+}

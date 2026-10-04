@@ -22543,48 +22543,7 @@ const COUNTS: &[(&str, usize)] = &[
 /// **A result never replays** unless the entry says so: a range replays, and a
 /// `rev` of one is an ordinary sequence, walked once.
 fn shape_through(contract: &FnContract, receiver: &Ty, found: &[Ty], result: Ty) -> Ty {
-    let Ty::Seq {
-        item,
-        is_sync,
-        pauses,
-        can_throw: throws,
-        parallel,
-        shape: written,
-    } = result
-    else {
-        return result;
-    };
-    let mut inputs: Vec<ty::Shape> = Vec::new();
-    if let Some(signature) = &contract.signature {
-        let shape_of = |actual: &Ty| match actual {
-            Ty::Seq { shape, .. } => *shape,
-            _ => ty::Shape::none(),
-        };
-        if let Some((name, Ty::Seq { .. })) = signature.params.first()
-            && name == "self"
-        {
-            inputs.push(shape_of(receiver));
-        }
-        for ((_, pattern), actual) in signature.arguments().iter().zip(found) {
-            if matches!(pattern, Ty::Seq { .. }) {
-                inputs.push(shape_of(actual));
-            }
-        }
-    }
-    let sized = inputs.iter().all(|s| s.sized);
-    let ends = inputs.iter().all(|s| s.ends) && (!contract.ends_by_length || sized);
-    Ty::Seq {
-        item,
-        is_sync,
-        pauses,
-        can_throw: throws,
-        parallel,
-        shape: ty::Shape {
-            ends: written.ends && ends,
-            sized: written.sized && sized,
-            replays: written.replays,
-        },
-    }
+    nikaia_std::tools::check_calls::shape_through(contract, receiver, found, result)
 }
 
 /// **A lazy walk of a sequence whose step pauses**
@@ -22594,10 +22553,7 @@ fn shape_through(contract: &FnContract, receiver: &Ty, found: &[Ty], result: Ty)
 /// `io::lines()`, whose step can fail as well. Both have every lazy walk `Seq`
 /// has but `rev`, as adapters of their own.
 fn a_paused_chain(key: &str, on: &Ty) -> bool {
-    matches!(
-        key,
-        "Seq::map" | "Seq::filter" | "Seq::take" | "Seq::skip" | "Seq::step_by" | "Seq::zip"
-    ) && matches!(on, Ty::Seq { pauses: true, .. })
+    nikaia_std::tools::check_calls::a_paused_chain(key, on)
 }
 
 /// What a `map` or a `filter` hands back where its step pauses
@@ -22609,44 +22565,11 @@ fn a_paused_chain(key: &str, on: &Ty) -> bool {
 /// `io::lines()` has produced nothing yet, so its failures are still ahead of
 /// whatever walks it, and the `?` goes there.
 fn a_pausing_sequence(result: Ty, on: &Ty) -> Ty {
-    let fails = matches!(
-        on,
-        Ty::Seq {
-            can_throw: true,
-            ..
-        }
-    );
-    match result {
-        Ty::Seq {
-            item,
-            can_throw: throws,
-            parallel,
-            shape,
-            ..
-        } => Ty::Seq {
-            item,
-            is_sync: false,
-            pauses: true,
-            can_throw: throws || fails,
-            parallel,
-            shape: ty::Shape {
-                ends: false,
-                sized: false,
-                ..shape
-            },
-        },
-        other => other,
-    }
+    nikaia_std::tools::check_calls::a_pausing_sequence(result, on)
 }
 
 fn walks_by_value(contract: &FnContract) -> bool {
-    let Some(signature) = &contract.signature else {
-        return false;
-    };
-    matches!(
-        signature.params.first().map(|(_, ty)| ty),
-        Some(Ty::Seq { .. })
-    )
+    nikaia_std::tools::check_calls::walks_by_value(contract)
 }
 
 /// The sentence a word that used to be reserved gets instead
@@ -22722,97 +22645,13 @@ fn declares_a_type(parsed: &Parsed, name: &str) -> bool {
 /// or a tuple's parts, position by position. Where the element cannot be taken
 /// apart into that many, every binding is unknown, as before.
 fn elements_of(over: &Ty, bindings: usize) -> Vec<Ty> {
-    if bindings == 1 {
-        return vec![element_of(over, 1)];
-    }
-    let parts = match over {
-        // `collections::HashMap` as written, or bare where the ledger keys it.
-        Ty::Named { name, args, .. } => match (
-            name.rsplit("::").next().unwrap_or_default(),
-            args.as_slice(),
-        ) {
-            ("HashMap" | "Map" | "BTreeMap" | "TrustedMap", [key, value]) if bindings == 2 => {
-                Some(vec![key.clone(), value.clone()])
-            }
-            // **And a set of pairs is taken apart as a list of them is**:
-            // `for (a, b) in links` over a `BTreeSet[(String, String)]` bound
-            // two names of unknown type, so a `.clone()` of either resolved
-            // to nothing and the function around it was inferred `async`
-            // (found moving `text_tiers` into Nikaia, #125).
-            ("Vec" | "List" | "BTreeSet" | "HashSet", [Ty::Tuple(parts)]) => Some(parts.clone()),
-            (name, [Ty::Tuple(parts), ..]) if name == ty::ARRAY => Some(parts.clone()),
-            _ => None,
-        },
-        Ty::Seq { item, .. } => match item.as_ref() {
-            Ty::Tuple(parts) => Some(parts.clone()),
-            _ => None,
-        },
-        _ => None,
-    };
-    match parts {
-        Some(parts) if parts.len() == bindings => parts,
-        _ => vec![Ty::Unknown; bindings],
-    }
+    nikaia_std::tools::check_types::elements_walked(over, bindings as i64)
 }
 
 /// A number, a `bool` or a `char`: read through a view, the value is the same
 /// value ([`Checked::copied_loop_bindings`]).
 fn a_copy_by_value(ty: &Ty) -> bool {
     nikaia_std::tools::check_types::a_copy_by_value(ty)
-}
-
-fn element_of(over: &Ty, bindings: usize) -> Ty {
-    match over {
-        // **A list lent to the function is walked the same way** (0.0.238):
-        // `for c in long` over a `long: ref Vec[char]` binds each `char`, and
-        // the binding is a view below either way (`Local::lent`). Answering
-        // `Unknown` for the view left every such binding unchecked, and a
-        // comparison of it with a value reached `rustc` as `char == &char`.
-        // **And a set's element is its one argument** (#302): `for name in
-        // names` over a `collections::BTreeSet[String]` bound a name of
-        // unknown type, so its `.clone()` resolved to nothing - which the
-        // `sync` walk reads as a call that may pause, and every function
-        // walking a set became `async`.
-        Ty::Named { name, args, .. } if bindings == 1 && args.len() == 1 => {
-            match name.rsplit("::").next().unwrap_or_default() {
-                "Vec" | "List" | "BTreeSet" | "HashSet" => args[0].clone(),
-                _ => Ty::Unknown,
-            }
-        }
-        // **An array's element is its first argument**
-        // ([ADR-152](../../docs/specification/adr/adr-152.md) D4), and the
-        // second is the length, which is why the arm above does not reach it:
-        // `Array[i64, 2]` has two arguments where a `Vec[i64]` has one.
-        //
-        // Without this a `for` over an array bound a name of **unknown** type,
-        // and everything downstream of it went quiet — including
-        // [ADR-285](../../docs/specification/adr/adr-285.md) D12's abort, so
-        // `for n in NS { n as u8 }` over an `Array[i64, 2]` **truncated
-        // silently**, which is the one thing that record exists to stop.
-        Ty::Named { name, args, view }
-            if bindings == 1 && !view && name == ty::ARRAY && !args.is_empty() =>
-        {
-            args[0].clone()
-        }
-        // …and a `&[T]` carries its `T` the same way
-        // ([ADR-179](../../docs/specification/adr/adr-179.md) D1). Both are a
-        // run; which of the two carries the length is not what a walk asks.
-        Ty::Pointed { .. } if bindings == 1 => match slice_element(over) {
-            Some(item) => item.clone(),
-            None => Ty::Unknown,
-        },
-        // **A produced sequence is what a `for` walks**
-        // ([ADR-105](../../docs/specification/adr/adr-105.md) D1), and its item
-        // is the binding's type: `for c in text.chars()` binds a `char`. A
-        // container is walked *as* a `Seq` by a `for` and is not one, which is
-        // why the arm above stays where it is.
-        //
-        // One binding only, as above: `for (k, v) in map.drain()` takes the
-        // pair apart, and which half is which is the tuple arm's question
-        // rather than this one's.
-        Ty::Seq { item, .. } if bindings == 1 => (**item).clone(),
-        _ => Ty::Unknown,
-    }
 }
 
 /// `&x`, as far as Stage 0 can say.
@@ -23525,16 +23364,7 @@ fn list(names: &[&str]) -> String {
 /// rather than a gap. A signature with no variables produces an empty map and
 /// every substitution below is the identity.
 fn bindings(contract: &FnContract, receiver: &Ty) -> BTreeMap<String, Ty> {
-    let mut bound = BTreeMap::new();
-    let Some(signature) = &contract.signature else {
-        return bound;
-    };
-    if let Some((name, pattern)) = signature.params.first()
-        && name == "self"
-    {
-        ty::bind(pattern, receiver, &mut bound);
-    }
-    bound
+    nikaia_std::tools::check_calls::receiver_bindings(contract, receiver)
 }
 
 /// What the **arguments** bind this signature's variables to.
@@ -23551,14 +23381,7 @@ fn bindings(contract: &FnContract, receiver: &Ty) -> BTreeMap<String, Ty> {
 /// what a caller can *tell* the signature, and `substitute` turns what it could
 /// not tell into `?`.
 fn from_arguments(contract: &FnContract, found: &[Ty]) -> BTreeMap<String, Ty> {
-    let mut bound = BTreeMap::new();
-    let Some(signature) = &contract.signature else {
-        return bound;
-    };
-    for ((_, pattern), actual) in signature.arguments().iter().zip(found) {
-        ty::bind(pattern, actual, &mut bound);
-    }
-    bound
+    nikaia_std::tools::check_calls::argument_bindings(contract, found)
 }
 
 /// The types a callee's parameters expect, as a call site sees them.
@@ -23566,17 +23389,7 @@ fn from_arguments(contract: &FnContract, found: &[Ty]) -> BTreeMap<String, Ty> {
 /// A method's receiver is the first parameter, so the arguments a *call* writes
 /// are the ones after it - `Signature::arguments` already draws that line.
 fn expected_arguments(contract: &FnContract) -> Vec<Ty> {
-    contract
-        .signature
-        .as_ref()
-        .map(|signature| {
-            signature
-                .arguments()
-                .iter()
-                .map(|(_, ty)| ty.clone())
-                .collect()
-        })
-        .unwrap_or_default()
+    nikaia_std::tools::check_calls::expected_arguments(contract)
 }
 
 /// Whether an `Array[T, N]` is anywhere inside a type.
