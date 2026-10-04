@@ -144,6 +144,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      issues: write
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -151,13 +152,30 @@ jobs:
           fetch-depth: 0
 
       - name: Fast-forward main to the tested commit
+        id: ff
         run: |
           git fetch origin main
           if git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
             echo "main already has $GITHUB_SHA"
           else
+            echo "old=$(git rev-parse origin/main)" >> "$GITHUB_OUTPUT"
             git push origin "${GITHUB_SHA}:refs/heads/main"
           fi
+
+      # A push made with this job's token closes no issue, whatever its commits
+      # say (#440), so the issues they fix are closed here.
+      - name: Close the issues the promoted commits fix
+        if: steps.ff.outputs.old != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 scripts/fixed-issues.py "${{ steps.ff.outputs.old }}" "$GITHUB_SHA" |
+          while read -r number sha; do
+            if [ "$(gh issue view "$number" --json state --jq .state)" = OPEN ]; then
+              gh issue close "$number" --reason completed \
+                --comment "Fixed by $sha, now on \`main\` (promoted after CI passed)."
+            fi
+          done
 
   # The crates that hold `unsafe`, one topic each (ADR-218). Each is its own
   # workspace and is checked on its own: tests and lints on stable, and Miri on
