@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part I: The Language Core**
-**Version:** 0.0.458 (Draft)
+**Version:** 0.0.459 (Draft)
 **Date:** 2026-10-04
 
 ---
@@ -1411,11 +1411,17 @@ out, and the call then takes the default. A parameter that has to be passed
 belongs before the `;`. An option without a default is a parse error that says
 so.
 
-**A default is a literal.**
+**A default is a build-time value** ([ADR-318](adr/adr-318.md)): a literal,
+or anything a `comptime` may hold (Part II 10.2), such as
+`timeout: time::Duration = 30.seconds()`. It is evaluated once, while the
+package that declares the function is built, and every call that leaves the
+option out receives that value, in the form a `comptime` crosses in. A default
+that cannot be evaluated or cannot cross is refused with the codes a `comptime`
+is.
 
 **Order is the declaration's**, not the call's: `method` written first above is
-still passed second. The ledger records an option's name, type *and* default
-(Part III, 13.5).
+still passed second. The ledger records an option's name, type *and* default,
+the default as its value (Part III, 13.5).
 
 **Optional Parentheses**
 A function declared without parameters may omit the parentheses, matching the

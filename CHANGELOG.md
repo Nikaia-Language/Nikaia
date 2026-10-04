@@ -4,6 +4,18 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.459] — 2026-10-04
+
+**An option's default is a build-time value** (ADR-318, #374). Part I 5.1 said
+*a default is a literal*, so `timeout: time::Duration = 30.seconds()` did not
+parse and an option's unit moved into its name. A default may now be anything a
+`comptime` may hold. It is evaluated once where the function is declared, the
+ledger records its value, and a call that leaves the option out receives it in
+the form a `comptime` crosses in. A `std` type the compiler cannot see into
+crosses through a new ledger column, `constant`, which names a constructor and
+its parts. A `std` function runs at build time when it is written in `std`'s
+Nikaia half. Decided and specified; not built.
+
 ## [0.0.458] — 2026-10-04
 
 **The README and the home page measure against tuned Rust, in counts.** Their

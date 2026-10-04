@@ -168,6 +168,7 @@ implementation.
 
 | ADR | Decides | Status | Built |
 | :--- | :--- | :--- | :--- |
+| [318](adr-318.md) | An option's default is a build-time value, evaluated once where the function is declared, recorded in the ledger as its value and written into the call in the form a `comptime` crosses in; a `std` type the compiler cannot see into crosses through its `constant` column, and a `std` function runs at build time when it is written in Nikaia. | Accepted | no |
 | [311](adr-311.md) | A build-time value crosses into the program in its view form, a map as a fixed table, and the lookup is the compiler's. | Accepted | yes |
 | [310](adr-310.md) | A build reads a file only when the code (`asset("…")`), a committed list and the invocation all name it, and the path stays in the project. | Accepted | yes |
 | [309](adr-309.md) | Only an `f"…"` has holes, the grammar parses them as code, and every analysis sees them. | Accepted | yes |

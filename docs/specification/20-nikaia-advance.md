@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part II: Advanced Features & Metaprogramming**
-**Version:** 0.0.458 (Draft)
+**Version:** 0.0.459 (Draft)
 **Date:** 2026-10-04
 
 ---
@@ -94,7 +94,8 @@ evaluate is refused with `NK1127`. It is never evaluated at run time instead.
 over them and over other constants, `+`, `==` and `.len()` over text, `xs[i]`,
 `xs[i] = …`, `xs.push(…)` and `xs.len()` over a list, a struct literal and a
 field of one, an `if`, and a **call** to a function or a **method** this program
-declares, in any of its files, whose body is made of those. A called body may
+declares, in any of its files, or `std` declares in its Nikaia half, whose body
+is made of those. A `std` function with no Nikaia body cannot be evaluated. A called body may
 recurse with a base case, and it may loop: a `for` over a range, a `while`,
 `break` and `continue`. A called body must be `sync` and must touch nothing but
 the build's own parameters. A callee that fails either condition is refused with
@@ -116,7 +117,10 @@ writes the length into the type, and `String` as a `ref String`. A run of
 it has crossed. A value that owns memory is refused by what it *is* and never by
 its parse: by its **type** for a `struct`, and for an `enum` by the **variant
 the value is**. `Shape::Empty` is a `const` and `Shape::Many([1, 2])` is not,
-though both are a `Shape`. A grammar call's result crosses when it is a whole
+though both are a `Shape`. A value of a `std` type crosses where its ledger
+entry names a `constant` (Part III 13.5): it is written as that constructor over
+its parts, so `comptime T: time::Duration = 30.seconds()` is a `const`. A `std`
+type without one is refused with `NK1167`. A grammar call's result crosses when it is a whole
 number, a float, a `bool`, text, a list, a `struct` or an `enum` variant. A rule
 that hands back a value it built into a position that views a run is refused
 with `NK1179` on the action's line. A map that crosses is a **fixed** map with a
