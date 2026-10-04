@@ -4,6 +4,17 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.465] — 2026-10-04
+
+**A default is refused at the default, and one that owns memory is `NK1167`**
+(ADR-318 D4, D7, #374). An option had no span of its own, so a refused default
+was pointed at the body's first statement; `ConfigParam` now carries
+`default_span`, and `NK1127`, `NK1152`, `NK1167` and `NK1168` stand on the
+default. A default whose value is a list, for an option of an owning type
+(`xs: Vec[i64] = three()`), is refused as a `comptime` of it is: `NK1167`,
+*`xs` is a `Vec[i64]`, which a default can't hold*, with the length the build
+computed in the way out, rather than `NK1127`'s *not built yet*.
+
 ## [0.0.464] — 2026-10-04
 
 **A function the build calls is not *never used*** (#446). A `comptime`'s

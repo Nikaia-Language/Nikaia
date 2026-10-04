@@ -286,6 +286,7 @@ pub struct ConfigParam {
     pub name: winnow_grammar::Symbol,
     pub ty: Type,
     pub default: Expr,
+    pub default_span: Span,
 }
 
 #[derive(Debug, Clone, PartialEq)]

@@ -137,3 +137,56 @@ fn a_default_that_needs_itself_is_a_ring() {
          }\n";
     assert_eq!(codes(source), vec!["NK1168".to_string()]);
 }
+
+fn refused(source: &str) -> Vec<(String, String)> {
+    let parsed = parse_to_ast(source).expect("the source parses");
+    let own = Ledger::infer(&parsed);
+    let library = Ledger::parse(STD).expect("std ships a ledger");
+    nikaia::check::check_program(&parsed, &own, &library, &std::collections::BTreeSet::new())
+        .findings
+        .into_iter()
+        .map(|f| (f.code.to_string(), source[f.span.bytes()].to_string()))
+        .collect()
+}
+
+/// **A list a `Vec` option would own is `NK1167`** (ADR-318 D4, D7), as a
+/// `comptime` of it is, and the refusal stands on the default.
+#[test]
+fn a_default_that_owns_memory_is_refused_at_the_default() {
+    let source = "fn three() -> Vec[i64] {\n\
+         \x20   return [1, 2, 3]\n\
+         }\n\
+         \n\
+         fn f(xs: Vec[i64] = three()) -> i64 {\n\
+         \x20   return xs.len()\n\
+         }\n\
+         \n\
+         fn main() {\n\
+         \x20   println(f\"{f()}\")\n\
+         }\n";
+    assert_eq!(
+        refused(source),
+        vec![("NK1167".to_string(), "three()".to_string())]
+    );
+}
+
+/// D7: a refused default is pointed at, not the body's first statement.
+#[test]
+fn a_refused_default_is_pointed_at() {
+    let source = "fn loud() -> i64 {\n\
+         \x20   println(\"x\")\n\
+         \x20   return 1\n\
+         }\n\
+         \n\
+         fn f(x: i64; t: i64 = loud()) -> i64 {\n\
+         \x20   return x + t\n\
+         }\n\
+         \n\
+         fn main() {\n\
+         \x20   println(f\"{f(1)}\")\n\
+         }\n";
+    assert_eq!(
+        refused(source),
+        vec![("NK1152".to_string(), "loud()".to_string())]
+    );
+}

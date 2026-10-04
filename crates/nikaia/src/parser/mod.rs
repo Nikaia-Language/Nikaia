@@ -1825,24 +1825,34 @@ grammar! {
         rule bare_config_param_tail -> ConfigParam = "," p:bare_config_param -> { p }
 
         rule bare_config_param -> ConfigParam =
-            name:NAME ":" ty:type_ref "=" default:expr -> {
-                ConfigParam { name, ty, default }
+            name:NAME ":" ty:type_ref "=" default:option_default -> {
+                let (default, default_span) = default;
+                ConfigParam { name, ty, default, default_span }
             }
+
+        // The default and where it is written (ADR-318 D7).
+        rule option_default -> (Expr, Span) @= default:expr -> { (default, Span::from(_span)) }
 
         // The default is required, and that is what makes this an *option*: a
         // caller may leave it out, and leaving it out is never a question about
         // what the value is. A parameter that must be passed belongs before the
         // `;`.
-        rule config_param -> ConfigParam =
-            name:NAME ":" ty:type_ref "=" default:expr -> {
-                ConfigParam { name, ty, default }
+        rule config_param -> ConfigParam @=
+            name:NAME ":" ty:type_ref "=" default:option_default -> {
+                let (default, default_span) = default;
+                ConfigParam { name, ty, default, default_span }
             }
           | name:NAME ":" ty:type_ref fail(
                 "An option after the `;` needs a default value. Write \
                  `name: T = value`, or move the parameter before the `;` if it always \
                  has to be passed."
             ) -> {
-                ConfigParam { name, ty, default: Expr::LitBool(false) }
+                ConfigParam {
+                    name,
+                    ty,
+                    default: Expr::LitBool(false),
+                    default_span: Span::from(_span),
+                }
             }
 
         // A literal, as an option's default once had to be. The default is an

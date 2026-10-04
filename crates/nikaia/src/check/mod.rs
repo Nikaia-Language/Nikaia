@@ -4871,10 +4871,7 @@ impl<'a> Checker<'a> {
         // declared** (ADR-318 D1, D7): refused here, with a `comptime`'s codes
         // and the option's name, where it cannot be.
         for option in config {
-            self.a_computed_default(
-                option,
-                body.stmts.first().map_or(Span::nowhere(), |s| s.span),
-            );
+            self.a_computed_default(option);
         }
         for option in config {
             frame.push(Local::free(
@@ -6493,7 +6490,8 @@ impl<'a> Checker<'a> {
     /// cannot be. A value that is a number, text or a `bool` is what the
     /// ledger records today; a struct or a list as a default is not built yet,
     /// and is said to be rather than handed to the language below empty.
-    fn a_computed_default(&mut self, option: &ast::ConfigParam, span: Span) {
+    fn a_computed_default(&mut self, option: &ast::ConfigParam) {
+        let span = option.default_span;
         if crate::contracts::a_literal(&option.default) {
             return;
         }
@@ -6508,6 +6506,17 @@ impl<'a> Checker<'a> {
         }
         let (value, said) = self.build_time_value(&option.default, &name, &span);
         if said {
+            return;
+        }
+        // **A list a `Vec` option would own is `NK1167`** (ADR-318 D4, D7):
+        // refused for what it is, as a `comptime` is, with the length the
+        // build computed in the way out.
+        let declared = Ty::from_ast(self.parsed, &option.ty);
+        if let Some(computed @ build_time::Value::List(_)) = &value
+            && is_growable(&declared)
+        {
+            let computed = computed.clone();
+            self.a_constant_that_owns_memory(&name, &declared, &computed, "a default", &span);
             return;
         }
         let message = match &value {
@@ -19963,6 +19972,7 @@ impl<'a> Checker<'a> {
         bound: &str,
         held: &Ty,
         computed: &build_time::Value,
+        holder: &str,
         span: &Span,
     ) {
         let (owns, fixed, way_out) = match computed {
@@ -20001,7 +20011,7 @@ impl<'a> Checker<'a> {
             span: *span,
             code: "NK1167",
             message: format!(
-                "`{bound}` is a `{}`, which a `comptime` can't hold.",
+                "`{bound}` is a `{}`, which {holder} can't hold.",
                 held.text()
             ),
             notes: vec![format!(
@@ -22203,7 +22213,13 @@ impl<'a> Checker<'a> {
                             true,
                         ) => {
                             let (want, computed) = (want.clone(), computed.clone());
-                            self.a_constant_that_owns_memory(&bound, &want, &computed, span);
+                            self.a_constant_that_owns_memory(
+                                &bound,
+                                &want,
+                                &computed,
+                                "a `comptime`",
+                                span,
+                            );
                         }
                         // **An `Array` with no length** is what a `comptime`
                         // list was written as, and the mismatch is the length:

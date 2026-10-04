@@ -995,6 +995,9 @@ pub struct ConfigParam {
     /// Any expression a `comptime` may hold, evaluated once where the function
     /// is declared (ADR-318); the ledger records its value.
     pub default: Expr,
+    /// Where the default is written: a refusal of it points there
+    /// (ADR-318 D7), not at the body's first statement.
+    pub default_span: Span,
 }
 
 pub struct FieldDef {
