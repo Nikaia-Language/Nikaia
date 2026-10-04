@@ -20,3 +20,11 @@
 * **A red `develop` is fixed forward.** Whoever finds it red fixes it with the
   next commit, or reverts the commit that broke it. Until then `main` stays
   where it was, and work on `develop` goes on.
+* **Parallel agents in one session: one local branch each, never a shared
+  `develop`.** Worktrees of one clone share their branches. If two of them
+  (or a worktree and the main checkout) have `develop` checked out, a commit
+  in one moves the branch under the others, and their index then shows the
+  reverse of that commit as staged changes. Each agent works on its own
+  branch (`git fetch origin develop && git checkout -B work-<name> origin/develop`),
+  rebases with `git pull --rebase origin develop` and pushes with
+  `git push origin HEAD:develop`.
