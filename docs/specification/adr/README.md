@@ -114,6 +114,7 @@ implementation.
 | [132](adr-132.md) | `else if` is an `else` whose block is one `if`, written without the braces, and is no keyword. | Accepted | yes |
 | [133](adr-133.md) | An argument list of options alone writes no `;`, and a leading `;` is refused. | Accepted | yes |
 | [135](adr-135.md) | A list literal is `[1, 2, 3]`, the empty one takes its type from its first use or is refused, and a `[` at the start of a line begins a literal. | Accepted | yes |
+| [317](adr-317.md) | A call's `(` is on the line of what it calls: a `(` at the start of a line begins what is written there (a tuple, a parenthesised expression), the rule ADR-135 D3 made for `[`. | Accepted | yes |
 | [140](adr-140.md) | Each of five constructs has one spelling: the brace struct literal, the anonymous constructor, `::` for a path, `throws` and `sync` after the result type, and a `use` that brings nothing in. | Accepted | yes |
 | [141](adr-141.md) | Six spellings the specification used are corrected to ones that exist, and `5.seconds()`, `channel::bounded` and `select` are each decided by a record of their own. | Accepted | yes |
 | [149](adr-149.md) | A channel is `std`'s and only bounded: `send` pauses when it is full, and `recv` gives `null` when every sender is gone. | Accepted | yes |

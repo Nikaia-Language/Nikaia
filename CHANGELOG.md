@@ -4,6 +4,16 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.429] — 2026-10-04
+
+**A call's `(` is on the line of what it calls** (ADR-317, Part I 5.1, #426).
+A `(` at the start of a line begins what is written there - a tuple, a
+parenthesised expression - and never the arguments of the line above it, the
+rule ADR-135 D3 made for `[`. `return null if open` followed by `(x, 2)` was
+the call `open(x, 2)`: a `bool` called, the function taken to pause and
+lowered `async`. It is a guard and a tuple, as it reads, and
+`tools/bounds_basic.nika` no longer writes around it.
+
 ## [0.0.428] — 2026-10-04
 
 **The basic bounds-check level is Nikaia** (ADR-306 D3, ADR-294, #125).

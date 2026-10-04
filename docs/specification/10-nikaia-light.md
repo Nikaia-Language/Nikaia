@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part I: The Language Core**
-**Version:** 0.0.428 (Draft)
+**Version:** 0.0.429 (Draft)
 **Date:** 2026-10-04
 
 ---
@@ -1379,6 +1379,11 @@ written.** A function whose parameters are all options is declared
 is required there. A **method** call takes the same form. A driver's deferred
 parameters (Part II 10.5) write no `;` either, because a receiver stands
 outside the parentheses.
+
+**A call's `(` is on the line of what it calls** ([ADR-317](adr/adr-317.md)),
+as an index's `[` is: a `(` at the **start of a line** begins what is written
+there - a tuple, a parenthesised expression - and never the arguments of the
+line above it.
 
 **Every configuration parameter has a default.** A caller may leave an option
 out, and the call then takes the default. A parameter that has to be passed

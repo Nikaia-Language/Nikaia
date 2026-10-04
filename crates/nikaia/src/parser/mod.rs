@@ -3134,7 +3134,7 @@ grammar! {
             // has to be tried before the plain call, or the call matches and
             // the lambda is left over - which is the parse error this form did
             // not have a grammar for until ADR-277.
-            "." name:SEGMENT args:call_arg_list lambda:trailing_lambda -> {
+            "." name:SEGMENT args:called lambda:trailing_lambda -> {
                 let (mut positional, config) = args;
                 positional.push(lambda);
                 Postfix::Method(name, positional, config)
@@ -3142,7 +3142,7 @@ grammar! {
           | "." name:SEGMENT lambda:trailing_lambda -> {
                 Postfix::Method(name, vec![lambda], Vec::new())
             }
-          | "." name:SEGMENT args:call_arg_list? -> {
+          | "." name:SEGMENT args:called? -> {
                 match args {
                     // Kap 5.1's `;` reaches a method call too, and what stands
                     // after it is kept: ADR-296 D5's deferred parameters arrive
@@ -3163,7 +3163,7 @@ grammar! {
           // Each of these must be tried before the bare-field arm below, or
           // that one matches the name and leaves the `(` to fail as an empty
           // parenthesised expression - which is what a reader used to get.
-          | "?." name:SEGMENT args:call_arg_list lambda:trailing_lambda -> {
+          | "?." name:SEGMENT args:called lambda:trailing_lambda -> {
                 let (mut positional, config) = args;
                 positional.push(lambda);
                 Postfix::SafeMethod(name, positional, config)
@@ -3171,7 +3171,7 @@ grammar! {
           | "?." name:SEGMENT lambda:trailing_lambda -> {
                 Postfix::SafeMethod(name, vec![lambda], Vec::new())
             }
-          | "?." name:SEGMENT args:call_arg_list -> {
+          | "?." name:SEGMENT args:called -> {
                 let (args, config) = args;
                 Postfix::SafeMethod(name, args, config)
             }
@@ -3274,6 +3274,15 @@ grammar! {
         // name **is** a type, `NK1146` says so and names the brace form, because
         // the parser can no longer be the one to tell them apart and does not
         // need to be.
+        // **A call's `(` is on the line of what it calls**
+        // ([ADR-317](../../../../docs/specification/adr/adr-317.md), #426), as
+        // an index's `[` is (ADR-135 D3): a `(` that begins a line begins
+        // what is written there. `return null if open` then `(x, 2)` on the
+        // next line read as the call `open(x, 2)`, which nothing in the
+        // program looked like.
+        rule called -> (Vec<Expr>, Vec<ConfigArg>) =
+            same_line args:call_arg_list -> { args }
+
         rule call_arg_list -> (Vec<Expr>, Vec<ConfigArg>) =
             "(" config:bare_config_args ")" -> { (Vec::new(), config) }
           // **And the leading `;` is refused rather than accepted beside it**
@@ -4203,7 +4212,7 @@ grammar! {
         // lambda cannot take a `{` that belonged to something else: it has to
         // start with the keyword `fn`.
         rule path_expr -> Expr =
-            head:NAME tail:path_segment* args:call_arg_list?
+            head:NAME tail:path_segment* args:called?
             lambda:trailing_lambda?
             -> {
                 let mut segments = vec![head];
