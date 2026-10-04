@@ -1,0 +1,169 @@
+// crates/nikaia-std/src/tools/check_words.nika
+//
+// **The words the checker's refusals are made of** - an article, a count, a
+// list of names, the nearest spelling, the note on a word another language
+// reserves - and two small facts the checker asks of a name, moved from the
+// compiler's checker (ADR-294, #125).
+
+/// **A word another language reserves and this one does not**: what to write
+/// instead, for the refusal of a name nothing declares.
+pub fn reserved_elsewhere(name: ref String) -> String? {
+    if name == "loop" {
+        return "Nikaia has no `loop` keyword. Write `while true { … }`. (`loop` is an ordinary name, so `let loop = 3` is fine.)"
+    }
+    if name == "const" {
+        return "A value computed while the program is built is written `comptime X = …`. (`const` is an ordinary name in Nikaia.)"
+    }
+    if name == "macro" || name == "quote" {
+        return "Nikaia has no macros. To generate code from a type's shape, use `comptime` and a bound; to turn text into a program, use a grammar. (Both words are ordinary names.)"
+    }
+    return null
+}
+
+/// The closest name among `among`, when one is close enough to be worth
+/// suggesting: at most one edit for every three characters of the name.
+pub fn nearest_name(name: ref String, among: ref Vec[String]) -> String? {
+    let mut best: String? = null
+    let mut best_distance = -1
+    let mut longest = name.len()
+    if longest < 1 {
+        longest = 1
+    }
+    for candidate in among {
+        let d = distance(name, candidate)
+        if d * 3 > longest {
+            continue
+        }
+        if best_distance < 0 || d < best_distance {
+            best = candidate.clone()
+            best_distance = d
+        }
+    }
+    return best
+}
+
+/// `a` or `an` in front of a word, which may be spelled in backticks.
+pub fn with_article(what: ref String) -> String {
+    for c in what.chars() {
+        if !c.is_alphanumeric() {
+            continue
+        }
+        let lower = c.to_ascii_lowercase()
+        if lower == 'a' || lower == 'e' || lower == 'i' || lower == 'o' || lower == 'u' {
+            return f"an {what}"
+        }
+        return f"a {what}"
+    }
+    return f"a {what}"
+}
+
+/// `1 field`, `2 fields`.
+pub fn counted(n: i64, what: ref String) -> String {
+    if n == 1 {
+        return f"1 {what}"
+    }
+    return f"{n} {what}s"
+}
+
+/// Names in backticks, the last joined with `and`: `` `a`, `b` and `c` ``.
+pub fn names_listed(names: ref Vec[String]) -> String {
+    if names.len() == 0 {
+        return "no fields"
+    }
+    if names.len() == 1 {
+        return f"`{names[0]}`"
+    }
+    let mut rest: Vec[String] = []
+    for k in 0..<names.len() - 1 {
+        rest.push(f"`{names[k]}`")
+    }
+    return f"{rest.join(", ")} and `{names[names.len() - 1]}`"
+}
+
+/// Every line of a text, indented to sit under a note.
+pub fn indented_text(text: ref String) -> String {
+    let mut lines: Vec[String] = []
+    for line in text.trim_end().lines() {
+        lines.push(f"       {line}")
+    }
+    return lines.join("\n")
+}
+
+/// Every `{…}` group in a string, by the text between the braces - a
+/// `\u{…}` escape is not one, and an empty group is left out.
+pub fn brace_groups(text: ref String) -> Vec[String] {
+    let c: Vec[char] = text.chars().collect()
+    let mut found: Vec[String] = []
+    let mut at = 0
+    while at < c.len() {
+        if c[at] == '\\' {
+            at += 1
+            if at < c.len() && c[at] == 'u' && at + 1 < c.len() && c[at + 1] == '{' {
+                at += 1
+                while at < c.len() && c[at] != '}' {
+                    at += 1
+                }
+            }
+            at += 1
+            continue
+        }
+        if c[at] == '{' {
+            let mut group: String = ""
+            at += 1
+            let mut closed = false
+            while at < c.len() {
+                if c[at] == '}' {
+                    closed = true
+                    break
+                }
+                group.push(c[at])
+                at += 1
+            }
+            if closed && group.trim().len() > 0 {
+                found.push(group)
+            }
+        }
+        at += 1
+    }
+    return found
+}
+
+/// What a refusal adds about another package's entry that never promised
+/// `sync` (ADR-288 D28): whose it is, and that the word is missing there
+/// rather than a pause here.
+pub fn not_promised_note(callee: ref String) -> String {
+    let parts: Vec[ref String] = callee.splitn(2, "::").collect()
+    let mut package: String = "its package"
+    let mut function = callee.clone()
+    if parts.len() == 2 {
+        package = parts[0].clone()
+        function = parts[1].clone()
+    }
+    return f"`{callee}` is `{package}`'s, and its source doesn't say `sync`. That its body doesn't pause today is not a promise another package can rely on: write `sync` after the result of `{function}` in `{package}` to make it."
+}
+
+/// **A `std` lookup whose key the language below takes by reference**: the
+/// map or set is asked about the key and keeps nothing - a removal takes the
+/// entry along and is one too.
+pub fn is_a_lookup(key: ref String) -> bool {
+    let mut bare = key.clone()
+    if key.starts_with("collections::") {
+        let parts: Vec[ref String] = key.splitn(2, "::").collect()
+        bare = parts[1].clone()
+    }
+    return bare == "HashMap::get" || bare == "HashMap::contains_key" || bare == "HashSet::contains" || bare == "HashSet::remove" || bare == "HashMap::remove" || bare == "BTreeMap::remove" || bare == "BTreeSet::remove" || bare == "BTreeMap::get" || bare == "BTreeMap::contains_key" || bare == "BTreeSet::contains" || bare == "Vec::contains"
+}
+
+/// How a member that may be boxed is named, the same in the checker and the
+/// emitter (ADR-246): a struct's field by its name, a variant's part as
+/// `Variant#0`, a variant's named field as `Variant.name`. `at` is -1 and
+/// `field` empty where there is none.
+pub fn boxed_member(owner: ref String, at: i64, field: ref String) -> String {
+    if at >= 0 {
+        return f"{owner}#{at}"
+    }
+    if field.len() > 0 {
+        return f"{owner}.{field}"
+    }
+    return owner.clone()
+}
