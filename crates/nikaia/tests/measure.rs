@@ -462,8 +462,8 @@ fn the_solver_kernels_lowered_against_rust_by_hand() {
     let proved = lower_with(
         "solver-kernels.nika",
         Build {
-            bounds: nikaia::bounds::BoundsChecks::Aggressive,
-            overflow: nikaia::bounds::OverflowChecks::Aggressive,
+            bounds: nikaia::bounds::BoundsChecks::Removed,
+            overflow: nikaia::bounds::OverflowChecks::Removed,
             ..Build::default()
         },
     );

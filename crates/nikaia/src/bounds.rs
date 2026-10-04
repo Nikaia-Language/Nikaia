@@ -39,16 +39,16 @@ use nikaia_std::tools::bounds_basic as nika;
 use nikaia_std::tools::bounds_body as body_of;
 use nikaia_std::tools::bounds_shape::{self as shaped, Around, BodyShape};
 
-/// How hard the compiler works to drop an index check (ADR-306 D1).
+/// What happens to an index check the walk proved (ADR-306 D14): `on` writes
+/// it without its check, `off` (the default) keeps it. What is proved does not
+/// depend on it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, PartialOrd, Ord)]
 pub enum BoundsChecks {
     /// Every index is checked: the default.
     #[default]
     Kept,
-    /// The loop over a list's own length (D3).
-    Basic,
-    /// Every linear fact the walk keeps, decided by the solver (D4).
-    Aggressive,
+    /// An index the walk proved inside is written without its check.
+    Removed,
 }
 
 impl BoundsChecks {
@@ -56,8 +56,7 @@ impl BoundsChecks {
     pub fn parse(word: &str) -> Option<BoundsChecks> {
         match word {
             "off" => Some(BoundsChecks::Kept),
-            "basic" => Some(BoundsChecks::Basic),
-            "aggressive" => Some(BoundsChecks::Aggressive),
+            "on" => Some(BoundsChecks::Removed),
             _ => None,
         }
     }
@@ -65,29 +64,28 @@ impl BoundsChecks {
     pub fn name(self) -> &'static str {
         match self {
             BoundsChecks::Kept => "off",
-            BoundsChecks::Basic => "basic",
-            BoundsChecks::Aggressive => "aggressive",
+            BoundsChecks::Removed => "on",
         }
     }
 }
 
-/// How hard the compiler works to drop an overflow check (ADR-306 D6).
+/// What happens to an overflow check the walk proved (ADR-306 D14), as for
+/// [`BoundsChecks`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, PartialOrd, Ord)]
 pub enum OverflowChecks {
     /// Every `+`, `-` and `*` is checked: the default.
     #[default]
     Kept,
-    /// Every one the walk proves stays inside its type is not.
-    Aggressive,
+    /// One the walk proved stays inside its type is written without its check.
+    Removed,
 }
 
 impl OverflowChecks {
-    /// The word after `remove-overflow-checks:`. There is no `basic`: the one
-    /// shape a walk without a solver would prove is the one LLVM proves.
+    /// The word after `remove-overflow-checks:`.
     pub fn parse(word: &str) -> Option<OverflowChecks> {
         match word {
             "off" => Some(OverflowChecks::Kept),
-            "aggressive" => Some(OverflowChecks::Aggressive),
+            "on" => Some(OverflowChecks::Removed),
             _ => None,
         }
     }
@@ -95,7 +93,7 @@ impl OverflowChecks {
     pub fn name(self) -> &'static str {
         match self {
             OverflowChecks::Kept => "off",
-            OverflowChecks::Aggressive => "aggressive",
+            OverflowChecks::Removed => "on",
         }
     }
 }
@@ -109,8 +107,10 @@ pub struct Proven {
     pub arithmetic: HashSet<usize>,
 }
 
-/// The index nodes whose check is proved unnecessary at `level`, and the
-/// arithmetic whose overflow check is at `overflow`.
+/// **Every index and every operation the walk proves**, whatever a build does
+/// with them (ADR-306 D14): the shape D3 reads without a solver and every
+/// linear fact D4 decides with one. What is written without its check is the
+/// emitter's choice, by `remove-bounds-checks` and `remove-overflow-checks`.
 ///
 /// `lengths` are the receivers of the `x.len()` calls that count a `std`
 /// list, text or map ([`crate::check::Checked::std_lengths`]): only those are
@@ -120,16 +120,11 @@ pub struct Proven {
 /// ([`crate::check::Checked::arithmetic`]): only those may be proved.
 pub fn proven(
     parsed: &Parsed,
-    level: BoundsChecks,
-    overflow: OverflowChecks,
     lengths: &BTreeSet<usize>,
     sized: &BTreeSet<usize>,
     arithmetic: &BTreeMap<usize, String>,
 ) -> Proven {
     let mut out = Proven::default();
-    if level == BoundsChecks::Kept && overflow == OverflowChecks::Kept {
-        return out;
-    }
     let mut functions: BTreeMap<String, Vec<bool>> = BTreeMap::new();
     // A method of this program that takes a parameter `mut` changes what it
     // is handed, whichever type it is called on.
@@ -179,16 +174,11 @@ pub fn proven(
         let Item::Fn { args, body, .. } = &item.node else {
             continue;
         };
-        if level >= BoundsChecks::Basic {
-            out.indices.extend(
-                nika::basic_indices(body, &parsed.interner, &|e: &Expr| value_node(e) as i64)
-                    .into_iter()
-                    .map(|n| n as usize),
-            );
-        }
-        if level < BoundsChecks::Aggressive && overflow == OverflowChecks::Kept {
-            continue;
-        }
+        out.indices.extend(
+            nika::basic_indices(body, &parsed.interner, &|e: &Expr| value_node(e) as i64)
+                .into_iter()
+                .map(|n| n as usize),
+        );
         let pinned = body_of::pinned_in(body, &parsed.interner);
         let shape = shaped::shape_of(args, body, &pinned, &around, &parsed.interner);
         let mut walk = Walk {
@@ -252,13 +242,9 @@ pub fn proven(
             walk.proven = Proven::default();
             walk.pass(args, body);
         }
-        if level == BoundsChecks::Aggressive {
-            out.indices.extend(walk.proven.indices.iter().copied());
-        }
-        if overflow == OverflowChecks::Aggressive {
-            out.arithmetic
-                .extend(walk.proven.arithmetic.iter().copied());
-        }
+        out.indices.extend(walk.proven.indices.iter().copied());
+        out.arithmetic
+            .extend(walk.proven.arithmetic.iter().copied());
     }
     out
 }

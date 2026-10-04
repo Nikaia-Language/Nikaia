@@ -39,8 +39,9 @@ struct Site {
     blocked: Option<&'static str>,
 }
 
-/// The report, for one file, at the levels the build asked for - or at
-/// `aggressive` where it asked for none, said in the first line.
+/// The report, for one file. What is proved does not depend on the build
+/// (ADR-306 D14); the first line says whether this build writes it without
+/// its check.
 pub fn report(
     parsed: &Parsed,
     source: &str,
@@ -50,16 +51,9 @@ pub fn report(
     bounds: BoundsChecks,
     overflow: OverflowChecks,
 ) -> String {
-    let off = bounds == BoundsChecks::Kept && overflow == OverflowChecks::Kept;
-    let (bounds, overflow) = match off {
-        true => (BoundsChecks::Aggressive, OverflowChecks::Aggressive),
-        false => (bounds, overflow),
-    };
     let checked = crate::check::check(parsed, own, library);
     let proven = crate::bounds::proven(
         parsed,
-        bounds,
-        overflow,
         &checked.std_lengths,
         &checked.sized_lengths,
         &checked.arithmetic,
@@ -70,8 +64,6 @@ pub fn report(
         lists: &checked.list_indices,
         arithmetic: &checked.arithmetic,
         proven: &proven,
-        bounds,
-        overflow,
         seen: HashSet::new(),
         sites: Vec::new(),
     };
@@ -99,16 +91,14 @@ pub fn report(
             .count()
     };
     let mut out = format!(
-        "bounds in {path}: {} indexes, {} without their check; {} operations, {} without \
-         their check{}\n",
+        "bounds in {path}: {} indexes, {} proved; {} operations, {} proved - written without \
+         their check: indexes {}, operations {}\n",
         indexes,
         proved(true),
         operations,
         proved(false),
-        match off {
-            true => " - at `aggressive`, which this build does not ask for",
-            false => "",
-        }
+        bounds.name(),
+        overflow.name(),
     );
     let width = sites
         .iter()
@@ -138,8 +128,6 @@ struct Walk<'a> {
     lists: &'a BTreeSet<usize>,
     arithmetic: &'a BTreeMap<usize, String>,
     proven: &'a crate::bounds::Proven,
-    bounds: BoundsChecks,
-    overflow: OverflowChecks,
     /// Index nodes already listed: an index read in a statement is listed once.
     seen: HashSet<usize>,
     sites: Vec<Site>,
@@ -171,8 +159,7 @@ impl Walk<'_> {
         } = stmt
             && self.arithmetic.contains_key(&span.at())
         {
-            let proved = self.overflow != OverflowChecks::Kept
-                && self.proven.arithmetic.contains(&span.at());
+            let proved = self.proven.arithmetic.contains(&span.at());
             let text = format!(
                 "{} {}= {}",
                 crate::check::written(self.parsed, target),
@@ -193,8 +180,7 @@ impl Walk<'_> {
                 if !self.seen.insert(value_node(base)) {
                     return;
                 }
-                let proved = self.bounds != BoundsChecks::Kept
-                    && self.proven.indices.contains(&value_node(base));
+                let proved = self.proven.indices.contains(&value_node(base));
                 found.push(Site {
                     line,
                     text: crate::check::written(self.parsed, expr),
@@ -210,8 +196,7 @@ impl Walk<'_> {
                 span,
                 ..
             } if self.arithmetic.contains_key(&span.at()) => {
-                let proved = self.overflow != OverflowChecks::Kept
-                    && self.proven.arithmetic.contains(&span.at());
+                let proved = self.proven.arithmetic.contains(&span.at());
                 found.push(Site {
                     line: self.line(span.at()),
                     text: crate::check::written(self.parsed, expr),

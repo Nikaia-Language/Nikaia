@@ -161,12 +161,12 @@ pub struct Build {
     pub target: Target,
     pub user_parallelism: UserParallelism,
     pub reentrancy_check: ReentrancyCheck,
-    /// `--optimization=remove-bounds-checks:<level>`
+    /// `--optimization=remove-bounds-checks:on`
     /// ([ADR-306](../../docs/specification/adr/adr-306.md) D1): how hard the
     /// compiler works to prove an index inside. Nothing a program means
     /// depends on it.
     pub bounds: crate::bounds::BoundsChecks,
-    /// `--optimization=remove-overflow-checks:<level>`
+    /// `--optimization=remove-overflow-checks:on`
     /// ([ADR-306](../../docs/specification/adr/adr-306.md) D6).
     pub overflow: crate::bounds::OverflowChecks,
 }
@@ -2506,10 +2506,11 @@ impl<'p> Emitter<'p> {
         // there is one type checker (ADR-288).
         let propagation =
             crate::check::propagation_against(parsed, beside, &own_contracts, described, reads);
+        // **Proved at every build, written without the check only where the
+        // build says so** (ADR-306 D14): what is proved does not depend on
+        // `remove-bounds-checks` or `remove-overflow-checks`.
         let proven = crate::bounds::proven(
             parsed,
-            build.bounds,
-            build.overflow,
             &propagation.std_lengths,
             &propagation.sized_lengths,
             &propagation.arithmetic,
@@ -2569,12 +2570,18 @@ impl<'p> Emitter<'p> {
                 .list_indices
                 .iter()
                 .copied()
-                .filter(|node| proven.indices.contains(node))
+                .filter(|node| {
+                    build.bounds == crate::bounds::BoundsChecks::Removed
+                        && proven.indices.contains(node)
+                })
                 .collect(),
             proven_arithmetic: propagation
                 .arithmetic
                 .iter()
-                .filter(|(at, _)| proven.arithmetic.contains(at))
+                .filter(|(at, _)| {
+                    build.overflow == crate::bounds::OverflowChecks::Removed
+                        && proven.arithmetic.contains(at)
+                })
                 .map(|(at, ty)| (*at, ty.clone()))
                 .collect(),
             copied_slots: propagation.copied_slots,

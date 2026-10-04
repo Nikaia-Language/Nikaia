@@ -36,7 +36,7 @@ fn main() {
 
 #[test]
 fn every_site_is_listed_with_what_became_of_it() {
-    let out = report(SOURCE, BoundsChecks::Aggressive, OverflowChecks::Aggressive);
+    let out = report(SOURCE, BoundsChecks::Removed, OverflowChecks::Removed);
     let line = |text: &str| {
         out.lines()
             .find(|l| l.contains(text))
@@ -52,19 +52,29 @@ fn every_site_is_listed_with_what_became_of_it() {
     assert!(line("total + xs[i]").contains("checked"), "{out}");
     assert!(line("xs[0] * g.width").contains("#384"), "{out}");
     assert!(line("p * q").contains("#386"), "{out}");
-    assert!(!out.contains("which this build does not ask for"), "{out}");
-}
-
-/// A build that asks for no optimization is reported at `aggressive`, and the
-/// first line says so.
-#[test]
-fn a_build_without_the_optimizations_is_reported_at_aggressive_and_says_so() {
-    let out = report(SOURCE, BoundsChecks::Kept, OverflowChecks::Kept);
     assert!(
         out.lines()
             .next()
-            .is_some_and(|l| l.ends_with("at `aggressive`, which this build does not ask for")),
+            .is_some_and(|l| l.ends_with("indexes on, operations on")),
         "{out}"
     );
-    assert!(out.contains("proved"), "{out}");
+}
+
+/// **What is proved does not depend on the build** (ADR-306 D14): a build
+/// that removes no check is reported with the same proofs, and the first line
+/// says it writes every check.
+#[test]
+fn a_build_that_removes_nothing_proves_the_same_and_says_so() {
+    let kept = report(SOURCE, BoundsChecks::Kept, OverflowChecks::Kept);
+    let removed = report(SOURCE, BoundsChecks::Removed, OverflowChecks::Removed);
+    assert!(
+        kept.lines()
+            .next()
+            .is_some_and(|l| l.ends_with("indexes off, operations off")),
+        "{kept}"
+    );
+    assert_eq!(
+        kept.lines().skip(1).collect::<Vec<_>>(),
+        removed.lines().skip(1).collect::<Vec<_>>()
+    );
 }

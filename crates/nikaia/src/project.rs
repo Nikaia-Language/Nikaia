@@ -133,8 +133,8 @@ fn refuted_claims(word: &str) -> Result<String> {
     }
 }
 
-/// **`name:level` words, comma-separated**, to what they decide
-/// ([ADR-306](../../docs/specification/adr/adr-306.md) D1). The names are
+/// **`name:on` or `name:off` words, comma-separated**, to what they decide
+/// ([ADR-306](../../docs/specification/adr/adr-306.md) D14). The names are
 /// `remove-bounds-checks` and `remove-overflow-checks`
 /// ([ADR-306](../../docs/specification/adr/adr-306.md) D6); a later word for
 /// a name wins over an earlier one.
@@ -146,22 +146,26 @@ pub fn optimizations(
     for word in words.split(',').map(str::trim).filter(|w| !w.is_empty()) {
         let Some((name, level)) = word.split_once(':') else {
             return Err(anyhow!(
-                "`--optimization={word}` needs a level: write \
-                 `--optimization=remove-bounds-checks:aggressive` or \
-                 `--optimization=remove-overflow-checks:aggressive`"
+                "`--optimization={word}` needs `on` or `off`: write \
+                 `--optimization=remove-bounds-checks:on` or \
+                 `--optimization=remove-overflow-checks:on`"
             ));
         };
         match name {
             "remove-bounds-checks" => {
                 bounds = crate::bounds::BoundsChecks::parse(level).ok_or_else(|| {
                     anyhow!(
-                        "`remove-bounds-checks` is `off`, `basic` or `aggressive`, not `{level}`"
+                        "`remove-bounds-checks` is `on` or `off`, not `{level}`{}",
+                        renamed(level)
                     )
                 })?;
             }
             "remove-overflow-checks" => {
                 overflow = crate::bounds::OverflowChecks::parse(level).ok_or_else(|| {
-                    anyhow!("`remove-overflow-checks` is `off` or `aggressive`, not `{level}`")
+                    anyhow!(
+                        "`remove-overflow-checks` is `on` or `off`, not `{level}`{}",
+                        renamed(level)
+                    )
                 })?;
             }
             _ => {
@@ -173,6 +177,20 @@ pub fn optimizations(
         }
     }
     Ok((bounds, overflow))
+}
+
+/// **The words before ADR-306 D14**: `basic` and `aggressive` were levels of
+/// how hard the compiler proved and whether it dropped what it proved, in one
+/// word. What is proved no longer depends on the option, so the old words name
+/// the one thing they still mean.
+fn renamed(level: &str) -> &'static str {
+    match level {
+        "aggressive" | "basic" => {
+            ". The compiler now proves the same at every build, and the option only says \
+             whether a proved check is written without it: `aggressive` and `basic` are `on`"
+        }
+        _ => "",
+    }
 }
 
 impl Settings {

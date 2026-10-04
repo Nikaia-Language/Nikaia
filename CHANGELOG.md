@@ -4,6 +4,17 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.460] — 2026-10-04
+
+**What is proved no longer depends on whether a check is dropped** (ADR-306
+D14, #390, steps 2 and 3). `remove-bounds-checks` and `remove-overflow-checks`
+take `on` and `off`, both `off` by default, and say only what is written: the
+walk runs at every build, the loop over a list's own length and every fact the
+solver decides together. `basic` and `aggressive` are refused with the word
+they now are (`on`). `--bounds` reports the same proofs whatever the build
+writes, and says in its first line whether this build writes them without
+their checks.
+
 ## [0.0.459] — 2026-10-04
 
 **An option's default is a build-time value** (ADR-318, #374). Part I 5.1 said

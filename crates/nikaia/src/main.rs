@@ -50,15 +50,12 @@ pub struct Cli {
     #[arg(long, global = true)]
     pub user_parallelism: Option<String>,
 
-    /// An optimization that changes nothing a program means, as
-    /// `NAME:LEVEL` (ADR-306 D1). There are two:
-    /// `remove-bounds-checks:basic` drops an index's check inside a loop over
-    /// the list's own length that cannot change it, and
-    /// `remove-bounds-checks:aggressive` also every one the solver proves
-    /// inside, with a certificate its checker accepts;
-    /// `remove-overflow-checks:aggressive` drops the check of a `+`, `-` or
-    /// `*` the solver proves stays inside its type (ADR-306). A check nothing
-    /// proves stays at every level.
+    /// An optimization that changes nothing a program means, as `NAME:on` or
+    /// `NAME:off` (ADR-306 D14). There are two: `remove-bounds-checks:on`
+    /// writes an index the compiler proved inside without its check, and
+    /// `remove-overflow-checks:on` a `+`, `-` or `*` it proved stays inside its
+    /// type. Both are `off` by default. What is proved does not depend on them,
+    /// and a check nothing proves stays either way.
     ///
     /// May be given more than once; overrides `nikaia.toml`'s
     /// `[build] optimization`.

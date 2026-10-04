@@ -50,7 +50,7 @@ version = "0.1.0"
 
 [build]
 user-parallelism = "$1"
-optimization = "remove-bounds-checks:aggressive,remove-overflow-checks:aggressive"
+optimization = "remove-bounds-checks:on,remove-overflow-checks:on"
 
 [build.x86_64-linux]
 opt-level = 3

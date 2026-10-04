@@ -64,11 +64,7 @@ fn run(purpose: &str, source: &str, level: BoundsChecks) -> (bool, String, Strin
     )
 }
 
-const LEVELS: [BoundsChecks; 3] = [
-    BoundsChecks::Kept,
-    BoundsChecks::Basic,
-    BoundsChecks::Aggressive,
-];
+const LEVELS: [BoundsChecks; 2] = [BoundsChecks::Kept, BoundsChecks::Removed];
 
 /// The same output at every level.
 fn prints(purpose: &str, source: &str, expected: &str) {
@@ -107,13 +103,12 @@ fn main() {
 }
 ";
 
-/// D3: the loop over a list's own length is `basic`'s one shape.
+/// D3: the loop over a list's own length, proved without a solver.
 #[test]
-fn a_loop_over_the_lists_own_length_is_proved_at_basic() {
+fn a_loop_over_the_lists_own_length_is_proved() {
     assert_eq!(unchecked(&lowered(OVER_ITS_LENGTH, BoundsChecks::Kept)), 0);
-    assert_eq!(unchecked(&lowered(OVER_ITS_LENGTH, BoundsChecks::Basic)), 1);
     assert_eq!(
-        unchecked(&lowered(OVER_ITS_LENGTH, BoundsChecks::Aggressive)),
+        unchecked(&lowered(OVER_ITS_LENGTH, BoundsChecks::Removed)),
         1
     );
     prints("over-its-length", OVER_ITS_LENGTH, "6\n");
@@ -156,8 +151,8 @@ fn main() {
     println(f\"{pick(xs, 1)} {pick(xs, 3)} {pick(xs, 0 - 1)}\")
 }
 ";
-    assert_eq!(unchecked(&lowered(source, BoundsChecks::Basic)), 0);
-    assert_eq!(unchecked(&lowered(source, BoundsChecks::Aggressive)), 1);
+    assert_eq!(unchecked(&lowered(source, BoundsChecks::Kept)), 0);
+    assert_eq!(unchecked(&lowered(source, BoundsChecks::Removed)), 1);
     prints("guard", source, "20 0 0\n");
 }
 
@@ -211,7 +206,7 @@ fn main() {
     println(f\"{out.len()} {out[0]} {out[6]}\")
 }
 ";
-    let rust = lowered(source, BoundsChecks::Aggressive);
+    let rust = lowered(source, BoundsChecks::Removed);
     // `a[i]` and `b[j]` in the condition, `a[i]` and `b[j]` in the branches.
     assert_eq!(unchecked(&rust), 4, "{rust}");
     prints("merge", source, "7 1 11\n");
@@ -244,7 +239,7 @@ fn main() {
     println(f\"{out[0]} {out[1]} {out[2]} {out[3]}\")
 }
 ";
-    let rust = lowered(source, BoundsChecks::Aggressive);
+    let rust = lowered(source, BoundsChecks::Removed);
     assert_eq!(unchecked(&rust), 5, "{rust}");
     prints("multiply", source, "4294967293 22 8 0\n");
 }
@@ -265,28 +260,31 @@ fn main() {
     println(f\"{sum}\")
 }
 ";
-    assert_eq!(unchecked(&lowered(source, BoundsChecks::Aggressive)), 0);
+    assert_eq!(unchecked(&lowered(source, BoundsChecks::Removed)), 0);
     stops_at_the_index("counter", source);
 }
 
-/// D1: the words, and what is refused.
+/// D14: the words are `on` and `off`, a later one wins, and the old levels are
+/// refused with the word they now are.
 #[test]
 fn the_option_is_read_and_a_wrong_word_is_refused() {
     use nikaia::project::optimizations;
     let bounds = |words: &str| optimizations(words).unwrap().0;
     assert_eq!(bounds(""), BoundsChecks::Kept);
-    assert_eq!(bounds("remove-bounds-checks:basic"), BoundsChecks::Basic);
+    assert_eq!(bounds("remove-bounds-checks:on"), BoundsChecks::Removed);
     assert_eq!(
-        bounds("remove-bounds-checks:basic, remove-bounds-checks:aggressive"),
-        BoundsChecks::Aggressive
+        bounds("remove-bounds-checks:on, remove-bounds-checks:off"),
+        BoundsChecks::Kept
     );
     let level = optimizations("remove-bounds-checks:all").unwrap_err();
-    assert!(level.to_string().contains("`off`, `basic` or `aggressive`"));
+    assert!(level.to_string().contains("`on` or `off`"), "{level}");
+    let old = optimizations("remove-bounds-checks:aggressive").unwrap_err();
+    assert!(old.to_string().contains("are `on`"), "{old}");
     let name = optimizations("inline:aggressive").unwrap_err();
     assert!(name.to_string().contains("remove-bounds-checks"));
     assert!(name.to_string().contains("remove-overflow-checks"));
     let bare = optimizations("remove-bounds-checks").unwrap_err();
-    assert!(bare.to_string().contains("needs a level"));
+    assert!(bare.to_string().contains("needs `on` or `off`"));
 }
 
 /// D1 on the command line: `--optimization` reaches the lowering, and a word
@@ -305,7 +303,7 @@ fn the_command_line_carries_the_option_to_the_lowering() {
             .output()
             .expect("run nikaia")
     };
-    let done = lower("--optimization=remove-bounds-checks:basic");
+    let done = lower("--optimization=remove-bounds-checks:on");
     assert!(
         done.status.success(),
         "{}",
@@ -317,7 +315,7 @@ fn the_command_line_carries_the_option_to_the_lowering() {
     let refused = lower("--optimization=remove-bounds-checks:everything");
     assert!(!refused.status.success());
     assert!(
-        String::from_utf8_lossy(&refused.stderr).contains("`off`, `basic` or `aggressive`"),
+        String::from_utf8_lossy(&refused.stderr).contains("`on` or `off`"),
         "{}",
         String::from_utf8_lossy(&refused.stderr)
     );

@@ -28,8 +28,8 @@ fn lowered(source: &str, level: Level) -> String {
     let how = match level {
         Level::Off => Build::default(),
         Level::Aggressive => Build {
-            bounds: BoundsChecks::Aggressive,
-            overflow: OverflowChecks::Aggressive,
+            bounds: BoundsChecks::Removed,
+            overflow: OverflowChecks::Removed,
             ..Build::default()
         },
     };
@@ -335,15 +335,12 @@ fn main() {
 fn the_overflow_option_is_read_and_a_wrong_level_is_refused() {
     use nikaia::project::optimizations;
     let (bounds, overflow) =
-        optimizations("remove-bounds-checks:basic,remove-overflow-checks:aggressive").unwrap();
-    assert_eq!(bounds, BoundsChecks::Basic);
-    assert_eq!(overflow, OverflowChecks::Aggressive);
+        optimizations("remove-bounds-checks:off,remove-overflow-checks:on").unwrap();
+    assert_eq!(bounds, BoundsChecks::Kept);
+    assert_eq!(overflow, OverflowChecks::Removed);
     assert_eq!(optimizations("").unwrap().1, OverflowChecks::Kept);
     let basic = optimizations("remove-overflow-checks:basic").unwrap_err();
-    assert!(
-        basic.to_string().contains("`off` or `aggressive`"),
-        "{basic}"
-    );
+    assert!(basic.to_string().contains("`on` or `off`"), "{basic}");
 }
 
 /// **A compound assignment is proved as the operation it is** (#387,
