@@ -4,6 +4,18 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.451] — 2026-10-04
+
+**Proving and dropping checks are two settings, and a length is below 2^60, in
+the records.** ADR-306 D12-D13 (#383): `len()` of a container whose elements
+take space is below 2^60 on every target; a list whose elements take no space
+has only the length it was built with. D14-D16 (#390): `proving` says how hard
+the compiler proves, `remove-bounds-checks` and `remove-overflow-checks` are
+`on`/`off` and only choose what is written (`off` by default); an index or an
+arithmetic operation the compiler shows fails is `NK1207`; the walk's answers
+go into `nikaia.proofs`. Part III 13.3 and the code table follow; `proving`'s
+levels wait for the measurements. Not built yet.
+
 ## [0.0.450] — 2026-10-04
 
 **Two decisions written into the records and the specification.** ADR-287
