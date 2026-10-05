@@ -11021,6 +11021,87 @@ impl ProverState {
         false
     }
     #[allow(clippy::too_many_arguments)]
+    pub fn an_assert(&mut self, arena: &mut TermArena, words: &winnow_grammar::InternerContext, cond: &Expr, written: String, names: &collections::BTreeSet<String>, message: Option<String>, span: Span, scope: &mut ProverScope, at: &ProverWhere, ask: impl Fn(&TermArena, &[i64], i64) -> SolverAnswer, model: impl Fn(&TermArena, &[i64], i64) -> Option<collections::BTreeMap<String, i64>>) -> AssertOutcome {
+        let mut outcome = AssertOutcome { held: ClaimHeld::ByTheTest, findings: vec![] };
+        if self.in_test { return outcome; }
+        let claim = claim_term(cond, words, &|name| { scope.ints.contains(name) }, &mut arena.nodes);
+        let at_byte = span.start as i64;
+        if self.collecting && at.free && !at.lambda && claim.is_some() {
+            let function = carrying_function((at.function).as_deref());
+            let returned = returned_before(&self.before_return, at_byte);
+            if function.is_some() && returned.is_some() {
+                let term = scope.postcondition_at(arena, nikaia_std::index::or(claim, || 0), nikaia_std::index::or(returned.as_deref(), || ""), &at.params);
+                if term.is_some() {
+                    let owner = nikaia_std::index::or(function, || "".into());
+                    let mut posts = nikaia_std::index::or(self.candidates.remove(&owner), || vec![].into());
+                    posts.push(PostClaim { term: nikaia_std::index::or(term, || 0), written: written.to_owned() });
+                    self.candidates.insert(owner, posts);
+                }
+            }
+        }
+        let mut rejected: Option<String> = None;
+        if claim.is_some() {
+            match ask(&arena, &scope.facts, nikaia_std::index::or(claim, || 0)) {
+                SolverAnswer::Proved => {
+                    scope.facts.push(nikaia_std::index::or(claim, || 0));
+                    outcome.held = ClaimHeld::Proved;
+                    return outcome;
+                },
+                SolverAnswer::Rejected(why) => { rejected = Some(why); },
+                SolverAnswer::NotProved => { },
+            }
+        }
+        let mut only_params = !names.is_empty();
+        for n in names.iter() { if !at.params.contains(n) { only_params = false; } }
+        let mut tainted_name: Option<String> = None;
+        for n in names.iter() { if tainted_name.is_none() && scope.tainted.contains(n) { tainted_name = Some(n.to_owned()); } }
+        let tainted_claim = tainted_name.is_some();
+        let mut refuted: Option<collections::BTreeMap<String, i64>> = None;
+        if claim.is_some() && !tainted_claim { refuted = refuting_values(arena, &scope.facts, nikaia_std::index::or(claim, || 0), &ask, &model); }
+        let is_refuted = refuted.is_some();
+        let owner = carrying_function((at.function).as_deref());
+        if claim.is_some() && at.no_precondition.is_none() && owner.is_some() && !is_refuted {
+            let term = scope.precondition_at(arena, nikaia_std::index::or(claim, || 0), &at.params);
+            if term.is_some() {
+                let function = nikaia_std::index::or(owner, || "".into());
+                if self.collecting {
+                    let as_written = only_params && at.top;
+                    let mut computed: Option<String> = None;
+                    if !as_written { computed = Some(arena.text(nikaia_std::index::or(term, || 0))); }
+                    let pre = PreClaim { term: nikaia_std::index::or(term, || 0), written: written.to_owned(), computed, message, origin: None, site: None };
+                    let mut found = nikaia_std::index::or(self.preconditions.remove(&function), || Precondition::none());
+                    found.claims.push(pre);
+                    self.preconditions.insert(function.to_owned(), found);
+                }
+                scope.facts.push(nikaia_std::index::or(claim, || 0));
+                outcome.held = ClaimHeld::Precondition(function, 0);
+                return outcome;
+            }
+        }
+        if tainted_claim {
+            outcome.held = ClaimHeld::Refused;
+            if self.collecting { return outcome; }
+            let first = nikaia_std::index::or(tainted_name, || "".into());
+            outcome.findings.push(Finding { code: String::from("NK1202"), span, message: format!("`{}` is a claim about data from outside the program.", written), notes: vec![format!("`{}` comes from outside the program, so nothing the compiler can see says what it holds.", first), String::from("That it is wrong is a case the program has to handle, not a defect an `assert` catches.")], help: Some(format!("Check it where it arrives, with a guard the program handles: `throw BadInput({}) if !({})`, or `return … if !({})`. After that line, this `assert` is proved.", first, written, written)), warning: false });
+            return outcome;
+        }
+        let refuted_values = nikaia_std::index::or(refuted, || collections::BTreeMap::new().into());
+        if is_refuted && !self.collecting { outcome.findings.push(Finding { code: String::from("NK1207"), span, message: format!("`{}` is false every time it is reached.", written), notes: vec![format!("What is known before it rules the claim out: {}.", shown(&refuted_values))], help: Some(String::from("If the claim is right, the code before it is wrong; if the code is right, the claim is.")), warning: false }); }
+        let mut sometimes: Option<collections::BTreeMap<String, i64>> = None;
+        if claim.is_some() && !is_refuted && !tainted_claim { sometimes = breaking_values(arena, &scope, nikaia_std::index::or(claim, || 0), &model); }
+        let is_sometimes = sometimes.is_some();
+        let sometimes_values = nikaia_std::index::or(sometimes, || collections::BTreeMap::new().into());
+        if is_sometimes && !self.collecting { outcome.findings.push(Finding { code: String::from("NK1207"), span, message: format!("`{}` is false when {}.", written, shown(&sometimes_values)), notes: vec![String::from("That state reaches it: what is known here pins every name the claim depends on.")], help: Some(String::from("If the claim is right, the code before it is wrong; if the code is right, the claim is.")), warning: false }); }
+        let mut why = String::from("nothing before it shows it");
+        if rejected.is_some() { why = nikaia_std::index::or(rejected, || "".into()); } else if is_refuted { why = format!("it is false every time it is reached ({})", shown(&refuted_values)); } else if is_sometimes { why = format!("it is false when {}", shown(&sometimes_values)); } else if claim.is_none() { why = String::from("it is not a comparison of whole numbers the prover reads"); } else if only_params && at.no_precondition.is_some() {
+            let no = nikaia_std::index::or(claim_text_of((at.no_precondition).as_deref()), || "".into());
+            why = format!("nothing before it shows it; {}", lowered_first(&without_full_stops(&no)));
+        } else if only_params && !at.top { why = String::from("nothing before it shows it, and a claim about parameters is a precondition only at the top of the function's body"); }
+        outcome.held = ClaimHeld::AtRunTime(why);
+        if claim.is_some() && !is_refuted { scope.facts.push(nikaia_std::index::or(claim, || 0)); }
+        outcome
+    }
+    #[allow(clippy::too_many_arguments)]
     pub fn precondition_call(&mut self, arena: &mut TermArena, words: &winnow_grammar::InternerContext, callee: &str, params: &[String], claims: &[PreClaim], args: &[Expr], span: Span, scope: &ProverScope, at: &ProverWhere, ask: impl Fn(&TermArena, &[i64], i64) -> SolverAnswer, model: impl Fn(&TermArena, &[i64], i64) -> Option<collections::BTreeMap<String, i64>>, escape: impl Fn(&str) -> String) -> CallOutcome {
         let mut outcome = CallOutcome { reach: CallReach::Proved, findings: vec![] };
         for index in 0..claims.len() as i64 {
@@ -11210,6 +11291,26 @@ fn values_given(arena: &TermArena, given_by: &collections::BTreeMap<String, i64>
 }
 
 fn rust_text(arena: &TermArena, id: i64, escape: &impl Fn(&str) -> String) -> String { rust_of(id, &|at| { arena.at(at) }, escape) }
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AssertOutcome {
+    pub held: ClaimHeld,
+    pub findings: Vec<Finding>,
+}
+
+fn returned_before(before_return: &collections::BTreeMap<i64, String>, at: i64) -> Option<String> {
+    let name = match *nikaia_std::index::get(&before_return, &at) { Some(__nikaia_value) => __nikaia_value, None => return None };
+    Some(name.to_owned())
+}
+
+fn without_full_stops(text: &str) -> String {
+    let c: Vec<char> = nikaia_std::list::chars(text.chars());
+    let mut end = c.len() as i64;
+    while end > 0 && *nikaia_std::index::get(&c, nikaia_std::index::at(end - 1)) == '.' { end -= 1; }
+    let mut out: String = String::from("");
+    for k in 0..end { out.push(*nikaia_std::index::get(&c, (k) as usize)); }
+    out
+}
 
 
 // --- render.nika ---
@@ -19933,7 +20034,7 @@ pub mod prover_solver {
 }
 pub mod prover_state {
     #[allow(unused_imports)]
-    pub use super::{ProverState, postconditions_for, ProverWhere, CallOutcome};
+    pub use super::{ProverState, postconditions_for, ProverWhere, CallOutcome, AssertOutcome};
 }
 pub mod render {
     #[allow(unused_imports)]

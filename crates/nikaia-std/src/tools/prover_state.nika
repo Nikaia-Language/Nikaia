@@ -127,6 +127,176 @@ impl ProverState {
         return false
     }
 
+    /// **One `assert`** (ADR-269 D4-D8, D11, D15, D17): proved from what is
+    /// known before it, a precondition of the function it stands in, refused
+    /// as a claim about data from outside, or checked where it is reached -
+    /// with the values that break it, where what is known shows them. A
+    /// candidate postcondition where it stands before a `return`. `written`
+    /// is the condition as the program wrote it, `names` the names it reads,
+    /// `at_byte` where the statement starts.
+    pub fn an_assert(ref mut self, mut arena: TermArena, words: ref winnow_grammar::InternerContext, cond: ref Expr, written: String, names: ref collections::BTreeSet[String], message: String?, span: Span, mut scope: ProverScope, at: ref ProverWhere, ask: fn(ref TermArena, ref Vec[i64], i64) -> SolverAnswer sync, model: fn(ref TermArena, ref Vec[i64], i64) -> collections::BTreeMap[String, i64]? sync) -> AssertOutcome {
+        let mut outcome = AssertOutcome { held: ClaimHeld::ByTheTest, findings: [] }
+        if self.in_test {
+            return outcome
+        }
+        let claim = claim_term(cond, words, fn(name) { scope.ints.contains(name) }, arena.nodes)
+        let at_byte = span.start as i64
+        // A claim about the value the next statement returns is a candidate
+        // postcondition (D17).
+        if self.collecting && at.free && !at.lambda && claim != null {
+            let function = carrying_function(at.function)
+            let returned = returned_before(self.before_return, at_byte)
+            if function != null && returned != null {
+                let term = scope.postcondition_at(arena, claim ?? 0, returned ?? "", at.params)
+                if term != null {
+                    let owner = function ?? ""
+                    let mut posts = self.candidates.remove(owner) ?? []
+                    posts.push(PostClaim { term: term ?? 0, written: written.clone() })
+                    self.candidates.insert(owner, posts)
+                }
+            }
+        }
+        let mut rejected: String? = null
+        if claim != null {
+            match ask(arena, scope.facts, claim ?? 0) {
+                SolverAnswer::Proved => {
+                    scope.facts.push(claim ?? 0)
+                    outcome.held = ClaimHeld::Proved
+                    return outcome
+                },
+                SolverAnswer::Rejected(why) => {
+                    rejected = why
+                },
+                SolverAnswer::NotProved => {},
+            }
+        }
+
+        // **A claim the body cannot prove is its callers'** where it can be
+        // carried back to the entry (D15): what it says about the parameters,
+        // under the branches and guards on the way. At the top of the body,
+        // over parameters only, that is the claim as written (D5).
+        let mut only_params = !names.is_empty()
+        for n in names {
+            if !at.params.contains(n) {
+                only_params = false
+            }
+        }
+        // **A claim what is known rules out is not a precondition**: every
+        // caller that reaches it breaks it, so it would only say *never come
+        // here*. It is warned about where it stands (D8). Decided in both
+        // passes alike, so the first pass's preconditions are the second's.
+        let mut tainted_name: String? = null
+        for n in names {
+            if tainted_name == null && scope.tainted.contains(n) {
+                tainted_name = n.clone()
+            }
+        }
+        let tainted_claim = tainted_name != null
+        let mut refuted: collections::BTreeMap[String, i64]? = null
+        if claim != null && !tainted_claim {
+            refuted = refuting_values(arena, scope.facts, claim ?? 0, ask, model)
+        }
+        let is_refuted = refuted != null
+        let owner = carrying_function(at.function)
+        if claim != null && at.no_precondition == null && owner != null && !is_refuted {
+            let term = scope.precondition_at(arena, claim ?? 0, at.params)
+            if term != null {
+                let function = owner ?? ""
+                if self.collecting {
+                    let as_written = only_params && at.top
+                    let mut computed: String? = null
+                    if !as_written {
+                        computed = arena.text(term ?? 0)
+                    }
+                    let pre = PreClaim { term: term ?? 0, written: written.clone(), computed: computed, message: message, origin: null, site: null }
+                    let mut found = self.preconditions.remove(function) ?? Precondition::none()
+                    found.claims.push(pre)
+                    self.preconditions.insert(function.clone(), found)
+                }
+                scope.facts.push(claim ?? 0)
+                outcome.held = ClaimHeld::Precondition(function, 0)
+                return outcome
+            }
+        }
+
+        // **A claim about data from outside is a guard's job** (D6): the one
+        // claim that is refused rather than checked.
+        if tainted_claim {
+            outcome.held = ClaimHeld::Refused
+            if self.collecting {
+                return outcome
+            }
+            let first = tainted_name ?? ""
+            outcome.findings.push(Finding {
+                code: "NK1202",
+                span: span,
+                message: f"`{written}` is a claim about data from outside the program.",
+                notes: [
+                    f"`{first}` comes from outside the program, so nothing the compiler can see says what it holds.",
+                    "That it is wrong is a case the program has to handle, not a defect an `assert` catches.",
+                ],
+                help: f"Check it where it arrives, with a guard the program handles: `throw BadInput({first}) if !({written})`, or `return … if !({written})`. After that line, this `assert` is proved.",
+                warning: false,
+            })
+            return outcome
+        }
+
+        // **Neither proved nor refused: checked where it is reached** (D4) -
+        // and where what is known before it rules the claim out, the author
+        // is told, with values (D8).
+        let refuted_values = refuted ?? collections::BTreeMap()
+        if is_refuted && !self.collecting {
+            outcome.findings.push(Finding {
+                code: "NK1207",
+                span: span,
+                message: f"`{written}` is false every time it is reached.",
+                notes: [f"What is known before it rules the claim out: {shown(refuted_values)}."],
+                help: "If the claim is right, the code before it is wrong; if the code is right, the claim is.",
+                warning: false,
+            })
+        }
+        // **False for some of the values that reach it** (D8): the same
+        // warning, with one such state.
+        let mut sometimes: collections::BTreeMap[String, i64]? = null
+        if claim != null && !is_refuted && !tainted_claim {
+            sometimes = breaking_values(arena, scope, claim ?? 0, model)
+        }
+        let is_sometimes = sometimes != null
+        let sometimes_values = sometimes ?? collections::BTreeMap()
+        if is_sometimes && !self.collecting {
+            outcome.findings.push(Finding {
+                code: "NK1207",
+                span: span,
+                message: f"`{written}` is false when {shown(sometimes_values)}.",
+                notes: ["That state reaches it: what is known here pins every name the claim depends on."],
+                help: "If the claim is right, the code before it is wrong; if the code is right, the claim is.",
+                warning: false,
+            })
+        }
+        let mut why = "nothing before it shows it"
+        if rejected != null {
+            why = rejected ?? ""
+        } else if is_refuted {
+            why = f"it is false every time it is reached ({shown(refuted_values)})"
+        } else if is_sometimes {
+            why = f"it is false when {shown(sometimes_values)}"
+        } else if claim == null {
+            why = "it is not a comparison of whole numbers the prover reads"
+        } else if only_params && at.no_precondition != null {
+            let no = claim_text_of(at.no_precondition) ?? ""
+            why = f"nothing before it shows it; {lowered_first(without_full_stops(no))}"
+        } else if only_params && !at.top {
+            why = "nothing before it shows it, and a claim about parameters is a precondition only at the top of the function's body"
+        }
+        outcome.held = ClaimHeld::AtRunTime(why)
+        // Past a check the claim holds: the program stops where it does not.
+        // Not a claim ruled out, which would make what follows vacuous.
+        if claim != null && !is_refuted {
+            scope.facts.push(claim ?? 0)
+        }
+        return outcome
+    }
+
     /// **A call to a function with a precondition** (ADR-269 D5): each of
     /// the callee's `claims`, with this call's arguments in place of its
     /// `params`, is proved here, carried back to the caller's entry in the
@@ -410,4 +580,31 @@ fn values_given(arena: ref TermArena, given_by: ref collections::BTreeMap[String
 /// each name as `escape` writes it.
 fn rust_text(arena: ref TermArena, id: i64, escape: fn(ref String) -> String sync) -> String {
     return rust_of(id, fn(at) { arena.at(at) }, escape)
+}
+
+/// How one `assert` is held, and what it was found to say.
+pub struct AssertOutcome {
+    pub held: ClaimHeld,
+    pub findings: Vec[Finding],
+}
+
+/// The name the statement after `at` returns, where an `assert` stands
+/// directly before a `return name`.
+fn returned_before(before_return: ref collections::BTreeMap[i64, String], at: i64) -> String? {
+    let name = before_return[at] ?? return null
+    return name.clone()
+}
+
+/// `text` without the full stops it ends in.
+fn without_full_stops(text: ref String) -> String {
+    let c: Vec[char] = text.chars().collect()
+    let mut end = c.len()
+    while end > 0 && c[end - 1] == '.' {
+        end -= 1
+    }
+    let mut out: String = ""
+    for k in 0..<end {
+        out.push(c[k])
+    }
+    return out
 }

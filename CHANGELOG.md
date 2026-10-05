@@ -4,6 +4,17 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.502] — 2026-10-05
+
+**An `assert` is held in Nikaia** (ADR-294, #436 step 4).
+`ProverState::an_assert` proves a claim from what is known before it, makes
+it a precondition of the function it stands in (ADR-269 D5, D15) or a
+candidate postcondition before a `return` (D17), refuses a claim about data
+from outside (D6, `NK1202`), shows the values that break it (D8, `NK1207`) and
+otherwise says why it is checked where it is reached (D4). `prove.rs` hands
+it the condition as written and the names it reads. Every bench and example
+lowers byte for byte as before, and so do their `--bounds` reports.
+
 ## [0.0.501] — 2026-10-05
 
 **A function value a method took whole is lent on to code that only runs

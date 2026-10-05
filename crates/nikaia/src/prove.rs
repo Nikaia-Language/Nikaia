@@ -33,7 +33,7 @@ use nikaia_std::tools::prover_arena::TermArena;
 use nikaia_std::tools::solver_terms::SolverTerm;
 
 use crate::ast::{Block, Expr, Item, Span, Spanned, Stmt};
-use crate::check::{Finding, Severity};
+use crate::check::Finding;
 use crate::contracts::Ledger;
 use crate::parser::Parsed;
 
@@ -234,7 +234,7 @@ pub fn prove(
 // (ADR-294, #436).
 use nikaia_std::tools::prover_calls::{self, FreeFunction};
 use nikaia_std::tools::prover_claims::{self, Foreign, PostClaim, PreClaim, Precondition};
-use nikaia_std::tools::prover_solver::{self, SolverAnswer};
+use nikaia_std::tools::prover_solver::SolverAnswer;
 use nikaia_std::tools::prover_state::{self, ProverState};
 
 struct Prover<'a> {
@@ -738,7 +738,9 @@ impl<'a> Prover<'a> {
         }
     }
 
-    /// An `assert` (D4-D6, D11).
+    /// **One `assert`** (ADR-269 D4-D8, D11, D15, D17;
+    /// `ProverState::an_assert`): how it is held, and what it was found to
+    /// say.
     fn an_assert(
         &mut self,
         cond: &Expr,
@@ -748,198 +750,26 @@ impl<'a> Prover<'a> {
         at: &Where,
     ) {
         let key = (span.at(), crate::check::argument_shape(cond));
-        if self.state.in_test {
-            self.out.held.insert(key, Held::ByTheTest);
-            return;
-        }
-        let claim = claim(&mut self.arena, self.parsed, cond, scope);
-        // A claim about the value the next statement returns is a candidate
-        // postcondition (ADR-269 D17).
-        if self.state.collecting
-            && at.free
-            && !at.lambda
-            && let (Some(claim), Some(function)) = (claim, at.function.clone())
-            && let Some(returned) = self.state.before_return.get(&(span.at() as i64)).cloned()
-            && let Some(term) = self.postcondition_at(claim, &returned, scope, at)
-        {
-            self.state
-                .candidates
-                .entry(function)
-                .or_default()
-                .push(PostClaim {
-                    term,
-                    written: crate::check::written(self.parsed, cond),
-                });
-        }
-        let mut rejected = None;
-        if let Some(claim) = claim {
-            match self.proves(&scope.facts, claim) {
-                Ok(()) => {
-                    scope.facts.push(claim);
-                    self.out.held.insert(key, Held::Proved);
-                    return;
-                }
-                Err(why) => rejected = why,
-            }
-        }
-
-        // **A claim the body cannot prove is its callers'** where it can be
-        // carried back to the entry (ADR-269 D15): what it says about the
-        // parameters, under the branches and guards on the way. At the top of
-        // the body, over parameters only, that is the claim as written
-        // (ADR-269 D5).
+        let written = crate::check::written(self.parsed, cond);
         let names = names_in(self.parsed, cond);
-        let only_params = !names.is_empty() && names.iter().all(|n| at.params.contains(n));
-        // **A claim what is known rules out is not a precondition**: every
-        // caller that reaches it breaks it, so it would only say *never come
-        // here*. It is warned about where it stands (ADR-269 D8). Decided in
-        // both passes alike, so the first pass's preconditions are the
-        // second's.
-        let tainted_claim = names.iter().any(|n| scope.tainted.contains(n));
-        let refuted = match claim {
-            Some(claim) if !tainted_claim => self.refutes(&scope.facts, claim),
-            _ => None,
-        };
-        if let (Some(claim), None, Some(function), None) = (
-            claim,
-            at.no_precondition.as_deref(),
-            at.function.clone(),
-            &refuted,
-        ) && let Some(term) = self.precondition_at(claim, scope, at)
-        {
-            if self.state.collecting {
-                let as_written = only_params && at.top;
-                let pre = PreClaim {
-                    term,
-                    computed: (!as_written).then(|| term_text(&self.arena, term)),
-                    written: crate::check::written(self.parsed, cond),
-                    message,
-                    origin: None,
-                    site: None,
-                };
-                self.state
-                    .preconditions
-                    .entry(function.clone())
-                    .or_insert_with(Precondition::none)
-                    .claims
-                    .push(pre);
-            }
-            scope.facts.push(claim);
-            self.out
-                .held
-                .insert(key, Held::Precondition(function.clone(), 0));
-            return;
-        }
-
-        let tainted: Vec<&String> = names
-            .iter()
-            .filter(|n| scope.tainted.contains(*n))
-            .collect();
-        // **A claim about data from outside is a guard's job** (D6): the one
-        // claim that is refused rather than checked.
-        if let Some(first) = tainted.first() {
-            self.out.held.insert(key, Held::Refused);
-            if self.state.collecting {
-                return;
-            }
-            let written = crate::check::written(self.parsed, cond);
-            self.out.findings.push(refusal(
-                span,
-                format!("`{written}` is a claim about data from outside the program."),
-                vec![
-                    format!(
-                        "`{first}` comes from outside the program, so nothing the compiler \
-                         can see says what it holds."
-                    ),
-                    "That it is wrong is a case the program has to handle, not a defect an \
-                     `assert` catches."
-                        .to_string(),
-                ],
-                &format!(
-                    "Check it where it arrives, with a guard the program handles: \
-                     `throw BadInput({first}) if !({written})`, or `return … if !({written})`. \
-                     After that line, this `assert` is proved."
-                ),
-            ));
-            return;
-        }
-
-        // **Neither proved nor refused: checked where it is reached** (D4) -
-        // and where what is known before it rules the claim out, the author
-        // is told, with values (ADR-269 D8).
-        if let Some(values) = refuted.as_ref().filter(|_| !self.state.collecting) {
-            let written = crate::check::written(self.parsed, cond);
-            self.out.findings.push(Finding {
-                severity: Severity::Error,
-                span,
-                code: "NK1207",
-                message: format!("`{written}` is false every time it is reached."),
-                notes: vec![format!(
-                    "What is known before it rules the claim out: {}.",
-                    shown(values)
-                )],
-                help: Some(
-                    "If the claim is right, the code before it is wrong; if the code is right, \
-                     the claim is."
-                        .to_string(),
-                ),
-                labels: Vec::new(),
-            });
-        }
-        // **False for some of the values that reach it** (D8): the same
-        // warning, with one such state.
-        let sometimes = match (claim, &refuted) {
-            (Some(claim), None) if !tainted_claim => self.breaks_when(scope, claim),
-            _ => None,
-        };
-        if let Some(values) = sometimes.as_ref().filter(|_| !self.state.collecting) {
-            let written = crate::check::written(self.parsed, cond);
-            self.out.findings.push(Finding {
-                severity: Severity::Error,
-                span,
-                code: "NK1207",
-                message: format!("`{written}` is false when {}.", shown(values)),
-                notes: vec![
-                    "That state reaches it: what is known here pins every name the claim \
-                     depends on."
-                        .to_string(),
-                ],
-                help: Some(
-                    "If the claim is right, the code before it is wrong; if the code is right, \
-                     the claim is."
-                        .to_string(),
-                ),
-                labels: Vec::new(),
-            });
-        }
-        let why = if let Some(rejected) = rejected {
-            rejected
-        } else if let Some(values) = &refuted {
-            format!("it is false every time it is reached ({})", shown(values))
-        } else if let Some(values) = &sometimes {
-            format!("it is false when {}", shown(values))
-        } else if claim.is_none() {
-            "it is not a comparison of whole numbers the prover reads".to_string()
-        } else if only_params && let Some(no) = &at.no_precondition {
-            format!(
-                "nothing before it shows it; {}",
-                lowered_first(no.trim_end_matches('.'))
-            )
-        } else if only_params && !at.top {
-            "nothing before it shows it, and a claim about parameters is a precondition only \
-             at the top of the function's body"
-                .to_string()
-        } else {
-            "nothing before it shows it".to_string()
-        };
-        self.out.held.insert(key, Held::AtRunTime(why));
-        // Past a check the claim holds: the program stops where it does not.
-        // Not a claim ruled out, which would make what follows vacuous.
-        if let Some(claim) = claim
-            && refuted.is_none()
-        {
-            scope.facts.push(claim);
-        }
+        let Terms { held, copy } = &mut self.arena;
+        let outcome = self.state.an_assert(
+            held,
+            &self.parsed.interner,
+            cond,
+            written,
+            &names,
+            message,
+            span,
+            scope,
+            at,
+            |arena, facts, goal| answer_of(copy, arena, facts, goal),
+            |arena, facts, goal| model_of(copy, arena, facts, goal),
+        );
+        self.out.held.insert(key, outcome.held);
+        self.out
+            .findings
+            .extend(outcome.findings.into_iter().map(crate::traits::from_nikaia));
     }
 
     /// Walk an expression for what it calls: a call to a function with a
@@ -1084,34 +914,9 @@ impl<'a> Prover<'a> {
         self.out.reaches.insert(key, joined);
     }
 
-    /// Whether the facts prove the goal: one query to the reference solver
-    /// ([ADR-270](../../docs/specification/adr/adr-270.md) D3, D4), whose
-    /// certificate is checked before a check is left out (D5). The reference
-    /// solver's word would be enough; checking it costs a replay of a few
-    /// steps, and a solver fault becomes a check at run time instead of a
-    /// claim nobody holds. `Err(Some(_))` says the certificate was rejected.
-    fn proves(&self, facts: &[i64], goal: i64) -> Result<(), Option<String>> {
-        match self.arena.query(facts, goal, crate::proofs::ask) {
-            crate::proofs::Asked::Proved => Ok(()),
-            crate::proofs::Asked::Rejected(why) => Err(Some(why)),
-            crate::proofs::Asked::Refuted(_) | crate::proofs::Asked::Unknown => Err(None),
-        }
-    }
-
     /// `term` at the function's entry (`ProverScope::at_entry`).
     fn at_entry(&mut self, term: i64, scope: &Scope) -> Option<i64> {
         scope.at_entry(&mut self.arena.held, term)
-    }
-
-    /// `claim` as a postcondition (`ProverScope::postcondition_at`).
-    fn postcondition_at(
-        &mut self,
-        claim: i64,
-        returned: &str,
-        scope: &Scope,
-        at: &Where,
-    ) -> Option<i64> {
-        scope.postcondition_at(&mut self.arena.held, claim, returned, &at.params)
     }
 
     /// **An exit of a free function** (`ProverState::exit`).
@@ -1202,33 +1007,6 @@ impl<'a> Prover<'a> {
     /// A condition joins the path (`ProverScope::on_the_path`).
     fn on_the_path(&mut self, scope: &mut Scope, condition: Option<i64>) {
         scope.on_the_path(&mut self.arena.held, condition)
-    }
-
-    /// **The precondition a claim makes** (`ProverScope::precondition_at`).
-    fn precondition_at(&mut self, claim: i64, scope: &Scope, at: &Where) -> Option<i64> {
-        scope.precondition_at(&mut self.arena.held, claim, &at.params)
-    }
-
-    /// The values that show a claim false every time it is reached
-    /// (`prover_solver::refuting_values`).
-    fn refutes(&mut self, facts: &[i64], claim: i64) -> Option<BTreeMap<String, i64>> {
-        let Terms { held, copy } = &mut self.arena;
-        prover_solver::refuting_values(
-            held,
-            facts,
-            claim,
-            &|arena, facts, goal| answer_of(copy, arena, facts, goal),
-            &|arena, facts, goal| model_of(copy, arena, facts, goal),
-        )
-    }
-
-    /// **Values that reach a claim and make it false**
-    /// (`prover_solver::breaking_values`).
-    fn breaks_when(&mut self, scope: &Scope, claim: i64) -> Option<BTreeMap<String, i64>> {
-        let Terms { held, copy } = &mut self.arena;
-        prover_solver::breaking_values(held, scope, claim, &|arena, facts, goal| {
-            model_of(copy, arena, facts, goal)
-        })
     }
 
     /// Whether a call may throw out of the function `at` is
@@ -1326,18 +1104,6 @@ fn same_preconditions(
     texts(a) == texts(b)
 }
 
-fn refusal(span: Span, message: String, notes: Vec<String>, help: &str) -> Finding {
-    Finding {
-        severity: Severity::Error,
-        span,
-        code: "NK1202",
-        message,
-        notes,
-        help: Some(help.to_string()),
-        labels: Vec::new(),
-    }
-}
-
 // **How a term and a value are written** (ADR-269 D7, D18) is
 // `tools/prove_text.nika` (ADR-294, #436): these hand it the arena one node
 // at a time and the emitter's escaping of a name.
@@ -1365,7 +1131,7 @@ fn ledger_text(arena: &Terms, id: i64) -> String {
 }
 
 use nikaia_std::tools::prove_terms;
-use nikaia_std::tools::prove_text::{self, has_a_length, lowered_first, shown};
+use nikaia_std::tools::prove_text::{self, has_a_length};
 
 fn is_whole_number(ty: &str) -> bool {
     nikaia_std::tools::bounds_shape::is_whole_number(ty)
