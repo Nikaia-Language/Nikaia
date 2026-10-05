@@ -221,6 +221,10 @@ pub enum Item {
         /// `pub comptime`, which is Part I 9.2's existing rule for Constants
         /// rather than a new one.
         public: bool,
+        /// `comptime(steps: 50G, ram: 16Gi)`: the bounds this one raises
+        /// ([ADR-321](../../../docs/specification/adr/adr-321.md) D11). Empty
+        /// where the word stands alone.
+        bounds: Vec[ConfigArg],
     },
 
     Import {
@@ -265,6 +269,8 @@ pub enum Stmt {
         name: winnow_grammar::Symbol,
         ty: Type?,
         value: Expr,
+        /// The item form's bounds (ADR-321 D11), in a body as well.
+        bounds: Vec[ConfigArg],
     },
 
     // Kap 2.1: x = 20, und x += 1

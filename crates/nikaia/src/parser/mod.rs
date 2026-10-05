@@ -2789,14 +2789,22 @@ grammar! {
         // second assignment to reach.
         rule comptime_stmt -> Stmt =
             KW_COMPTIME
+            bounds:comptime_bounds?
             name:NAME
             ty:type_annotation?
             "="
             val:expr
             ";"?
             -> {
-                Stmt::Comptime { name, ty, value: val }
+                Stmt::Comptime { name, ty, value: val, bounds: bounds.unwrap_or_default() }
             }
+
+        // `comptime(steps: 50G, ram: 16Gi)`: the bounds one `comptime` raises,
+        // named as a call's options are
+        // ([ADR-321](../../../../docs/specification/adr/adr-321.md) D11). Which
+        // names there are is the checker's question (`NK1109`).
+        rule comptime_bounds -> Vec<ConfigArg> =
+            "(" bounds:bare_config_args ")" -> { bounds }
 
         // Part I 9.2 and [ADR-287](../../../../docs/specification/adr/adr-287.md)
         // D2's other half: the same form where an item stands.
@@ -2812,6 +2820,7 @@ grammar! {
         rule comptime_item -> Item =
             vis:kw_pub?
             KW_COMPTIME
+            bounds:comptime_bounds?
             name:NAME
             ty:type_annotation?
             "="
@@ -2823,6 +2832,7 @@ grammar! {
                     ty,
                     value: val,
                     public: vis.is_some(),
+                    bounds: bounds.unwrap_or_default(),
                 }
             }
 

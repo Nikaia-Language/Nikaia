@@ -1180,6 +1180,7 @@ fn evaluate_defaults(
                 &nothing,
                 library,
                 workshop,
+                workshop.bounds(),
             ) {
                 crate::comptime_run::Computed::Value(value) => Some(Some(value)),
                 crate::comptime_run::Computed::NotHere => None,

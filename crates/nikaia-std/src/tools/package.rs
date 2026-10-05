@@ -105,7 +105,7 @@ pub enum Item {
     Test { name: String, body: Block },
     Bench { name: String, body: Block },
     Grammar(GrammarDef),
-    Comptime { name: winnow_grammar::Symbol, ty: Option<Type>, value: Expr, public: bool },
+    Comptime { name: winnow_grammar::Symbol, ty: Option<Type>, value: Expr, public: bool, bounds: Vec<ConfigArg> },
     Import { path: Vec<winnow_grammar::Symbol>, alias: Option<winnow_grammar::Symbol> },
 }
 
@@ -117,7 +117,7 @@ pub struct Block {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Stmt {
     Let { names: Vec<winnow_grammar::Symbol>, mutable: bool, ty: Option<Type>, value: Expr },
-    Comptime { name: winnow_grammar::Symbol, ty: Option<Type>, value: Expr },
+    Comptime { name: winnow_grammar::Symbol, ty: Option<Type>, value: Expr, bounds: Vec<ConfigArg> },
     Assign { target: Expr, op: Option<BinaryOp>, value: Expr },
     For { bindings: Vec<winnow_grammar::Symbol>, iter: Expr, body: Block },
     While { cond: Expr, body: Block },

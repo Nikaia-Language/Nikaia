@@ -589,3 +589,88 @@ fn an_options_default_is_compiled_and_recorded() {
         "`base` stopped while the program was built: attempt to multiply with overflow."
     );
 }
+
+/// **A `comptime` raises its bounds at its declaration** (ADR-321 D11):
+/// `comptime(steps: 100)` refuses what the default lets through, and
+/// `comptime(steps: 1M)` lets through what a smaller default refused, in
+/// ADR-322's scales.
+#[test]
+fn a_comptime_names_its_own_step_budget() {
+    let fib = "fn fib(n: i64) -> i64 {\n\
+               \x20   if n < 2 {\n\
+               \x20       return n\n\
+               \x20   }\n\
+               \x20   return fib(n - 1) + fib(n - 2)\n\
+               }\n\
+               \n";
+    let main = "\nfn main() {\n    println(f\"{F}\")\n}\n";
+    let lowered_bound = format!("{fib}comptime(steps: 100) F = fib(20)\n{main}");
+    let stopped = the_one(findings(&lowered_bound));
+    assert_eq!(
+        stopped.message,
+        "`F` took more than 100 steps while the program was built."
+    );
+    let raised = format!("{fib}comptime(steps: 1M) F = fib(20)\n{main}");
+    assert!(
+        findings_bounded(&raised, 1_000, 4 << 30).is_empty(),
+        "{:#?}",
+        findings_bounded(&raised, 1_000, 4 << 30)
+    );
+    let inside = format!(
+        "{fib}fn main() {{\n    comptime(steps: 100) F = fib(20)\n    println(f\"{{F}}\")\n}}\n"
+    );
+    let stopped = the_one(findings(&inside));
+    assert_eq!(
+        stopped.message,
+        "`F` took more than 100 steps while the program was built."
+    );
+}
+
+/// **And its memory bound** (D10, D11), in bytes, written `Ki`/`Mi`/`Gi`.
+#[test]
+fn a_comptime_names_its_own_memory_bound() {
+    let grow = "fn grow() -> i64 {\n\
+                \x20   let mut xs: Vec[i64] = []\n\
+                \x20   while true {\n\
+                \x20       xs.push(1)\n\
+                \x20   }\n\
+                \x20   return xs.len()\n\
+                }\n\
+                \n\
+                comptime(ram: 64Mi, steps: 10G) G = grow()\n\
+                \n\
+                fn main() {\n\
+                \x20   println(f\"{G}\")\n\
+                }\n";
+    let stopped = the_one(findings(grow));
+    assert_eq!(
+        stopped.message,
+        "`G` held more than 67108864 bytes at once while the program was built."
+    );
+}
+
+/// **Two names and no third** (D11): another is `NK1109`, and a value the
+/// build does not know is refused; neither runs anything.
+#[test]
+fn a_bound_with_another_name_or_no_number_is_refused() {
+    let found = findings(
+        "fn one() -> i64 {\n    return 1\n}\n\ncomptime(stpes: 5) X = one()\n\nfn main() {\n    println(f\"{X}\")\n}\n",
+    );
+    let wrong: Vec<_> = found.iter().filter(|f| f.code == "NK1109").collect();
+    assert_eq!(wrong.len(), 1, "{found:#?}");
+    assert_eq!(
+        wrong[0].message,
+        "A `comptime` has no bound called `stpes`."
+    );
+    assert_eq!(wrong[0].help.as_deref(), Some("Did you mean `steps`?"));
+    assert!(found.iter().all(|f| f.code != "NK1152"), "{found:#?}");
+
+    let found = findings(
+        "fn one() -> i64 {\n    return 1\n}\n\ncomptime(steps: one()) X = one()\n\nfn main() {\n    println(f\"{X}\")\n}\n",
+    );
+    assert!(
+        found.iter().any(|f| f.code == "NK1102"
+            && f.message == "`steps` takes a whole number the build knows, and this is not one."),
+        "{found:#?}"
+    );
+}

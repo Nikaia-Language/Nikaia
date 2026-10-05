@@ -111,6 +111,7 @@ pub(crate) fn unit_without_its_constants(
                 ty: declared.clone(),
                 value: literal_of(&held, &kept)?,
                 public: *public,
+                bounds: Vec::new(),
             },
             item.span,
         ));
@@ -192,12 +193,15 @@ pub(crate) fn compute(
     known: &dyn Fn(&str) -> Option<Value>,
     library: &crate::contracts::Ledger,
     workshop: &crate::grammar_run::Workshop,
+    bounds: Bounds,
 ) -> Computed {
     // **The sub-program's own inference and lowering compute no default
     // again**: they read the same functions, and a default compiled while a
     // default is compiled is the same question asked without end.
     defaults_compiled_in(None, || {
-        computed(files, here, bound, value, ty, known, library, workshop)
+        computed(
+            files, here, bound, value, ty, known, library, workshop, bounds,
+        )
     })
 }
 
@@ -211,6 +215,7 @@ fn computed(
     known: &dyn Fn(&str) -> Option<Value>,
     library: &crate::contracts::Ledger,
     workshop: &crate::grammar_run::Workshop,
+    bounds: Bounds,
 ) -> Computed {
     use crate::contracts::LedgerOps;
     let Some(sub) = sub_program(files[here], bound, value, ty, known) else {
@@ -253,7 +258,7 @@ fn computed(
     let Ok(dump) = crate::grammar_run::dumper(&units[here], ty) else {
         return Computed::NotHere;
     };
-    let Some(program) = with_driver(&lowered, &dump, workshop.bounds()) else {
+    let Some(program) = with_driver(&lowered, &dump, bounds) else {
         return Computed::NotHere;
     };
     match workshop.run_comptime(&program, bound) {

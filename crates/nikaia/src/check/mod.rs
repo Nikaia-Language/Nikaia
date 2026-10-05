@@ -1303,6 +1303,7 @@ fn walked<'a>(
         reads,
         said_rings: BTreeSet::new(),
         computing_default: false,
+        raised: (None, None),
         computes,
         option_values: Vec::new(),
         own,
@@ -2753,6 +2754,10 @@ struct Checker<'a> {
     /// refusal's way out for it is a `T?`, not a `let` in place of a
     /// `comptime` it never was.
     computing_default: bool,
+    /// **The bounds the `comptime` being computed raised**
+    /// ([ADR-321](../../docs/specification/adr/adr-321.md) D11): steps and
+    /// bytes, each where it named one; the workshop's otherwise.
+    raised: (Option<u64>, Option<u64>),
     /// **Whether this walk computes build-time values at all**: the ledger's
     /// pass ([`check_for_the_ledger`]) does not, and says nothing for them.
     computes: bool,
@@ -10115,9 +10120,12 @@ impl<'a> Checker<'a> {
             // **Refused by name rather than run at program time** (D5). Falling
             // back would break the promise the word is for, and quietly - the
             // program would still work and the guarantee would be gone.
-            Stmt::Comptime { name, ty, value } => {
-                self.comptime_binding(*name, ty.as_ref(), value, span)
-            }
+            Stmt::Comptime {
+                name,
+                ty,
+                value,
+                bounds,
+            } => self.comptime_binding(*name, ty.as_ref(), value, bounds, span),
 
             Stmt::Assign {
                 target, op, value, ..
@@ -18556,6 +18564,16 @@ impl<'a> Checker<'a> {
             &known,
             self.library,
             workshop,
+            {
+                let mut bounds = workshop.bounds();
+                if let Some(steps) = self.raised.0 {
+                    bounds.steps = steps;
+                }
+                if let Some(bytes) = self.raised.1 {
+                    bounds.bytes = bytes;
+                }
+                bounds
+            },
         ) {
             crate::comptime_run::Computed::Value(computed) => Some((Some(computed), false)),
             crate::comptime_run::Computed::Forbidden { callee, because } => {
@@ -22773,13 +22791,79 @@ impl<'a> Checker<'a> {
         }
         for item in &self.parsed.program.items {
             let Item::Comptime {
-                name, ty, value, ..
+                name,
+                ty,
+                value,
+                bounds,
+                ..
             } = &item.node
             else {
                 continue;
             };
-            self.comptime_binding(*name, ty.as_ref(), value, &item.span);
+            self.comptime_binding(*name, ty.as_ref(), value, bounds, &item.span);
         }
+    }
+
+    /// **`comptime(steps: 50G, ram: 16Gi)`**
+    /// ([ADR-321](../../docs/specification/adr/adr-321.md) D11): the steps and
+    /// bytes it names, or `None` where one is refused - a name other than the
+    /// two (`NK1109`), or a value that is not a whole number the build knows.
+    fn raised_bounds(
+        &mut self,
+        bounds: &[crate::ast::ConfigArg],
+        span: &Span,
+    ) -> Option<(Option<u64>, Option<u64>)> {
+        const NAMES: [&str; 2] = ["steps", "ram"];
+        let mut raised = (None, None);
+        let mut refused = false;
+        for bound in bounds {
+            let name = self.parsed.text(bound.name).to_string();
+            if !NAMES.contains(&name.as_str()) {
+                self.checked.findings.push(Finding {
+                    severity: Severity::Error,
+                    span: *span,
+                    code: "NK1109",
+                    message: format!("A `comptime` has no bound called `{name}`."),
+                    notes: vec!["Its bounds are `steps` and `ram`.".to_string()],
+                    help: Some(match nearest(&name, &NAMES) {
+                        Some(near) => format!("Did you mean `{near}`?"),
+                        None => "Name `steps` or `ram`, like `comptime(steps: 50G) …`.".to_string(),
+                    }),
+                    labels: Vec::new(),
+                });
+                refused = true;
+                continue;
+            }
+            let value = match self.constant_of(&bound.value) {
+                Some(folded) if !folded.beyond && !folded.value.negative => {
+                    Some(folded.value.magnitude)
+                }
+                _ => None,
+            };
+            let Some(value) = value else {
+                self.checked.findings.push(Finding {
+                    severity: Severity::Error,
+                    span: *span,
+                    code: "NK1102",
+                    message: format!(
+                        "`{name}` takes a whole number the build knows, and this is not one."
+                    ),
+                    notes: Vec::new(),
+                    help: Some(match name.as_str() {
+                        "steps" => "Write a number, like `steps: 50G`.".to_string(),
+                        _ => "Write a number of bytes, like `ram: 16Gi`.".to_string(),
+                    }),
+                    labels: Vec::new(),
+                });
+                refused = true;
+                continue;
+            };
+            match name.as_str() {
+                "steps" => raised.0 = Some(value),
+                _ => raised.1 = Some(value),
+            }
+        }
+        (!refused).then_some(raised)
     }
 
     /// **One `comptime`, wherever it stands**
@@ -22796,8 +22880,12 @@ impl<'a> Checker<'a> {
         name: Ident,
         ty: Option<&crate::ast::Type>,
         value: &Expr,
+        bounds: &[crate::ast::ConfigArg],
         span: &Span,
     ) -> Ty {
+        // **The bounds this one raises** (ADR-321 D11), read before anything
+        // runs: a bound that is refused runs nothing.
+        let raised = self.raised_bounds(bounds, span);
         // **`asset("…")` is a name only here** (ADR-310 D3), so the ordinary
         // walk's refusal is off while the initialiser is read: the evaluator
         // answers it, and two walks over one expression must not both have an
@@ -22842,9 +22930,18 @@ impl<'a> Checker<'a> {
             // number to hand on.
             Some(folded) if folded.beyond => (None, false),
             Some(folded) => (Some(build_time::Value::Int(folded.value)), false),
-            None => match self.compiled_build_time_value(value, &found, &bound, span) {
-                Some(outcome) => outcome,
-                None => self.build_time_value(value, &bound, span),
+            None => match raised {
+                None => (None, true),
+                Some(raised) => {
+                    let outside = std::mem::replace(&mut self.raised, raised);
+                    let outcome = match self.compiled_build_time_value(value, &found, &bound, span)
+                    {
+                        Some(outcome) => outcome,
+                        None => self.build_time_value(value, &bound, span),
+                    };
+                    self.raised = outside;
+                    outcome
+                }
             },
         };
         // Counted rather than returned, so that every refusal below - the

@@ -4,6 +4,23 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.530] — 2026-10-05
+
+**A `comptime` raises its own bounds: `comptime(steps: 50G, ram: 16Gi)`**
+(ADR-321 D11, #468 step 5b). Built as decided in 0.0.527.
+- Either bound may be named, at item level and in a body; one left out keeps
+  the default (10G steps, 4Gi).
+- `comptime(steps: 100) F = fib(20)` is refused by the budget, *`F` took more
+  than 100 steps while the program was built.*
+- `comptime(ram: 64Mi)` stops a list that grows without end at 67108864 bytes.
+- `comptime(stpes: 5)` is `NK1109`, *A `comptime` has no bound called
+  `stpes`.*, with *Did you mean `steps`?*.
+- A bound that is not a whole number the build knows is `NK1102`, and nothing
+  runs.
+
+The bounds are part of the run's program, so a changed bound runs again. Every
+bench and example lowers byte for byte as before.
+
 ## [0.0.529] — 2026-10-05
 
 **`1G` and `4Gi` are numbers, and an exponent is written `e`** (ADR-322,
