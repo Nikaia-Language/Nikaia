@@ -1109,6 +1109,35 @@ fn a_fallback_that_returns_takes_its_takings_with_it() {
     );
 }
 
+/// **A fallback block that ends in a jump is a fallback that jumps** (#457,
+/// found moving the prover's `Scope` into Nikaia, #436): `?? { s.insert(name)
+/// return 0 }` hands `name` over only on the path that leaves. It was
+/// `NK2105` for the read after it; a block that does not leave still is.
+#[test]
+fn a_fallback_block_that_returns_takes_its_takings_with_it() {
+    let leaves = "use std::collections\n\
+                  \n\
+                  fn f(known: i64?, mut s: collections::BTreeSet[String]) -> i64 {\n\
+                  \x20   let name: String = \"xy\"\n\
+                  \x20   let n = known ?? {\n\
+                  \x20       s.insert(name)\n\
+                  \x20       return 0\n\
+                  \x20   }\n\
+                  \x20   return n + name.len()\n\
+                  }\n\
+                  \n\
+                  fn main() {\n\
+                  \x20   let mut s: collections::BTreeSet[String] = collections::BTreeSet()\n\
+                  \x20   println(f\"{f(3, s)} {f(null, s)} {s.len()}\")\n\
+                  }\n";
+    runs("coalesce-block-return-takes", leaves, "5 0 1\n");
+    let stays = leaves.replace("        return 0\n", "        0\n");
+    assert!(
+        findings(&stays).iter().any(|f| f.code == "NK2105"),
+        "a fallback that does not leave still hands `name` over"
+    );
+}
+
 /// **Found by the solver's kernels** ([ADR-270](../../../docs/specification/adr/adr-270.md)
 /// D8 step 1): an index into a `mut` parameter, read and written. The
 /// parameter is a `&mut Vec<u32>` below, and the write was `set(&mut out, …)` -

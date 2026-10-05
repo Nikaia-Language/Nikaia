@@ -12533,17 +12533,10 @@ impl<'a> Checker<'a> {
                 // return Refused(k)` hands `k` over only on the path that
                 // leaves, so a use of `k` on the next line is no use after it -
                 // it was `NK2105` (found moving `contracts::order`'s walk into
-                // Nikaia, #125).
+                // Nikaia, #125). A block that ends in a jump is one (#457).
                 let from = self.taken_so_far();
                 let other = self.expr(fallback, span);
-                self.a_branch_that_leaves(
-                    from,
-                    matches!(
-                        &**fallback,
-                        Expr::Return(_) | Expr::Throw(_) | Expr::Continue | Expr::Break
-                    ),
-                    span,
-                );
+                self.a_branch_that_leaves(from, leaves(fallback), span);
                 // **A name on the left of `??` is taken where the answer is
                 // kept and lent where it is only read** (ADR-279 D5), which is
                 // the rule an argument follows (ADR-094 D1). Which one is known

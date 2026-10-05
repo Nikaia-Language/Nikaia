@@ -13470,12 +13470,17 @@ fn jumps(expr: &Expr) -> bool {
     )
 }
 
-/// Whether a `??`'s fallback ends in a jump: a jump itself, or another `??`
+/// Whether a `??`'s fallback ends in a jump: a jump itself, another `??`
 /// whose own fallback does - the chain `a ?? b ?? continue` is one fallback
-/// that may leave.
+/// that may leave - or a block whose last statement does (#457).
 fn jumps_at_the_end(expr: &Expr) -> bool {
     match expr {
         Expr::Coalesce { fallback, .. } => jumps_at_the_end(fallback),
+        Expr::Block(block) => match block.stmts.last().map(|s| &s.node) {
+            Some(Stmt::Return(_) | Stmt::Break | Stmt::Continue) => true,
+            Some(Stmt::Expr(inner)) => jumps_at_the_end(inner),
+            _ => false,
+        },
         _ => jumps(expr),
     }
 }

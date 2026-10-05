@@ -4,6 +4,15 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.487] — 2026-10-05
+
+**A `??` whose fallback block ends in a jump is a fallback that jumps**
+(#457). `known ?? { s.insert(name)  return 0 }` handed `name` over for the
+rest of the function - `NK2105` at the next read - and was written as
+`.into()` on a block of type `!`, which `rustc` refused. The checker asks
+whether the fallback leaves, a block ending in a jump included, and the
+emitter writes such a fallback as the `match` a bare jump gets.
+
 ## [0.0.486] — 2026-10-05
 
 **The prover's walk holds its terms in Nikaia** (ADR-294, #436 step 4). Every
