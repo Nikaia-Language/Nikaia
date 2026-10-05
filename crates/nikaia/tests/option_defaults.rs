@@ -257,3 +257,60 @@ fn a_struct_default_with_a_field_that_owns_memory_is_refused() {
         vec![("NK1167".to_string(), "bag()".to_string())]
     );
 }
+
+/// **Across packages** (ADR-318 D3, #374 step 4): a library's computed
+/// default reaches a caller in another package as the value the library's
+/// build computed, and a struct in it under the name the caller writes the
+/// type with, `lib::Point`.
+#[test]
+fn a_computed_default_reaches_another_package() {
+    let dir = common::scratch_dir("option-defaults-across");
+    let lib = "pub struct Point {\n\
+         \x20   pub x: i64,\n\
+         \x20   pub y: i64,\n\
+         }\n\
+         \n\
+         fn origin() -> Point {\n\
+         \x20   return Point { x: 1, y: 2 }\n\
+         }\n\
+         \n\
+         pub fn show(label: ref String; at: Point = origin(), scale: i64 = 10 * 3) -> String {\n\
+         \x20   return f\"{label} {at.x} {at.y} {scale}\"\n\
+         }\n\
+         \n\
+         fn main() {\n\
+         }\n";
+    let app = "fn main() {\n\
+         \x20   println(lib::show(\"p\"))\n\
+         }\n";
+    for (package, source, manifest) in [
+        (
+            "lib",
+            lib,
+            "[package]\nname = \"lib\"\nversion = \"0.1.0\"\n",
+        ),
+        (
+            "app",
+            app,
+            "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n[dependencies]\nlib = { path = \"../lib\" }\n",
+        ),
+    ] {
+        std::fs::create_dir_all(dir.join(package).join("src")).expect("the package");
+        std::fs::write(dir.join(package).join("nikaia.toml"), manifest).expect("a manifest");
+        std::fs::write(dir.join(package).join("src/main.nika"), source).expect("a source");
+    }
+    let run = std::process::Command::new(env!("CARGO_BIN_EXE_nikaia"))
+        .current_dir(dir.join("app"))
+        .arg("run")
+        .output()
+        .expect("the nikaia binary runs");
+    let stdout = String::from_utf8_lossy(&run.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&run.stderr).to_string();
+    let ledger = std::fs::read_to_string(dir.join("app/nikaia.contracts")).unwrap_or_default();
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(stdout, "p 1 2 30\n", "{stderr}");
+    assert!(
+        ledger.contains("at: lib::Point = lib::Point { x: 1, y: 2 }, scale: i64 = 30"),
+        "{ledger}"
+    );
+}

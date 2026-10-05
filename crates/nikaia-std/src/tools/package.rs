@@ -7293,6 +7293,7 @@ pub fn absorb_into(ledger: &mut Ledger, module: Option<&str>, renames: &collecti
             for option in signature.config.iter() {
                 let mut changed = option.clone();
                 changed.ty = qualified_ty(&option.ty, &prefix, qualified, &declared, &kept);
+                if qualified { changed.default = qualified_default(&option.default, &prefix, &declared); }
                 options.push(changed);
             }
             signature.config = options;
@@ -7334,6 +7335,51 @@ fn widen(ledger: &mut Ledger, name: String, types: &collections::BTreeSet<String
     }, || collections::BTreeSet::new().into());
     for ty in types.iter() { all.insert(ty.to_owned()); }
     ledger.implementations.insert(name, all);
+}
+
+fn qualified_default(text: &str, prefix: &str, declared: &collections::BTreeSet<String>) -> String {
+    let c: Vec<char> = nikaia_std::list::chars(text.chars());
+    let mut out: String = String::from("");
+    let mut at: i64 = 0;
+    let mut quoted = false;
+    while ((at) as usize) < c.len() {
+        let here = *nikaia_std::index::get(&c, (at) as usize);
+        if quoted {
+            out.push(here);
+            if here == '\\' && ((at + 1) as usize) < c.len() {
+                out.push(*nikaia_std::index::get(&c, (at + 1) as usize));
+                at += 2;
+                continue;
+            }
+            if here == '"' { quoted = false; }
+            at += 1;
+            continue;
+        }
+        if here == '"' {
+            quoted = true;
+            out.push(here);
+            at += 1;
+            continue;
+        }
+        if here.is_alphabetic() || here == '_' {
+            let start: i64 = at;
+            let mut word: String = String::from("");
+            while ((at) as usize) < c.len() && ((*nikaia_std::index::get(&c, (at) as usize)).is_alphanumeric() || *nikaia_std::index::get(&c, (at) as usize) == '_') {
+                word.push(*nikaia_std::index::get(&c, (at) as usize));
+                at += 1;
+            }
+            let after_path = start >= 2 && *nikaia_std::index::get(&c, nikaia_std::index::at(start - 1)) == ':' && *nikaia_std::index::get(&c, nikaia_std::index::at(start - 2)) == ':';
+            if !after_path && declared.contains(&word) {
+                out.push_str(prefix);
+                out.push_str("::");
+            }
+            out.push_str(&word);
+            continue;
+        }
+        out.push(here);
+        at += 1;
+    }
+    out
 }
 
 fn key_under(name: &str, prefix: &str, qualified: bool) -> String {

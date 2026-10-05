@@ -4,6 +4,17 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.467] — 2026-10-05
+
+**A computed default reaches another package** (ADR-318 D3, #374 step 4).
+Absorbing a dependency's ledger qualified an option's type, `at: lib::Point`,
+but left the default as the library wrote it, `Point { x: 1, y: 2 }`, and the
+consumer's Rust could not find `Point`. The default's type names are now
+qualified the same way, `lib::Point { x: 1, y: 2 }`; a word inside a string or
+already after a `::` is left alone. A two-package test runs a library's
+`at: Point = origin()` and `scale: i64 = 10 * 3` from a caller that leaves
+both out.
+
 ## [0.0.466] — 2026-10-05
 
 **A struct is a default** (ADR-318 D3, D4, #374). A default whose value is a

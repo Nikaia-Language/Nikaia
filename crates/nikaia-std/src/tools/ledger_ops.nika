@@ -114,6 +114,9 @@ pub fn absorb_into(mut ledger: Ledger, module: ref String?, renames: ref collect
             for option in signature.config {
                 let mut changed = option.clone()
                 changed.ty = qualified_ty(option.ty, prefix, qualified, declared, kept)
+                if qualified {
+                    changed.default = qualified_default(option.default, prefix, declared)
+                }
                 options.push(changed)
             }
             signature.config = options
@@ -163,6 +166,58 @@ fn widen(mut ledger: Ledger, name: String, types: ref collections::BTreeSet[Stri
         all.insert(ty.clone())
     }
     ledger.implementations.insert(name, all)
+}
+
+/// **A default's type names, under the name a caller writes them with**
+/// (ADR-318 D3): `Point { x: 1, y: 2 }` in `geo`'s ledger is
+/// `geo::Point { x: 1, y: 2 }` to a consumer, as its option's type is
+/// `geo::Point`. A word the package declares as a type, outside a string and
+/// not already after a `::`, is the one that changes.
+fn qualified_default(text: ref String, prefix: ref String, declared: ref collections::BTreeSet[String]) -> String {
+    let c: Vec[char] = text.chars().collect()
+    let mut out: String = ""
+    let mut at = 0
+    let mut quoted = false
+    while at < c.len() {
+        let here = c[at]
+        if quoted {
+            out.push(here)
+            if here == '\\' && at + 1 < c.len() {
+                out.push(c[at + 1])
+                at += 2
+                continue
+            }
+            if here == '"' {
+                quoted = false
+            }
+            at += 1
+            continue
+        }
+        if here == '"' {
+            quoted = true
+            out.push(here)
+            at += 1
+            continue
+        }
+        if here.is_alphabetic() || here == '_' {
+            let start = at
+            let mut word: String = ""
+            while at < c.len() && (c[at].is_alphanumeric() || c[at] == '_') {
+                word.push(c[at])
+                at += 1
+            }
+            let after_path = start >= 2 && c[start - 1] == ':' && c[start - 2] == ':'
+            if !after_path && declared.contains(word) {
+                out.push_str(prefix)
+                out.push_str("::")
+            }
+            out.push_str(word)
+            continue
+        }
+        out.push(here)
+        at += 1
+    }
+    return out
 }
 
 fn key_under(name: ref String, prefix: ref String, qualified: bool) -> String {
