@@ -1045,7 +1045,11 @@ fn method_origins(call: ref Expr, ask: ref BufferAsk, holes_of: fn(ref Expr) -> 
     if keeping != null {
         add_all(call_source(keeping ?? "", walk), out)
     }
-    if hands_back_its_own(method) || (method == "clone" && copies_text(receiver, ask, walk)) {
+    // **A result that holds no view is the call's own** (#460), as a
+    // function's is (`answered_by`): where every method of this package by
+    // that name hands back such a result, `into.add(length)` points nowhere,
+    // and a number it answers kept nothing of `length` alive.
+    if hands_back_its_own(method) || (method == "clone" && copies_text(receiver, ask, walk)) || (keeping == null && owned_by_every_method(ask.own, method)) {
         for arg in args {
             origins_of(arg, ask, holes_of, unaliased, walk)
         }
@@ -1057,6 +1061,24 @@ fn method_origins(call: ref Expr, ask: ref BufferAsk, holes_of: fn(ref Expr) -> 
         add_all(origins_of(arg, ask, holes_of, unaliased, walk), out)
     }
     return out
+}
+
+/// Whether every method of `ledger` named `method` hands back a result that
+/// holds no view - and there is one.
+fn owned_by_every_method(ledger: ref Ledger, method: ref String) -> bool {
+    let suffix = f"::{method}"
+    let mut any = false
+    for (key, contract) in ledger.functions {
+        if key.ends_with(ref suffix) {
+            let signature = contract.signature ?? return false
+            any = true
+            let result = signature.result ?? continue
+            if a_ledger_type_with_a_view(result) {
+                return false
+            }
+        }
+    }
+    return any
 }
 
 // A call: **to a variant whole** a buffer is moved into the value; a callee

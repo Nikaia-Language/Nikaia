@@ -73,4 +73,141 @@ impl ProverState {
         }
         return false
     }
+
+    /// **A callee's precondition this function cannot show is its callers'**
+    /// (ADR-269 D15), as an `assert` of it standing at the call would be:
+    /// carried back to the entry, where that reads only the parameters.
+    /// Not where what is known rules it out - that call is warned about
+    /// (D8) - nor through a call that can come back to this function, nor in
+    /// a test. `function` is the free function the call stands in, where a
+    /// precondition may belong to it.
+    pub fn carry_back(ref mut self, mut arena: TermArena, goal: i64?, pre: ref PreClaim, callee: ref String, site: CarriedFrom, scope: ref ProverScope, function: ref String?, params: ref collections::BTreeSet[String], ask: fn(ref TermArena, ref Vec[i64], i64) -> SolverAnswer sync, model: fn(ref TermArena, ref Vec[i64], i64) -> collections::BTreeMap[String, i64]? sync) {
+        let claim = goal ?? return
+        let owner = carrying_function(function) ?? return
+        if self.in_test || self.reaches(callee, owner) {
+            return
+        }
+        if refuting_values(arena, scope.facts, claim, ask, model) != null {
+            return
+        }
+        let term = scope.precondition_at(arena, claim, params) ?? return
+        let carried = PreClaim {
+            term: term,
+            written: pre.written.clone(),
+            computed: arena.text(term),
+            message: claim_text_of(pre.message),
+            origin: claim_text_of(pre.origin) ?? callee.clone(),
+            site: site,
+        }
+        let mut found = self.preconditions.remove(owner) ?? Precondition::none()
+        found.claims.push(carried)
+        self.preconditions.insert(owner, found)
+    }
+
+    /// **An exit of a free function**: each postcondition standing has to be
+    /// shown here, with the value handed back as `result`, or it falls
+    /// (ADR-269 D17). A parameter bound again before the exit reads something
+    /// else than at the entry, and that is a fall too. `counts` says the exit
+    /// is the function's own - not a lambda's, and of a free function.
+    pub fn exit(ref mut self, mut arena: TermArena, value: ref Expr, words: ref winnow_grammar::InternerContext, scope: ref ProverScope, function: ref String?, counts: bool, params: ref collections::BTreeSet[String], ask: fn(ref TermArena, ref Vec[i64], i64) -> SolverAnswer sync) {
+        if self.collecting || !counts {
+            return
+        }
+        let owner = carrying_function(function) ?? return
+        let posts = standing_posts(self.postconditions, owner) ?? return
+        let returned = lin_term(value, words, fn(name) { scope.ints.contains(name) }, arena.nodes)
+        let mut unshadowed = true
+        for p in params {
+            let key = if scope.entry.contains_key(p) { p.clone() } else { length_of(p) }
+            let at_entry = scope.entry[key] ?? -1
+            if at_entry < 0 || !arena.is_the_variable(at_entry, key) {
+                unshadowed = false
+                break
+            }
+        }
+        for index in 0..<posts.len() {
+            let mut shown = false
+            if unshadowed && returned != null {
+                let mut given: collections::BTreeMap[String, i64] = collections::BTreeMap()
+                given.insert(result_name(), returned ?? 0)
+                let goal = arena.substitute(posts[index].term, given)
+                shown = match ask(arena, scope.facts, goal) {
+                    SolverAnswer::Proved => true,
+                    else => false,
+                }
+            }
+            if !shown {
+                self.broken.insert((owner.clone(), index))
+            }
+        }
+    }
+}
+
+/// **What a call's postconditions say of the name its result is bound to**
+/// (ADR-269 D17): each of `posts` with the call's arguments in place of
+/// `params` and `bound` in place of `result`. Computed before the name is
+/// bound, so an argument that reads the name it shadows makes none; a
+/// postcondition that reads a parameter no argument gives makes none either.
+pub fn postconditions_for(mut arena: TermArena, posts: ref Vec[PostClaim], params: ref Vec[String], args: ref Vec[Expr], bound: ref String, scope: ref ProverScope, words: ref winnow_grammar::InternerContext) -> Vec[i64] {
+    let mut args_given: collections::BTreeMap[String, i64] = collections::BTreeMap()
+    let mut k = 0
+    for arg in args {
+        if k >= params.len() {
+            break
+        }
+        let param = params[k]
+        let term = lin_term(arg, words, fn(name) { scope.ints.contains(name) }, arena.nodes)
+        if term != null {
+            args_given.insert(param.clone(), term ?? 0)
+        }
+        match arg {
+            Expr::Variable(name) => {
+                let length = length_of(words.resolve(name))
+                if scope.ints.contains(length) {
+                    let known = arena.var(length)
+                    args_given.insert(length_of(param), known)
+                }
+            },
+            else => {},
+        }
+        k += 1
+    }
+    let bound_length = length_of(bound)
+    for (_, term) in args_given {
+        if arena.mentions(term, bound) || arena.mentions(term, bound_length) {
+            return []
+        }
+    }
+    let result = arena.var(bound)
+    args_given.insert(result_name(), result)
+    let mut out: Vec[i64] = []
+    for post in posts {
+        let mut read: collections::BTreeSet[String] = collections::BTreeSet()
+        arena.variables(post.term, read)
+        if every_given(read, args_given) {
+            out.push(arena.substitute(post.term, args_given))
+        }
+    }
+    return out
+}
+
+/// Whether `args_given` gives each of `names`.
+fn every_given(names: ref collections::BTreeSet[String], args_given: ref collections::BTreeMap[String, i64]) -> bool {
+    for name in names {
+        if !args_given.contains_key(name) {
+            return false
+        }
+    }
+    return true
+}
+
+/// A function's postconditions, as they stand now.
+fn standing_posts(postconditions: ref collections::BTreeMap[String, Vec[PostClaim]], function: ref String) -> Vec[PostClaim]? {
+    let posts = postconditions[function] ?? return null
+    return posts.clone()
+}
+
+fn carrying_function(function: ref String?) -> String? {
+    let f = function ?? return null
+    return f.clone()
 }

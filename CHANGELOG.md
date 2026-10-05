@@ -4,6 +4,28 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.495] — 2026-10-05
+
+**Carrying a precondition back and showing a postcondition are Nikaia**
+(ADR-294, #436 step 4). `ProverState::carry_back` decides whether a
+precondition a call cannot show becomes the caller's (ADR-269 D15),
+`ProverState::exit` whether an exit shows the postconditions standing (D17),
+and `postconditions_for` what a call's postconditions say of the name its
+result is bound to; `TermArena::text` writes a term as a reader does. Every
+bench and example lowers byte for byte as before.
+
+**A method's number keeps nothing alive** (#460). `tools/buffers.nika` gave a
+method call's result the origins of its receiver and arguments, also where
+the method hands back an `i64`: `total += into.add(length)` put `length`'s
+buffer into `total`, the buffer went into the frame's keep, and
+`known.contains(&length)` was a `&&String`. A method of this package whose
+result holds no view hands back its own, as a function already did.
+
+**A function takes the parameters the program wrote** (#459). One with more
+than seven, the receiver counted, is written with
+`#[allow(clippy::too_many_arguments)]`: the lint is a rule about Rust written
+by hand, and the warning was about a file nobody wrote.
+
 ## [0.0.494] — 2026-10-05
 
 **What the prover asks the solver is Nikaia** (ADR-294, #436 step 4).

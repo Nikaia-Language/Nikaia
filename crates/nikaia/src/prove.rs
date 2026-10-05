@@ -235,7 +235,7 @@ pub fn prove(
 // (ADR-294, #436).
 use nikaia_std::tools::prover_claims::{CarriedFrom, Foreign, PostClaim, PreClaim, Precondition};
 use nikaia_std::tools::prover_solver::{self, SolverAnswer};
-use nikaia_std::tools::prover_state::ProverState;
+use nikaia_std::tools::prover_state::{self, ProverState};
 
 struct Prover<'a> {
     parsed: &'a Parsed,
@@ -1261,10 +1261,7 @@ impl<'a> Prover<'a> {
     }
 
     /// **A callee's precondition this function cannot show is its callers'**
-    /// (ADR-269 D15), as an `assert` of it standing at the call would be:
-    /// carried back to the entry, where that reads only the parameters.
-    /// Not where what is known rules it out - that call is warned about
-    /// (D8) - nor through a call that can come back to this function.
+    /// (`ProverState::carry_back`).
     fn carry_back(
         &mut self,
         goal: Option<i64>,
@@ -1274,33 +1271,23 @@ impl<'a> Prover<'a> {
         scope: &Scope,
         at: &Where,
     ) {
-        let (Some(goal), Some(function), None) = (goal, at.function.clone(), at.no_precondition)
-        else {
-            return;
-        };
-        if self.state.in_test || self.state.reaches(callee, &function) {
-            return;
-        }
-        if self.refutes(&scope.facts, goal).is_some() {
-            return;
-        }
-        let Some(term) = self.precondition_at(goal, scope, at) else {
-            return;
-        };
-        let carried = PreClaim {
-            term,
-            computed: Some(term_text(&self.arena, term)),
-            written: pre.written.clone(),
-            message: pre.message.clone(),
-            origin: Some(pre.origin.clone().unwrap_or_else(|| callee.to_string())),
-            site: Some(site),
-        };
-        self.state
-            .preconditions
-            .entry(function)
-            .or_insert_with(Precondition::none)
-            .claims
-            .push(carried);
+        let function = at
+            .function
+            .as_deref()
+            .filter(|_| at.no_precondition.is_none());
+        let Terms { held, copy } = &mut self.arena;
+        self.state.carry_back(
+            held,
+            goal,
+            pre,
+            callee,
+            site,
+            scope,
+            function,
+            &at.params,
+            |arena, facts, goal| answer_of(copy, arena, facts, goal),
+            |arena, facts, goal| model_of(copy, arena, facts, goal),
+        )
     }
 
     /// Whether the facts prove the goal: one query to the reference solver
@@ -1333,49 +1320,24 @@ impl<'a> Prover<'a> {
         scope.postcondition_at(&mut self.arena.held, claim, returned, &at.params)
     }
 
-    /// **An exit of a free function**: each postcondition standing has to be
-    /// shown here, with the value handed back as `result`, or it falls
-    /// (ADR-269 D17). A parameter bound again before the exit reads something
-    /// else than at the entry, and that is a fall too.
+    /// **An exit of a free function** (`ProverState::exit`).
     fn exit(&mut self, value: &Expr, scope: &Scope, at: &Where) {
-        if self.state.collecting || at.lambda || !at.free {
-            return;
-        }
-        let Some(function) = at.function.clone() else {
-            return;
-        };
-        let Some(posts) = self.state.postconditions.get(&function).cloned() else {
-            return;
-        };
-        let returned = lin(&mut self.arena, self.parsed, value, scope);
-        let unshadowed = at.params.iter().all(|p| {
-            let key = if scope.entry.contains_key(p) {
-                p.clone()
-            } else {
-                length_of(p)
-            };
-            scope
-                .entry
-                .get(&key)
-                .is_some_and(|e| self.arena.is_the_variable(*e, &key))
-        });
-        for (index, post) in posts.iter().enumerate() {
-            let shown = unshadowed
-                && returned.is_some_and(|returned| {
-                    let given = BTreeMap::from([(result_name(), returned)]);
-                    let goal = self.arena.substitute(post.term, &given);
-                    self.proves(&scope.facts, goal).is_ok()
-                });
-            if !shown {
-                self.state.broken.insert((function.clone(), index as i64));
-            }
-        }
+        let Terms { held, copy } = &mut self.arena;
+        self.state.exit(
+            held,
+            value,
+            &self.parsed.interner,
+            scope,
+            at.function.as_deref(),
+            !at.lambda && at.free,
+            &at.params,
+            |arena, facts, goal| answer_of(copy, arena, facts, goal),
+        )
     }
 
-    /// What a call's postconditions say of the name its result is bound to:
-    /// each with the call's arguments in place of the parameters and the name
-    /// in place of `result`. Computed before the name is bound, so an argument
-    /// that reads the name it shadows makes none.
+    /// What a call's postconditions say of the name its result is bound to
+    /// (`prover_state::postconditions_for`), from the callee's own
+    /// postconditions or another package's ledger.
     fn postconditions_of(
         &mut self,
         callee: &str,
@@ -1400,36 +1362,15 @@ impl<'a> Prover<'a> {
                     None => return Vec::new(),
                 },
             };
-        let mut with: BTreeMap<String, i64> = BTreeMap::new();
-        for (param, arg) in params.iter().zip(args) {
-            if let Some(term) = lin(&mut self.arena, self.parsed, arg, scope) {
-                with.insert(param.clone(), term);
-            }
-            if let Expr::Variable(name) = arg {
-                let length = length_of(self.parsed.text(*name));
-                if scope.ints.contains(&length) {
-                    let known = self.arena.var(&length);
-                    with.insert(length_of(param), known);
-                }
-            }
-        }
-        if with.values().any(|term| {
-            self.arena.mentions(*term, bound) || self.arena.mentions(*term, &length_of(bound))
-        }) {
-            return Vec::new();
-        }
-        let result = self.arena.var(bound);
-        with.insert(result_name(), result);
-        posts
-            .iter()
-            .filter_map(|post| {
-                let mut read = BTreeSet::new();
-                self.arena.variables(post.term, &mut read);
-                read.iter()
-                    .all(|name| with.contains_key(name))
-                    .then(|| self.arena.substitute(post.term, &with))
-            })
-            .collect()
+        prover_state::postconditions_for(
+            &mut self.arena.held,
+            &posts,
+            &params,
+            args,
+            bound,
+            scope,
+            &self.parsed.interner,
+        )
     }
 
     /// Whether a free function hands back a whole number.
@@ -1928,10 +1869,6 @@ impl Terms {
             .map(|(name, term)| (name.clone(), *term))
             .collect();
         self.held.substitute(id, &given)
-    }
-
-    fn is_the_variable(&self, id: i64, name: &str) -> bool {
-        self.held.is_the_variable(id, name)
     }
 
     /// A term `prove_terms` builds, its nodes appended to `held`.

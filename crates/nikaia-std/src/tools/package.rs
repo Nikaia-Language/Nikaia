@@ -2789,7 +2789,7 @@ fn method_origins(call: &Expr, ask: &BufferAsk<'_>, holes_of: &impl Fn(&Expr) ->
     };
     let keeping = keeping_method_key(ask.own, (walk.target).as_deref(), on_self, &method);
     if keeping.is_some() { add_all(&call_source(nikaia_std::index::or(keeping.as_deref(), || ""), walk), &mut out); }
-    if hands_back_its_own(&method) || method == "clone" && copies_text(receiver, ask, &walk) {
+    if hands_back_its_own(&method) || method == "clone" && copies_text(receiver, ask, &walk) || keeping.is_none() && owned_by_every_method(ask.own, &method) {
         for arg in args.iter() { origins_of(arg, ask, holes_of, unaliased, walk); }
         origins_of(receiver, ask, holes_of, unaliased, walk);
         return out;
@@ -2797,6 +2797,20 @@ fn method_origins(call: &Expr, ask: &BufferAsk<'_>, holes_of: &impl Fn(&Expr) ->
     add_all(&origins_of(receiver, ask, holes_of, unaliased, walk), &mut out);
     for arg in args.iter() { add_all(&origins_of(arg, ask, holes_of, unaliased, walk), &mut out); }
     out
+}
+
+fn owned_by_every_method(ledger: &Ledger, method: &str) -> bool {
+    let suffix = format!("::{}", method);
+    let mut any = false;
+    for (key, contract) in ledger.functions.iter() {
+        if key.ends_with(&suffix) {
+            let signature = match contract.signature.as_ref() { Some(__nikaia_value) => __nikaia_value, None => return false };
+            any = true;
+            let result = match signature.result.as_ref() { Some(__nikaia_value) => __nikaia_value, None => continue };
+            if a_ledger_type_with_a_view(result) { return false; }
+        }
+    }
+    any
 }
 
 fn call_origins(func: &Expr, args: &[Expr], ask: &BufferAsk<'_>, holes_of: &impl Fn(&Expr) -> Vec<Expr>, unaliased: &impl Fn(&str) -> String, walk: &mut BufferWalk) -> collections::BTreeSet<(i64, String)> {
@@ -10381,6 +10395,7 @@ impl TermArena {
         }
         total
     }
+    pub fn text(&self, id: i64) -> String { term_text(id, &|at| { self.at(at) }) }
     pub fn is_the_variable(&self, id: i64, name: &str) -> bool {
         match nikaia_std::index::get(&self.nodes, nikaia_std::index::at(id)) {
             SolverTerm::Var(n) => n == name,
@@ -10746,6 +10761,96 @@ impl ProverState {
         }
         false
     }
+    #[allow(clippy::too_many_arguments)]
+    pub fn carry_back(&mut self, arena: &mut TermArena, goal: Option<i64>, pre: &PreClaim, callee: &str, site: CarriedFrom, scope: &ProverScope, function: Option<&str>, params: &collections::BTreeSet<String>, ask: impl Fn(&TermArena, &[i64], i64) -> SolverAnswer, model: impl Fn(&TermArena, &[i64], i64) -> Option<collections::BTreeMap<String, i64>>) {
+        let claim = match goal { Some(__nikaia_value) => __nikaia_value, None => return };
+        let owner = match carrying_function(function) { Some(__nikaia_value) => __nikaia_value, None => return };
+        if self.in_test || self.reaches(callee, &owner) { return; }
+        if refuting_values(arena, &scope.facts, claim, &ask, &model).is_some() { return; }
+        let term = match scope.precondition_at(arena, claim, params) { Some(__nikaia_value) => __nikaia_value, None => return };
+        let carried = PreClaim { term, written: pre.written.to_owned(), computed: Some(arena.text(term)), message: claim_text_of((pre.message).as_deref()), origin: Some(nikaia_std::index::or(claim_text_of((pre.origin).as_deref()), || callee.to_owned().into())), site: Some(site) };
+        let mut found = nikaia_std::index::or(self.preconditions.remove(&owner), || Precondition::none());
+        found.claims.push(carried);
+        self.preconditions.insert(owner, found);
+    }
+    #[allow(clippy::too_many_arguments)]
+    pub fn exit(&mut self, arena: &mut TermArena, value: &Expr, words: &winnow_grammar::InternerContext, scope: &ProverScope, function: Option<&str>, counts: bool, params: &collections::BTreeSet<String>, ask: impl Fn(&TermArena, &[i64], i64) -> SolverAnswer) {
+        if self.collecting || !counts { return; }
+        let owner = match carrying_function(function) { Some(__nikaia_value) => __nikaia_value, None => return };
+        let posts = match standing_posts(&self.postconditions, &owner) { Some(__nikaia_value) => __nikaia_value, None => return };
+        let returned = lin_term(value, words, &|name| { scope.ints.contains(name) }, &mut arena.nodes);
+        let mut unshadowed = true;
+        for p in params.iter() {
+            let key = if scope.entry.contains_key(p) { p.to_owned() } else { length_of(p) };
+            let at_entry = nikaia_std::index::or(*nikaia_std::index::get(&scope.entry, &key), || -1);
+            if at_entry < 0 || !arena.is_the_variable(at_entry, &key) {
+                unshadowed = false;
+                break;
+            }
+        }
+        for index in 0..posts.len() as i64 {
+            let mut shown = false;
+            if unshadowed && returned.is_some() {
+                let mut given: collections::BTreeMap<String, i64> = collections::BTreeMap::new();
+                given.insert(result_name(), nikaia_std::index::or(returned, || 0));
+                let goal = arena.substitute(nikaia_std::index::get(&posts, (index) as usize).term, &given);
+                shown = matches!(ask(&arena, &scope.facts, goal), SolverAnswer::Proved);
+            }
+            if !shown { self.broken.insert((owner.to_owned(), index)); }
+        }
+    }
+}
+
+pub fn postconditions_for(arena: &mut TermArena, posts: &[PostClaim], params: &[String], args: &[Expr], bound: &str, scope: &ProverScope, words: &winnow_grammar::InternerContext) -> Vec<i64> {
+    let mut args_given: collections::BTreeMap<String, i64> = collections::BTreeMap::new();
+    let mut k: i64 = 0;
+    for arg in args.iter() {
+        if ((k) as usize) >= params.len() { break; }
+        let param = nikaia_std::index::get(&params, (k) as usize);
+        let term = lin_term(arg, words, &|name| { scope.ints.contains(name) }, &mut arena.nodes);
+        if term.is_some() { args_given.insert(param.to_owned(), nikaia_std::index::or(term, || 0)); }
+        match arg {
+            Expr::Variable(name) => {
+                let name = *name;
+                let length = length_of(words.resolve(name));
+                if scope.ints.contains(&length) {
+                    let known = arena.var(&length);
+                    args_given.insert(length_of(&param), known);
+                }
+            },
+            _ => { },
+        }
+        k += 1;
+    }
+    let bound_length = length_of(bound);
+    for (_, term) in args_given.iter() {
+        let term = nikaia_std::num::value(term);
+        if arena.mentions(term, bound) || arena.mentions(term, &bound_length) { return vec![]; }
+    }
+    let result = arena.var(bound);
+    args_given.insert(result_name(), result);
+    let mut out: Vec<i64> = vec![];
+    for post in posts.iter() {
+        let mut read: collections::BTreeSet<String> = collections::BTreeSet::new();
+        arena.variables(post.term, &mut read);
+        if every_given(&read, &args_given) { out.push(arena.substitute(post.term, &args_given)); }
+    }
+    out
+}
+
+fn every_given(names: &collections::BTreeSet<String>, args_given: &collections::BTreeMap<String, i64>) -> bool {
+    for name in names.iter() { if !args_given.contains_key(name) { return false; } }
+    true
+}
+
+fn standing_posts(postconditions: &collections::BTreeMap<String, Vec<PostClaim>>, function: &str) -> Option<Vec<PostClaim>> {
+    let posts = match *nikaia_std::index::get(&postconditions, function) { Some(__nikaia_value) => __nikaia_value, None => return None };
+    Some(posts.to_owned())
+}
+
+fn carrying_function(function: Option<&str>) -> Option<String> {
+    let f = match function { Some(__nikaia_value) => __nikaia_value, None => return None };
+    Some(f.to_owned())
 }
 
 
@@ -19466,7 +19571,7 @@ pub mod prover_solver {
 }
 pub mod prover_state {
     #[allow(unused_imports)]
-    pub use super::{ProverState};
+    pub use super::{ProverState, postconditions_for};
 }
 pub mod render {
     #[allow(unused_imports)]

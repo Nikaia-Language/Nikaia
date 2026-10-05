@@ -4664,6 +4664,14 @@ impl<'p> Emitter<'p> {
             out.push("#[allow(non_snake_case)]\n");
             out.push(&pad);
         }
+        // **A function takes the parameters the program wrote** (#459): the
+        // language below's lint asks for fewer than eight inputs, which is a
+        // rule about code written in it, and the warning would be about a file
+        // nobody wrote.
+        if args.len() + usize::from(receiver.is_some()) > 7 {
+            out.push("#[allow(clippy::too_many_arguments)]\n");
+            out.push(&pad);
+        }
         // **What a fold's step calls runs once per item** (#433): LLVM left
         // 1BRC's `Summary::record` out of line - hashbrown's insert path makes
         // it too big for its heuristic - at 319 instructions a row, and 300

@@ -333,6 +333,11 @@ impl TermArena {
     }
 
     /// Whether `id` is the variable `name` itself.
+    /// A term as a reader writes it (`prove_text.nika`'s `term_text`).
+    pub fn text(ref self, id: i64) -> String {
+        return term_text(id) fn(at) { self.at(at) }
+    }
+
     pub fn is_the_variable(ref self, id: i64, name: ref String) -> bool {
         return match self.nodes[id] {
             SolverTerm::Var(n) => n == name,

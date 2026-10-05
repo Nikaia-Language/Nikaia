@@ -1205,6 +1205,89 @@ fn a_list_parameter_is_handed_to_a_function_value() {
     );
 }
 
+/// **A function takes the parameters the program wrote** (#459, found
+/// moving the prover's `carry_back` into Nikaia, #436): eight parameters are
+/// written with the `allow` for the language below's lint, seven without.
+#[test]
+fn a_long_parameter_list_is_allowed_below() {
+    let source = "fn eight(a: i64, b: i64, c: i64, d: i64, e: i64, f: i64, g: i64, h: i64) -> i64 {\n\
+                  \x20   return a + b + c + d + e + f + g + h\n\
+                  }\n\
+                  \n\
+                  fn seven(a: i64, b: i64, c: i64, d: i64, e: i64, f: i64, g: i64) -> i64 {\n\
+                  \x20   return a + b + c + d + e + f + g\n\
+                  }\n\
+                  \n\
+                  fn main() {\n\
+                  \x20   println(f\"{eight(1, 2, 3, 4, 5, 6, 7, 8)} {seven(1, 2, 3, 4, 5, 6, 7)}\")\n\
+                  }\n";
+    let parsed = parse_to_ast(source).expect("the source parses");
+    let rust = emit_program(&parsed, Build::default())
+        .expect("the source lowers")
+        .rust;
+    let allowed = rust.matches("#[allow(clippy::too_many_arguments)]").count();
+    assert_eq!(allowed, 1, "{rust}");
+    let at = rust.find("#[allow(clippy::too_many_arguments)]").unwrap();
+    assert!(
+        rust[at..]
+            .trim_start_matches("#[allow(clippy::too_many_arguments)]")
+            .trim_start()
+            .starts_with("fn eight"),
+        "{rust}"
+    );
+    runs("long-parameter-list", source, "36 28\n");
+}
+
+/// **A method's number is its own** (#460, found moving the prover's
+/// `postconditions_of` into Nikaia, #436): `total += into.add(length)` gave
+/// the sum the origins of `length`, a `String` the loop makes, so the buffer
+/// went into the frame's keep and `known.contains(&length)` was a
+/// `&&String`, which `rustc` refused. A method of this package whose result
+/// holds no view hands back its own, as a function does.
+#[test]
+fn a_methods_number_keeps_nothing_alive() {
+    runs(
+        "method-number-own",
+        "use std::collections\n\
+         \n\
+         struct Names {\n\
+         \x20   pub all: Vec[String],\n\
+         }\n\
+         \n\
+         impl Names {\n\
+         \x20   pub fn add(ref mut self, name: ref String) -> i64 {\n\
+         \x20       self.all.push(name.clone())\n\
+         \x20       return self.all.len()\n\
+         \x20   }\n\
+         }\n\
+         \n\
+         fn length_named(name: ref String) -> String {\n\
+         \x20   return f\"{name}.len()\"\n\
+         }\n\
+         \n\
+         fn count(names: ref Vec[String], known: ref collections::BTreeSet[String], mut into: Names) -> i64 {\n\
+         \x20   let mut total = 0\n\
+         \x20   for name in names {\n\
+         \x20       let length = length_named(name)\n\
+         \x20       if known.contains(length) {\n\
+         \x20           total += into.add(length)\n\
+         \x20       }\n\
+         \x20   }\n\
+         \x20   return total\n\
+         }\n\
+         \n\
+         fn main() {\n\
+         \x20   let names: Vec[String] = [\"a\", \"b\", \"c\"]\n\
+         \x20   let mut known: collections::BTreeSet[String] = collections::BTreeSet()\n\
+         \x20   known.insert(\"a.len()\")\n\
+         \x20   known.insert(\"c.len()\")\n\
+         \x20   let mut into = Names { all: [] }\n\
+         \x20   println(f\"{count(names, known, into)} {into.all.len()}\")\n\
+         }\n",
+        "3 2\n",
+    );
+}
+
 /// **Found by the solver's kernels** ([ADR-270](../../../docs/specification/adr/adr-270.md)
 /// D8 step 1): an index into a `mut` parameter, read and written. The
 /// parameter is a `&mut Vec<u32>` below, and the write was `set(&mut out, …)` -
