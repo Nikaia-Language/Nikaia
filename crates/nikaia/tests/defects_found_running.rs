@@ -1464,6 +1464,22 @@ fn tuples_taken_apart_and_list_positions_lower() {
     );
 }
 
+/// **A list of tuple literals builds each tuple's text** (#466): `[("a", 1),
+/// ("b", 2)]` for a `Vec[(String, i64)]` was `NK1103`, a list of `(ref
+/// String, ?)`, where one tuple and a list of plain text were accepted.
+#[test]
+fn a_list_of_tuple_literals_takes_the_declared_type() {
+    runs(
+        "tuple-list-literal",
+        "fn main() {\n\
+         \x20   let pairs: Vec[(String, i64)] = [(\"a\", 1), (\"b\", 2)]\n\
+         \x20   let (name, n) = pairs[1]\n\
+         \x20   println(f\"{pairs.len()} {name} {n}\")\n\
+         }\n",
+        "2 b 2\n",
+    );
+}
+
 /// **Found by the solver's kernels** ([ADR-270](../../../docs/specification/adr/adr-270.md)
 /// D8 step 1): an index into a `mut` parameter, read and written. The
 /// parameter is a `&mut Vec<u32>` below, and the write was `set(&mut out, …)` -

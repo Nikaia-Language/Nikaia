@@ -18995,7 +18995,41 @@ impl<'a> Checker<'a> {
         self.array_literal(found, want, value, span)
             .or_else(|| self.text_literal(want, value, true))
             .or_else(|| self.tuple_literal(found, want, value))
+            .or_else(|| self.list_of_tuple_literals(found, want, value))
             .or_else(|| self.collect_by_use(found, want, value, span))
+    }
+
+    /// **A list of tuple literals builds each tuple's text where the list is
+    /// kept**, as one tuple does (`tuple_literal`): `[("a", 1), ("b", 2)]`
+    /// for a `Vec[(String, i64)]` was `NK1103`, a list of `(ref String, ?)`.
+    fn list_of_tuple_literals(&mut self, found: &Ty, want: &Ty, value: &Expr) -> Option<Ty> {
+        let (
+            Ty::Named {
+                name,
+                args,
+                view: false,
+            },
+            Ty::Named { args: founds, .. },
+            Expr::ListLit { items, .. },
+        ) = (want, found, value)
+        else {
+            return None;
+        };
+        let ([wanted @ Ty::Tuple(_)], [element]) = (args.as_slice(), founds.as_slice()) else {
+            return None;
+        };
+        if name != "Vec" || items.is_empty() {
+            return None;
+        }
+        let mut built = None;
+        for item in items {
+            built = Some(self.tuple_literal(element, wanted, item)?);
+        }
+        built.map(|element| Ty::Named {
+            name: name.clone(),
+            args: vec![element],
+            view: false,
+        })
     }
 
     /// **`collect()` builds what the place it goes into declares**

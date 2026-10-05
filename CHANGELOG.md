@@ -4,6 +4,13 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.507] — 2026-10-05
+
+**A list of tuple literals builds each tuple's text** (#466). `let pairs:
+Vec[(String, i64)] = [("a", 1), ("b", 2)]` was `NK1103`, a list of
+`(ref String, ?)`, where one tuple literal and a list of plain text literals
+were already accepted: the list's tuples are now built as one tuple is.
+
 ## [0.0.506] — 2026-10-05
 
 **A tuple taken apart out of a place is lent, and a list's position is
