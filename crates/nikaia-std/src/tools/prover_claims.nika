@@ -1,0 +1,92 @@
+// crates/nikaia-std/src/tools/prover_claims.nika
+//
+// **The claims the prover carries between functions** (ADR-269 D15, D17,
+// D18), moved from the compiler's `prove` (ADR-294, #436 step 4): a
+// precondition's claims at a function's entry, a postcondition's over
+// `result`, and another package's contract read back into terms. A term is
+// a place in the walk's arena (`prover_arena.nika`).
+
+/// One claim of a precondition (ADR-269 D15).
+pub struct PreClaim {
+    /// The condition at the function's entry, over its parameters: the
+    /// `assert`'s claim carried back through the body - `mode == 1 → x > 1`
+    /// for `assert(y > 0)` after `let y = x - 1` inside `if mode == 1`.
+    pub term: i64,
+    /// The `assert`'s condition, written, for messages.
+    pub written: String,
+    /// The condition at the entry as a reader writes it, where it is not the
+    /// claim as written: `mode == 1 → x - 1 > 0` (ADR-269 D21).
+    pub computed: String?,
+    /// The `assert`'s `message:`, where it is text as written.
+    pub message: String?,
+    /// **The function the `assert` stands in**, where it is not this one:
+    /// a callee's precondition carried back through a call (ADR-269 D15).
+    pub origin: String?,
+    /// The call it was carried back from - where it starts, the callee and
+    /// the claim's place in the callee's list - so that the second pass
+    /// knows the call needs no check of its own.
+    pub site: CarriedFrom?,
+}
+
+impl PreClaim {
+    /// What a failed check of it says: the condition, and where a computed
+    /// one came from (ADR-269 D21).
+    pub fn failure(ref self, function: ref String) -> String {
+        let computed = claim_text_of(self.computed) ?? return f"precondition of `{function}`: `{self.written}`"
+        let origin = claim_text_of(self.origin) ?? return f"precondition of `{function}`: `{computed}`, from `assert({self.written})`"
+        return f"precondition of `{function}`: `{computed}`, from `assert({self.written})` in `{origin}`"
+    }
+
+    /// Whether it was carried back from the call `site`.
+    pub fn carried_from(ref self, site: ref CarriedFrom) -> bool {
+        let mine = carried_site_of(self.site) ?? return false
+        return mine == site
+    }
+}
+
+/// **The call a claim was carried back from** (ADR-269 D15): where it
+/// starts, the callee, and the claim's place in the callee's list.
+pub struct CarriedFrom {
+    pub at: i64,
+    pub callee: String,
+    pub place: i64,
+}
+
+/// A function's precondition: its claims, each at its entry.
+pub struct Precondition {
+    pub claims: Vec[PreClaim],
+}
+
+impl Precondition {
+    pub fn none() -> Precondition {
+        return Precondition { claims: [] }
+    }
+}
+
+/// One claim of a postcondition (ADR-269 D17).
+pub struct PostClaim {
+    /// Over `result` and the function's parameters.
+    pub term: i64,
+    /// The `assert`'s condition, written.
+    pub written: String,
+}
+
+/// **Another package's function, as its ledger states it** (ADR-269 D18):
+/// its parameters, whether it hands back a whole number, and its contract
+/// read back into terms.
+pub struct Foreign {
+    pub params: Vec[String],
+    pub whole_result: bool,
+    pub requires: Vec[PreClaim],
+    pub ensures: Vec[PostClaim],
+}
+
+fn claim_text_of(text: ref String?) -> String? {
+    let t = text ?? return null
+    return t.clone()
+}
+
+fn carried_site_of(site: ref CarriedFrom?) -> CarriedFrom? {
+    let s = site ?? return null
+    return s.clone()
+}

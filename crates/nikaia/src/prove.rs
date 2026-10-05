@@ -162,7 +162,7 @@ pub fn prove(
                         .collect();
                     Check {
                         rust: rust_of(&prover.arena, claim.term),
-                        written: claim.message(function),
+                        written: claim.failure(function),
                         message: claim.message.clone(),
                         operands,
                     }
@@ -239,73 +239,9 @@ pub fn prove(
     prover.out
 }
 
-/// A function's precondition: the claims its callers prove about its
-/// parameters (D5).
-#[derive(Debug, Clone)]
-struct Precondition {
-    claims: Vec<PreClaim>,
-}
-
-impl PreClaim {
-    /// What a failed check of it says: the condition, and where a computed
-    /// one came from (ADR-269 D21).
-    fn message(&self, function: &str) -> String {
-        match (&self.computed, &self.origin) {
-            (Some(computed), Some(origin)) => format!(
-                "precondition of `{function}`: `{computed}`, from `assert({})` in `{origin}`",
-                self.written
-            ),
-            (Some(computed), None) => format!(
-                "precondition of `{function}`: `{computed}`, from `assert({})`",
-                self.written
-            ),
-            (None, _) => format!("precondition of `{function}`: `{}`", self.written),
-        }
-    }
-}
-
-/// **Another package's function, as its ledger states it** (ADR-269 D18):
-/// its parameters, whether it hands back a whole number, and its contract
-/// read back into terms.
-#[derive(Debug, Clone)]
-struct Foreign {
-    params: Vec<String>,
-    whole_result: bool,
-    requires: Vec<PreClaim>,
-    ensures: Vec<PostClaim>,
-}
-
-/// One claim of a postcondition (ADR-269 D17).
-#[derive(Debug, Clone)]
-struct PostClaim {
-    /// Over `result` and the function's parameters.
-    term: i64,
-    /// The `assert`'s condition, written.
-    written: String,
-}
-
-/// One claim of a precondition (ADR-269 D15).
-#[derive(Debug, Clone)]
-struct PreClaim {
-    /// The condition at the function's entry, over its parameters: the
-    /// `assert`'s claim carried back through the body - `mode == 1 → x > 1`
-    /// for `assert(y > 0)` after `let y = x - 1` inside `if mode == 1`.
-    term: i64,
-    /// The `assert`'s condition, written, for messages.
-    written: String,
-    /// The condition at the entry as a reader writes it, where it is not the
-    /// claim as written: `mode == 1 → x - 1 > 0` (ADR-269 D21).
-    computed: Option<String>,
-    /// The `assert`'s `message:`, where it is text as written.
-    message: Option<String>,
-    /// **The function the `assert` stands in**, where it is not this one:
-    /// a callee's precondition carried back through a call (ADR-269 D15).
-    origin: Option<String>,
-    /// The call it was carried back from - where it starts, the callee and
-    /// the claim's place in the callee's list - so that the second pass
-    /// knows the call needs no check of its own.
-    site: Option<(usize, String, usize)>,
-}
+// **The claims carried between functions** are `tools/prover_claims.nika`
+// (ADR-294, #436).
+use nikaia_std::tools::prover_claims::{CarriedFrom, Foreign, PostClaim, PreClaim, Precondition};
 
 struct Prover<'a> {
     parsed: &'a Parsed,
@@ -925,7 +861,7 @@ impl<'a> Prover<'a> {
                 };
                 self.preconditions
                     .entry(function.clone())
-                    .or_insert_with(|| Precondition { claims: Vec::new() })
+                    .or_insert_with(Precondition::none)
                     .claims
                     .push(pre);
             }
@@ -1200,7 +1136,11 @@ impl<'a> Prover<'a> {
             if proved {
                 continue;
             }
-            let site = (span.at(), callee.to_string(), index);
+            let site = CarriedFrom {
+                at: span.at() as i64,
+                callee: callee.to_string(),
+                place: index as i64,
+            };
             if self.collecting {
                 self.carry_back(goal, pre, callee, site, scope, at);
                 continue;
@@ -1211,7 +1151,7 @@ impl<'a> Prover<'a> {
                 && self
                     .preconditions
                     .get(function)
-                    .is_some_and(|p| p.claims.iter().any(|c| c.site.as_ref() == Some(&site)))
+                    .is_some_and(|p| p.claims.iter().any(|c| c.carried_from(&site)))
             {
                 continue;
             }
@@ -1320,7 +1260,7 @@ impl<'a> Prover<'a> {
                 match goal {
                     Some(goal) => Reach::Checked(vec![Check {
                         rust: rust_of(&self.arena, goal),
-                        written: pre.message(callee),
+                        written: pre.failure(callee),
                         message: pre.message.clone(),
                         operands: read
                             .iter()
@@ -1352,7 +1292,7 @@ impl<'a> Prover<'a> {
         goal: Option<i64>,
         pre: &PreClaim,
         callee: &str,
-        site: (usize, String, usize),
+        site: CarriedFrom,
         scope: &Scope,
         at: &Where,
     ) {
@@ -1379,7 +1319,7 @@ impl<'a> Prover<'a> {
         };
         self.preconditions
             .entry(function)
-            .or_insert_with(|| Precondition { claims: Vec::new() })
+            .or_insert_with(Precondition::none)
             .claims
             .push(carried);
     }

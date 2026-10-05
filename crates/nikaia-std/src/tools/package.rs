@@ -10390,6 +10390,71 @@ impl TermArena {
 }
 
 
+// --- prover_claims.nika ---
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PreClaim {
+    pub term: i64,
+    pub written: String,
+    pub computed: Option<String>,
+    pub message: Option<String>,
+    pub origin: Option<String>,
+    pub site: Option<CarriedFrom>,
+}
+
+impl PreClaim {
+    pub fn failure(&self, function: &str) -> String {
+        let computed = match claim_text_of((self.computed).as_deref()) { Some(__nikaia_value) => __nikaia_value, None => return format!("precondition of `{}`: `{}`", function, self.written) };
+        let origin = match claim_text_of((self.origin).as_deref()) { Some(__nikaia_value) => __nikaia_value, None => return format!("precondition of `{}`: `{}`, from `assert({})`", function, computed, self.written) };
+        format!("precondition of `{}`: `{}`, from `assert({})` in `{}`", function, computed, self.written, origin)
+    }
+    pub fn carried_from(&self, site: &CarriedFrom) -> bool {
+        let mine = match carried_site_of((self.site).as_ref()) { Some(__nikaia_value) => __nikaia_value, None => return false };
+        mine == *site
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CarriedFrom {
+    pub at: i64,
+    pub callee: String,
+    pub place: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Precondition {
+    pub claims: Vec<PreClaim>,
+}
+
+impl Precondition {
+    pub fn none() -> Precondition { Precondition { claims: vec![] } }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PostClaim {
+    pub term: i64,
+    pub written: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Foreign {
+    pub params: Vec<String>,
+    pub whole_result: bool,
+    pub requires: Vec<PreClaim>,
+    pub ensures: Vec<PostClaim>,
+}
+
+fn claim_text_of(text: Option<&str>) -> Option<String> {
+    let t = match text { Some(__nikaia_value) => __nikaia_value, None => return None };
+    Some(t.to_owned())
+}
+
+fn carried_site_of(site: Option<&CarriedFrom>) -> Option<CarriedFrom> {
+    let s = match site { Some(__nikaia_value) => __nikaia_value, None => return None };
+    Some(s.clone())
+}
+
+
 // --- prover_results.nika ---
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -19309,6 +19374,10 @@ pub mod prove_text {
 pub mod prover_arena {
     #[allow(unused_imports)]
     pub use super::{TermArena};
+}
+pub mod prover_claims {
+    #[allow(unused_imports)]
+    pub use super::{PreClaim, CarriedFrom, Precondition, PostClaim, Foreign};
 }
 pub mod prover_results {
     #[allow(unused_imports)]

@@ -4,6 +4,15 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.491] — 2026-10-05
+
+**The claims the prover carries between functions are Nikaia** (ADR-294,
+#436 step 4). `tools/prover_claims.nika` holds a precondition's claims
+(`PreClaim`, with the call it was carried back from as a `CarriedFrom`), a
+postcondition's (`PostClaim`), a function's `Precondition` and another
+package's contract read back (`Foreign`); what a failed check says is
+`PreClaim::failure`. Every bench and example lowers byte for byte as before.
+
 ## [0.0.490] — 2026-10-05
 
 **What the prover hands the rest of the compiler is Nikaia** (ADR-294, #436
