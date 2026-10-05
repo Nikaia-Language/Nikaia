@@ -454,3 +454,60 @@ fn a_file_the_build_reads_is_handed_to_a_compiled_call() {
     assert!(found.iter().any(|f| f.code == "NK1175"), "{found:#?}");
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// **What an earlier `comptime` came to is carried as its literal** (ADR-321
+/// D1): a struct and a variant the program declares, handed to a later one
+/// that is compiled.
+#[test]
+fn an_earlier_struct_or_variant_is_carried_into_a_later_run() {
+    let source = "struct Point {\n\
+                  \x20   x: i64,\n\
+                  \x20   y: i64,\n\
+                  }\n\
+                  \n\
+                  impl Point {\n\
+                  \x20   fn scaled(self, by: i64) -> Point {\n\
+                  \x20       return Point { x: self.x * by, y: self.y * by }\n\
+                  \x20   }\n\
+                  \n\
+                  \x20   fn sum(self) -> i64 {\n\
+                  \x20       return self.x + self.y\n\
+                  \x20   }\n\
+                  }\n\
+                  \n\
+                  enum Shade {\n\
+                  \x20   Odd,\n\
+                  \x20   Even(i64),\n\
+                  }\n\
+                  \n\
+                  fn origin(x: i64, y: i64) -> Point {\n\
+                  \x20   return Point { x: x, y: y }\n\
+                  }\n\
+                  \n\
+                  fn shade_of(n: i64) -> Shade {\n\
+                  \x20   if n % 2 == 0 {\n\
+                  \x20       return Shade::Even(n)\n\
+                  \x20   }\n\
+                  \x20   return Shade::Odd\n\
+                  }\n\
+                  \n\
+                  fn weight(s: Shade) -> i64 {\n\
+                  \x20   return match s {\n\
+                  \x20       Shade::Even(n) => n,\n\
+                  \x20       Shade::Odd => 1,\n\
+                  \x20   }\n\
+                  }\n\
+                  \n\
+                  comptime ORIGIN = origin(1, 2)\n\
+                  comptime BIG = ORIGIN.scaled(10).sum()\n\
+                  comptime S = shade_of(4)\n\
+                  comptime W = weight(S)\n\
+                  \n\
+                  fn main() {\n\
+                  \x20   println(f\"{BIG} {W}\")\n\
+                  }\n";
+    assert!(findings(source).is_empty(), "{:#?}", findings(source));
+    let rust = lowered(source);
+    assert!(rust.contains("const BIG: i64 = 30;"), "{rust}");
+    assert!(rust.contains("const W: i64 = 4;"), "{rust}");
+}

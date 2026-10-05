@@ -109,7 +109,7 @@ pub(crate) fn unit_without_its_constants(
             Item::Comptime {
                 name: *name,
                 ty: declared.clone(),
-                value: literal_of(&held)?,
+                value: literal_of(&held, &kept)?,
                 public: *public,
             },
             item.span,
@@ -183,9 +183,15 @@ fn a_function(
     }
 }
 
-/// An earlier `comptime`'s value as the literal that writes it: a number, a
-/// truth value or text. Anything else has no literal here.
-fn literal_of(value: &Value) -> Option<Expr> {
+/// **An earlier `comptime`'s value as the literal that writes it**: a number,
+/// a truth value, text, and a list, a tuple, a struct or a variant of those.
+/// The names a struct or a variant needs are interned in `parsed`, the file
+/// the literal goes into.
+fn literal_of(value: &Value, parsed: &Parsed) -> Option<Expr> {
+    let name = |text: &str| parsed.interner.intern_string(text);
+    let all = |items: &[Value]| -> Option<Vec<Expr>> {
+        items.iter().map(|item| literal_of(item, parsed)).collect()
+    };
     match value {
         Value::Int(n) => Some(Expr::LitInt {
             value: n.magnitude,
@@ -197,7 +203,38 @@ fn literal_of(value: &Value) -> Option<Expr> {
             text: crate::build_time::written(text),
             at: 0,
         }),
-        _ => None,
+        Value::List(items) => Some(Expr::ListLit {
+            items: all(items)?,
+            at: 0,
+        }),
+        Value::Tuple(parts) => Some(Expr::Tuple(all(parts)?)),
+        Value::Struct { name: ty, fields } => Some(Expr::StructLit {
+            name: name(ty),
+            fields: fields
+                .iter()
+                .map(|(field, held)| {
+                    Some(ast::FieldInit {
+                        name: name(field),
+                        value: Some(literal_of(held, parsed)?),
+                    })
+                })
+                .collect::<Option<_>>()?,
+        }),
+        Value::Variant {
+            ty,
+            variant,
+            payload,
+        } => {
+            let path = Expr::Path(vec![name(ty), name(variant)]);
+            match payload.is_empty() {
+                true => Some(path),
+                false => Some(Expr::Call {
+                    func: Box::new(path),
+                    args: all(payload)?,
+                    config: Vec::new(),
+                }),
+            }
+        }
     }
 }
 

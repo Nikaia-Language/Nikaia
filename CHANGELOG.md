@@ -4,6 +4,16 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.523] — 2026-10-05
+
+**What an earlier `comptime` came to is carried into a later compiled one,
+whatever its shape** (ADR-321 D1, #468). A `comptime` program carries the
+earlier ones as the literals they came to. Lists, tuples, structs and variants
+are now carried as well as numbers, truth values and text. So
+`comptime BIG = ORIGIN.scaled(10).sum()` after `comptime ORIGIN = origin(1, 2)`
+is compiled rather than handed to the interpreter. Every bench and example
+lowers byte for byte as before.
+
 ## [0.0.522] — 2026-10-05
 
 **A file the build reads is handed to a compiled call** (ADR-310, ADR-321 D1,
