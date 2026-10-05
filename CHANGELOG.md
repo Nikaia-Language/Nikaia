@@ -4,6 +4,28 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.476] — 2026-10-05
+
+**How the prover writes a term is Nikaia** (ADR-294, #436 step 1). The text
+helpers are moved from `prove.rs` into `tools/prove_text.nika`:
+
+- a term as the language below writes it for a check;
+- a term as a reader writes it, with `→` for a precondition under a path;
+- a term as the ledger writes it;
+- a model's values as a sentence;
+- `lowered_first` and `has_a_length`.
+
+They read the terms one node at a time through `tools/solver_terms.nika`'s
+`SolverTerm`, which the interval propagation now shares. `prove.rs` keeps thin
+wrappers that pass in the arena and the emitter's escaping. Every bench and
+example lowers to byte-identical Rust.
+
+**A binding in scope hides an item of its name** (#451). A call through a
+parameter of function type, `twice(4)` in `fn apply(twice: fn(i64) -> i64
+sync)`, resolved to a free function `twice` of the program. The call was then
+checked against that function's signature: *`twice` takes 3 arguments*. The
+local binding is now the callee, as a `let` already was.
+
 ## [0.0.475] — 2026-10-05
 
 **The interval propagation is Nikaia** (ADR-294, #435 step 2). `Range`, the

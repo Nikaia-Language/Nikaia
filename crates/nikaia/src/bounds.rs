@@ -37,8 +37,9 @@ use crate::check::value_node;
 use crate::parser::Parsed;
 use nikaia_std::tools::bounds_basic as nika;
 use nikaia_std::tools::bounds_body as body_of;
-use nikaia_std::tools::bounds_interval::{self as interval, Range, SolverTerm};
+use nikaia_std::tools::bounds_interval::{self as interval, Range};
 use nikaia_std::tools::bounds_shape::{self as shaped, Around, BodyShape};
+use nikaia_std::tools::solver_terms::SolverTerm;
 
 /// What happens to an index check the walk proved (ADR-306 D14): `on` writes
 /// it without its check, `off` (the default) keeps it. What is proved does not
@@ -1798,16 +1799,17 @@ fn breaks(parsed: &Parsed, body: &Block) -> bool {
 
 // --- interval propagation (ADR-306) ---------------------------------------------
 
-/// **One node of `arena`, by index, for `tools/bounds_interval.nika`**
-/// (ADR-294, #435): the propagation reads the terms where they are, one node
-/// at a time, with each child named by its index.
-fn solver_term(arena: &Arena, at: i64) -> SolverTerm {
+/// **One node of `arena`, by index, for the tools written in Nikaia**
+/// (`tools/solver_terms.nika`, ADR-294, #435, #436): they read the terms where
+/// they are, one node at a time, with each child named by its index.
+pub(crate) fn solver_term(arena: &Arena, at: i64) -> SolverTerm {
     use nikaia_logic::Term;
     let id = |t: &TermId| t.index() as i64;
     let Some(term) = usize::try_from(at).ok().and_then(|at| arena.at(at)) else {
         return SolverTerm::Other;
     };
     match term {
+        Term::Bool(b) => SolverTerm::Bool(*b),
         Term::Int(n) => SolverTerm::Int(*n),
         Term::Var(name) => SolverTerm::Var(name.clone()),
         Term::Add(a, b) => SolverTerm::Add(id(a), id(b)),
@@ -1819,8 +1821,10 @@ fn solver_term(arena: &Arena, at: i64) -> SolverTerm {
         Term::Ge(a, b) => SolverTerm::Ge(id(a), id(b)),
         Term::Gt(a, b) => SolverTerm::Gt(id(a), id(b)),
         Term::Eq(a, b) => SolverTerm::Eq(id(a), id(b)),
+        Term::Ne(a, b) => SolverTerm::Ne(id(a), id(b)),
         Term::And(parts) => SolverTerm::And(parts.iter().map(id).collect()),
-        _ => SolverTerm::Other,
+        Term::Or(parts) => SolverTerm::Or(parts.iter().map(id).collect()),
+        Term::Not(a) => SolverTerm::Not(id(a)),
     }
 }
 

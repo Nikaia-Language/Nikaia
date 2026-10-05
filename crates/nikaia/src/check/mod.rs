@@ -14340,7 +14340,13 @@ impl<'a> Checker<'a> {
             .map(|(ty, _)| ty.to_string());
         // Neither a variant nor a hull is a ledger entry, so neither has a
         // signature to type an argument from.
-        let resolved = match variant.is_some() || is_hull(&name) {
+        // **A binding in scope hides an item of its name** (#451), as a
+        // `let` hides one and as Rust's scope does: `twice(4)` inside `fn
+        // apply(twice: fn(i64) -> i64 sync)` is the parameter, not a free
+        // `fn twice(a, b, c)` - which it was, and the call was checked
+        // against the wrong signature.
+        let shadowed = matches!(func, Expr::Variable(_)) && self.lookup(&name).is_some();
+        let resolved = match variant.is_some() || is_hull(&name) || shadowed {
             true => None,
             false => self.resolve(&name),
         };

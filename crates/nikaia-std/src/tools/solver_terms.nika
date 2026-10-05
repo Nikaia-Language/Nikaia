@@ -1,0 +1,29 @@
+// crates/nikaia-std/src/tools/solver_terms.nika
+//
+// **A `nikaia-logic` term, one node at a time** (ADR-294, #435, #436): what
+// the tools written in Nikaia read of the prover's terms. The terms stay in
+// the compiler's arena; a tool is handed `term_of`, which gives back the node
+// at an index with its children as indices, so nothing is copied and the
+// arena needs no second form.
+
+/// One node of a term, with its children by index.
+pub enum SolverTerm {
+    Bool(bool),
+    Int(i64),
+    Var(String),
+    Add(i64, i64),
+    Sub(i64, i64),
+    Neg(i64),
+    Mul(i64, i64),
+    Le(i64, i64),
+    Lt(i64, i64),
+    Ge(i64, i64),
+    Gt(i64, i64),
+    Eq(i64, i64),
+    Ne(i64, i64),
+    And(Vec[i64]),
+    Or(Vec[i64]),
+    Not(i64),
+    /// An index the arena does not have.
+    Other,
+}

@@ -1,0 +1,184 @@
+// crates/nikaia-std/src/tools/prove_text.nika
+//
+// **How the prover writes a term and a value** (ADR-269 D7, D18), moved from
+// the compiler's `prove` (ADR-294, #436 step 1): a term as the language below
+// writes it for a check, as a reader writes it in a message, and as the
+// ledger writes it; a model's values as a sentence. The terms are read one
+// node at a time (`solver_terms.nika`).
+
+use std::collections
+
+/// **A term as the language below writes it**, for a check that is not the
+/// `assert` as written: every number in `i128`, so that the check cannot
+/// overflow where the claim's own arithmetic would have stopped the program
+/// (Part I 2.2) - the prover reads numbers without a limit, and so does this.
+/// A name is the escaped name the emitter writes (`escape`); `xs.len()` the
+/// length.
+pub fn rust_of(id: i64, term_of: fn(i64) -> SolverTerm sync, escape: fn(ref String) -> String sync) -> String {
+    return match term_of(id) {
+        SolverTerm::Bool(b) => if b { "true" } else { "false" },
+        SolverTerm::Int(n) => f"({n}i128)",
+        SolverTerm::Var(name) => rust_of_name(name, escape),
+        SolverTerm::Neg(a) => f"(-{rust_of(a, term_of, escape)})",
+        SolverTerm::Not(a) => f"(!{rust_of(a, term_of, escape)})",
+        SolverTerm::Add(a, b) => f"({rust_of(a, term_of, escape)} + {rust_of(b, term_of, escape)})",
+        SolverTerm::Sub(a, b) => f"({rust_of(a, term_of, escape)} - {rust_of(b, term_of, escape)})",
+        SolverTerm::Mul(a, b) => f"({rust_of(a, term_of, escape)} * {rust_of(b, term_of, escape)})",
+        SolverTerm::Le(a, b) => f"({rust_of(a, term_of, escape)} <= {rust_of(b, term_of, escape)})",
+        SolverTerm::Lt(a, b) => f"({rust_of(a, term_of, escape)} < {rust_of(b, term_of, escape)})",
+        SolverTerm::Ge(a, b) => f"({rust_of(a, term_of, escape)} >= {rust_of(b, term_of, escape)})",
+        SolverTerm::Gt(a, b) => f"({rust_of(a, term_of, escape)} > {rust_of(b, term_of, escape)})",
+        SolverTerm::Eq(a, b) => f"({rust_of(a, term_of, escape)} == {rust_of(b, term_of, escape)})",
+        SolverTerm::Ne(a, b) => f"({rust_of(a, term_of, escape)} != {rust_of(b, term_of, escape)})",
+        SolverTerm::And(parts) => rust_joined(" && ", parts, "true", term_of, escape),
+        SolverTerm::Or(parts) => rust_joined(" || ", parts, "false", term_of, escape),
+        else => "",
+    }
+}
+
+fn rust_joined(op: ref String, parts: ref Vec[i64], empty: ref String, term_of: fn(i64) -> SolverTerm sync, escape: fn(ref String) -> String sync) -> String {
+    if parts.is_empty() {
+        return empty.clone()
+    }
+    let mut written: Vec[String] = []
+    for part in parts {
+        written.push(rust_of(part, term_of, escape))
+    }
+    return f"({written.join(op)})"
+}
+
+/// A name of the proof as the language below reads it, in `i128`.
+pub fn rust_of_name(name: ref String, escape: fn(ref String) -> String sync) -> String {
+    if name.ends_with(".len()") {
+        let c: Vec[char] = name.chars().collect()
+        let mut base: String = ""
+        for k in 0..<c.len() - 6 {
+            base.push(c[k])
+        }
+        return f"({escape(base)}.len() as i128)"
+    }
+    return f"({escape(name)}.clone() as i128)"
+}
+
+/// A term as a reader writes it, in the language's operators, with `→` for
+/// the implication a branch makes of a precondition: `mode == 1 → x - 1 > 0`.
+pub fn term_text(id: i64, term_of: fn(i64) -> SolverTerm sync) -> String {
+    return term_whole(id, true, term_of)
+}
+
+/// A term in the language's own syntax, as the ledger writes it and reads it
+/// back (ADR-251 D4): the implication is `!(taken) || claim`.
+pub fn term_ledger_text(id: i64, term_of: fn(i64) -> SolverTerm sync) -> String {
+    return term_whole(id, false, term_of)
+}
+
+/// How tightly each form binds, for parentheses: higher binds tighter.
+fn term_rank(term: ref SolverTerm, arrow: bool) -> i64 {
+    return match term {
+        SolverTerm::Or(parts) => if arrow && parts.len() == 2 { 0 } else { 1 },
+        SolverTerm::And(_) => 2,
+        SolverTerm::Le(_, _) => 3,
+        SolverTerm::Lt(_, _) => 3,
+        SolverTerm::Ge(_, _) => 3,
+        SolverTerm::Gt(_, _) => 3,
+        SolverTerm::Eq(_, _) => 3,
+        SolverTerm::Ne(_, _) => 3,
+        SolverTerm::Add(_, _) => 4,
+        SolverTerm::Sub(_, _) => 4,
+        SolverTerm::Mul(_, _) => 5,
+        SolverTerm::Neg(_) => 6,
+        SolverTerm::Not(_) => 6,
+        else => 7,
+    }
+}
+
+/// `id`, in parentheses where it binds less tightly than `at_least`.
+fn term_inner(id: i64, at_least: i64, arrow: bool, term_of: fn(i64) -> SolverTerm sync) -> String {
+    let text = term_whole(id, arrow, term_of)
+    if term_rank(term_of(id), arrow) < at_least {
+        return f"({text})"
+    }
+    return text
+}
+
+fn term_binary(op: ref String, a: i64, b: i64, r: i64, arrow: bool, term_of: fn(i64) -> SolverTerm sync) -> String {
+    return f"{term_inner(a, r, arrow, term_of)} {op} {term_inner(b, r + 1, arrow, term_of)}"
+}
+
+fn term_joined(op: ref String, parts: ref Vec[i64], r: i64, arrow: bool, term_of: fn(i64) -> SolverTerm sync) -> String {
+    let mut written: Vec[String] = []
+    for part in parts {
+        written.push(term_inner(part, r + 1, arrow, term_of))
+    }
+    return written.join(op)
+}
+
+fn term_whole(id: i64, arrow: bool, term_of: fn(i64) -> SolverTerm sync) -> String {
+    let term = term_of(id)
+    let r = term_rank(term, arrow)
+    return match term {
+        SolverTerm::Bool(b) => if b { "true" } else { "false" },
+        SolverTerm::Int(n) => f"{n}",
+        SolverTerm::Var(name) => name.clone(),
+        SolverTerm::Neg(a) => f"-{term_inner(a, r, arrow, term_of)}",
+        SolverTerm::Not(a) => f"!{term_inner(a, r, arrow, term_of)}",
+        SolverTerm::Add(a, b) => term_binary("+", a, b, r, arrow, term_of),
+        SolverTerm::Sub(a, b) => term_binary("-", a, b, r, arrow, term_of),
+        SolverTerm::Mul(a, b) => term_binary("*", a, b, r, arrow, term_of),
+        SolverTerm::Le(a, b) => term_binary("<=", a, b, r, arrow, term_of),
+        SolverTerm::Lt(a, b) => term_binary("<", a, b, r, arrow, term_of),
+        SolverTerm::Ge(a, b) => term_binary(">=", a, b, r, arrow, term_of),
+        SolverTerm::Gt(a, b) => term_binary(">", a, b, r, arrow, term_of),
+        SolverTerm::Eq(a, b) => term_binary("==", a, b, r, arrow, term_of),
+        SolverTerm::Ne(a, b) => term_binary("!=", a, b, r, arrow, term_of),
+        // `!taken || claim` is how a precondition under a path is built.
+        SolverTerm::Or(parts) => {
+            if arrow && parts.len() == 2 {
+                match term_of(parts[0]) {
+                    SolverTerm::Not(taken) => {
+                        return f"{term_inner(taken, 1, arrow, term_of)} → {term_inner(parts[1], 1, arrow, term_of)}"
+                    },
+                    else => {},
+                }
+            }
+            term_joined(" || ", parts, r, arrow, term_of)
+        },
+        SolverTerm::And(parts) => term_joined(" && ", parts, r, arrow, term_of),
+        else => "",
+    }
+}
+
+/// Values as a reader writes them: `` `x` is 5, `xs.len()` is 0 ``.
+pub fn shown(values: ref collections::BTreeMap[String, i64]) -> String {
+    if values.is_empty() {
+        return "no value of its own; the claim is false as written"
+    }
+    let mut said: Vec[String] = []
+    for (name, value) in values {
+        said.push(f"`{name}` is {value}")
+    }
+    return said.join(", ")
+}
+
+/// `"A method can't …"` as the rest of a sentence.
+pub fn lowered_first(text: ref String) -> String {
+    let c: Vec[char] = text.chars().collect()
+    if c.is_empty() {
+        return ""
+    }
+    let mut head: String = ""
+    head.push(c[0])
+    let mut out = head.to_lowercase()
+    for k in 1..<c.len() {
+        out.push(c[k])
+    }
+    return out
+}
+
+/// A type whose `len()` the prover reads: a list, text, an array.
+pub fn has_a_length(ty: ref String) -> bool {
+    return match ty {
+        "Vec" => true, "String" => true, "str" => true, "Array" => true,
+        else => false,
+    }
+}

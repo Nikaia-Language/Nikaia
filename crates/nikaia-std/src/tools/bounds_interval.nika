@@ -12,8 +12,8 @@
 // one.
 //
 // The facts are `nikaia-logic` terms, reached one node at a time through
-// `term_of`, which hands back a node with its children as indices: the terms
-// stay in the compiler's arena and nothing is copied.
+// `term_of` (`solver_terms.nika`): the terms stay in the compiler's arena and
+// nothing is copied.
 
 use std::collections
 
@@ -22,25 +22,6 @@ use std::collections
 pub struct Range {
     pub lo: i64?,
     pub hi: i64?,
-}
-
-/// One node of a term, with its children by index.
-pub enum SolverTerm {
-    Int(i64),
-    Var(String),
-    Add(i64, i64),
-    Sub(i64, i64),
-    Neg(i64),
-    Mul(i64, i64),
-    Le(i64, i64),
-    Lt(i64, i64),
-    Ge(i64, i64),
-    Gt(i64, i64),
-    Eq(i64, i64),
-    And(Vec[i64]),
-    /// What the propagation does not read: a disjunction, a negation, a
-    /// truth value.
-    Other,
 }
 
 /// A linear term: each variable's coefficient and a constant.

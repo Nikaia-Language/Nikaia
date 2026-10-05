@@ -1234,23 +1234,6 @@ pub struct Range {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SolverTerm {
-    Int(i64),
-    Var(String),
-    Add(i64, i64),
-    Sub(i64, i64),
-    Neg(i64),
-    Mul(i64, i64),
-    Le(i64, i64),
-    Lt(i64, i64),
-    Ge(i64, i64),
-    Gt(i64, i64),
-    Eq(i64, i64),
-    And(Vec<i64>),
-    Other,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
 struct Form {
     vars: collections::BTreeMap<String, i64>,
     k: i64,
@@ -9475,6 +9458,145 @@ fn stands_at(c: &[char], at: i64, w: &[char]) -> bool {
 }
 
 
+// --- prove_text.nika ---
+
+pub fn rust_of(id: i64, term_of: &impl Fn(i64) -> SolverTerm, escape: &impl Fn(&str) -> String) -> String {
+    match term_of(id) {
+        SolverTerm::Bool(b) => if b { String::from("true") } else { String::from("false") },
+        SolverTerm::Int(n) => format!("({}i128)", n),
+        SolverTerm::Var(ref name) => rust_of_name(&name, escape),
+        SolverTerm::Neg(a) => format!("(-{})", rust_of(a, term_of, escape)),
+        SolverTerm::Not(a) => format!("(!{})", rust_of(a, term_of, escape)),
+        SolverTerm::Add(a, b) => format!("({} + {})", rust_of(a, term_of, escape), rust_of(b, term_of, escape)),
+        SolverTerm::Sub(a, b) => format!("({} - {})", rust_of(a, term_of, escape), rust_of(b, term_of, escape)),
+        SolverTerm::Mul(a, b) => format!("({} * {})", rust_of(a, term_of, escape), rust_of(b, term_of, escape)),
+        SolverTerm::Le(a, b) => format!("({} <= {})", rust_of(a, term_of, escape), rust_of(b, term_of, escape)),
+        SolverTerm::Lt(a, b) => format!("({} < {})", rust_of(a, term_of, escape), rust_of(b, term_of, escape)),
+        SolverTerm::Ge(a, b) => format!("({} >= {})", rust_of(a, term_of, escape), rust_of(b, term_of, escape)),
+        SolverTerm::Gt(a, b) => format!("({} > {})", rust_of(a, term_of, escape), rust_of(b, term_of, escape)),
+        SolverTerm::Eq(a, b) => format!("({} == {})", rust_of(a, term_of, escape), rust_of(b, term_of, escape)),
+        SolverTerm::Ne(a, b) => format!("({} != {})", rust_of(a, term_of, escape), rust_of(b, term_of, escape)),
+        SolverTerm::And(ref parts) => rust_joined(" && ", &parts, "true", term_of, escape),
+        SolverTerm::Or(ref parts) => rust_joined(" || ", &parts, "false", term_of, escape),
+        _ => String::from(""),
+    }
+}
+
+fn rust_joined(op: &str, parts: &[i64], empty: &str, term_of: &impl Fn(i64) -> SolverTerm, escape: &impl Fn(&str) -> String) -> String {
+    if parts.is_empty() { return empty.to_owned(); }
+    let mut written: Vec<String> = vec![];
+    for part in parts.iter() {
+        let part = nikaia_std::num::value(part);
+        written.push(rust_of(part, term_of, escape));
+    }
+    format!("({})", written.join(op))
+}
+
+pub fn rust_of_name(name: &str, escape: &impl Fn(&str) -> String) -> String {
+    if name.ends_with(".len()") {
+        let c: Vec<char> = nikaia_std::list::chars(name.chars());
+        let mut base: String = String::from("");
+        for k in 0..c.len() as i64 - 6 { base.push(*nikaia_std::index::get(&c, (k) as usize)); }
+        return format!("({}.len() as i128)", escape(&base));
+    }
+    format!("({}.clone() as i128)", escape(name))
+}
+
+pub fn term_text(id: i64, term_of: &impl Fn(i64) -> SolverTerm) -> String { term_whole(id, true, term_of) }
+
+pub fn term_ledger_text(id: i64, term_of: &impl Fn(i64) -> SolverTerm) -> String { term_whole(id, false, term_of) }
+
+fn term_rank(term: &SolverTerm, arrow: bool) -> i64 {
+    match term {
+        SolverTerm::Or(parts) => if arrow && parts.len() == 2 { 0 } else { 1 },
+        SolverTerm::And(_) => 2,
+        SolverTerm::Le(_, _) => 3,
+        SolverTerm::Lt(_, _) => 3,
+        SolverTerm::Ge(_, _) => 3,
+        SolverTerm::Gt(_, _) => 3,
+        SolverTerm::Eq(_, _) => 3,
+        SolverTerm::Ne(_, _) => 3,
+        SolverTerm::Add(_, _) => 4,
+        SolverTerm::Sub(_, _) => 4,
+        SolverTerm::Mul(_, _) => 5,
+        SolverTerm::Neg(_) => 6,
+        SolverTerm::Not(_) => 6,
+        _ => 7,
+    }
+}
+
+fn term_inner(id: i64, at_least: i64, arrow: bool, term_of: &impl Fn(i64) -> SolverTerm) -> String {
+    let text = term_whole(id, arrow, term_of);
+    if term_rank(&term_of(id), arrow) < at_least { return format!("({})", text); }
+    text
+}
+
+fn term_binary(op: &str, a: i64, b: i64, r: i64, arrow: bool, term_of: &impl Fn(i64) -> SolverTerm) -> String { format!("{} {} {}", term_inner(a, r, arrow, term_of), op, term_inner(b, r + 1, arrow, term_of)) }
+
+fn term_joined(op: &str, parts: &[i64], r: i64, arrow: bool, term_of: &impl Fn(i64) -> SolverTerm) -> String {
+    let mut written: Vec<String> = vec![];
+    for part in parts.iter() {
+        let part = nikaia_std::num::value(part);
+        written.push(term_inner(part, r + 1, arrow, term_of));
+    }
+    written.join(op)
+}
+
+fn term_whole(id: i64, arrow: bool, term_of: &impl Fn(i64) -> SolverTerm) -> String {
+    let term = term_of(id);
+    let r = term_rank(&term, arrow);
+    match term {
+        SolverTerm::Bool(b) => if b { String::from("true") } else { String::from("false") },
+        SolverTerm::Int(n) => format!("{}", n),
+        SolverTerm::Var(ref name) => name.to_owned(),
+        SolverTerm::Neg(a) => format!("-{}", term_inner(a, r, arrow, term_of)),
+        SolverTerm::Not(a) => format!("!{}", term_inner(a, r, arrow, term_of)),
+        SolverTerm::Add(a, b) => term_binary("+", a, b, r, arrow, term_of),
+        SolverTerm::Sub(a, b) => term_binary("-", a, b, r, arrow, term_of),
+        SolverTerm::Mul(a, b) => term_binary("*", a, b, r, arrow, term_of),
+        SolverTerm::Le(a, b) => term_binary("<=", a, b, r, arrow, term_of),
+        SolverTerm::Lt(a, b) => term_binary("<", a, b, r, arrow, term_of),
+        SolverTerm::Ge(a, b) => term_binary(">=", a, b, r, arrow, term_of),
+        SolverTerm::Gt(a, b) => term_binary(">", a, b, r, arrow, term_of),
+        SolverTerm::Eq(a, b) => term_binary("==", a, b, r, arrow, term_of),
+        SolverTerm::Ne(a, b) => term_binary("!=", a, b, r, arrow, term_of),
+        SolverTerm::Or(ref parts) => {
+            if arrow && parts.len() == 2 {
+                match term_of(*nikaia_std::index::get(&parts, 0)) {
+                    SolverTerm::Not(taken) => { return format!("{} → {}", term_inner(taken, 1, arrow, term_of), term_inner(*nikaia_std::index::get(&parts, 1), 1, arrow, term_of)); },
+                    _ => { },
+                }
+            }
+            term_joined(" || ", parts, r, arrow, term_of)
+        },
+        SolverTerm::And(ref parts) => term_joined(" && ", &parts, r, arrow, term_of),
+        _ => String::from(""),
+    }
+}
+
+pub fn shown(values: &collections::BTreeMap<String, i64>) -> String {
+    if values.is_empty() { return String::from("no value of its own; the claim is false as written"); }
+    let mut said: Vec<String> = vec![];
+    for (name, value) in values.iter() {
+        let value = nikaia_std::num::value(value);
+        said.push(format!("`{}` is {}", name, value));
+    }
+    said.join(", ")
+}
+
+pub fn lowered_first(text: &str) -> String {
+    let c: Vec<char> = nikaia_std::list::chars(text.chars());
+    if c.is_empty() { return String::from(""); }
+    let mut head: String = String::from("");
+    head.push(*nikaia_std::index::get(&c, 0));
+    let mut out = head.to_lowercase();
+    for k in 1..c.len() as i64 { out.push(*nikaia_std::index::get(&c, (k) as usize)); }
+    out
+}
+
+pub fn has_a_length(ty: &str) -> bool { matches!(ty, "Vec" | "String" | "str" | "Array") }
+
+
 // --- render.nika ---
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -11775,6 +11897,30 @@ pub fn contract(written: &WrittenFn, crate_word: &str, types: &collections::BTre
     entry.keeps = keeps;
     entry.signature = Some(signature);
     entry
+}
+
+
+// --- solver_terms.nika ---
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SolverTerm {
+    Bool(bool),
+    Int(i64),
+    Var(String),
+    Add(i64, i64),
+    Sub(i64, i64),
+    Neg(i64),
+    Mul(i64, i64),
+    Le(i64, i64),
+    Lt(i64, i64),
+    Ge(i64, i64),
+    Gt(i64, i64),
+    Eq(i64, i64),
+    Ne(i64, i64),
+    And(Vec<i64>),
+    Or(Vec<i64>),
+    Not(i64),
+    Other,
 }
 
 
@@ -17978,7 +18124,7 @@ pub mod bounds_body {
 }
 pub mod bounds_interval {
     #[allow(unused_imports)]
-    pub use super::{Range, SolverTerm, candidate};
+    pub use super::{Range, candidate};
 }
 pub mod bounds_shape {
     #[allow(unused_imports)]
@@ -18116,6 +18262,10 @@ pub mod paths {
     #[allow(unused_imports)]
     pub use super::{Export, Named, after, module_of, joined, exported, named, bases, split_top_level};
 }
+pub mod prove_text {
+    #[allow(unused_imports)]
+    pub use super::{rust_of, rust_of_name, term_text, term_ledger_text, shown, lowered_first, has_a_length};
+}
 pub mod render {
     #[allow(unused_imports)]
     pub use super::{Marked, Shown, rendered, Pause, paused, an_or_a};
@@ -18135,6 +18285,10 @@ pub mod sharing {
 pub mod signature {
     #[allow(unused_imports)]
     pub use super::{Translated, Resulted, translate, result_of, view_of, sent_across, sends, WrittenFn, contract};
+}
+pub mod solver_terms {
+    #[allow(unused_imports)]
+    pub use super::{SolverTerm};
 }
 pub mod sources {
     #[allow(unused_imports)]

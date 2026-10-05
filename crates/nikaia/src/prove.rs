@@ -2110,175 +2110,47 @@ fn refusal(span: Span, message: String, notes: Vec<String>, help: &str) -> Findi
     }
 }
 
-/// **A term as the language below writes it**, for a check that is not the
-/// `assert` as written: every number in `i128`, so that the check cannot
-/// overflow where the claim's own arithmetic would have stopped the program
-/// (Part I 2.2) - the prover reads numbers without a limit, and so does this.
-/// A name is the escaped name the emitter writes; `xs.len()` the length.
+// **How a term and a value are written** (ADR-269 D7, D18) is
+// `tools/prove_text.nika` (ADR-294, #436): these hand it the arena one node
+// at a time and the emitter's escaping of a name.
+
 fn rust_of(arena: &Arena, id: TermId) -> String {
-    use nikaia_logic::Term;
-    let r = |id: &TermId| rust_of(arena, *id);
-    let joined = |op: &str, parts: &[TermId], empty: &str| match parts {
-        [] => empty.to_string(),
-        _ => format!("({})", parts.iter().map(r).collect::<Vec<_>>().join(op)),
-    };
-    match arena.get(id) {
-        Term::Bool(b) => b.to_string(),
-        Term::Int(n) => format!("({n}i128)"),
-        Term::Var(name) => rust_of_name(name),
-        Term::Neg(a) => format!("(-{})", r(a)),
-        Term::Not(a) => format!("(!{})", r(a)),
-        Term::Add(a, b) => format!("({} + {})", r(a), r(b)),
-        Term::Sub(a, b) => format!("({} - {})", r(a), r(b)),
-        Term::Mul(a, b) => format!("({} * {})", r(a), r(b)),
-        Term::Le(a, b) => format!("({} <= {})", r(a), r(b)),
-        Term::Lt(a, b) => format!("({} < {})", r(a), r(b)),
-        Term::Ge(a, b) => format!("({} >= {})", r(a), r(b)),
-        Term::Gt(a, b) => format!("({} > {})", r(a), r(b)),
-        Term::Eq(a, b) => format!("({} == {})", r(a), r(b)),
-        Term::Ne(a, b) => format!("({} != {})", r(a), r(b)),
-        Term::And(parts) => joined(" && ", parts, "true"),
-        Term::Or(parts) => joined(" || ", parts, "false"),
-    }
+    prove_text::rust_of(
+        id.index() as i64,
+        &|at| crate::bounds::solver_term(arena, at),
+        &|name| crate::emit::escaped(name).into_owned(),
+    )
 }
 
-/// A name of the proof as the language below reads it, in `i128`.
 fn rust_of_name(name: &str) -> String {
-    match name.strip_suffix(".len()") {
-        Some(base) => format!("({}.len() as i128)", crate::emit::escaped(base)),
-        None => format!("({}.clone() as i128)", crate::emit::escaped(name)),
-    }
+    prove_text::rust_of_name(name, &|name| crate::emit::escaped(name).into_owned())
 }
 
-/// A term as a reader writes it, in the language's operators, with `→` for
-/// the implication a branch makes of a precondition: `mode == 1 → x - 1 > 0`.
+/// A term as a reader writes it, with `→` for the implication a branch makes
+/// of a precondition.
 fn term_text(arena: &Arena, id: TermId) -> String {
-    term_text_as(arena, id, true)
+    prove_text::term_text(id.index() as i64, &|at| {
+        crate::bounds::solver_term(arena, at)
+    })
 }
 
 /// A term in the language's own syntax, as the ledger writes it and reads it
-/// back ([ADR-251](../../docs/specification/adr/adr-251.md) D4): the
-/// implication is `!(taken) || claim`.
+/// back ([ADR-251](../../docs/specification/adr/adr-251.md) D4).
 fn ledger_text(arena: &Arena, id: TermId) -> String {
-    term_text_as(arena, id, false)
+    prove_text::term_ledger_text(id.index() as i64, &|at| {
+        crate::bounds::solver_term(arena, at)
+    })
 }
 
-fn term_text_as(arena: &Arena, id: TermId, arrow: bool) -> String {
-    use nikaia_logic::Term;
-    // How tightly each form binds, for parentheses: higher binds tighter.
-    fn rank(term: &Term, arrow: bool) -> u8 {
-        match term {
-            Term::Or(parts) if arrow && is_implication(parts) => 0,
-            Term::Or(_) => 1,
-            Term::And(_) => 2,
-            Term::Le(..)
-            | Term::Lt(..)
-            | Term::Ge(..)
-            | Term::Gt(..)
-            | Term::Eq(..)
-            | Term::Ne(..) => 3,
-            Term::Add(..) | Term::Sub(..) => 4,
-            Term::Mul(..) => 5,
-            Term::Neg(_) | Term::Not(_) => 6,
-            Term::Bool(_) | Term::Int(_) | Term::Var(_) => 7,
-        }
-    }
-    fn is_implication(parts: &[TermId]) -> bool {
-        parts.len() == 2
-    }
-    fn inner(arena: &Arena, id: TermId, at_least: u8, arrow: bool) -> String {
-        let term = arena.get(id);
-        let text = whole(arena, id, arrow);
-        if rank(term, arrow) < at_least {
-            format!("({text})")
-        } else {
-            text
-        }
-    }
-    fn whole(arena: &Arena, id: TermId, arrow: bool) -> String {
-        let term = arena.get(id);
-        let r = rank(term, arrow);
-        let binary = |op: &str, a: &TermId, b: &TermId| {
-            format!(
-                "{} {op} {}",
-                inner(arena, *a, r, arrow),
-                inner(arena, *b, r + 1, arrow)
-            )
-        };
-        let joined = |op: &str, parts: &[TermId]| {
-            parts
-                .iter()
-                .map(|p| inner(arena, *p, r + 1, arrow))
-                .collect::<Vec<_>>()
-                .join(op)
-        };
-        match term {
-            Term::Bool(b) => b.to_string(),
-            Term::Int(n) => n.to_string(),
-            Term::Var(name) => name.clone(),
-            Term::Neg(a) => format!("-{}", inner(arena, *a, r, arrow)),
-            Term::Not(a) => format!("!{}", inner(arena, *a, r, arrow)),
-            Term::Add(a, b) => binary("+", a, b),
-            Term::Sub(a, b) => binary("-", a, b),
-            Term::Mul(a, b) => binary("*", a, b),
-            Term::Le(a, b) => binary("<=", a, b),
-            Term::Lt(a, b) => binary("<", a, b),
-            Term::Ge(a, b) => binary(">=", a, b),
-            Term::Gt(a, b) => binary(">", a, b),
-            Term::Eq(a, b) => binary("==", a, b),
-            Term::Ne(a, b) => binary("!=", a, b),
-            // `!taken || claim` is how a precondition under a path is built.
-            Term::Or(parts) if arrow && is_implication(parts) => match arena.get(parts[0]) {
-                Term::Not(taken) => format!(
-                    "{} → {}",
-                    inner(arena, *taken, 1, arrow),
-                    inner(arena, parts[1], 1, arrow)
-                ),
-                _ => joined(" || ", parts),
-            },
-            Term::Or(parts) => joined(" || ", parts),
-            Term::And(parts) => joined(" && ", parts),
-        }
-    }
-    whole(arena, id, arrow)
-}
-
-/// Values as a reader writes them: `` `x` is 5, `xs.len()` is 0 ``.
-fn shown(values: &BTreeMap<String, i64>) -> String {
-    if values.is_empty() {
-        return "no value of its own; the claim is false as written".to_string();
-    }
-    values
-        .iter()
-        .map(|(name, value)| format!("`{name}` is {value}"))
-        .collect::<Vec<_>>()
-        .join(", ")
-}
-
-/// `"A method can't …"` as the rest of a sentence.
-fn lowered_first(text: &str) -> String {
-    let mut chars = text.chars();
-    match chars.next() {
-        Some(first) => first.to_lowercase().chain(chars).collect(),
-        None => String::new(),
-    }
-}
+use nikaia_std::tools::prove_text::{self, has_a_length, lowered_first, shown};
 
 /// The variable `name.len()` stands for.
 fn length_of(name: &str) -> String {
     format!("{name}.len()")
 }
 
-/// A type whose `len()` the prover reads: a list, text, an array.
-fn has_a_length(ty: &str) -> bool {
-    matches!(ty, "Vec" | "String" | "str" | "Array")
-}
-
 fn is_whole_number(ty: &str) -> bool {
-    matches!(
-        ty,
-        "i8" | "i16" | "i32" | "i64" | "u8" | "u16" | "u32" | "u64" | "usize" | "isize"
-    )
+    nikaia_std::tools::bounds_shape::is_whole_number(ty)
 }
 
 /// Every name a claim reads.
