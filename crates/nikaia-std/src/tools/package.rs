@@ -10390,6 +10390,62 @@ impl TermArena {
 }
 
 
+// --- prover_results.nika ---
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ClaimHeld {
+    ByTheTest,
+    Proved,
+    Precondition(String, i64),
+    AtRunTime(String),
+    Refused,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PreconditionCheck {
+    pub rust: String,
+    pub written: String,
+    pub message: Option<String>,
+    pub operands: Vec<(String, String)>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CallReach {
+    Proved,
+    Checked(Vec<PreconditionCheck>),
+    Through,
+}
+
+pub fn joined_reach(a: CallReach, b: CallReach) -> CallReach {
+    match a {
+        CallReach::Through => CallReach::Through,
+        CallReach::Proved => b,
+        CallReach::Checked(first) => match b {
+            CallReach::Through => CallReach::Through,
+            CallReach::Proved => CallReach::Checked(first),
+            CallReach::Checked(ref second) => CallReach::Checked(both_checks(first, &second)),
+        },
+    }
+}
+
+fn both_checks(first: Vec<PreconditionCheck>, second: &[PreconditionCheck]) -> Vec<PreconditionCheck> {
+    let mut all = first;
+    for check in second.iter() { if !all.contains(check) { all.push(check.clone()); } }
+    all
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Published {
+    pub requires: Vec<String>,
+    pub ensures: Vec<String>,
+    pub from: Vec<String>,
+}
+
+impl Published {
+    pub fn nothing() -> Published { Published { requires: vec![], ensures: vec![], from: vec![] } }
+}
+
+
 // --- prover_scope.nika ---
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -19253,6 +19309,10 @@ pub mod prove_text {
 pub mod prover_arena {
     #[allow(unused_imports)]
     pub use super::{TermArena};
+}
+pub mod prover_results {
+    #[allow(unused_imports)]
+    pub use super::{ClaimHeld, PreconditionCheck, CallReach, joined_reach, Published};
 }
 pub mod prover_scope {
     #[allow(unused_imports)]

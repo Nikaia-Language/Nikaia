@@ -38,77 +38,11 @@ use crate::check::{Finding, Severity};
 use crate::contracts::{Ledger, Provenance};
 use crate::parser::Parsed;
 
-/// How the compiler holds one `assert` (ADR-269 D4-D6, D11).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Held {
-    /// In a `test` block: the test's verdict, checked when it runs (D11).
-    ByTheTest,
-    /// Proved from what precedes it; no check is emitted.
-    Proved,
-    /// The precondition of the named function (D5): the body assumes it; a
-    /// call proves it or carries the check, and a caller the compiler can't
-    /// see reaches the entry that checks it (ADR-269 D20). The number is how
-    /// many distinct calls carry a check.
-    Precondition(String, usize),
-    /// Not proved: the condition is checked where it is reached (D4), for
-    /// the reason given.
-    AtRunTime(String),
-    /// A claim about data from outside the program (D6): `NK1202`.
-    Refused,
-}
-
-/// A precondition checked before a function's body runs (ADR-269 D5,
-/// ADR-269 D20): the condition as the language below writes it, over names in
-/// scope where it stands, and what it says when it fails.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Check {
-    /// A `bool` expression of the language below, in `i128` so that the
-    /// check itself cannot overflow.
-    pub rust: String,
-    /// `precondition of `f`: `x > 2``, and where it came from.
-    pub written: String,
-    /// The `assert`'s `message:`, where it wrote one.
-    pub message: Option<String>,
-    /// The values a failure shows (ADR-269 D2): each parameter the condition
-    /// reads, by name, and the expression of the language below that is its
-    /// value where the check stands.
-    pub operands: Vec<(String, String)>,
-}
-
-/// **How a call reaches a function with a precondition** (ADR-269 D20).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Reach {
-    /// Every precondition is proved here: the unchecked entry.
-    Proved,
-    /// The call checks what it does not prove, with its arguments in place
-    /// of the parameters, then takes the unchecked entry.
-    Checked(Vec<Check>),
-    /// The call cannot check it - an argument the prover doesn't read - and
-    /// reaches the checked entry.
-    Through,
-}
-
-impl Reach {
-    /// Two calls that read the same are one key: the more careful answer
-    /// holds for both.
-    fn joined(self, other: Reach) -> Reach {
-        match (self, other) {
-            (Reach::Through, _) | (_, Reach::Through) => Reach::Through,
-            (Reach::Checked(mut a), Reach::Checked(b)) => {
-                for check in b {
-                    if !a.contains(&check) {
-                        a.push(check);
-                    }
-                }
-                Reach::Checked(a)
-            }
-            (Reach::Checked(a), Reach::Proved) | (Reach::Proved, Reach::Checked(a)) => {
-                Reach::Checked(a)
-            }
-            (Reach::Proved, Reach::Proved) => Reach::Proved,
-        }
-    }
-}
+// **What the prover hands the rest of the compiler** is
+// `tools/prover_results.nika` (ADR-294, #436).
+pub use nikaia_std::tools::prover_results::{
+    CallReach as Reach, ClaimHeld as Held, PreconditionCheck as Check, Published, joined_reach,
+};
 
 /// How each call the prover saw reaches its callee, by callee and arguments
 /// as written. A call it did not see is not here, and reaches the checked
@@ -127,18 +61,6 @@ pub struct Proved {
     pub reaches: Reaches,
     /// By the ledger's key: what the ledger publishes (ADR-269 D18).
     pub published: BTreeMap<String, Published>,
-}
-
-/// **A function's contract as the ledger writes it** (ADR-269 D18), in the
-/// language's syntax.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct Published {
-    /// Over the parameters.
-    pub requires: Vec<String>,
-    /// Over the parameters and `result`.
-    pub ensures: Vec<String>,
-    /// For each of `requires`, then of `ensures`: the `assert` it came from.
-    pub from: Vec<String>,
 }
 
 /// How a call is named in [`Reaches`].
@@ -254,7 +176,9 @@ pub fn prove(
     // every postcondition still standing, and the `assert` each came from.
     let mut published: BTreeMap<String, Published> = BTreeMap::new();
     for (function, pre) in &prover.preconditions {
-        let entry = published.entry(function.clone()).or_default();
+        let entry = published
+            .entry(function.clone())
+            .or_insert_with(Published::nothing);
         for claim in &pre.claims {
             entry.requires.push(ledger_text(&prover.arena, claim.term));
             entry.from.push(format!("assert({})", claim.written));
@@ -264,7 +188,9 @@ pub fn prove(
         if posts.is_empty() {
             continue;
         }
-        let entry = published.entry(function.clone()).or_default();
+        let entry = published
+            .entry(function.clone())
+            .or_insert_with(Published::nothing);
         for post in posts {
             entry.ensures.push(ledger_text(&prover.arena, post.term));
         }
@@ -277,7 +203,7 @@ pub fn prove(
         }
     }
     prover.out.published = published;
-    let mut checked: BTreeMap<String, usize> = BTreeMap::new();
+    let mut checked: BTreeMap<String, i64> = BTreeMap::new();
     for ((callee, _), reach) in &prover.out.reaches {
         if matches!(reach, Reach::Checked(_)) {
             *checked.entry(callee.clone()).or_insert(0) += 1;
@@ -1389,25 +1315,28 @@ impl<'a> Prover<'a> {
             // one the prover reads, which also makes it pure, so evaluating it
             // once more for the check changes nothing. Where one is not, the
             // call reaches the checked entry (ADR-269 D20).
-            reach = reach.joined(match goal {
-                Some(goal) => Reach::Checked(vec![Check {
-                    rust: rust_of(&self.arena, goal),
-                    written: pre.message(callee),
-                    message: pre.message.clone(),
-                    operands: read
-                        .iter()
-                        .filter_map(|name| {
-                            let value = with.get(name).copied().flatten()?;
-                            Some((name.clone(), rust_of(&self.arena, value)))
-                        })
-                        .collect(),
-                }]),
-                None => Reach::Through,
-            });
+            reach = joined_reach(
+                reach,
+                match goal {
+                    Some(goal) => Reach::Checked(vec![Check {
+                        rust: rust_of(&self.arena, goal),
+                        written: pre.message(callee),
+                        message: pre.message.clone(),
+                        operands: read
+                            .iter()
+                            .filter_map(|name| {
+                                let value = with.get(name).copied().flatten()?;
+                                Some((name.clone(), rust_of(&self.arena, value)))
+                            })
+                            .collect(),
+                    }]),
+                    None => Reach::Through,
+                },
+            );
         }
         let key = call_key(self.parsed, callee, args);
         let joined = match self.out.reaches.remove(&key) {
-            Some(before) => before.joined(reach),
+            Some(before) => joined_reach(before, reach),
             None => reach,
         };
         self.out.reaches.insert(key, joined);

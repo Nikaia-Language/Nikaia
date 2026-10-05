@@ -4,6 +4,16 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.490] — 2026-10-05
+
+**What the prover hands the rest of the compiler is Nikaia** (ADR-294, #436
+step 4). `tools/prover_results.nika` holds how an `assert` is held
+(`ClaimHeld`), what a checked entry checks (`PreconditionCheck`), how a call
+reaches a function with a precondition (`CallReach`, joined by
+`joined_reach`) and the contract the ledger publishes (`Published`);
+`prove.rs` names them as before. Every bench and example lowers byte for
+byte as before.
+
 ## [0.0.489] — 2026-10-05
 
 **A number read past a jump is the number** (#456, the first of its two

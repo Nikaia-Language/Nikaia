@@ -1,0 +1,95 @@
+// crates/nikaia-std/src/tools/prover_results.nika
+//
+// **What the prover hands the rest of the compiler** (ADR-269), moved from
+// the compiler's `prove` (ADR-294, #436 step 4): how each `assert` is held,
+// what a checked entry checks, how a call reaches a function with a
+// precondition, and the contract the ledger publishes.
+
+/// How the compiler holds one `assert` (ADR-269 D4-D6, D11).
+pub enum ClaimHeld {
+    /// In a `test` block: the test's verdict, checked when it runs (D11).
+    ByTheTest,
+    /// Proved from what precedes it; no check is emitted.
+    Proved,
+    /// The precondition of the named function (D5): the body assumes it; a
+    /// call proves it or carries the check, and a caller the compiler can't
+    /// see reaches the entry that checks it (ADR-269 D20). The number is how
+    /// many distinct calls carry a check.
+    Precondition(String, i64),
+    /// Not proved: the condition is checked where it is reached (D4), for
+    /// the reason given.
+    AtRunTime(String),
+    /// A claim about data from outside the program (D6): `NK1202`.
+    Refused,
+}
+
+/// A precondition checked before a function's body runs (ADR-269 D5,
+/// ADR-269 D20): the condition as the language below writes it, over names in
+/// scope where it stands, and what it says when it fails.
+pub struct PreconditionCheck {
+    /// A `bool` expression of the language below, in `i128` so that the
+    /// check itself cannot overflow.
+    pub rust: String,
+    /// `precondition of `f`: `x > 2``, and where it came from.
+    pub written: String,
+    /// The `assert`'s `message:`, where it wrote one.
+    pub message: String?,
+    /// The values a failure shows (ADR-269 D2): each parameter the condition
+    /// reads, by name, and the expression of the language below that is its
+    /// value where the check stands.
+    pub operands: Vec[(String, String)],
+}
+
+/// **How a call reaches a function with a precondition** (ADR-269 D20).
+pub enum CallReach {
+    /// Every precondition is proved here: the unchecked entry.
+    Proved,
+    /// The call checks what it does not prove, with its arguments in place
+    /// of the parameters, then takes the unchecked entry.
+    Checked(Vec[PreconditionCheck]),
+    /// The call cannot check it - an argument the prover doesn't read - and
+    /// reaches the checked entry.
+    Through,
+}
+
+/// Two calls that read the same are one key: the more careful answer holds
+/// for both.
+pub fn joined_reach(a: CallReach, b: CallReach) -> CallReach {
+    return match a {
+        CallReach::Through => CallReach::Through,
+        CallReach::Proved => b,
+        CallReach::Checked(first) => match b {
+            CallReach::Through => CallReach::Through,
+            CallReach::Proved => CallReach::Checked(first),
+            CallReach::Checked(second) => CallReach::Checked(both_checks(first, second)),
+        },
+    }
+}
+
+/// `first`, then each of `second` it does not hold yet.
+fn both_checks(first: Vec[PreconditionCheck], second: Vec[PreconditionCheck]) -> Vec[PreconditionCheck] {
+    let mut all = first
+    for check in second {
+        if !all.contains(check) {
+            all.push(check.clone())
+        }
+    }
+    return all
+}
+
+/// **A function's contract as the ledger writes it** (ADR-269 D18), in the
+/// language's syntax.
+pub struct Published {
+    /// Over the parameters.
+    pub requires: Vec[String],
+    /// Over the parameters and `result`.
+    pub ensures: Vec[String],
+    /// For each of `requires`, then of `ensures`: the `assert` it came from.
+    pub from: Vec[String],
+}
+
+impl Published {
+    pub fn nothing() -> Published {
+        return Published { requires: [], ensures: [], from: [] }
+    }
+}
