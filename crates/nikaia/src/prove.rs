@@ -233,7 +233,9 @@ pub fn prove(
 
 // **The claims carried between functions** are `tools/prover_claims.nika`
 // (ADR-294, #436).
-use nikaia_std::tools::prover_claims::{CarriedFrom, Foreign, PostClaim, PreClaim, Precondition};
+use nikaia_std::tools::prover_claims::{
+    self, CarriedFrom, Foreign, PostClaim, PreClaim, Precondition,
+};
 use nikaia_std::tools::prover_solver::{self, SolverAnswer};
 use nikaia_std::tools::prover_state::{self, ProverState};
 
@@ -253,7 +255,7 @@ struct Prover<'a> {
 }
 
 /// What a body may know at one point (`tools/prover_scope.nika`, #436).
-use nikaia_std::tools::prover_scope::{ProverScope as Scope, length_of, result_name};
+use nikaia_std::tools::prover_scope::{ProverScope as Scope, length_of};
 
 /// Where a function body is, for what an `assert` there may become.
 #[derive(Clone)]
@@ -1395,72 +1397,16 @@ impl<'a> Prover<'a> {
             return known.clone();
         }
         let contract = self.own.functions.get(key)?.clone();
-        let signature = contract.signature.clone();
-        let mut params = Vec::new();
-        let mut names = BTreeSet::from([result_name()]);
-        for (name, ty) in signature
-            .as_ref()
-            .map(|s| s.params.clone())
-            .unwrap_or_default()
-        {
-            if let crate::contracts::ty::Ty::Named {
-                name: type_name,
-                args,
-                view,
-            } = &ty
-            {
-                if args.is_empty() && !view && is_whole_number(type_name) {
-                    names.insert(name.clone());
-                }
-                if has_a_length(type_name) {
-                    names.insert(length_of(&name));
-                }
-            }
-            params.push(name);
-        }
-        let whole_result = matches!(
-            signature.as_ref().and_then(|s| s.result.clone()),
-            Some(crate::contracts::ty::Ty::Named { name, args, view })
-                if args.is_empty() && !view && is_whole_number(&name)
-        );
-        let assert_of = |at: usize| {
-            contract
-                .from
-                .get(at)
-                .and_then(|from| from.strip_prefix("assert("))
-                .and_then(|from| from.strip_suffix(')'))
-                .unwrap_or_default()
-                .to_string()
+        let shape = prover_claims::foreign_shape(&contract);
+        let mut read_back = |texts: &[String]| -> Vec<i64> {
+            texts
+                .iter()
+                .map(|text| condition(&mut self.arena, text, &shape.names).unwrap_or(-1))
+                .collect()
         };
-        let mut requires = Vec::new();
-        for (at, text) in contract.requires.iter().enumerate() {
-            if let Some(term) = condition(&mut self.arena, text, &names) {
-                let written = assert_of(at);
-                requires.push(PreClaim {
-                    term,
-                    computed: (written != *text).then(|| text.clone()),
-                    written,
-                    message: None,
-                    origin: None,
-                    site: None,
-                });
-            }
-        }
-        let mut ensures = Vec::new();
-        for (at, text) in contract.ensures.iter().enumerate() {
-            if let Some(term) = condition(&mut self.arena, text, &names) {
-                ensures.push(PostClaim {
-                    term,
-                    written: assert_of(contract.requires.len() + at),
-                });
-            }
-        }
-        let foreign = Foreign {
-            params,
-            whole_result,
-            requires,
-            ensures,
-        };
+        let requires = read_back(&contract.requires);
+        let ensures = read_back(&contract.ensures);
+        let foreign = prover_claims::foreign_from(&contract, shape, &requires, &ensures);
         self.state
             .foreign
             .insert(key.to_string(), Some(foreign.clone()));

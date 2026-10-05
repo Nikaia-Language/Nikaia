@@ -4,6 +4,19 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.497] — 2026-10-05
+
+**Another package's contract is read back in Nikaia** (ADR-294, #436 step 4).
+`prover_claims.nika`'s `foreign_shape` reads which names a ledger's
+conditions may use and whether the function hands back a whole number, and
+`foreign_from` makes the `PreClaim`s and `PostClaim`s with the `assert` each
+came from (ADR-269 D18); parsing a condition stays the compiler's. Every
+bench and example lowers byte for byte as before.
+
+**A `let` over a list element is a view in a comparison** (#461). `let held
+= xs[at]` binds the element lent, and `made != held` compared a `String` with
+a `&String`; the comparison reads such a side as it reads any other view.
+
 ## [0.0.496] — 2026-10-05
 
 **Text is read through a view that names its unit, and there is no `char`**

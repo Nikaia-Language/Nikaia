@@ -1288,6 +1288,39 @@ fn a_methods_number_keeps_nothing_alive() {
     );
 }
 
+/// **A `let` over a list element is a view in a comparison** (#461, found
+/// moving the prover's `foreign_contract` into Nikaia, #436): `let held =
+/// xs[at]` binds the element lent, and `made != held` compared a `String`
+/// with a `&String`, which `rustc` refused. Two such views compared with each
+/// other stay as they are.
+#[test]
+fn a_let_over_an_element_is_read_in_a_comparison() {
+    runs(
+        "lent-let-compared",
+        "fn named(n: i64) -> String {\n\
+         \x20   return f\"x{n}\"\n\
+         }\n\
+         \n\
+         fn differs(xs: ref Vec[String], at: i64) -> bool {\n\
+         \x20   let made = named(at)\n\
+         \x20   let held = xs[at]\n\
+         \x20   return made != held\n\
+         }\n\
+         \n\
+         fn same_ends(xs: ref Vec[String]) -> bool {\n\
+         \x20   let first = xs[0]\n\
+         \x20   let last = xs[xs.len() - 1]\n\
+         \x20   return first == last\n\
+         }\n\
+         \n\
+         fn main() {\n\
+         \x20   let xs: Vec[String] = [\"x0\", \"y\", \"x0\"]\n\
+         \x20   println(f\"{differs(xs, 0)} {differs(xs, 1)} {same_ends(xs)}\")\n\
+         }\n",
+        "false true true\n",
+    );
+}
+
 /// **Found by the solver's kernels** ([ADR-270](../../../docs/specification/adr/adr-270.md)
 /// D8 step 1): an index into a `mut` parameter, read and written. The
 /// parameter is a `&mut Vec<u32>` below, and the write was `set(&mut out, …)` -

@@ -6277,14 +6277,25 @@ impl<'a> Checker<'a> {
         let a_lent_parameter = |side: &Expr, ty: &Ty| {
             !ty.is_unknown() && !ty.is_a_view() && !owned_text(ty) && self.a_lent_parameter(side)
         };
+        // **And a `let` over a place** (#461): `let held = xs[at]` over a
+        // `Vec[String]` is a view below (`Checked::lent_lets`) though its type
+        // here is the value's, and `made != held` compared a `String` with a
+        // `&String` (found moving the prover's `foreign_contract` into Nikaia,
+        // #436).
+        let a_lent_let = |side: &Expr, ty: &Ty| !ty.is_unknown() && self.a_lent_let(side);
         let is_view = |side: &Expr, ty: &Ty| {
             copies_as_a_view(ty)
                 || a_view_of_a_type(ty)
                 || (lent(side) && (copied(ty) || owned_text(ty)))
                 || a_lent_parameter(side, ty)
+                || a_lent_let(side, ty)
         };
         let is_value = |side: &Expr, ty: &Ty| {
-            !ty.is_unknown() && !ty.is_a_view() && !lent(side) && !a_lent_parameter(side, ty)
+            !ty.is_unknown()
+                && !ty.is_a_view()
+                && !lent(side)
+                && !a_lent_parameter(side, ty)
+                && !a_lent_let(side, ty)
         };
         let read_left = is_view(lhs, left) && is_value(rhs, right);
         let read_right = is_view(rhs, right) && is_value(lhs, left);
@@ -16527,6 +16538,19 @@ impl<'a> Checker<'a> {
             help: Some(format!("Hand over a copy each time: `{path}.clone()`.")),
             labels: Vec::new(),
         });
+    }
+
+    /// Whether `side` names a `let` over a place, which is a view of it
+    /// ([`Checked::lent_lets`]).
+    fn a_lent_let(&self, side: &Expr) -> bool {
+        let Expr::Variable(name) = side else {
+            return false;
+        };
+        let name = self.parsed.text(*name);
+        self.scope
+            .iter()
+            .rposition(|frame| frame.iter().any(|local| local.name == name))
+            .is_some_and(|frame| self.lent_lets.contains(&(name.to_string(), frame)))
     }
 
     /// Whether a name is only **lent** to this body: a parameter or a `self`

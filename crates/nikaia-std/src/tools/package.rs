@@ -10469,6 +10469,69 @@ fn carried_site_of(site: Option<&CarriedFrom>) -> Option<CarriedFrom> {
     Some(s.clone())
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ForeignShape {
+    pub params: Vec<String>,
+    pub names: collections::BTreeSet<String>,
+    pub whole_result: bool,
+}
+
+pub fn foreign_shape(contract: &FnContract) -> ForeignShape {
+    let mut shape = ForeignShape { params: vec![], names: collections::BTreeSet::new(), whole_result: false };
+    shape.names.insert(result_name());
+    let signature = match contract.signature.as_ref() { Some(__nikaia_value) => __nikaia_value, None => return shape };
+    for (param, ty) in signature.params.iter() {
+        match ty {
+            Ty::Named { name, args, view } => {
+                let view = *view;
+                if args.is_empty() && !view && is_whole_number(name) { shape.names.insert(param.to_owned()); }
+                if has_a_length(name) { shape.names.insert(length_of(param)); }
+            },
+            _ => { },
+        }
+        shape.params.push(param.to_owned());
+    }
+    shape.whole_result = whole_result_of((signature.result).as_ref());
+    shape
+}
+
+fn whole_result_of(result: Option<&Ty>) -> bool {
+    let ty = match result { Some(__nikaia_value) => __nikaia_value, None => return false };
+    match ty {
+        Ty::Named { name, args, view } => { let view = *view; args.is_empty() && !view && is_whole_number(name) },
+        _ => false,
+    }
+}
+
+pub fn foreign_from(contract: &FnContract, shape: ForeignShape, requires: &[i64], ensures: &[i64]) -> Foreign {
+    let mut foreign = Foreign { params: shape.params, whole_result: shape.whole_result, requires: vec![], ensures: vec![] };
+    for at in 0..requires.len() as i64 {
+        let term = *nikaia_std::index::get(&requires, nikaia_std::index::at(at));
+        if term < 0 { continue; }
+        let written = assert_of(contract, at);
+        let text = nikaia_std::index::get(&contract.requires, nikaia_std::index::at(at));
+        let mut computed: Option<String> = None;
+        if written != *text { computed = Some(text.to_owned()); }
+        foreign.requires.push(PreClaim { term, written, computed, message: None, origin: None, site: None });
+    }
+    for at in 0..ensures.len() as i64 {
+        let term = *nikaia_std::index::get(&ensures, nikaia_std::index::at(at));
+        if term < 0 { continue; }
+        foreign.ensures.push(PostClaim { term, written: assert_of(contract, contract.requires.len() as i64 + at) });
+    }
+    foreign
+}
+
+fn assert_of(contract: &FnContract, at: i64) -> String {
+    if at >= contract.from.len() as i64 { return String::from(""); }
+    let from = nikaia_std::index::get(&contract.from, nikaia_std::index::at(at));
+    if !from.starts_with("assert(") || !from.ends_with(")") { return String::from(""); }
+    let c: Vec<char> = nikaia_std::list::chars(from.chars());
+    let mut inner: String = String::from("");
+    for k in 7..c.len() as i64 - 1 { inner.push(*nikaia_std::index::get(&c, (k) as usize)); }
+    inner
+}
+
 
 // --- prover_results.nika ---
 
@@ -19555,7 +19618,7 @@ pub mod prover_arena {
 }
 pub mod prover_claims {
     #[allow(unused_imports)]
-    pub use super::{PreClaim, CarriedFrom, Precondition, PostClaim, Foreign};
+    pub use super::{PreClaim, CarriedFrom, Precondition, PostClaim, Foreign, ForeignShape, foreign_shape, foreign_from};
 }
 pub mod prover_results {
     #[allow(unused_imports)]

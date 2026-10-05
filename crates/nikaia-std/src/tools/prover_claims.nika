@@ -6,6 +6,8 @@
 // `result`, and another package's contract read back into terms. A term is
 // a place in the walk's arena (`prover_arena.nika`).
 
+use std::collections
+
 /// One claim of a precondition (ADR-269 D15).
 pub struct PreClaim {
     /// The condition at the function's entry, over its parameters: the
@@ -89,4 +91,91 @@ fn claim_text_of(text: ref String?) -> String? {
 fn carried_site_of(site: ref CarriedFrom?) -> CarriedFrom? {
     let s = site ?? return null
     return s.clone()
+}
+
+/// **What another package's function looks like to the prover** (ADR-269
+/// D18): its parameters' names, the names its conditions may read - each
+/// whole-number parameter, each list's length and `result` - and whether it
+/// hands back a whole number.
+pub struct ForeignShape {
+    pub params: Vec[String],
+    pub names: collections::BTreeSet[String],
+    pub whole_result: bool,
+}
+
+/// The shape of `contract`'s function, read from its signature.
+pub fn foreign_shape(contract: ref FnContract) -> ForeignShape {
+    let mut shape = ForeignShape { params: [], names: collections::BTreeSet(), whole_result: false }
+    shape.names.insert(result_name())
+    let signature = contract.signature ?? return shape
+    for (param, ty) in signature.params {
+        match ty {
+            Ty::Named { name, args, view } => {
+                if args.is_empty() && !view && is_whole_number(name) {
+                    shape.names.insert(param.clone())
+                }
+                if has_a_length(name) {
+                    shape.names.insert(length_of(param))
+                }
+            },
+            else => {},
+        }
+        shape.params.push(param.clone())
+    }
+    shape.whole_result = whole_result_of(signature.result)
+    return shape
+}
+
+fn whole_result_of(result: ref Ty?) -> bool {
+    let ty = result ?? return false
+    return match ty {
+        Ty::Named { name, args, view } => args.is_empty() && !view && is_whole_number(name),
+        else => false,
+    }
+}
+
+/// **Another package's contract, read back into terms** (ADR-269 D18):
+/// `requires` and `ensures` hold, for each condition the ledger states, its
+/// term - or `-1` where it did not read back, which is left out and only
+/// ever proves less. Each claim keeps the `assert` it came from.
+pub fn foreign_from(contract: ref FnContract, shape: ForeignShape, requires: ref Vec[i64], ensures: ref Vec[i64]) -> Foreign {
+    let mut foreign = Foreign { params: shape.params, whole_result: shape.whole_result, requires: [], ensures: [] }
+    for at in 0..<requires.len() {
+        let term = requires[at]
+        if term < 0 {
+            continue
+        }
+        let written = assert_of(contract, at)
+        let text = contract.requires[at]
+        let mut computed: String? = null
+        if written != text {
+            computed = text.clone()
+        }
+        foreign.requires.push(PreClaim { term: term, written: written, computed: computed, message: null, origin: null, site: null })
+    }
+    for at in 0..<ensures.len() {
+        let term = ensures[at]
+        if term < 0 {
+            continue
+        }
+        foreign.ensures.push(PostClaim { term: term, written: assert_of(contract, contract.requires.len() + at) })
+    }
+    return foreign
+}
+
+/// The condition of the `assert` the ledger's `at`-th claim came from.
+fn assert_of(contract: ref FnContract, at: i64) -> String {
+    if at >= contract.from.len() {
+        return ""
+    }
+    let from = contract.from[at]
+    if !from.starts_with("assert(") || !from.ends_with(")") {
+        return ""
+    }
+    let c: Vec[char] = from.chars().collect()
+    let mut inner: String = ""
+    for k in 7..<c.len() - 1 {
+        inner.push(c[k])
+    }
+    return inner
 }
