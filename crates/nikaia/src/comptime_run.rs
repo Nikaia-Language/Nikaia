@@ -1,0 +1,493 @@
+//! **A `comptime` that calls a function is compiled and run**
+//! ([ADR-321](../../../docs/specification/adr/adr-321.md) D1).
+//!
+//! The initialiser and everything it calls are lowered as the program is,
+//! compiled for the machine that builds and run there; what the program prints
+//! is the value. One implementation of the language computes the build-time
+//! and the run-time answer, so an overflow stops the build where it would stop
+//! the program, and a function of `std`'s Rust half runs as it does when the
+//! program runs.
+//!
+//! **What is built here** (#468's first stage): one small program per
+//! `comptime`, against `std` alone. It is linked against one dynamic library
+//! that names `std` (D3, the *bundle*), compiled by `rustc` directly and run
+//! once; its answer is kept under a key of the code that produced it (D4), so
+//! an unchanged `comptime` is neither compiled nor run again - which is also
+//! what keeps a lowering inside Cargo's own build from starting another.
+//!
+//! The program is the file's items without its `fn main` and without its
+//! `comptime`s, then the `comptime`s already worked out, each as the literal it
+//! came to, and a function that hands back the initialiser. Its `main` writes
+//! the value in the encoding a grammar run already uses
+//! ([`crate::grammar_run::decode`]).
+
+use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::sync::OnceLock;
+
+use crate::ast::{self, Block, Expr, Item, Span, Spanned, Stmt};
+use crate::build_time::Value;
+use crate::contracts::ty::Ty;
+use crate::grammar_run::Wall;
+use crate::parser::Parsed;
+
+/// The name the sub-program hands the value back under.
+const VALUE_FN: &str = "__nikaia_comptime_value";
+
+/// **The sub-program for one initialiser**, or nothing where this stage does
+/// not build one: a type with no written form, or an earlier `comptime` whose
+/// value is not a literal.
+///
+/// `bound` is the `comptime` being worked out; `known` is what an earlier one
+/// came to, by name, and nothing for one not worked out yet - which is left
+/// out, as the one being worked out is.
+pub(crate) fn sub_program(
+    parsed: &Parsed,
+    bound: &str,
+    value: &Expr,
+    ty: &Ty,
+    known: &dyn Fn(&str) -> Option<Value>,
+) -> Option<Parsed> {
+    let mut kept = parsed.keeping(|item| match item {
+        // **The program's `main` is not this program's**, and its constants
+        // are carried below as what they came to.
+        Item::Fn {
+            name: Some(name), ..
+        } => parsed.text(*name) != "main",
+        Item::Comptime { .. } => false,
+        _ => true,
+    });
+    for item in &parsed.program.items {
+        let Item::Comptime {
+            name,
+            ty: declared,
+            public,
+            ..
+        } = &item.node
+        else {
+            continue;
+        };
+        let named = parsed.text(*name);
+        if named == bound {
+            continue;
+        }
+        let Some(held) = known(named) else {
+            continue;
+        };
+        kept.program.items.push(Spanned::new(
+            Item::Comptime {
+                name: *name,
+                ty: declared.clone(),
+                value: literal_of(&held)?,
+                public: *public,
+            },
+            item.span,
+        ));
+    }
+    let returns = written_type(ty, &kept)?;
+    let main = kept.interner.intern_string("main");
+    let value_fn = kept.interner.intern_string(VALUE_FN);
+    kept.program.items.push(Spanned::new(
+        a_function(main, None, Vec::new()),
+        Span::nowhere(),
+    ));
+    kept.program.items.push(Spanned::new(
+        a_function(
+            value_fn,
+            Some(returns),
+            vec![Spanned::new(
+                Stmt::Return(Some(value.clone())),
+                Span::nowhere(),
+            )],
+        ),
+        Span::nowhere(),
+    ));
+    Some(kept)
+}
+
+fn a_function(
+    name: winnow_grammar::Symbol,
+    ret_type: Option<ast::Type>,
+    stmts: Vec<Spanned<Stmt>>,
+) -> Item {
+    Item::Fn {
+        name: Some(name),
+        generics: Vec::new(),
+        receiver: None,
+        args: Vec::new(),
+        config: Vec::new(),
+        spread: None,
+        ret_type,
+        body: Block { stmts },
+        is_sync: false,
+        sync_by: Vec::new(),
+        is_public: false,
+        can_throw: false,
+    }
+}
+
+/// An earlier `comptime`'s value as the literal that writes it: a number, a
+/// truth value or text. Anything else has no literal here.
+fn literal_of(value: &Value) -> Option<Expr> {
+    match value {
+        Value::Int(n) => Some(Expr::LitInt {
+            value: n.magnitude,
+            negative: n.negative,
+        }),
+        Value::Bool(b) => Some(Expr::LitBool(*b)),
+        Value::Float(f) => Some(Expr::LitFloat(format!("{f:?}"))),
+        Value::Text(text) => Some(Expr::LitStr {
+            text: crate::build_time::written(text),
+            at: 0,
+        }),
+        _ => None,
+    }
+}
+
+/// `ty` as the sub-program writes it in the value function's signature.
+fn written_type(ty: &Ty, parsed: &Parsed) -> Option<ast::Type> {
+    let plain = |name: &str| ast::Type {
+        name: parsed.interner.intern_string(name),
+        generics: Vec::new(),
+        is_view: false,
+        is_tuple: false,
+        is_nullable: false,
+        code: Box::new(None),
+        count: None,
+        is_mut: false,
+        is_slice: false,
+        either: false,
+    };
+    match ty {
+        Ty::Named { name, args, view } => {
+            let mut out = plain(name);
+            out.is_view = *view;
+            out.generics = args
+                .iter()
+                .map(|arg| written_type(arg, parsed))
+                .collect::<Option<_>>()?;
+            Some(out)
+        }
+        Ty::Count(n) => {
+            let mut out = plain(&n.to_string());
+            out.count = Some(*n);
+            Some(out)
+        }
+        Ty::Tuple(parts) => {
+            let mut out = plain("");
+            out.is_tuple = true;
+            out.generics = parts
+                .iter()
+                .map(|part| written_type(part, parsed))
+                .collect::<Option<_>>()?;
+            Some(out)
+        }
+        Ty::Nullable(inner) => {
+            let mut out = written_type(inner, parsed)?;
+            out.is_nullable = true;
+            Some(out)
+        }
+        _ => None,
+    }
+}
+
+/// **The lowered sub-program with a `main` of its own**: the generated one
+/// starts the runtime and runs the program's body, and this one reports a stop,
+/// computes the value and writes it.
+///
+/// **A stop names the byte it came from**, where the program's own table names
+/// a `.nika` line (ADR-300 D9): the sub-program has no file of its own, and the
+/// checker turns the byte back into a place in the file it is checking. A row
+/// is the generated line, [`STOPPED_AT`], and the byte the line's outermost
+/// node starts at.
+pub(crate) fn with_driver(lowered: &crate::emit::Lowered, dump: &str) -> Option<String> {
+    let rust = &lowered.rust;
+    let start = rust.find("\nfn main() {\n")?;
+    let end = start + 1 + rust[start + 1..].find("\n}\n")? + 3;
+    let main = format!(
+        "\nfn main() {{\n\
+         \x20   nikaia_std::abort::report_in_nikaia_terms(__NIKAIA_SITES);\n\
+         \x20   let value = {VALUE_FN}();\n\
+         \x20   let mut out = String::new();\n\
+         {dump}\
+         \x20   println!(\"{{out}}\");\n\
+         }}\n"
+    );
+    let mut starts = vec![0usize];
+    starts.extend(
+        rust.char_indices()
+            .filter(|(_, c)| *c == '\n')
+            .map(|(i, _)| i + 1),
+    );
+    let mut rows: std::collections::BTreeMap<usize, usize> = std::collections::BTreeMap::new();
+    for (generated, byte, _) in lowered.map.rows() {
+        if generated >= start || byte == 0 {
+            continue;
+        }
+        let line = match starts.binary_search(&generated) {
+            Ok(i) => i + 1,
+            Err(i) => i,
+        };
+        rows.entry(line).or_insert(byte);
+    }
+    let mut table = String::from("const __NIKAIA_SITES: &[nikaia_std::abort::Site] = &[\n");
+    for (line, byte) in rows {
+        table.push_str(&format!("    ({line}, {STOPPED_AT:?}, {byte}),\n"));
+    }
+    table.push_str("];\n");
+    let rest = &rust[end..];
+    let empty = rest.find("const __NIKAIA_SITES")?;
+    let after = empty + rest[empty..].find("];\n")? + 3;
+    // **Nothing goes in front of the program**: the table maps its lines, and
+    // one line more above them would name the wrong one.
+    Some(format!(
+        "{}{main}{}{table}{}{}\nextern crate nikaia_bundle as _;\n",
+        &rust[..start],
+        &rest[..empty],
+        &rest[after..],
+        crate::grammar_run::DUMP_HELPERS
+    ))
+}
+
+/// What a stop's row names instead of a file: the byte follows it.
+pub(crate) const STOPPED_AT: &str = "@";
+
+// --- compiling and running -----------------------------------------------------
+
+/// **The dynamic library build-time code links against** (D3): one crate that
+/// names `std`, built by Cargo from the same compiled dependencies as anything
+/// else in the workshop.
+#[derive(Debug)]
+pub(crate) struct Bundle {
+    /// The library itself.
+    dylib: PathBuf,
+    /// `std` as Cargo compiled it, which `rustc` is pointed at so that a path
+    /// `nikaia_std::…` resolves in every module; the code is the library's.
+    std_rlib: PathBuf,
+    /// Where the libraries it was built from are.
+    deps: PathBuf,
+    /// What changes when the library is rebuilt: part of every key.
+    stamp: String,
+}
+
+/// Build the bundle under `at`, or say why it could not be built.
+pub(crate) fn bundle(at: &Path) -> Result<Bundle, String> {
+    let dir = at.join("bundle");
+    std::fs::create_dir_all(dir.join("src")).map_err(|e| format!("{}: {e}", dir.display()))?;
+    let mut manifest = String::from(
+        "# GENERATED. The library build-time code links against (ADR-321 D3).\n\n\
+         [workspace]\n\n\
+         [package]\nname = \"nikaia_bundle\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n\
+         [lib]\npath = \"src/lib.rs\"\n\n[dependencies]\n",
+    );
+    for (name, value) in crate::project::runtime_dependencies_for("nikaia_std") {
+        manifest.push_str(&format!("{name} = {value}\n"));
+    }
+    write_if_changed(&dir.join("Cargo.toml"), &manifest)?;
+    write_if_changed(
+        &dir.join("src").join("lib.rs"),
+        "// GENERATED (ADR-321 D3).\npub extern crate nikaia_std;\n",
+    )?;
+    let built = Command::new(cargo())
+        .args(["rustc", "--quiet", "--lib", "--crate-type", "dylib"])
+        .arg("--message-format=json")
+        .arg("--manifest-path")
+        .arg(dir.join("Cargo.toml"))
+        .arg("--target-dir")
+        .arg(at.join("target"))
+        .args(["--", "-C", "prefer-dynamic"])
+        .output()
+        .map_err(|e| format!("running cargo: {e}"))?;
+    if !built.status.success() {
+        return Err(String::from_utf8_lossy(&built.stderr).to_string());
+    }
+    let mut dylib = None;
+    let mut std_rlib = None;
+    for line in String::from_utf8_lossy(&built.stdout).lines() {
+        let Ok(message) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
+        if message["reason"] != "compiler-artifact" {
+            continue;
+        }
+        let files = message["filenames"].as_array().cloned().unwrap_or_default();
+        let files = files.iter().filter_map(|f| f.as_str()).map(PathBuf::from);
+        match message["target"]["name"].as_str() {
+            Some("nikaia_std") => {
+                std_rlib = files
+                    .clone()
+                    .find(|f| f.extension().is_some_and(|e| e == "rlib"))
+            }
+            Some("nikaia_bundle") => {
+                dylib = files.clone().find(|f| {
+                    f.extension()
+                        .is_some_and(|e| e == std::env::consts::DLL_EXTENSION)
+                })
+            }
+            _ => {}
+        }
+    }
+    let (Some(dylib), Some(std_rlib)) = (dylib, std_rlib) else {
+        return Err("cargo built the bundle and named no library".to_string());
+    };
+    let deps = std_rlib
+        .parent()
+        .map(Path::to_path_buf)
+        .ok_or_else(|| "no directory for std".to_string())?;
+    let stamp = [&dylib, &std_rlib]
+        .iter()
+        .map(|file| {
+            let meta = std::fs::metadata(file).map_err(|e| format!("{}: {e}", file.display()))?;
+            let modified = meta
+                .modified()
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_nanos())
+                .unwrap_or_default();
+            Ok(format!("{}:{}:{modified}", file.display(), meta.len()))
+        })
+        .collect::<Result<Vec<String>, String>>()?
+        .join("\n");
+    Ok(Bundle {
+        dylib,
+        std_rlib,
+        deps,
+        stamp,
+    })
+}
+
+/// **Compile and run one build-time program**, or hand back what it said when
+/// it ran before: its standard output, or `Wall::Refused` with what it wrote
+/// where it stopped. Keyed on the program, the toolchain and the bundle (D4).
+pub(crate) fn run(at: &Path, bundle: &Bundle, program: &str) -> Result<String, Wall> {
+    let key =
+        crate::assets::digest(format!("{program}\n{}\n{}", toolchain(), bundle.stamp).as_bytes());
+    let dir = at.join("comptime").join(&key);
+    let answered = dir.join("answer");
+    let stopped = dir.join("stopped");
+    if let Ok(answer) = std::fs::read_to_string(&answered) {
+        return Ok(answer);
+    }
+    if let Ok(said) = std::fs::read_to_string(&stopped) {
+        return Err(Wall::Refused { detail: said });
+    }
+    let did_not = |detail: String| Wall::DidNotBuild { detail };
+    let source = dir.join("main.rs");
+    write_if_changed(&source, program).map_err(did_not)?;
+    let binary = dir.join("run");
+    let compiled = Command::new(rustc())
+        .args([
+            "--edition=2024",
+            "--crate-name",
+            "comptime",
+            "--crate-type",
+            "bin",
+        ])
+        .args(["-C", "opt-level=0", "-C", "overflow-checks=on"])
+        .args([
+            "-C",
+            "debug-assertions=off",
+            "-C",
+            "prefer-dynamic",
+            "-A",
+            "warnings",
+        ])
+        .arg("--extern")
+        .arg(format!("nikaia_bundle={}", bundle.dylib.display()))
+        .arg("--extern")
+        .arg(format!("nikaia_std={}", bundle.std_rlib.display()))
+        .arg("-L")
+        .arg(format!("dependency={}", bundle.deps.display()))
+        .arg("-o")
+        .arg(&binary)
+        .arg(&source)
+        .output()
+        .map_err(|e| did_not(format!("running rustc: {e}")))?;
+    if !compiled.status.success() {
+        return Err(did_not(
+            String::from_utf8_lossy(&compiled.stderr).to_string(),
+        ));
+    }
+    let mut libraries: Vec<PathBuf> = Vec::new();
+    if let Some(dir) = bundle.dylib.parent() {
+        libraries.push(dir.to_path_buf());
+    }
+    libraries.push(bundle.deps.clone());
+    libraries.push(PathBuf::from(target_libdir()));
+    if let Some(held) = std::env::var_os(LIBRARY_PATH) {
+        libraries.extend(std::env::split_paths(&held));
+    }
+    let ran = Command::new(&binary)
+        .env("RUST_BACKTRACE", "0")
+        .env(
+            LIBRARY_PATH,
+            std::env::join_paths(libraries).map_err(|e| did_not(e.to_string()))?,
+        )
+        .output()
+        .map_err(|e| did_not(format!("running {}: {e}", binary.display())))?;
+    if ran.status.success() {
+        let answer = String::from_utf8_lossy(&ran.stdout).trim().to_string();
+        write_if_changed(&answered, &answer).map_err(did_not)?;
+        return Ok(answer);
+    }
+    let said = String::from_utf8_lossy(&ran.stderr).trim().to_string();
+    // **A stop the program reported is an answer**, and kept as one: the same
+    // code stops the same way. A run that died without a word is not, and is
+    // tried again next time.
+    if said.contains("the program stopped") {
+        write_if_changed(&stopped, &said).map_err(did_not)?;
+    }
+    Err(Wall::Refused { detail: said })
+}
+
+/// The variable the loader reads for where libraries are.
+#[cfg(target_os = "macos")]
+const LIBRARY_PATH: &str = "DYLD_LIBRARY_PATH";
+#[cfg(windows)]
+const LIBRARY_PATH: &str = "PATH";
+#[cfg(not(any(target_os = "macos", windows)))]
+const LIBRARY_PATH: &str = "LD_LIBRARY_PATH";
+
+fn cargo() -> String {
+    std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_string())
+}
+
+fn rustc() -> String {
+    std::env::var("RUSTC").unwrap_or_else(|_| "rustc".to_string())
+}
+
+/// `rustc -vV`, once: the toolchain a key is about.
+fn toolchain() -> &'static str {
+    static HELD: OnceLock<String> = OnceLock::new();
+    HELD.get_or_init(|| {
+        Command::new(rustc())
+            .arg("-vV")
+            .output()
+            .map(|out| String::from_utf8_lossy(&out.stdout).to_string())
+            .unwrap_or_default()
+    })
+}
+
+/// Where the toolchain's own `std` is, which a program linked with
+/// `prefer-dynamic` loads.
+fn target_libdir() -> &'static str {
+    static HELD: OnceLock<String> = OnceLock::new();
+    HELD.get_or_init(|| {
+        Command::new(rustc())
+            .args(["--print", "target-libdir"])
+            .output()
+            .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_string())
+            .unwrap_or_default()
+    })
+}
+
+/// Written only when it changed, so that Cargo's freshness keeps working.
+fn write_if_changed(path: &Path, text: &str) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
+    }
+    if std::fs::read_to_string(path).is_ok_and(|held| held == text) {
+        return Ok(());
+    }
+    std::fs::write(path, text).map_err(|e| format!("{}: {e}", path.display()))
+}

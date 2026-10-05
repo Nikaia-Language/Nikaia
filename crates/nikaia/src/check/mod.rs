@@ -18344,6 +18344,141 @@ impl<'a> Checker<'a> {
     /// first one said again with less in it. The caller keeps `NK1127` for the
     /// case it is about: a shape this evaluator does not read, which nothing
     /// else has a sentence for.
+    /// **An initialiser that calls a function, compiled and run**
+    /// ([ADR-321](../../docs/specification/adr/adr-321.md) D1,
+    /// `crate::comptime_run`), where this stage builds one: the build has a
+    /// workshop, the program is this one file and declares no grammar, and the
+    /// initialiser is numbers, names and calls to this file's own functions.
+    /// Nothing where it does not apply, and the interpreter answers as before.
+    ///
+    /// **The rule is asked first** (D2): each function the initialiser calls
+    /// is read off the ledger, and one that may not run is `NK1152` before
+    /// anything is compiled. What a callee calls in turn is in its own entry.
+    fn compiled_build_time_value(
+        &mut self,
+        value: &Expr,
+        found: &Ty,
+        bound: &str,
+        span: &Span,
+    ) -> Option<(Option<build_time::Value>, bool)> {
+        let workshop = self.reads.workshop();
+        if !workshop.somewhere()
+            || self
+                .beside
+                .iter()
+                .any(|other| !std::ptr::eq(*other, self.parsed))
+            || self
+                .parsed
+                .program
+                .items
+                .iter()
+                .any(|item| matches!(item.node, Item::Grammar(_)))
+        {
+            return None;
+        }
+        let mut called = Vec::new();
+        if !compiled_shape(value, self.parsed, &mut called) || called.is_empty() {
+            return None;
+        }
+        for callee in &called {
+            let declared = self.parsed.program.items.iter().any(|item| {
+                matches!(&item.node, Item::Fn { name: Some(name), receiver: None, .. }
+                    if self.parsed.text(*name) == callee)
+            });
+            let contract = self.own.functions.get(callee)?;
+            if !declared {
+                return None;
+            }
+            if let Some(because) = build_time::may_not_run(contract) {
+                self.a_body_that_may_not_run_at_build_time(callee, because, span);
+                return Some((None, true));
+            }
+        }
+        let outermost: BTreeMap<String, build_time::Value> = self
+            .scope
+            .first()
+            .map(|frame| {
+                frame
+                    .iter()
+                    .filter_map(|local| {
+                        let value = local
+                            .built
+                            .clone()
+                            .or_else(|| local.constant.map(build_time::Value::Int))?;
+                        Some((local.name.clone(), value))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let known = |name: &str| outermost.get(name).cloned();
+        let sub = crate::comptime_run::sub_program(self.parsed, bound, value, found, &known)?;
+        let lowered = crate::emit::emit_program(&sub, crate::emit::Build::default()).ok()?;
+        let dump = crate::grammar_run::dumper(&sub, found).ok()?;
+        let program = crate::comptime_run::with_driver(&lowered, &dump)?;
+        match workshop.run_comptime(&program) {
+            Ok(text) => match crate::grammar_run::decode(&text) {
+                Ok(computed) => Some((Some(computed), false)),
+                Err(_) => None,
+            },
+            Err(crate::grammar_run::Wall::Refused { detail }) => {
+                self.a_build_time_run_that_stopped(bound, &detail, span);
+                Some((None, true))
+            }
+            Err(_) => None,
+        }
+    }
+
+    /// **A build-time run that stopped as the program would**
+    /// ([ADR-321](../../docs/specification/adr/adr-321.md) D1): the same code
+    /// stops the program the same way. In its own words, at the place it
+    /// stopped where the run named one (`comptime_run::STOPPED_AT`).
+    fn a_build_time_run_that_stopped(&mut self, bound: &str, said: &str, span: &Span) {
+        let line = said
+            .lines()
+            .find(|line| line.contains("the program stopped"))
+            .unwrap_or(said);
+        let (place, why) = match line.split_once(": the program stopped: ") {
+            Some((place, why)) => (Some(place), why),
+            None => (None, line),
+        };
+        let at = place
+            .and_then(|place| place.strip_prefix(crate::comptime_run::STOPPED_AT))
+            .and_then(|byte| byte.strip_prefix(':'))
+            .and_then(|byte| byte.parse::<u32>().ok());
+        let mut labels = Vec::new();
+        if let Some(at) = at {
+            labels.push(Label {
+                span: Span { start: at, end: at },
+                word: String::new(),
+                text: "it stopped here".to_string(),
+                main: true,
+            });
+            labels.push(Label {
+                span: *span,
+                word: bound.to_string(),
+                text: "computed while the program is built".to_string(),
+                main: false,
+            });
+        }
+        self.checked.findings.push(Finding {
+            severity: Severity::Error,
+            span: *span,
+            code: "NK1152",
+            message: format!("`{bound}` stopped while the program was built: {why}."),
+            notes: vec![
+                "The code a `comptime` runs is the program's own, and it stops where the \
+                 program would stop when it runs."
+                    .to_string(),
+            ],
+            help: Some(
+                "Fix it as you would fix the program stopping there, or compute the value \
+                 while the program runs, with `let` instead of `comptime`."
+                    .to_string(),
+            ),
+            labels,
+        });
+    }
+
     fn build_time_value(
         &mut self,
         value: &Expr,
@@ -22467,7 +22602,10 @@ impl<'a> Checker<'a> {
             // number to hand on.
             Some(folded) if folded.beyond => (None, false),
             Some(folded) => (Some(build_time::Value::Int(folded.value)), false),
-            None => self.build_time_value(value, &bound, span),
+            None => match self.compiled_build_time_value(value, &found, &bound, span) {
+                Some(outcome) => outcome,
+                None => self.build_time_value(value, &bound, span),
+            },
         };
         // Counted rather than returned, so that every refusal below - the
         // crossing's, the ordinary mismatch's, and whatever `constant_fits`
@@ -24692,4 +24830,40 @@ fn is_a_whole_number(name: &str) -> bool {
         name,
         "i8" | "i16" | "i32" | "i64" | "isize" | "u8" | "u16" | "u32" | "u64" | "usize"
     )
+}
+
+/// **Whether an initialiser is one the compiled path takes in its first
+/// stage** ([ADR-321](../../docs/specification/adr/adr-321.md)): numbers,
+/// truth values, text, names, operators, tuples, lists and calls by name, whose
+/// callees are collected into `called`.
+fn compiled_shape(expr: &Expr, parsed: &Parsed, called: &mut Vec<String>) -> bool {
+    match expr {
+        Expr::LitInt { .. }
+        | Expr::LitFloat(_)
+        | Expr::LitBool(_)
+        | Expr::LitStr { .. }
+        | Expr::Variable(_) => true,
+        Expr::Unary { expr, .. } => compiled_shape(expr, parsed, called),
+        Expr::Binary { lhs, rhs, .. } => {
+            compiled_shape(lhs, parsed, called) && compiled_shape(rhs, parsed, called)
+        }
+        Expr::Tuple(items) | Expr::ListLit { items, .. } => items
+            .iter()
+            .all(|item| compiled_shape(item, parsed, called)),
+        Expr::Call { func, args, config } => {
+            let Expr::Variable(name) = &**func else {
+                return false;
+            };
+            let name = parsed.text(*name);
+            if name == crate::assets::ASSET {
+                return false;
+            }
+            called.push(name.to_string());
+            args.iter().all(|arg| compiled_shape(arg, parsed, called))
+                && config
+                    .iter()
+                    .all(|option| compiled_shape(&option.value, parsed, called))
+        }
+        _ => false,
+    }
 }

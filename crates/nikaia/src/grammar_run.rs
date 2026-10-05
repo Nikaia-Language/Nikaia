@@ -84,6 +84,10 @@ pub struct Workshop {
     /// The grammars being run, innermost last — a ring rather than a depth,
     /// because the message names what it found.
     running: std::sync::Mutex<Vec<String>>,
+    /// **The library build-time code links against**
+    /// ([ADR-321](../../../docs/specification/adr/adr-321.md) D3), built the
+    /// first time a `comptime` needs it and kept for the rest of the build.
+    bundle: std::sync::OnceLock<Result<crate::comptime_run::Bundle, String>>,
 }
 
 impl Workshop {
@@ -102,7 +106,25 @@ impl Workshop {
         Workshop {
             at: Some(at.into()),
             running: std::sync::Mutex::new(Vec::new()),
+            bundle: std::sync::OnceLock::new(),
         }
+    }
+
+    /// **Compile and run a `comptime`'s program**
+    /// ([ADR-321](../../../docs/specification/adr/adr-321.md) D1): what it
+    /// printed, or why it did not (`crate::comptime_run`).
+    pub fn run_comptime(&self, program: &str) -> Result<String, Wall> {
+        let Some(at) = &self.at else {
+            return Err(Wall::NowhereToBuild);
+        };
+        let bundle = self
+            .bundle
+            .get_or_init(|| crate::comptime_run::bundle(at))
+            .as_ref()
+            .map_err(|detail| Wall::DidNotBuild {
+                detail: detail.clone(),
+            })?;
+        crate::comptime_run::run(at, bundle, program)
     }
 
     /// Run `ask`'s rule over `ask`'s file, in a parser compiled from `parsed`.
@@ -309,7 +331,7 @@ fn driver(parsed: &Parsed, ask: &Ask<'_>) -> Result<String, Wall> {
 /// ([`crate::build_time::decoded`](../build_time/fn.decoded.html)), which is
 /// Rust's — so what this writes is what that reads, and the pair is held
 /// together by a test that runs a program rather than by care.
-const DUMP_HELPERS: &str = r#"
+pub(crate) const DUMP_HELPERS: &str = r#"
 fn __nikaia_text(out: &mut String, s: &str) {
     out.push_str("(s \"");
     for c in s.chars() {
@@ -330,7 +352,7 @@ fn __nikaia_text(out: &mut String, s: &str) {
 /// so a shape a `const` cannot hold is refused *before* a parser is compiled.
 /// **Written in Nikaia** (`tools/dump.nika`, #125); what stays here is reading
 /// the program's declarations into the shapes it walks.
-fn dumper(parsed: &Parsed, result: &Ty) -> Result<String, Wall> {
+pub(crate) fn dumper(parsed: &Parsed, result: &Ty) -> Result<String, Wall> {
     let mut out = String::new();
     match nikaia_std::tools::dump::dump(&shapes(parsed), result, "value", 1, &mut out) {
         None => Ok(out),

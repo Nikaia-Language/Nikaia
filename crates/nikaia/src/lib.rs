@@ -9,6 +9,7 @@ pub mod bounds;
 pub mod bounds_report;
 pub mod build_time;
 pub mod check;
+pub mod comptime_run;
 pub mod contracts;
 pub mod describe;
 pub mod diagnostics;

@@ -4,6 +4,35 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.518] — 2026-10-05
+
+**A `comptime` that calls a function is compiled and run** (ADR-321 D1, #468,
+first stage). The initialiser and what it calls are lowered as the program is
+and compiled for the machine that builds, so the build-time answer is the
+run-time one:
+- `comptime C = sq(100000)` with an `i32` `sq` stops the build at the
+  multiplication, `NK1152` with the program's words (*attempt to multiply with
+  overflow*), pointed at the line it stopped on. The interpreter computed
+  `10000000000` in a wider type.
+- A callee may call `std`'s Rust half: `text::digit_value('7')` inside a
+  callee was `NK1127`, and is `7`.
+- The rule is asked before anything is compiled (D2): a callee that may not run
+  is `NK1152` as before.
+
+How:
+- The program is linked against one dynamic library that names `std` (D3, the
+  *bundle*), built once in the build's workshop beside its cache.
+- It is compiled by `rustc` directly, and its answer is kept under a key of
+  the code, the toolchain and the bundle (D4). An unchanged `comptime` is
+  neither compiled nor run again, which also keeps the lowering inside
+  Cargo's build from starting another.
+
+The first stage takes a program of one file without a grammar, and an
+initialiser of numbers, names and calls to the file's own functions. Elsewhere,
+and in a bare check with no workshop, the interpreter still answers. The step
+budget, one crate per package and the interpreter's removal are the next
+stages. Every bench and example lowers byte for byte as before.
+
 ## [0.0.517] — 2026-10-05
 
 **A build-time run is bounded in steps and in memory** (ADR-321 D7, D10-D12).

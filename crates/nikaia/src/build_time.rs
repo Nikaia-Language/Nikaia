@@ -844,22 +844,10 @@ impl<'a> BuildTime<'a> {
                 way_out: "write the work in Nikaia, in this file, and call that",
             });
         };
-        if !contract.sync_claim.is_sync() {
+        if let Some(because) = may_not_run(contract) {
             return Err(Refusal::NotAllowed {
                 callee: name.to_string(),
-                because: "It can pause, and nothing run at build time may pause.",
-            });
-        }
-        if !contract.touches_known {
-            return Err(Refusal::NotAllowed {
-                callee: name.to_string(),
-                because: "Nothing says what it touches outside the program.",
-            });
-        }
-        if !contract.touches.iter().all(is_the_builds_own) {
-            return Err(Refusal::NotAllowed {
-                callee: name.to_string(),
-                because: "It touches the world outside the program.",
+                because,
             });
         }
         let Some((
@@ -1397,6 +1385,23 @@ pub fn decoded(literal: &str) -> Option<String> {
 /// Every control character is written as an escape.
 pub fn written(text: &str) -> String {
     nikaia_std::tools::escapes::as_a_literal(text)
+}
+
+/// **Why a function may not run while the program is built**, read off its
+/// ledger entry ([ADR-287](../../../docs/specification/adr/adr-287.md) D13,
+/// D14): it can pause, nothing says what it touches, or it touches more than
+/// the build's own parameters. Nothing where it may run.
+pub(crate) fn may_not_run(contract: &crate::contracts::FnContract) -> Option<&'static str> {
+    if !contract.sync_claim.is_sync() {
+        return Some("It can pause, and nothing run at build time may pause.");
+    }
+    if !contract.touches_known {
+        return Some("Nothing says what it touches outside the program.");
+    }
+    if !contract.touches.iter().all(is_the_builds_own) {
+        return Some("It touches the world outside the program.");
+    }
+    None
 }
 
 /// Whether a touch is the build's own parameters
