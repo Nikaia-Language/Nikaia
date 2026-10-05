@@ -4,6 +4,20 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.520] — 2026-10-05
+
+**A `comptime` may call a method, `std`'s or the program's** (ADR-321 D2,
+#468). `comptime LOUD = "abc".to_uppercase()` was `NK1127`, because the
+interpreter could run only code written in the program; compiled, it is
+`"ABC"`, and `Point { x: 3, y: 4 }.sum()` runs the program's own method.
+
+Any initialiser with a call in it is now compiled. The rule is asked of what
+it reaches: the ledger derived for the function that hands the value back, so
+a method that prints or pauses is `NK1152` before anything is compiled, naming
+the callee where the initialiser calls it by name. An initialiser that reads an
+`asset`, a program of more than one file and one with a grammar are still the
+interpreter's. Every bench and example lowers byte for byte as before.
+
 ## [0.0.519] — 2026-10-05
 
 **A build-time run is bounded: steps, call depth and memory** (ADR-321 D7, D10,

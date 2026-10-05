@@ -314,3 +314,31 @@ fn a_list_that_grows_without_end_is_stopped_by_the_memory_bound() {
         "`G` held more than 100000000 bytes at once while the program was built."
     );
 }
+
+/// **A method is called as a function is** (ADR-321 D2): one of `std`'s on
+/// text, which the interpreter could not run because its body is Rust, and
+/// one of the program's own.
+#[test]
+fn a_method_runs_at_build_time_whoever_declares_it() {
+    let source = "struct Point {\n\
+                  \x20   x: i64,\n\
+                  \x20   y: i64,\n\
+                  }\n\
+                  \n\
+                  impl Point {\n\
+                  \x20   fn sum(self) -> i64 {\n\
+                  \x20       return self.x + self.y\n\
+                  \x20   }\n\
+                  }\n\
+                  \n\
+                  comptime LOUD = \"abc\".to_uppercase()\n\
+                  comptime S = Point { x: 3, y: 4 }.sum()\n\
+                  \n\
+                  fn main() {\n\
+                  \x20   println(f\"{LOUD} {S}\")\n\
+                  }\n";
+    assert!(findings(source).is_empty(), "{:#?}", findings(source));
+    let rust = lowered(source);
+    assert!(rust.contains("const LOUD: &str = \"ABC\";"), "{rust}");
+    assert!(rust.contains("const S: i64 = 7;"), "{rust}");
+}

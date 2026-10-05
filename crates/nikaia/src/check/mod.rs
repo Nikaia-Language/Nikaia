@@ -18376,23 +18376,22 @@ impl<'a> Checker<'a> {
         {
             return None;
         }
-        let mut called = Vec::new();
-        if !compiled_shape(value, self.parsed, &mut called) || called.is_empty() {
+        // **A call somewhere in it**, which is what D1 compiles: an
+        // initialiser of literals alone is folded, and one that reads a file
+        // is the interpreter's until the run can read one (ADR-310).
+        let mut calls = false;
+        let mut reads = false;
+        crate::emit::visit_expr(value, &mut |expr: &Expr| match expr {
+            Expr::Call { func, .. } => {
+                calls = true;
+                reads |= matches!(&**func, Expr::Variable(name)
+                    if self.parsed.text(*name) == crate::assets::ASSET);
+            }
+            Expr::MethodCall { .. } | Expr::SafeMethod { .. } => calls = true,
+            _ => {}
+        });
+        if !calls || reads {
             return None;
-        }
-        for callee in &called {
-            let declared = self.parsed.program.items.iter().any(|item| {
-                matches!(&item.node, Item::Fn { name: Some(name), receiver: None, .. }
-                    if self.parsed.text(*name) == callee)
-            });
-            let contract = self.own.functions.get(callee)?;
-            if !declared {
-                return None;
-            }
-            if let Some(because) = build_time::may_not_run(contract) {
-                self.a_body_that_may_not_run_at_build_time(callee, because, span);
-                return Some((None, true));
-            }
         }
         let outermost: BTreeMap<String, build_time::Value> = self
             .scope
@@ -18412,6 +18411,30 @@ impl<'a> Checker<'a> {
             .unwrap_or_default();
         let known = |name: &str| outermost.get(name).cloned();
         let sub = crate::comptime_run::sub_program(self.parsed, bound, value, found, &known)?;
+        // **The rule is asked of what the initialiser reaches** (D2), as the
+        // ledger derives it for the function that hands the value back: every
+        // call in it, by name or on a value, and everything those call.
+        let derived = Ledger::infer_package(&[&sub], self.library);
+        if let Some(because) = derived
+            .functions
+            .get(crate::comptime_run::VALUE_FN)
+            .and_then(build_time::may_not_run)
+        {
+            let mut culprit = None;
+            crate::emit::visit_expr(value, &mut |expr: &Expr| {
+                if culprit.is_none()
+                    && let Expr::Call { func, .. } = expr
+                    && let Expr::Variable(name) = &**func
+                    && let Some(contract) = derived.functions.get(self.parsed.text(*name))
+                    && build_time::may_not_run(contract).is_some()
+                {
+                    culprit = Some(self.parsed.text(*name).to_string());
+                }
+            });
+            let callee = culprit.unwrap_or_else(|| bound.to_string());
+            self.a_body_that_may_not_run_at_build_time(&callee, because, span);
+            return Some((None, true));
+        }
         let counted = crate::emit::Build {
             counts_steps: true,
             ..Default::default()
@@ -24892,40 +24915,4 @@ fn is_a_whole_number(name: &str) -> bool {
         name,
         "i8" | "i16" | "i32" | "i64" | "isize" | "u8" | "u16" | "u32" | "u64" | "usize"
     )
-}
-
-/// **Whether an initialiser is one the compiled path takes in its first
-/// stage** ([ADR-321](../../docs/specification/adr/adr-321.md)): numbers,
-/// truth values, text, names, operators, tuples, lists and calls by name, whose
-/// callees are collected into `called`.
-fn compiled_shape(expr: &Expr, parsed: &Parsed, called: &mut Vec<String>) -> bool {
-    match expr {
-        Expr::LitInt { .. }
-        | Expr::LitFloat(_)
-        | Expr::LitBool(_)
-        | Expr::LitStr { .. }
-        | Expr::Variable(_) => true,
-        Expr::Unary { expr, .. } => compiled_shape(expr, parsed, called),
-        Expr::Binary { lhs, rhs, .. } => {
-            compiled_shape(lhs, parsed, called) && compiled_shape(rhs, parsed, called)
-        }
-        Expr::Tuple(items) | Expr::ListLit { items, .. } => items
-            .iter()
-            .all(|item| compiled_shape(item, parsed, called)),
-        Expr::Call { func, args, config } => {
-            let Expr::Variable(name) = &**func else {
-                return false;
-            };
-            let name = parsed.text(*name);
-            if name == crate::assets::ASSET {
-                return false;
-            }
-            called.push(name.to_string());
-            args.iter().all(|arg| compiled_shape(arg, parsed, called))
-                && config
-                    .iter()
-                    .all(|option| compiled_shape(&option.value, parsed, called))
-        }
-        _ => false,
-    }
 }
