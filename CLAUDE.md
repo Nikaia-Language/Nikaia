@@ -61,6 +61,11 @@ What the owner expects from such a round:
   how other languages and tools do it, options with their consequences, the
   measurements still owed, and a recommendation.
 * **Do not ask which issue to take next**: the order is arbitrary, pick one.
+* **What the language offers is decided from what it is for**, the coherence of
+  its types and what other languages count as basic - never from what this
+  repository's programs happen to call (ADR-288 D11 is about how a `std` entry
+  is made, not about what exists). *Waits for a program that needs it* is not a
+  reason; say *not decided here* and why.
 * **A decision lands in three places, each with its own job: the ADR says
   why, the specification says what, the issue tells the history.** The
   deciding session writes the ADR (a new D, or a new record) and the

@@ -4,6 +4,18 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.485] — 2026-10-05
+
+**What the language offers is not measured by what this repository calls.**
+ADR-288 D11 says how a `std` entry is made - by hand, reviewed, never copied
+from Rust's whole surface - and now says that this is all it says: what `std`
+provides is decided from what the language is for, the coherence of its types
+and what other languages count as basic. Eight records had cited it, or its
+wording, as *waits for a program that needs it* to leave a capability out
+(ADR-019, 042, 105, 150, 247, 282, 283, 284, 290, 291, 295, 299, 302, 312);
+each now says *not decided here*. ADR-286's Cargo defaults and the owner's own
+*until someone needs it* in ADR-287 D19 and ADR-293 stay.
+
 ## [0.0.484] — 2026-10-05
 
 **The prover's terms can be held in Nikaia** (ADR-294, #436 step 4, the
