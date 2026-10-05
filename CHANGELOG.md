@@ -4,6 +4,24 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.529] — 2026-10-05
+
+**`1G` and `4Gi` are numbers, and an exponent is written `e`** (ADR-322,
+#469). Built as decided in 0.0.527.
+- A decimal whole number may end in `K M G T P` or `Ki Mi Gi Ti Pi`, after its
+  digits and separators: `1_500M` is `1500000000`, `4Gi` is `4294967296`. The
+  value is lowered, never the suffix, and the use gives the type (`1G` is an
+  `i32`, `3G` an `i64`, `1K` in a `u8` is `NK1116` about `1000`).
+- Past a `u64` the number is refused by name: *`20000P` is
+  20000000000000000000, which is too big*.
+- `1Gx` is still a number beside a name (`NK1117`); `0xFFK` is still a digit
+  the radix does not have.
+- `1.5G` is refused: *A scale like `G` stands on a whole number, not on a
+  float.* `1E5` is refused with *`1e5`*, and `1.5E-4` with *`e-4`*.
+
+No `.nika` file in the repository used either spelling; every bench and example
+lowers byte for byte as before.
+
 ## [0.0.528] — 2026-10-05
 
 **The ledger's pass no longer computes a `comptime`** (ADR-321 D1, #468). The

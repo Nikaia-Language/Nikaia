@@ -272,3 +272,95 @@ fn a_literal_in_a_branch_takes_the_type_the_let_wrote() {
     assert!(rust.contains("4294967295u64"), "{rust}");
     assert!(!rust.contains("i64"), "{rust}");
 }
+
+/// **A scale spells the value** ([ADR-322](../../../docs/specification/adr/adr-322.md)):
+/// `K M G T P` are 10³ to 10¹⁵, `Ki Mi Gi Ti Pi` 2¹⁰ to 2⁵⁰, after the digits
+/// and their separators, and what is lowered is the number.
+#[test]
+fn a_scale_is_a_spelling_of_the_value() {
+    let rust = lowered(
+        "    let a = 1K\n\
+         \x20   let b = 1Ki\n\
+         \x20   let c = 4Gi\n\
+         \x20   let d = 1_500M\n\
+         \x20   let e = 16P\n\
+         \x20   let f = -2K\n\
+         \x20   println(f\"{a} {b} {c} {d} {e} {f}\")",
+    );
+    assert!(rust.contains("let a = 1000;"), "{rust}");
+    assert!(rust.contains("let b = 1024;"), "{rust}");
+    assert!(rust.contains("let c = 4294967296i64;"), "{rust}");
+    assert!(rust.contains("let d = 1500000000;"), "{rust}");
+    assert!(rust.contains("let e = 16000000000000000i64;"), "{rust}");
+    assert!(rust.contains("let f = -2000;"), "{rust}");
+}
+
+/// **The use gives the type**, as for any literal (ADR-285 D20): `1G` is an
+/// `i32`, `3G` an `i64`, and `1K` in a `u8` is `NK1116` about `1000`.
+#[test]
+fn a_scaled_number_is_typed_by_its_use() {
+    let rust = lowered("    let a = 1G\n    let b = 3G\n    println(f\"{a} {b}\")");
+    assert!(rust.contains("let a = 1000000000;"), "{rust}");
+    assert!(rust.contains("let b = 3000000000i64;"), "{rust}");
+
+    let found = findings("fn main() {\n    let c: u8 = 1K\n    println(f\"{c}\")\n}\n");
+    assert!(
+        found
+            .iter()
+            .any(|f| f.code == "NK1116" && f.message.contains("`1000`")),
+        "{found:#?}"
+    );
+}
+
+/// **A scale a name goes on from is not one**: `1Gx` is the number `1` beside
+/// a name, as `0X10` is.
+#[test]
+fn a_scale_followed_by_a_name_is_a_name() {
+    let found: Vec<_> = findings("fn main() {\n    let n = 1Gx\n    println(f\"{n}\")\n}\n")
+        .into_iter()
+        .filter(|f| f.code == "NK1117")
+        .collect();
+    assert_eq!(found.len(), 1, "{found:#?}");
+    assert!(found[0].message.contains("Gx"), "{found:#?}");
+}
+
+/// **Past a `u64`, refused by name**: `20000P` is 2·10¹⁹.
+#[test]
+fn a_scaled_number_past_a_u64_is_refused_by_name() {
+    let said = refused("    let n = 20000P\n    println(f\"{n}\")");
+    assert!(
+        said.contains("`20000P` is 20000000000000000000, which is too big"),
+        "{said}"
+    );
+}
+
+/// **No scale where it does not belong**: a radix-prefixed number has no
+/// decimal scale, and a float takes none.
+#[test]
+fn a_scale_on_a_radix_or_a_float_is_refused() {
+    let said = refused("    let n = 0xFFK\n    println(f\"{n}\")");
+    assert!(said.contains("A `0x` number only has the digits"), "{said}");
+    let said = refused("    let n = 1.5G\n    println(f\"{n}\")");
+    assert!(
+        said.contains("A scale like `G` stands on a whole number, not on a float"),
+        "{said}"
+    );
+}
+
+/// **An exponent is written `e`** (ADR-322): `1E5` is refused with the
+/// spelling it means, and `2e3` is the float it was.
+#[test]
+fn an_upper_case_exponent_is_refused_with_its_spelling() {
+    let said = refused("    let n = 1E5\n    println(f\"{n}\")");
+    assert!(
+        said.contains("written with a lower-case `e`: `1e5`"),
+        "{said}"
+    );
+    let said = refused("    let n = 1.5E-4\n    println(f\"{n}\")");
+    assert!(
+        said.contains("written with a lower-case `e`: `e-4`"),
+        "{said}"
+    );
+    let rust = lowered("    let x = 2e3\n    println(f\"{x}\")");
+    assert!(rust.contains("2e3"), "{rust}");
+}

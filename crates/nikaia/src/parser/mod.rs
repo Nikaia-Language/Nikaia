@@ -181,6 +181,74 @@ fn guarded(jump: ast::Stmt, cond: ast::Expr, span: ast::Span) -> ast::Stmt {
     })
 }
 
+/// **A scale after a decimal whole number's digits**
+/// ([ADR-322](../../../docs/specification/adr/adr-322.md)): `K M G T P` are 10³
+/// to 10¹⁵, `Ki Mi Gi Ti Pi` 2¹⁰ to 2⁵⁰. What it multiplies by and how many
+/// bytes it takes; none where a name goes on (`1Gx` is a number beside a name).
+fn scale_at(rest: &[u8]) -> Option<(i128, usize)> {
+    let power = match rest.first()? {
+        b'K' => 1,
+        b'M' => 2,
+        b'G' => 3,
+        b'T' => 4,
+        b'P' => 5,
+        _ => return None,
+    };
+    let (base, len) = match rest.get(1) {
+        Some(b'i') => (1024i128, 2),
+        _ => (1000i128, 1),
+    };
+    if rest
+        .get(len)
+        .is_some_and(|c| c.is_ascii_alphanumeric() || *c == b'_')
+    {
+        return None;
+    }
+    Some((base.pow(power), len))
+}
+
+/// **An exponent written `E`**, which is not one: how many bytes `E5`,
+/// `E-4` or `E+2` take.
+fn upper_exponent(rest: &[u8]) -> Option<usize> {
+    let sign = match rest {
+        [b'E', b'+' | b'-', ..] => 1,
+        [b'E', ..] => 0,
+        _ => return None,
+    };
+    let digits = rest[1 + sign..]
+        .iter()
+        .take_while(|c| c.is_ascii_digit())
+        .count();
+    (digits > 0).then_some(1 + sign + digits)
+}
+
+/// **What may not follow a float's digits**
+/// ([ADR-322](../../../docs/specification/adr/adr-322.md)): a scale, which
+/// stands on a whole number, and an exponent written `E`. Consumes nothing
+/// when neither is there.
+fn float_end<'a, S>(i: &mut ParseInput<'a, S>) -> Result<(), ParseError>
+where
+    S: Clone + std::fmt::Debug,
+{
+    let bytes = winnow::stream::AsBStr::as_bstr(i);
+    let message = if let Some((_, len)) = scale_at(bytes) {
+        format!(
+            "a scale like `{}` stands on a whole number, not on a float",
+            String::from_utf8_lossy(&bytes[..len])
+        )
+    } else if let Some(len) = upper_exponent(bytes) {
+        format!(
+            "an exponent is written with a lower-case `e`: `{}`",
+            String::from_utf8_lossy(&bytes[..len]).replace('E', "e")
+        )
+    } else {
+        return Ok(());
+    };
+    Err(ParseError::from_input(i)
+        .with_message(message)
+        .with_priority(winnow_grammar::error::PRIO_STRUCTURAL))
+}
+
 /// Part I 2.2's number, in the four spellings
 /// ([ADR-285](../../../docs/specification/adr/adr-285.md) D16): `255`,
 /// `1_000_000`, `0xFF`, `0b1010` and `0o17`.
@@ -265,7 +333,9 @@ where
         // beside the prefix, not doubled, not last.
         if c == '_' {
             if value.is_empty() || after_separator {
-                wrong = Some("an underscore in a number goes between two digits, like `1_000_000`");
+                wrong = Some(
+                    "an underscore in a number goes between two digits, like `1_000_000`".into(),
+                );
                 break;
             }
             after_separator = true;
@@ -282,19 +352,22 @@ where
             if prefix == 0 {
                 return Err(ParseError::from_input(i).add_expected("digits"));
             }
-            wrong = Some("a number needs at least one digit after its prefix");
+            wrong = Some("a number needs at least one digit after its prefix".into());
         } else if after_separator {
-            wrong = Some("a number can't end in an underscore");
+            wrong = Some("a number can't end in an underscore".into());
         } else if prefix > 0 && at < bytes.len() && (bytes[at] as char).is_ascii_alphanumeric() {
             // **A digit the radix does not have** — `0b1210`, `0o19` — is the
             // misparse this record is about, one prefix along: without this the
             // number ends at the bad digit and what follows is a second number
             // nobody wrote.
-            wrong = Some(match radix {
-                2 => "a `0b` number only has the digits `0` and `1`",
-                8 => "a `0o` number only has the digits `0` to `7`",
-                _ => "a `0x` number only has the digits `0` to `9` and `a` to `f`",
-            });
+            wrong = Some(
+                match radix {
+                    2 => "a `0b` number only has the digits `0` and `1`",
+                    8 => "a `0o` number only has the digits `0` to `7`",
+                    _ => "a `0x` number only has the digits `0` to `9` and `a` to `f`",
+                }
+                .into(),
+            );
         }
     }
     // **A float keeps the sign it always had.** `-1.16e+00` and `-1..5` both
@@ -305,6 +378,39 @@ where
     // and the number to whichever rule it belongs to.
     if signed && radix == 10 && matches!(bytes.get(at), Some(b'.' | b'e' | b'E')) {
         return Err(ParseError::from_input(i).add_expected("digits"));
+    }
+    // **A scale spells the value** ([ADR-322](../../../docs/specification/adr/adr-322.md)):
+    // `1G` is `1000000000` and `4Gi` is `4294967296`, on a decimal whole
+    // number and nowhere else. **An exponent is written `e`**, and `1E5` is
+    // refused with the spelling it means.
+    let mut scale: Option<(i128, usize)> = None;
+    if wrong.is_none() && radix == 10 {
+        let written = &bytes[..at];
+        // **A float `float_end` stopped**: `1.5G` and `1.5E-4` are refused
+        // here too, or they would read as `1` and a field `.5`. Its message,
+        // further along, is the one shown.
+        let fraction = match bytes.get(at) {
+            Some(b'.') => bytes[at + 1..]
+                .iter()
+                .take_while(|c| c.is_ascii_digit() || **c == b'_')
+                .count(),
+            _ => 0,
+        };
+        let after = at + 1 + fraction;
+        if fraction > 0
+            && (scale_at(&bytes[after..]).is_some() || upper_exponent(&bytes[after..]).is_some())
+        {
+            wrong = Some("a float takes no scale and writes its exponent `e`".into());
+        } else if let Some((by, len)) = scale_at(&bytes[at..]) {
+            scale = Some((by, len));
+        } else if let Some(len) = upper_exponent(&bytes[at..]) {
+            wrong = Some(format!(
+                "an exponent is written with a lower-case `e`: `{}{}`",
+                if signed { "-" } else { "" },
+                String::from_utf8_lossy(written).to_string()
+                    + &String::from_utf8_lossy(&bytes[at..at + len]).replace('E', "e")
+            ));
+        }
     }
     // **The sign goes into the text the radix parser reads**, rather than being
     // applied afterwards: `-9223372036854775808` parses and `-(9223372036854775808)`
@@ -317,15 +423,32 @@ where
         // **As wide as a `u64` holds** ([ADR-285](../../../docs/specification/adr/adr-285.md)
         // D2), and as low as an `i64` does: which of the two a number is, is
         // asked where a type stands beside it (`NK1116`).
-        None => match i128::from_str_radix(&value, radix) {
+        None => match i128::from_str_radix(&value, radix)
+            .map(|number| number.saturating_mul(scale.map_or(1, |(by, _)| by)))
+        {
             Ok(number) if number <= u64::MAX as i128 && number >= i64::MIN as i128 => number,
+            Ok(number) if scale.is_some() => {
+                let (_, len) = scale.expect("just asked");
+                wrong = Some(format!(
+                    "`{value}{}` is {number}, which is too big: the largest integer types are \
+                     `u64` and `i64`",
+                    String::from_utf8_lossy(&bytes[at..at + len])
+                ));
+                0
+            }
             _ => {
-                wrong =
-                    Some("this number is too big: the largest integer types are `u64` and `i64`");
+                wrong = Some(
+                    "this number is too big: the largest integer types are `u64` and `i64`".into(),
+                );
                 0
             }
         },
     };
+    if wrong.is_none()
+        && let Some((_, len)) = scale
+    {
+        at += len;
+    }
     // **The caret goes on the character that is wrong**, and getting there
     // means walking to it: a diagnostic is ranked by how far the parse got, so
     // a refusal built at the start of the literal loses to the float rule's
@@ -1358,6 +1481,7 @@ grammar! {
         extern rule same_line -> ();
         extern rule number_lit -> i128;
         extern rule negative_number_lit -> i128;
+        extern rule float_end -> ();
         extern rule doc_here -> Option<String>;
 
         // --- Entry Point ---
@@ -3426,19 +3550,19 @@ grammar! {
         // is the mass of Jupiter, and spelling it out in zeroes is how a digit
         // gets lost. The text is kept as written and handed to the language
         // below, which spells a float literal the same way.
+        //
+        // **The exponent is written `e`** ([ADR-322](../../../../docs/specification/adr/adr-322.md));
+        // `float_end` refuses `1.5E-4` and `1.5G` where they stand.
         rule FLOAT -> String =
-            w:DIGITS "." f:DIGITS e:EXPONENT? -> {
+            w:DIGITS "." f:DIGITS e:EXPONENT? float_end -> {
                 format!("{w}.{f}{}", e.unwrap_or_default())
             }
-          | w:DIGITS e:EXPONENT -> { format!("{w}{e}") }
+          | w:DIGITS e:EXPONENT float_end -> { format!("{w}{e}") }
 
         rule EXPONENT -> String =
             "e" "-" d:digit1 -> { format!("e-{d}") }
           | "e" "+" d:digit1 -> { format!("e+{d}") }
           | "e" d:digit1 -> { format!("e{d}") }
-          | "E" "-" d:digit1 -> { format!("E-{d}") }
-          | "E" "+" d:digit1 -> { format!("E+{d}") }
-          | "E" d:digit1 -> { format!("E{d}") }
 
         // The same set without the two brace-led forms, for the head of an
         // `if` or a `for`, where a `{` is the body.
