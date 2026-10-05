@@ -1138,6 +1138,44 @@ fn a_fallback_block_that_returns_takes_its_takings_with_it() {
     );
 }
 
+/// **A number read past a jump is the number** (#456, found moving the
+/// prover's terms into Nikaia, #436): `let v = m[k] ?? return null` over a
+/// `BTreeMap[String, i64]` bound the map's view, and handing it to `insert`
+/// gave the map a `&i64`, which `rustc` refused; so did a `get`. Read out of
+/// the view where it is bound, as a loop binding is, it is the value
+/// everywhere below.
+#[test]
+fn a_number_read_past_a_jump_is_the_number() {
+    runs(
+        "copied-jump-read",
+        "use std::collections\n\
+         \n\
+         fn doubled(values: ref collections::BTreeMap[String, i64], names: ref Vec[String]) -> collections::BTreeMap[String, i64]? {\n\
+         \x20   let mut out: collections::BTreeMap[String, i64] = collections::BTreeMap()\n\
+         \x20   for name in names {\n\
+         \x20       let v = values[name] ?? return null\n\
+         \x20       let w = values.get(name) ?? return null\n\
+         \x20       out.insert(name.clone(), v + w)\n\
+         \x20       if v > 1 {\n\
+         \x20           out.insert(f\"{name}!\", v)\n\
+         \x20       }\n\
+         \x20   }\n\
+         \x20   return out\n\
+         }\n\
+         \n\
+         fn main() {\n\
+         \x20   let mut m: collections::BTreeMap[String, i64] = collections::BTreeMap()\n\
+         \x20   m.insert(\"a\", 2)\n\
+         \x20   let found: Vec[String] = [\"a\"]\n\
+         \x20   let missing: Vec[String] = [\"a\", \"b\"]\n\
+         \x20   let r = doubled(m, found) ?? collections::BTreeMap()\n\
+         \x20   println(f\"{r.len()} {r[\"a\"] ?? 0}\")\n\
+         \x20   println(f\"{doubled(m, missing) == null}\")\n\
+         }\n",
+        "2 4\ntrue\n",
+    );
+}
+
 /// **Found by the solver's kernels** ([ADR-270](../../../docs/specification/adr/adr-270.md)
 /// D8 step 1): an index into a `mut` parameter, read and written. The
 /// parameter is a `&mut Vec<u32>` below, and the write was `set(&mut out, …)` -

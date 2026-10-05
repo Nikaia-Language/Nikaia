@@ -503,6 +503,11 @@ pub struct Checked {
     /// shape, with how the option is opened below: `.as_deref()` for text and
     /// `.as_ref()` for anything else.
     pub lent_coalesces: BTreeMap<(usize, String), &'static str>,
+    /// **A number, a `bool` or a `char` a `let` reads out of a container past
+    /// a jump** (#456), by statement and the value's shape: `let v = m[k] ??
+    /// return null` binds the value, read out of the view as a loop binding's
+    /// is ([`Checked::copied_loop_bindings`]).
+    pub copied_jump_reads: BTreeSet<(usize, String)>,
     /// **A `??` over a map's text whose fallback is a view of text** (#297),
     /// by statement and shape: the answer is a view, and the fallback is
     /// written as it is - `m.get(k) ?? name` for a `name: ref String`.
@@ -1807,6 +1812,8 @@ pub struct Propagation {
     pub text_as_is: BTreeSet<(usize, String)>,
     /// [`Checked::lent_coalesces`].
     pub lent_coalesces: BTreeMap<(usize, String), &'static str>,
+    /// [`Checked::copied_jump_reads`].
+    pub copied_jump_reads: BTreeSet<(usize, String)>,
     /// [`Checked::view_coalesces`].
     pub view_coalesces: BTreeSet<(usize, String)>,
     /// [`Checked::lent_map_fallbacks`].
@@ -2107,6 +2114,7 @@ pub fn propagation_against(
         owned_copies: checked.owned_copies,
         text_as_is: checked.text_as_is,
         lent_coalesces: checked.lent_coalesces,
+        copied_jump_reads: checked.copied_jump_reads,
         view_coalesces: checked.view_coalesces,
         lent_map_fallbacks: checked.lent_map_fallbacks,
         optional_fallbacks: checked.optional_fallbacks,
@@ -9877,6 +9885,25 @@ impl<'a> Checker<'a> {
                 let read_through_a_jump = matches!(value, Expr::Coalesce { value: read, fallback }
                     if matches!(**read, Expr::Index { .. })
                         && matches!(**fallback, Expr::Return(_) | Expr::Continue | Expr::Break | Expr::Throw(_)));
+                // **Unless what it reads is a number, a `bool` or a `char`**
+                // (#456): then the value is read out of the view where it is
+                // bound, as a loop binding's is, and the name is the value in
+                // every position below - a `get` included, whose answer is
+                // the same view; `num::value` reads a value as itself, so an
+                // owned answer is read as well. Bound as a view, `values.insert(name, v)`
+                // handed the map a `&i64`.
+                let copied_read = a_copy_by_value(&bound)
+                    && matches!(value, Expr::Coalesce { value: read, fallback }
+                        if (matches!(**read, Expr::Index { .. })
+                            || matches!(&**read, Expr::MethodCall { method, .. }
+                                if self.parsed.text(*method) == "get"))
+                            && leaves(fallback));
+                if copied_read {
+                    self.checked
+                        .copied_jump_reads
+                        .insert((span.at(), argument_shape(value)));
+                }
+                let read_through_a_jump = read_through_a_jump && !copied_read;
                 self.bind_local(Local {
                     id,
                     name,

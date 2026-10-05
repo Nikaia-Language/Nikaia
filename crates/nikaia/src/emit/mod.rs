@@ -1290,6 +1290,8 @@ struct Emitter<'p> {
     text_as_is: std::collections::BTreeSet<(usize, String)>,
     /// `??`s that lend their left side, and how it is opened (ADR-279 D5).
     lent_coalesces: std::collections::BTreeMap<(usize, String), &'static str>,
+    /// A number, `bool` or `char` a `let` reads past a jump, copied (#456).
+    copied_jump_reads: std::collections::BTreeSet<(usize, String)>,
     /// **`std`'s count of a sequence**, by statement and receiver shape, which
     /// gets the conversion a length gets (Part I 2.2).
     counted: std::collections::BTreeSet<(usize, String)>,
@@ -2667,6 +2669,7 @@ impl<'p> Emitter<'p> {
             owned_copies: propagation.owned_copies,
             text_as_is: propagation.text_as_is,
             lent_coalesces: propagation.lent_coalesces,
+            copied_jump_reads: propagation.copied_jump_reads,
             counted: propagation.counted,
             lent_bindings: propagation.lent_bindings,
             guards_inside_boxes: propagation.guards_inside_boxes,
@@ -8991,7 +8994,16 @@ impl<'p> Emitter<'p> {
                 {
                     out.push(opened);
                 }
-                out.push(" { Some(__nikaia_value) => __nikaia_value, None => ");
+                // **A number read past a jump is read out of the view**
+                // (#456, `Checked::copied_jump_reads`).
+                let copied = self
+                    .copied_jump_reads
+                    .contains(&(flow.statement, crate::check::argument_shape(expr)));
+                out.push(if copied {
+                    " { Some(__nikaia_value) => nikaia_std::num::value(__nikaia_value), None => "
+                } else {
+                    " { Some(__nikaia_value) => __nikaia_value, None => "
+                });
                 self.expr(out, fallback, depth, flow)?;
                 out.push(" }");
             }

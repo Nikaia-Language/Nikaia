@@ -10245,8 +10245,7 @@ impl TermArena {
         match nikaia_std::index::get(&self.nodes, nikaia_std::index::at(id)) {
             SolverTerm::Int(n) => { let n = *n; Some(n) },
             SolverTerm::Var(name) => {
-                if !values.contains_key(name) { return None; }
-                let found: i64 = nikaia_std::index::or(*nikaia_std::index::get(&values, name), || 0);
+                let found = match *nikaia_std::index::get(&values, name) { Some(__nikaia_value) => nikaia_std::num::value(__nikaia_value), None => return None };
                 Some(found)
             },
             SolverTerm::Neg(a) => {
@@ -10450,6 +10449,74 @@ impl ProverScope {
         let zero = arena.int(0);
         self.facts.push(arena.ge(n, zero));
     }
+    pub fn at_entry(&self, arena: &mut TermArena, term: i64) -> Option<i64> {
+        let mut read: collections::BTreeSet<String> = collections::BTreeSet::new();
+        arena.variables(term, &mut read);
+        let mut values: collections::BTreeMap<String, i64> = collections::BTreeMap::new();
+        for name in read.iter() {
+            let value = match *nikaia_std::index::get(&self.entry, name) { Some(__nikaia_value) => nikaia_std::num::value(__nikaia_value), None => return None };
+            values.insert(name.to_owned(), value);
+        }
+        Some(arena.substitute(term, &values))
+    }
+    pub fn on_the_path(&mut self, arena: &mut TermArena, condition: Option<i64>) {
+        let at = match condition { Some(__nikaia_value) => __nikaia_value, None => {
+            self.path = None;
+            return;
+        } };
+        let c = match self.at_entry(arena, at) { Some(__nikaia_value) => __nikaia_value, None => {
+            self.path = None;
+            return;
+        } };
+        self.path = pushed(copied_path((self.path).as_ref()), c);
+    }
+    pub fn precondition_at(&self, arena: &mut TermArena, claim: i64, params: &collections::BTreeSet<String>) -> Option<i64> {
+        let path = match copied_path((self.path).as_ref()) { Some(__nikaia_value) => __nikaia_value, None => return None };
+        let at_entry = match self.at_entry(arena, claim) { Some(__nikaia_value) => __nikaia_value, None => return None };
+        let mut term = at_entry;
+        if !path.is_empty() {
+            let taken = arena.and(path);
+            let not_taken = arena.not(taken);
+            term = arena.or(vec![not_taken, at_entry]);
+        }
+        if !only_parameters(&arena, term, params) || arena.size(term) > precondition_terms() { return None; }
+        Some(term)
+    }
+    pub fn postcondition_at(&self, arena: &mut TermArena, claim: i64, returned: &str, params: &collections::BTreeSet<String>) -> Option<i64> {
+        let mut read: collections::BTreeSet<String> = collections::BTreeSet::new();
+        arena.variables(claim, &mut read);
+        let result = arena.var(&result_name());
+        let mut values: collections::BTreeMap<String, i64> = collections::BTreeMap::new();
+        for name in read.iter() {
+            if name == returned { values.insert(name.to_owned(), result); } else {
+                let value = match *nikaia_std::index::get(&self.entry, name) { Some(__nikaia_value) => nikaia_std::num::value(__nikaia_value), None => return None };
+                values.insert(name.to_owned(), value);
+            }
+        }
+        let term = arena.substitute(claim, &values);
+        let mut names: collections::BTreeSet<String> = collections::BTreeSet::new();
+        arena.variables(term, &mut names);
+        for name in names.iter() { if *name != result_name() && !is_a_parameter(name, params) { return None; } }
+        Some(term)
+    }
+    pub fn pinned_names(&self, arena: &TermArena, claim: i64) -> Option<collections::BTreeSet<String>> {
+        if !self.exact { return None; }
+        let mut names: collections::BTreeSet<String> = collections::BTreeSet::new();
+        arena.variables(claim, &mut names);
+        let mut grown = true;
+        while grown {
+            let before = names.len() as i64;
+            for fact in self.facts.iter() {
+                let fact = nikaia_std::num::value(fact);
+                let mut read: collections::BTreeSet<String> = collections::BTreeSet::new();
+                arena.variables(fact, &mut read);
+                if ties(&read, &names) { for n in read.iter() { names.insert(n.to_owned()); } }
+            }
+            grown = (names.len() as i64) != before;
+        }
+        for n in names.iter() { if self.loose.contains(n) || !self.ints.contains(n) { return None; } }
+        Some(names)
+    }
     pub fn blind(&self) -> ProverScope {
         let mut scope = ProverScope::unknown();
         scope.tainted = self.tainted.to_owned();
@@ -10459,6 +10526,33 @@ impl ProverScope {
 }
 
 pub fn length_of(name: &str) -> String { format!("{}.len()", name) }
+
+pub fn result_name() -> String { String::from("result") }
+
+pub fn precondition_terms() -> i64 { 64 }
+
+fn pushed(path: Option<Vec<i64>>, c: i64) -> Option<Vec<i64>> {
+    let mut p = match path { Some(__nikaia_value) => __nikaia_value, None => return None };
+    p.push(c);
+    Some(p)
+}
+
+fn copied_path(path: Option<&Vec<i64>>) -> Option<Vec<i64>> {
+    let p = match path { Some(__nikaia_value) => __nikaia_value, None => return None };
+    Some(p.to_owned())
+}
+
+fn only_parameters(arena: &TermArena, term: i64, params: &collections::BTreeSet<String>) -> bool {
+    let mut read: collections::BTreeSet<String> = collections::BTreeSet::new();
+    arena.variables(term, &mut read);
+    for name in read.iter() { if !is_a_parameter(name, params) { return false; } }
+    true
+}
+
+fn ties(read: &collections::BTreeSet<String>, names: &collections::BTreeSet<String>) -> bool {
+    for n in read.iter() { if names.contains(n) { return true; } }
+    false
+}
 
 
 // --- render.nika ---
@@ -15549,10 +15643,10 @@ pub fn held_across_a_pause(bound: &[(String, i64)], pauses: &[i64], named: &coll
     let mut out: collections::BTreeSet<String> = collections::BTreeSet::new();
     for (name, at) in bound.iter() {
         let at = nikaia_std::num::value(at);
-        let last = match *nikaia_std::index::get(&named, name) { Some(__nikaia_value) => __nikaia_value, None => continue };
+        let last = match *nikaia_std::index::get(&named, name) { Some(__nikaia_value) => nikaia_std::num::value(__nikaia_value), None => continue };
         for pause in pauses.iter() {
             let pause = nikaia_std::num::value(pause);
-            if pause > at && *last > pause { out.insert(name.to_owned()); }
+            if pause > at && last > pause { out.insert(name.to_owned()); }
         }
     }
     out
@@ -19162,7 +19256,7 @@ pub mod prover_arena {
 }
 pub mod prover_scope {
     #[allow(unused_imports)]
-    pub use super::{ProverScope, length_of};
+    pub use super::{ProverScope, length_of, result_name, precondition_terms};
 }
 pub mod render {
     #[allow(unused_imports)]

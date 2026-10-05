@@ -111,6 +111,113 @@ impl ProverScope {
         self.facts.push(arena.ge(n, zero))
     }
 
+    /// `term` at the function's entry: each name it reads replaced by its
+    /// value there. Nothing where it reads a name whose value at the entry is
+    /// not known - the result of a call, a mutable binding.
+    pub fn at_entry(ref self, mut arena: TermArena, term: i64) -> i64? {
+        let mut read: collections::BTreeSet[String] = collections::BTreeSet()
+        arena.variables(term, read)
+        let mut values: collections::BTreeMap[String, i64] = collections::BTreeMap()
+        for name in read {
+            let value = self.entry[name] ?? return null
+            values.insert(name.clone(), value)
+        }
+        return arena.substitute(term, values)
+    }
+
+    /// A branch taken or a guard passed: `condition` at the entry joins the
+    /// path, and a condition the walk cannot carry there ends it.
+    pub fn on_the_path(ref mut self, mut arena: TermArena, condition: i64?) {
+        let at = condition ?? {
+            self.path = null
+            return
+        }
+        let c = self.at_entry(arena, at) ?? {
+            self.path = null
+            return
+        }
+        self.path = pushed(copied_path(self.path), c)
+    }
+
+    /// **The precondition a claim makes** (ADR-269 D15, D16): `path → claim`
+    /// at the entry, where both read only the function's parameters and the
+    /// lengths of its lists, and the result is no larger than a fixed number
+    /// of terms - counted, so that whether a claim is a precondition does not
+    /// depend on the machine.
+    pub fn precondition_at(ref self, mut arena: TermArena, claim: i64, params: ref collections::BTreeSet[String]) -> i64? {
+        let path = copied_path(self.path) ?? return null
+        let at_entry = self.at_entry(arena, claim) ?? return null
+        let mut term = at_entry
+        if !path.is_empty() {
+            let taken = arena.and(path)
+            let not_taken = arena.not(taken)
+            term = arena.or([not_taken, at_entry])
+        }
+        if !only_parameters(arena, term, params) || arena.size(term) > precondition_terms() {
+            return null
+        }
+        return term
+    }
+
+    /// `claim` as a postcondition: `returned` is `result`, every other name
+    /// its value at the entry; nothing where that leaves a name that is not a
+    /// parameter or the length of one.
+    pub fn postcondition_at(ref self, mut arena: TermArena, claim: i64, returned: ref String, params: ref collections::BTreeSet[String]) -> i64? {
+        let mut read: collections::BTreeSet[String] = collections::BTreeSet()
+        arena.variables(claim, read)
+        let result = arena.var(result_name())
+        let mut values: collections::BTreeMap[String, i64] = collections::BTreeMap()
+        for name in read {
+            if name == returned {
+                values.insert(name.clone(), result)
+            } else {
+                let value = self.entry[name] ?? return null
+                values.insert(name.clone(), value)
+            }
+        }
+        let term = arena.substitute(claim, values)
+        let mut names: collections::BTreeSet[String] = collections::BTreeSet()
+        arena.variables(term, names)
+        for name in names {
+            if name != result_name() && !is_a_parameter(name, params) {
+                return null
+            }
+        }
+        return term
+    }
+
+    /// **The names a state that breaks `claim` is made of** (ADR-269 D8): the
+    /// claim's, and every name a fact ties them to - where the facts are
+    /// exactly what reaches here and pin each of them, no parameter, no
+    /// call's result, nothing they lean on. Nothing anywhere else.
+    pub fn pinned_names(ref self, arena: ref TermArena, claim: i64) -> collections::BTreeSet[String]? {
+        if !self.exact {
+            return null
+        }
+        let mut names: collections::BTreeSet[String] = collections::BTreeSet()
+        arena.variables(claim, names)
+        let mut grown = true
+        while grown {
+            let before = names.len()
+            for fact in self.facts {
+                let mut read: collections::BTreeSet[String] = collections::BTreeSet()
+                arena.variables(fact, read)
+                if ties(read, names) {
+                    for n in read {
+                        names.insert(n.clone())
+                    }
+                }
+            }
+            grown = names.len() != before
+        }
+        for n in names {
+            if self.loose.contains(n) || !self.ints.contains(n) {
+                return null
+            }
+        }
+        return names
+    }
+
     /// A block whose bindings this walk cannot see: no facts, no variables.
     pub fn blind(ref self) -> ProverScope {
         let mut scope = ProverScope::unknown()
@@ -123,4 +230,48 @@ impl ProverScope {
 /// The variable `name.len()` stands for.
 pub fn length_of(name: ref String) -> String {
     return f"{name}.len()"
+}
+
+/// The name a postcondition gives the value handed back.
+pub fn result_name() -> String {
+    return "result"
+}
+
+/// How many terms a precondition carried back to the entry may have
+/// (ADR-269 D16).
+pub fn precondition_terms() -> i64 {
+    return 64
+}
+
+fn pushed(path: Vec[i64]?, c: i64) -> Vec[i64]? {
+    let mut p = path ?? return null
+    p.push(c)
+    return p
+}
+
+fn copied_path(path: ref Vec[i64]?) -> Vec[i64]? {
+    let p = path ?? return null
+    return p.clone()
+}
+
+/// Whether `term` reads only the function's parameters and their lengths.
+fn only_parameters(arena: ref TermArena, term: i64, params: ref collections::BTreeSet[String]) -> bool {
+    let mut read: collections::BTreeSet[String] = collections::BTreeSet()
+    arena.variables(term, read)
+    for name in read {
+        if !is_a_parameter(name, params) {
+            return false
+        }
+    }
+    return true
+}
+
+/// Whether one of `read` is among `names`.
+fn ties(read: ref collections::BTreeSet[String], names: ref collections::BTreeSet[String]) -> bool {
+    for n in read {
+        if names.contains(n) {
+            return true
+        }
+    }
+    return false
 }

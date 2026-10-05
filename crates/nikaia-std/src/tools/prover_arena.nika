@@ -193,13 +193,8 @@ impl TermArena {
     pub fn int_value(ref self, id: i64, values: ref collections::BTreeMap[String, i64]) -> i64? {
         return match self.nodes[id] {
             SolverTerm::Int(n) => n,
-            // `contains_key` and the brackets rather than `?? return`, until
-            // #456's first lowering copies.
             SolverTerm::Var(name) => {
-                if !values.contains_key(name) {
-                    return null
-                }
-                let found: i64 = values[name] ?? 0
+                let found = values[name] ?? return null
                 found
             },
             SolverTerm::Neg(a) => {

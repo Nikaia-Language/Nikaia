@@ -4,6 +4,24 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.489] — 2026-10-05
+
+**A number read past a jump is the number** (#456, the first of its two
+lowerings). `let v = m[k] ?? return null` over a map of numbers bound the
+map's view, and handing `v` on - `out.insert(name, v)` - gave the map a
+`&i64`, which `rustc` refused; `m.get(k) ?? return null` did the same. A
+number, a `bool` or a `char` read through the brackets or a `get` past a jump
+is now read out of the view where it is bound, as a loop binding is, and the
+name is the value everywhere below. `prover_arena.nika`'s `int_value` goes
+back to the plain form.
+
+**Where a claim stands at the entry is Nikaia** (ADR-294, #436 step 4).
+`ProverScope` gains `at_entry`, `on_the_path`, `precondition_at`,
+`postcondition_at` and `pinned_names` (the names a breaking state is made of);
+`prove.rs`'s versions are one-line adapters, and `RESULT`,
+`PRECONDITION_TERMS` and its own `is_a_parameter` go. Every bench and example
+lowers byte for byte as before.
+
 ## [0.0.488] — 2026-10-05
 
 **What the prover knows at a point is Nikaia** (ADR-294, #436 step 4).

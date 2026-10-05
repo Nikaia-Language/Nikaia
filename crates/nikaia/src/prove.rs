@@ -359,7 +359,6 @@ struct PostClaim {
 }
 
 /// The name a postcondition calls the value a function hands back.
-const RESULT: &str = "result";
 
 /// One claim of a precondition (ADR-269 D15).
 #[derive(Debug, Clone)]
@@ -420,7 +419,7 @@ struct Prover<'a> {
 }
 
 /// What a body may know at one point (`tools/prover_scope.nika`, #436).
-use nikaia_std::tools::prover_scope::{ProverScope as Scope, length_of};
+use nikaia_std::tools::prover_scope::{ProverScope as Scope, length_of, result_name};
 
 /// Where a function body is, for what an `assert` there may become.
 #[derive(Clone)]
@@ -1494,22 +1493,12 @@ impl<'a> Prover<'a> {
         }
     }
 
-    /// `term` at the function's entry: each name it reads replaced by its
-    /// value there. `None` where it reads a name whose value at the entry is
-    /// not known - the result of a call, a mutable binding.
+    /// `term` at the function's entry (`ProverScope::at_entry`).
     fn at_entry(&mut self, term: i64, scope: &Scope) -> Option<i64> {
-        let mut read = BTreeSet::new();
-        self.arena.variables(term, &mut read);
-        let values: Option<BTreeMap<String, i64>> = read
-            .into_iter()
-            .map(|name| Some((name.clone(), *scope.entry.get(&name)?)))
-            .collect();
-        Some(self.arena.substitute(term, &values?))
+        scope.at_entry(&mut self.arena.held, term)
     }
 
-    /// `claim` as a postcondition: `returned` is `result`, every other name its
-    /// value at the entry; `None` where that leaves a name that is not a
-    /// parameter or the length of one.
+    /// `claim` as a postcondition (`ProverScope::postcondition_at`).
     fn postcondition_at(
         &mut self,
         claim: i64,
@@ -1517,26 +1506,7 @@ impl<'a> Prover<'a> {
         scope: &Scope,
         at: &Where,
     ) -> Option<i64> {
-        let mut read = BTreeSet::new();
-        self.arena.variables(claim, &mut read);
-        let result = self.arena.var(RESULT);
-        let values: Option<BTreeMap<String, i64>> = read
-            .into_iter()
-            .map(|name| {
-                let value = if name == returned {
-                    result
-                } else {
-                    *scope.entry.get(&name)?
-                };
-                Some((name, value))
-            })
-            .collect();
-        let term = self.arena.substitute(claim, &values?);
-        let mut read = BTreeSet::new();
-        self.arena.variables(term, &mut read);
-        read.iter()
-            .all(|name| name == RESULT || is_a_parameter(name, at))
-            .then_some(term)
+        scope.postcondition_at(&mut self.arena.held, claim, returned, &at.params)
     }
 
     /// **An exit of a free function**: each postcondition standing has to be
@@ -1568,7 +1538,7 @@ impl<'a> Prover<'a> {
         for (index, post) in posts.iter().enumerate() {
             let shown = unshadowed
                 && returned.is_some_and(|returned| {
-                    let given = BTreeMap::from([(RESULT.to_string(), returned)]);
+                    let given = BTreeMap::from([(result_name(), returned)]);
                     let goal = self.arena.substitute(post.term, &given);
                     self.proves(&scope.facts, goal).is_ok()
                 });
@@ -1625,7 +1595,7 @@ impl<'a> Prover<'a> {
             return Vec::new();
         }
         let result = self.arena.var(bound);
-        with.insert(RESULT.to_string(), result);
+        with.insert(result_name(), result);
         posts
             .iter()
             .filter_map(|post| {
@@ -1662,7 +1632,7 @@ impl<'a> Prover<'a> {
         let contract = self.own.functions.get(key)?.clone();
         let signature = contract.signature.clone();
         let mut params = Vec::new();
-        let mut names = BTreeSet::from([RESULT.to_string()]);
+        let mut names = BTreeSet::from([result_name()]);
         for (name, ty) in signature
             .as_ref()
             .map(|s| s.params.clone())
@@ -1730,37 +1700,14 @@ impl<'a> Prover<'a> {
         Some(foreign)
     }
 
-    /// A branch taken or a guard passed: what it says at the entry joins the
-    /// path, or the path is no longer known.
+    /// A condition joins the path (`ProverScope::on_the_path`).
     fn on_the_path(&mut self, scope: &mut Scope, condition: Option<i64>) {
-        let at_entry = condition.and_then(|c| self.at_entry(c, scope));
-        match (&mut scope.path, at_entry) {
-            (Some(path), Some(c)) => path.push(c),
-            (path, None) => *path = None,
-            (None, Some(_)) => {}
-        }
+        scope.on_the_path(&mut self.arena.held, condition)
     }
 
-    /// **The precondition a claim makes** (ADR-269 D15, D16): `path → claim`
-    /// at the entry, where both read only the function's parameters and the
-    /// lengths of its lists, and the result is no larger than a fixed number
-    /// of terms - counted, so that whether a claim is a precondition does not
-    /// depend on the machine.
+    /// **The precondition a claim makes** (`ProverScope::precondition_at`).
     fn precondition_at(&mut self, claim: i64, scope: &Scope, at: &Where) -> Option<i64> {
-        let path = scope.path.clone()?;
-        let at_entry = self.at_entry(claim, scope)?;
-        let term = match path.as_slice() {
-            [] => at_entry,
-            _ => {
-                let taken = self.arena.and(path);
-                let not_taken = self.arena.not(taken);
-                self.arena.or(vec![not_taken, at_entry])
-            }
-        };
-        let mut read = BTreeSet::new();
-        self.arena.variables(term, &mut read);
-        let parameters_only = read.iter().all(|name| is_a_parameter(name, at));
-        (parameters_only && self.arena.size(term) <= PRECONDITION_TERMS).then_some(term)
+        scope.precondition_at(&mut self.arena.held, claim, &at.params)
     }
 
     /// The values that show a claim false every time it is reached
@@ -1792,31 +1739,7 @@ impl<'a> Prover<'a> {
     /// Then the model is a state the program reaches, unless it stops or
     /// leaves before. `None` everywhere else.
     fn breaks_when(&mut self, scope: &Scope, claim: i64) -> Option<BTreeMap<String, i64>> {
-        if !scope.exact {
-            return None;
-        }
-        // The claim's names, and every name a fact ties them to.
-        let mut names = BTreeSet::new();
-        self.arena.variables(claim, &mut names);
-        loop {
-            let before = names.len();
-            for fact in &scope.facts {
-                let mut read = BTreeSet::new();
-                self.arena.variables(*fact, &mut read);
-                if read.iter().any(|n| names.contains(n)) {
-                    names.extend(read);
-                }
-            }
-            if names.len() == before {
-                break;
-            }
-        }
-        if names
-            .iter()
-            .any(|n| scope.loose.contains(n) || !scope.ints.contains(n))
-        {
-            return None;
-        }
+        let names = scope.pinned_names(&self.arena.held, claim)?;
         let model = self.arena.query(&scope.facts, claim, refuted)?;
         // Every name the state is made of, so that a loop's counter is
         // shown beside what was computed from it.
@@ -2092,16 +2015,6 @@ fn qualified(parsed: &Parsed, func: &Expr) -> Option<String> {
     )
 }
 
-/// Whether a name of the proof is one of the function's parameters, or the
-/// length of one.
-fn is_a_parameter(name: &str, at: &Where) -> bool {
-    nikaia_std::tools::claim_names::is_a_parameter(name, &at.params)
-}
-
-/// How many terms a precondition carried back to the entry may have
-/// (ADR-269 D16).
-const PRECONDITION_TERMS: usize = 64;
-
 /// A whole-number expression, where it is one this prover reads (ADR-269 D9).
 fn lin(arena: &mut Terms, parsed: &Parsed, expr: &Expr, scope: &Scope) -> Option<i64> {
     lin_with(arena, parsed, expr, &|name| scope.ints.contains(name))
@@ -2221,10 +2134,6 @@ impl Terms {
         self.held.and(parts)
     }
 
-    fn or(&mut self, parts: Vec<i64>) -> i64 {
-        self.held.or(parts)
-    }
-
     fn not(&mut self, a: i64) -> i64 {
         self.held.not(a)
     }
@@ -2247,10 +2156,6 @@ impl Terms {
             .map(|(name, term)| (name.clone(), *term))
             .collect();
         self.held.substitute(id, &given)
-    }
-
-    fn size(&self, id: i64) -> usize {
-        self.held.size(id) as usize
     }
 
     fn is_the_variable(&self, id: i64, name: &str) -> bool {
