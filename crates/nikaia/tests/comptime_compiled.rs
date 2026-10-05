@@ -551,3 +551,41 @@ fn a_program_with_a_grammar_compiles_its_other_comptimes() {
         "`C` stopped while the program was built: attempt to multiply with overflow."
     );
 }
+
+/// **An option's computed default is compiled too** (ADR-318 D1, ADR-321 D1):
+/// the ledger records what the run came to, so a call that leaves the option
+/// out gets it, and a default that overflows stops the build at the default.
+#[test]
+fn an_options_default_is_compiled_and_recorded() {
+    let source = |base: &str| {
+        format!(
+            "fn sq(x: i32) -> i32 {{\n\
+             \x20   return x * x\n\
+             }}\n\
+             \n\
+             fn shout(label: ref String; times: i64 = \"abcd\".len(), base: i32 = {base}) -> String {{\n\
+             \x20   return f\"{{label}} {{times}} {{base}}\"\n\
+             }}\n\
+             \n\
+             fn main() {{\n\
+             \x20   println(shout(\"go\"))\n\
+             }}\n"
+        )
+    };
+    let at = workshop();
+    let lowered = nikaia::comptime_run::defaults_compiled_in(Some(&at), || {
+        let parsed = parse_to_ast(&source("sq(9)")).expect("the source parses");
+        assert!(findings(&source("sq(9)")).is_empty());
+        nikaia::emit::emit_program_reading(&parsed, Default::default(), &reads())
+            .expect("it lowers")
+            .rust
+    });
+    assert!(lowered.contains("shout(\"go\", 4, 81)"), "{lowered}");
+    let stopped = nikaia::comptime_run::defaults_compiled_in(Some(&at), || {
+        the_one(findings(&source("sq(100000)")))
+    });
+    assert_eq!(
+        stopped.message,
+        "`base` stopped while the program was built: attempt to multiply with overflow."
+    );
+}

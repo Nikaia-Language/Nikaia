@@ -6571,7 +6571,12 @@ impl<'a> Checker<'a> {
             return;
         }
         self.computing_default = true;
-        let (value, said) = self.build_time_value(&option.default, &name, &span);
+        let declared_ty = Ty::from_ast(self.parsed, &option.ty);
+        let (value, said) =
+            match self.compiled_build_time_value(&option.default, &declared_ty, &name, &span) {
+                Some(outcome) => outcome,
+                None => self.build_time_value(&option.default, &name, &span),
+            };
         self.computing_default = false;
         if said {
             return;
@@ -18488,96 +18493,26 @@ impl<'a> Checker<'a> {
             })
             .unwrap_or_default();
         let known = |name: &str| outermost.get(name).cloned();
-        let mut sub = Some(crate::comptime_run::sub_program(
-            self.parsed,
+        match crate::comptime_run::compute(
+            &files,
+            here,
             bound,
             value,
             found,
             &known,
-        )?);
-        let mut units: Vec<Parsed> = Vec::with_capacity(files.len());
-        for (at, file) in files.iter().enumerate() {
-            match at == here {
-                true => units.push(sub.take()?),
-                false => units.push(crate::comptime_run::unit_without_its_constants(
-                    file, bound, &known,
-                )?),
+            self.library,
+            workshop,
+        ) {
+            crate::comptime_run::Computed::Value(computed) => Some((Some(computed), false)),
+            crate::comptime_run::Computed::Forbidden { callee, because } => {
+                self.a_body_that_may_not_run_at_build_time(&callee, because, span);
+                Some((None, true))
             }
-        }
-        let unit_refs: Vec<&Parsed> = units.iter().collect();
-        // **The rule is asked of what the initialiser reaches** (D2), as the
-        // ledger derives it for the function that hands the value back: every
-        // call in it, by name or on a value, and everything those call.
-        let derived = Ledger::infer_package(&unit_refs, self.library);
-        if let Some(because) = derived
-            .functions
-            .get(crate::comptime_run::VALUE_FN)
-            .and_then(build_time::may_not_run)
-        {
-            // **Named as the call resolves**: a function by its name or its
-            // path, a method by its key (`Reader::read`), read off this
-            // program's entries and then `std`'s.
-            let forbidden = |key: &str| {
-                derived
-                    .functions
-                    .get(key)
-                    .or_else(|| self.library.functions.get(key))
-                    .is_some_and(|contract| build_time::may_not_run(contract).is_some())
-            };
-            let mut culprit = None;
-            crate::emit::visit_expr(value, &mut |expr: &Expr| {
-                if culprit.is_some() {
-                    return;
-                }
-                let key = match expr {
-                    Expr::Call { func, .. } => match &**func {
-                        Expr::Variable(name) => Some(self.parsed.text(*name).to_string()),
-                        Expr::Path(path) => Some(
-                            path.iter()
-                                .map(|segment| self.parsed.text(*segment))
-                                .collect::<Vec<_>>()
-                                .join("::"),
-                        ),
-                        _ => None,
-                    },
-                    Expr::MethodCall { method, .. } | Expr::SafeMethod { method, .. } => {
-                        let method = format!("::{}", self.parsed.text(*method));
-                        derived
-                            .functions
-                            .keys()
-                            .find(|key| key.ends_with(&method) && forbidden(key))
-                            .cloned()
-                    }
-                    _ => None,
-                };
-                if let Some(key) = key.filter(|key| forbidden(key)) {
-                    culprit = Some(key);
-                }
-            });
-            let callee = culprit.unwrap_or_else(|| bound.to_string());
-            self.a_body_that_may_not_run_at_build_time(&callee, because, span);
-            return Some((None, true));
-        }
-        let counted = crate::emit::Build {
-            counts_steps: true,
-            ..Default::default()
-        };
-        let lowered = match units.len() {
-            1 => crate::emit::emit_program(&units[here], counted).ok()?,
-            _ => crate::comptime_run::lowered_units(&units, here, counted, &derived, self.library)?,
-        };
-        let dump = crate::grammar_run::dumper(&units[here], found).ok()?;
-        let program = crate::comptime_run::with_driver(&lowered, &dump, workshop.bounds())?;
-        match workshop.run_comptime(&program, bound) {
-            Ok(text) => match crate::grammar_run::decode(&text) {
-                Ok(computed) => Some((Some(computed), false)),
-                Err(_) => None,
-            },
-            Err(crate::grammar_run::Wall::Refused { detail }) => {
+            crate::comptime_run::Computed::Stopped(detail) => {
                 self.a_build_time_run_that_stopped(bound, &detail, &files, here, span);
                 Some((None, true))
             }
-            Err(_) => None,
+            crate::comptime_run::Computed::NotHere => None,
         }
     }
 
@@ -18663,11 +18598,14 @@ impl<'a> Checker<'a> {
             code: "NK1152",
             message: format!("`{bound}` stopped while the program was built: {why}."),
             notes,
-            help: Some(
-                "Fix it as you would fix the program stopping there, or compute the value \
-                 while the program runs, with `let` instead of `comptime`."
+            help: Some(match self.computing_default {
+                true => "Fix it as you would fix the program stopping there, or make the option \
+                         a `T?` and compute the value in the body."
                     .to_string(),
-            ),
+                false => "Fix it as you would fix the program stopping there, or compute the \
+                          value while the program runs, with `let` instead of `comptime`."
+                    .to_string(),
+            }),
             labels,
         });
     }
@@ -18715,11 +18653,14 @@ impl<'a> Checker<'a> {
             code: "NK1152",
             message,
             notes,
-            help: Some(
-                "Look for a loop or a recursion that does not end, or compute the value while \
-                 the program runs, with `let` instead of `comptime`."
+            help: Some(match self.computing_default {
+                true => "Look for a loop or a recursion that does not end, or make the option a \
+                         `T?` and compute the value in the body."
                     .to_string(),
-            ),
+                false => "Look for a loop or a recursion that does not end, or compute the value \
+                          while the program runs, with `let` instead of `comptime`."
+                    .to_string(),
+            }),
             labels: Vec::new(),
         });
     }

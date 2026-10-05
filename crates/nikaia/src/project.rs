@@ -952,11 +952,16 @@ pub fn lower_reading(
     // project*, which is what a `nikaia.toml` declares; a directory of loose
     // examples is a directory of programs, and compiling one of them must not
     // pull in the other ten (ADR-286 D1, `modules::collect_one`).
-    let program = match (settings.tests, layout.in_project) {
-        (true, in_project) => modules::Program::read_for_tests(input, packages, in_project)?,
-        (false, true) => modules::Program::read_with(input, packages)?,
-        (false, false) => modules::Program::read_one(input)?,
-    };
+    // **An option's computed default is compiled where this build compiles
+    // its `comptime`s** (ADR-321 D1, ADR-318 D1): the ledger inferred while
+    // the program is read records the value.
+    let program = crate::comptime_run::defaults_compiled_in(reads.workshop().place(), || {
+        match (settings.tests, layout.in_project) {
+            (true, in_project) => modules::Program::read_for_tests(input, packages, in_project),
+            (false, true) => modules::Program::read_with(input, packages),
+            (false, false) => modules::Program::read_one(input),
+        }
+    })?;
     let key_source = program.sources().join("\n// --- unit ---\n");
     // **What the output names is part of the key** (0.0.239): the abort table
     // names each file as it was handed to the compiler (ADR-300 D9), so a

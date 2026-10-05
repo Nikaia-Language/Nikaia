@@ -762,7 +762,7 @@ impl LedgerOps for Ledger {
         // one that changes no lowering — the state it writes is a
         // representation and only one of the three is built.
         tether::infer(&mut ledger, units, library);
-        evaluate_defaults(&mut ledger, units, &defaults);
+        evaluate_defaults(&mut ledger, units, &defaults, library);
         (ledger, checked, noted)
     }
 
@@ -1098,6 +1098,9 @@ struct Computed<'a> {
     at: usize,
     parsed: &'a Parsed,
     default: &'a Expr,
+    /// The option's name and declared type, which a compiled run needs.
+    option: String,
+    ty: &'a crate::ast::Type,
 }
 
 /// The options of `item` whose default is an expression to evaluate.
@@ -1117,6 +1120,8 @@ fn computed_defaults<'a>(
                 at,
                 parsed,
                 default: &option.default,
+                option: parsed.text(option.name).to_string(),
+                ty: &option.ty,
             });
         }
     }
@@ -1146,18 +1151,52 @@ pub fn a_literal(expr: &Expr) -> bool {
 /// A value with no literal of its own here - a struct, a list - or one that
 /// cannot be computed keeps the empty text, and the checker refuses it at the
 /// default (D7).
-fn evaluate_defaults(ledger: &mut Ledger, units: &[&Parsed], defaults: &[Computed<'_>]) {
+fn evaluate_defaults(
+    ledger: &mut Ledger,
+    units: &[&Parsed],
+    defaults: &[Computed<'_>],
+    library: &Ledger,
+) {
     if defaults.is_empty() {
         return;
     }
     let reads = crate::assets::Reads::none();
     let own = ledger.clone();
     let nothing = |_: &str| -> Option<crate::build_time::Value> { None };
+    let workshop = crate::comptime_run::defaults_workshop();
     for computed in defaults {
-        let value =
-            crate::build_time::BuildTime::new(computed.parsed, units, &own, &reads, &nothing)
-                .evaluate(computed.default);
-        let Some(text) = value.ok().and_then(|v| literal_of(&v)) else {
+        // **Compiled where the build has a workshop** (ADR-321 D1), as the
+        // checker computes the same default; the interpreter answers a read
+        // with none.
+        let compiled = workshop.as_ref().and_then(|workshop| {
+            let here = units
+                .iter()
+                .position(|unit| std::ptr::eq(*unit, computed.parsed))?;
+            let ty = crate::contracts::ty::Ty::from_ast(computed.parsed, computed.ty);
+            match crate::comptime_run::compute(
+                units,
+                here,
+                &computed.option,
+                computed.default,
+                &ty,
+                &nothing,
+                library,
+                workshop,
+            ) {
+                crate::comptime_run::Computed::Value(value) => Some(Some(value)),
+                crate::comptime_run::Computed::NotHere => None,
+                _ => Some(None),
+            }
+        });
+        let value = match compiled {
+            Some(value) => value,
+            None => {
+                crate::build_time::BuildTime::new(computed.parsed, units, &own, &reads, &nothing)
+                    .evaluate(computed.default)
+                    .ok()
+            }
+        };
+        let Some(text) = value.and_then(|v| literal_of(&v)) else {
             continue;
         };
         if let Some(option) = ledger

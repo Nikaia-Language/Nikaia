@@ -4,6 +4,20 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.526] — 2026-10-05
+
+**An option's computed default is compiled too** (ADR-318 D1, ADR-321 D1,
+#468). A default is a `comptime` without a name. It is now computed as one is:
+compiled and run in the build's workshop, both where the checker asks about
+it and where the ledger records its value.
+- `times: i64 = "abcd".len()` was `NK1127`, because its body is Rust; it is now
+  `4`, and a call that leaves the option out gets `4`.
+- `base: i32 = sq(100000)` stops the build at the multiplication, pointed at
+  the default.
+
+A read with no workshop still gets the interpreter. Every bench and example
+lowers byte for byte as before.
+
 ## [0.0.525] — 2026-10-05
 
 **A build-time call the rule forbids is named as it resolves** (ADR-321 D2,

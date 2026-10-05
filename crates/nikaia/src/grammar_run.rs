@@ -118,6 +118,11 @@ impl Workshop {
         Workshop { bounds, ..self }
     }
 
+    /// Where this workshop builds, where it has a place at all.
+    pub fn place(&self) -> Option<&Path> {
+        self.at.as_deref()
+    }
+
     /// What a `comptime`'s run may spend here.
     pub fn bounds(&self) -> crate::comptime_run::Bounds {
         self.bounds

@@ -162,6 +162,188 @@ pub(crate) fn lowered_units(
     })
 }
 
+/// **What a compiled build-time run came to.**
+pub(crate) enum Computed {
+    /// The value.
+    Value(Value),
+    /// A callee the rule forbids (D2), named as the call resolves.
+    Forbidden {
+        callee: String,
+        because: &'static str,
+    },
+    /// The run stopped, and what it said.
+    Stopped(String),
+    /// This stage builds no program for it, and the interpreter answers.
+    NotHere,
+}
+
+/// **Compile and run an initialiser** (ADR-321 D1): `value`, standing in
+/// `files[here]`, of type `ty`, with every file of the program around it and
+/// `known` for what earlier `comptime`s came to. The rule is asked first
+/// (D2), of the ledger entry derived for the function that hands the value
+/// back: every call it reaches, by name or on a value.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn compute(
+    files: &[&Parsed],
+    here: usize,
+    bound: &str,
+    value: &Expr,
+    ty: &Ty,
+    known: &dyn Fn(&str) -> Option<Value>,
+    library: &crate::contracts::Ledger,
+    workshop: &crate::grammar_run::Workshop,
+) -> Computed {
+    // **The sub-program's own inference and lowering compute no default
+    // again**: they read the same functions, and a default compiled while a
+    // default is compiled is the same question asked without end.
+    defaults_compiled_in(None, || {
+        computed(files, here, bound, value, ty, known, library, workshop)
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn computed(
+    files: &[&Parsed],
+    here: usize,
+    bound: &str,
+    value: &Expr,
+    ty: &Ty,
+    known: &dyn Fn(&str) -> Option<Value>,
+    library: &crate::contracts::Ledger,
+    workshop: &crate::grammar_run::Workshop,
+) -> Computed {
+    use crate::contracts::LedgerOps;
+    let Some(sub) = sub_program(files[here], bound, value, ty, known) else {
+        return Computed::NotHere;
+    };
+    let mut sub = Some(sub);
+    let mut units: Vec<Parsed> = Vec::with_capacity(files.len());
+    for (at, file) in files.iter().enumerate() {
+        let unit = match at == here {
+            true => sub.take(),
+            false => unit_without_its_constants(file, bound, known),
+        };
+        match unit {
+            Some(unit) => units.push(unit),
+            None => return Computed::NotHere,
+        }
+    }
+    let unit_refs: Vec<&Parsed> = units.iter().collect();
+    let derived = crate::contracts::Ledger::infer_package(&unit_refs, library);
+    if let Some(because) = derived
+        .functions
+        .get(VALUE_FN)
+        .and_then(crate::build_time::may_not_run)
+    {
+        let callee =
+            culprit(files[here], value, &derived, library).unwrap_or_else(|| bound.to_string());
+        return Computed::Forbidden { callee, because };
+    }
+    let counted = crate::emit::Build {
+        counts_steps: true,
+        ..Default::default()
+    };
+    let lowered = match units.len() {
+        1 => crate::emit::emit_program(&units[here], counted).ok(),
+        _ => lowered_units(&units, here, counted, &derived, library),
+    };
+    let Some(lowered) = lowered else {
+        return Computed::NotHere;
+    };
+    let Ok(dump) = crate::grammar_run::dumper(&units[here], ty) else {
+        return Computed::NotHere;
+    };
+    let Some(program) = with_driver(&lowered, &dump, workshop.bounds()) else {
+        return Computed::NotHere;
+    };
+    match workshop.run_comptime(&program, bound) {
+        Ok(text) => match crate::grammar_run::decode(&text) {
+            Ok(computed) => Computed::Value(computed),
+            Err(_) => Computed::NotHere,
+        },
+        Err(Wall::Refused { detail }) => Computed::Stopped(detail),
+        Err(_) => Computed::NotHere,
+    }
+}
+
+/// **The callee the rule forbids, named as the call resolves**: a function by
+/// its name or its path, a method by its key (`Reader::read`), read off the
+/// program's entries and then `std`'s.
+fn culprit(
+    parsed: &Parsed,
+    value: &Expr,
+    derived: &crate::contracts::Ledger,
+    library: &crate::contracts::Ledger,
+) -> Option<String> {
+    let forbidden = |key: &str| {
+        derived
+            .functions
+            .get(key)
+            .or_else(|| library.functions.get(key))
+            .is_some_and(|contract| crate::build_time::may_not_run(contract).is_some())
+    };
+    let mut found = None;
+    crate::emit::visit_expr(value, &mut |expr: &Expr| {
+        if found.is_some() {
+            return;
+        }
+        let key = match expr {
+            Expr::Call { func, .. } => match &**func {
+                Expr::Variable(name) => Some(parsed.text(*name).to_string()),
+                Expr::Path(path) => Some(
+                    path.iter()
+                        .map(|segment| parsed.text(*segment))
+                        .collect::<Vec<_>>()
+                        .join("::"),
+                ),
+                _ => None,
+            },
+            Expr::MethodCall { method, .. } | Expr::SafeMethod { method, .. } => {
+                let method = format!("::{}", parsed.text(*method));
+                derived
+                    .functions
+                    .keys()
+                    .find(|key| key.ends_with(&method) && forbidden(key))
+                    .cloned()
+            }
+            _ => None,
+        };
+        if let Some(key) = key.filter(|key| forbidden(key)) {
+            found = Some(key);
+        }
+    });
+    found
+}
+
+// --- the defaults a ledger records -------------------------------------------
+
+/// **Where an option's default is compiled** while a ledger is inferred
+/// ([ADR-318](../../../docs/specification/adr/adr-318.md) D1, ADR-321 D1): the
+/// workshop of the build that reads the program, for as long as it reads it.
+/// The inference has no `Reads` of its own; a build sets this around the read,
+/// and a caller that sets nothing gets the interpreter, as before.
+static DEFAULTS: std::sync::Mutex<Option<std::sync::Arc<crate::grammar_run::Workshop>>> =
+    std::sync::Mutex::new(None);
+
+/// Read a program with `at` as the workshop its defaults are compiled in.
+pub fn defaults_compiled_in<R>(at: Option<&Path>, read: impl FnOnce() -> R) -> R {
+    let workshop = at.map(|at| std::sync::Arc::new(crate::grammar_run::Workshop::at(at)));
+    let before = match DEFAULTS.lock() {
+        Ok(mut held) => std::mem::replace(&mut *held, workshop),
+        Err(_) => None,
+    };
+    let out = read();
+    if let Ok(mut held) = DEFAULTS.lock() {
+        *held = before;
+    }
+    out
+}
+
+/// The workshop defaults are compiled in now, where a build set one.
+pub(crate) fn defaults_workshop() -> Option<std::sync::Arc<crate::grammar_run::Workshop>> {
+    DEFAULTS.lock().ok().and_then(|held| held.clone())
+}
+
 fn a_function(
     name: winnow_grammar::Symbol,
     ret_type: Option<ast::Type>,
