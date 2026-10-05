@@ -1,0 +1,167 @@
+// crates/nikaia-std/src/tools/prove_terms.nika
+//
+// **An expression as a term of the proof** (ADR-269 D7, ADR-270), moved from
+// the compiler's `prove` (ADR-294, #436 step 4): a whole number as a linear
+// term, and a claim as a formula over them, where they are ones the prover
+// reads.
+//
+// **The terms are built, not stored.** Each node is appended to `out` in the
+// order it is made, its children named by their place in `out`, and the
+// compiler replays the list into its arena (`solver_terms.nika`'s nodes): the
+// same terms in the same order the Rust made them, with nothing of the arena
+// reached from here.
+
+/// `expr` as a linear term over the names `var` admits: the node's place in
+/// `out`, or nothing where it is not one. A product is linear where one side
+/// is a constant.
+pub fn lin_term(expr: ref Expr, words: ref winnow_grammar::InternerContext, var: fn(ref String) -> bool sync, mut out: Vec[SolverTerm]) -> i64? {
+    return match expr {
+        // A literal no `i64` holds is outside what the solver reads.
+        Expr::LitInt { value, negative } => {
+            let n = literal_value(value, negative) ?? return null
+            built(SolverTerm::Int(n), out)
+        },
+        Expr::Variable(name) => {
+            let text = words.resolve(name)
+            if !var(text) {
+                return null
+            }
+            built(SolverTerm::Var(text.clone()), out)
+        },
+        // `xs.len()` of a list that does not change is a variable of its own.
+        Expr::MethodCall { receiver, method, args, .. } => {
+            if !args.is_empty() || words.resolve(method) != "len" {
+                return null
+            }
+            let length = match receiver {
+                Expr::Variable(name) => f"{words.resolve(name)}.len()",
+                else => return null,
+            }
+            if !var(length) {
+                return null
+            }
+            built(SolverTerm::Var(length), out)
+        },
+        Expr::Unary { op, expr } => {
+            if op != UnaryOp::Neg {
+                return null
+            }
+            let a = lin_term(expr, words, var, out) ?? return null
+            built(SolverTerm::Neg(a), out)
+        },
+        Expr::Binary { op, lhs, rhs, .. } => {
+            let l = lin_term(lhs, words, var, out) ?? return null
+            let r = lin_term(rhs, words, var, out) ?? return null
+            match op {
+                BinaryOp::Add => built(SolverTerm::Add(l, r), out),
+                BinaryOp::Sub => built(SolverTerm::Sub(l, r), out),
+                BinaryOp::Mul => {
+                    if constant_at(l, out) == null && constant_at(r, out) == null {
+                        return null
+                    }
+                    built(SolverTerm::Mul(l, r), out)
+                },
+                else => null,
+            }
+        },
+        else => null,
+    }
+}
+
+/// The claim `expr` as a formula over [`lin_term`]s, where it is one this
+/// prover reads.
+pub fn claim_term(expr: ref Expr, words: ref winnow_grammar::InternerContext, var: fn(ref String) -> bool sync, mut out: Vec[SolverTerm]) -> i64? {
+    return match expr {
+        Expr::LitBool(b) => built(SolverTerm::Bool(b), out),
+        Expr::Unary { op, expr } => {
+            if op != UnaryOp::Not {
+                return null
+            }
+            let a = claim_term(expr, words, var, out) ?? return null
+            built(SolverTerm::Not(a), out)
+        },
+        Expr::Binary { op, lhs, rhs, .. } => match op {
+            BinaryOp::And => {
+                let l = claim_term(lhs, words, var, out) ?? return null
+                let r = claim_term(rhs, words, var, out) ?? return null
+                built(SolverTerm::And([l, r]), out)
+            },
+            BinaryOp::Or => {
+                let l = claim_term(lhs, words, var, out) ?? return null
+                let r = claim_term(rhs, words, var, out) ?? return null
+                built(SolverTerm::Or([l, r]), out)
+            },
+            BinaryOp::Lt => compared(op, lhs, rhs, words, var, out),
+            BinaryOp::Le => compared(op, lhs, rhs, words, var, out),
+            BinaryOp::Gt => compared(op, lhs, rhs, words, var, out),
+            BinaryOp::Ge => compared(op, lhs, rhs, words, var, out),
+            BinaryOp::Eq => compared(op, lhs, rhs, words, var, out),
+            BinaryOp::Ne => compared(op, lhs, rhs, words, var, out),
+            else => null,
+        },
+        else => null,
+    }
+}
+
+/// A comparison of two linear terms.
+fn compared(op: BinaryOp, lhs: ref Expr, rhs: ref Expr, words: ref winnow_grammar::InternerContext, var: fn(ref String) -> bool sync, mut out: Vec[SolverTerm]) -> i64? {
+    let a = lin_term(lhs, words, var, out) ?? return null
+    let b = lin_term(rhs, words, var, out) ?? return null
+    return match op {
+        BinaryOp::Lt => built(SolverTerm::Lt(a, b), out),
+        BinaryOp::Le => built(SolverTerm::Le(a, b), out),
+        BinaryOp::Gt => built(SolverTerm::Gt(a, b), out),
+        BinaryOp::Ge => built(SolverTerm::Ge(a, b), out),
+        BinaryOp::Eq => built(SolverTerm::Eq(a, b), out),
+        else => built(SolverTerm::Ne(a, b), out),
+    }
+}
+
+/// `node` appended, and its place.
+fn built(node: SolverTerm, mut out: Vec[SolverTerm]) -> i64 {
+    out.push(node)
+    return out.len() - 1
+}
+
+/// The value of the term at `at` where it reads no variable and fits, as
+/// `nikaia-logic`'s `Arena::constant` reads it.
+fn constant_at(at: i64, out: ref Vec[SolverTerm]) -> i64? {
+    return match out[at] {
+        SolverTerm::Int(n) => n,
+        SolverTerm::Neg(a) => {
+            let v = constant_at(a, out) ?? return null
+            v.checked_neg()
+        },
+        SolverTerm::Add(a, b) => {
+            let x = constant_at(a, out) ?? return null
+            let y = constant_at(b, out) ?? return null
+            x.checked_add(y)
+        },
+        SolverTerm::Sub(a, b) => {
+            let x = constant_at(a, out) ?? return null
+            let y = constant_at(b, out) ?? return null
+            x.checked_sub(y)
+        },
+        SolverTerm::Mul(a, b) => {
+            let x = constant_at(a, out) ?? return null
+            let y = constant_at(b, out) ?? return null
+            x.checked_mul(y)
+        },
+        else => null,
+    }
+}
+
+/// An integer literal's value where an `i64` holds it.
+fn literal_value(value: u64, negative: bool) -> i64? {
+    if value <= 9223372036854775807 {
+        let n = value as i64
+        if negative {
+            return -n
+        }
+        return n
+    }
+    if negative && value == 9223372036854775808 {
+        return -9223372036854775808
+    }
+    return null
+}

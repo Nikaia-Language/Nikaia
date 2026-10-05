@@ -31,7 +31,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use nikaia_logic::{Arena, Query, TermId, verify_model};
 
-use crate::ast::{BinaryOp, Block, Expr, Item, Span, Spanned, Stmt, UnaryOp};
+use crate::ast::{Block, Expr, Item, Span, Spanned, Stmt};
 use crate::check::{Finding, Severity};
 use crate::contracts::{Ledger, Provenance};
 use crate::parser::Parsed;
@@ -2124,6 +2124,7 @@ fn ledger_text(arena: &Arena, id: TermId) -> String {
     })
 }
 
+use nikaia_std::tools::prove_terms;
 use nikaia_std::tools::prove_text::{self, has_a_length, lowered_first, shown};
 
 /// The variable `name.len()` stands for.
@@ -2245,56 +2246,18 @@ fn lin(arena: &mut Arena, parsed: &Parsed, expr: &Expr, scope: &Scope) -> Option
     lin_with(arena, parsed, expr, &|name| scope.ints.contains(name))
 }
 
+/// `expr` as a linear term over the names `var` admits
+/// (`tools/prove_terms.nika`, ADR-294, #436), its nodes put into `arena`.
 fn lin_with(
     arena: &mut Arena,
     parsed: &Parsed,
     expr: &Expr,
     var: &dyn Fn(&str) -> bool,
 ) -> Option<TermId> {
-    match expr {
-        Expr::LitInt { value, negative } => {
-            // A literal no `i64` holds is outside what the solver reads.
-            Some(arena.int(i64::try_from(crate::ast::int_value(*value, *negative)).ok()?))
-        }
-        Expr::Variable(name) => {
-            let name = parsed.text(*name);
-            var(name).then(|| arena.var(name))
-        }
-        // `xs.len()` of a list that does not change is a variable of its own.
-        Expr::MethodCall {
-            receiver,
-            method,
-            args,
-            ..
-        } if args.is_empty() && parsed.text(*method) == "len" => match &**receiver {
-            Expr::Variable(name) => {
-                let length = length_of(parsed.text(*name));
-                var(&length).then(|| arena.var(&length))
-            }
-            _ => None,
-        },
-        Expr::Unary {
-            op: UnaryOp::Neg,
-            expr,
-        } => {
-            let a = lin_with(arena, parsed, expr, var)?;
-            Some(arena.neg(a))
-        }
-        Expr::Binary { op, lhs, rhs, .. } => {
-            let l = lin_with(arena, parsed, lhs, var)?;
-            let r = lin_with(arena, parsed, rhs, var)?;
-            match op {
-                BinaryOp::Add => Some(arena.add(l, r)),
-                BinaryOp::Sub => Some(arena.sub(l, r)),
-                // Linear: one side of a product is a constant.
-                BinaryOp::Mul if arena.constant(l).is_some() || arena.constant(r).is_some() => {
-                    Some(arena.mul(l, r))
-                }
-                _ => None,
-            }
-        }
-        _ => None,
-    }
+    let mut nodes = Vec::new();
+    let at = prove_terms::lin_term(expr, &parsed.interner, &|name| var(name), &mut nodes);
+    let ids = crate::bounds::into_arena(arena, &nodes);
+    at.map(|at| ids[at as usize])
 }
 
 /// The claim `expr` as a term, where it is one this prover reads.
@@ -2308,43 +2271,8 @@ fn claim_with(
     expr: &Expr,
     var: &dyn Fn(&str) -> bool,
 ) -> Option<TermId> {
-    match expr {
-        Expr::LitBool(b) => Some(arena.bool(*b)),
-        Expr::Unary {
-            op: UnaryOp::Not,
-            expr,
-        } => {
-            let a = claim_with(arena, parsed, expr, var)?;
-            Some(arena.not(a))
-        }
-        Expr::Binary { op, lhs, rhs, .. } => match op {
-            BinaryOp::And | BinaryOp::Or => {
-                let l = claim_with(arena, parsed, lhs, var)?;
-                let r = claim_with(arena, parsed, rhs, var)?;
-                Some(match op {
-                    BinaryOp::And => arena.and(vec![l, r]),
-                    _ => arena.or(vec![l, r]),
-                })
-            }
-            BinaryOp::Lt
-            | BinaryOp::Le
-            | BinaryOp::Gt
-            | BinaryOp::Ge
-            | BinaryOp::Eq
-            | BinaryOp::Ne => {
-                let a = lin_with(arena, parsed, lhs, var)?;
-                let b = lin_with(arena, parsed, rhs, var)?;
-                Some(match op {
-                    BinaryOp::Lt => arena.lt(a, b),
-                    BinaryOp::Le => arena.le(a, b),
-                    BinaryOp::Gt => arena.gt(a, b),
-                    BinaryOp::Ge => arena.ge(a, b),
-                    BinaryOp::Eq => arena.eq(a, b),
-                    _ => arena.ne(a, b),
-                })
-            }
-            _ => None,
-        },
-        _ => None,
-    }
+    let mut nodes = Vec::new();
+    let at = prove_terms::claim_term(expr, &parsed.interner, &|name| var(name), &mut nodes);
+    let ids = crate::bounds::into_arena(arena, &nodes);
+    at.map(|at| ids[at as usize])
 }

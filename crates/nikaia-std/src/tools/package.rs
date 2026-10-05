@@ -9660,6 +9660,146 @@ fn stands_at(c: &[char], at: i64, w: &[char]) -> bool {
 }
 
 
+// --- prove_terms.nika ---
+
+pub fn lin_term(expr: &Expr, words: &winnow_grammar::InternerContext, var: &impl Fn(&str) -> bool, out: &mut Vec<SolverTerm>) -> Option<i64> {
+    match expr {
+        Expr::LitInt { value, negative } => {
+            let negative = *negative; let value = *value;
+            let n = match literal_value(value, negative) { Some(__nikaia_value) => __nikaia_value, None => return None };
+            Some(built(SolverTerm::Int(n), out))
+        },
+        Expr::Variable(name) => {
+            let name = *name;
+            let text = words.resolve(name);
+            if !var(text) { return None; }
+            Some(built(SolverTerm::Var(text.to_owned()), out))
+        },
+        Expr::MethodCall { receiver, method, args, .. } => {
+            let receiver = nikaia_std::boxed::open(receiver); let method = *method;
+            if !args.is_empty() || words.resolve(method) != "len" { return None; }
+            let length = match receiver {
+                Expr::Variable(name) => { let name = *name; format!("{}.len()", words.resolve(name)) },
+                _ => return None,
+            };
+            if !var(&length) { return None; }
+            Some(built(SolverTerm::Var(length), out))
+        },
+        Expr::Unary { op, expr } => {
+            let expr = nikaia_std::boxed::open(expr);
+            if *op != UnaryOp::Neg { return None; }
+            let a = match lin_term(expr, words, var, out) { Some(__nikaia_value) => __nikaia_value, None => return None };
+            Some(built(SolverTerm::Neg(a), out))
+        },
+        Expr::Binary { op, lhs, rhs, .. } => {
+            let lhs = nikaia_std::boxed::open(lhs); let rhs = nikaia_std::boxed::open(rhs);
+            let l = match lin_term(lhs, words, var, out) { Some(__nikaia_value) => __nikaia_value, None => return None };
+            let r = match lin_term(rhs, words, var, out) { Some(__nikaia_value) => __nikaia_value, None => return None };
+            match op {
+                BinaryOp::Add => Some(built(SolverTerm::Add(l, r), out)),
+                BinaryOp::Sub => Some(built(SolverTerm::Sub(l, r), out)),
+                BinaryOp::Mul => {
+                    if constant_at(l, &out).is_none() && constant_at(r, &out).is_none() { return None; }
+                    Some(built(SolverTerm::Mul(l, r), out))
+                },
+                _ => None,
+            }
+        },
+        _ => None,
+    }
+}
+
+pub fn claim_term(expr: &Expr, words: &winnow_grammar::InternerContext, var: &impl Fn(&str) -> bool, out: &mut Vec<SolverTerm>) -> Option<i64> {
+    match expr {
+        Expr::LitBool(b) => { let b = *b; Some(built(SolverTerm::Bool(b), out)) },
+        Expr::Unary { op, expr } => {
+            let expr = nikaia_std::boxed::open(expr);
+            if *op != UnaryOp::Not { return None; }
+            let a = match claim_term(expr, words, var, out) { Some(__nikaia_value) => __nikaia_value, None => return None };
+            Some(built(SolverTerm::Not(a), out))
+        },
+        Expr::Binary { op, lhs, rhs, .. } => { let lhs = nikaia_std::boxed::open(lhs); let rhs = nikaia_std::boxed::open(rhs); match op {
+            BinaryOp::And => {
+                let l = match claim_term(lhs, words, var, out) { Some(__nikaia_value) => __nikaia_value, None => return None };
+                let r = match claim_term(rhs, words, var, out) { Some(__nikaia_value) => __nikaia_value, None => return None };
+                Some(built(SolverTerm::And(vec![l, r]), out))
+            },
+            BinaryOp::Or => {
+                let l = match claim_term(lhs, words, var, out) { Some(__nikaia_value) => __nikaia_value, None => return None };
+                let r = match claim_term(rhs, words, var, out) { Some(__nikaia_value) => __nikaia_value, None => return None };
+                Some(built(SolverTerm::Or(vec![l, r]), out))
+            },
+            BinaryOp::Lt => compared(*op, lhs, rhs, words, var, out),
+            BinaryOp::Le => compared(*op, lhs, rhs, words, var, out),
+            BinaryOp::Gt => compared(*op, lhs, rhs, words, var, out),
+            BinaryOp::Ge => compared(*op, lhs, rhs, words, var, out),
+            BinaryOp::Eq => compared(*op, lhs, rhs, words, var, out),
+            BinaryOp::Ne => compared(*op, lhs, rhs, words, var, out),
+            _ => None,
+        } },
+        _ => None,
+    }
+}
+
+fn compared(op: BinaryOp, lhs: &Expr, rhs: &Expr, words: &winnow_grammar::InternerContext, var: &impl Fn(&str) -> bool, out: &mut Vec<SolverTerm>) -> Option<i64> {
+    let a = match lin_term(lhs, words, var, out) { Some(__nikaia_value) => __nikaia_value, None => return None };
+    let b = match lin_term(rhs, words, var, out) { Some(__nikaia_value) => __nikaia_value, None => return None };
+    Some(match op {
+        BinaryOp::Lt => built(SolverTerm::Lt(a, b), out),
+        BinaryOp::Le => built(SolverTerm::Le(a, b), out),
+        BinaryOp::Gt => built(SolverTerm::Gt(a, b), out),
+        BinaryOp::Ge => built(SolverTerm::Ge(a, b), out),
+        BinaryOp::Eq => built(SolverTerm::Eq(a, b), out),
+        _ => built(SolverTerm::Ne(a, b), out),
+    })
+}
+
+fn built(node: SolverTerm, out: &mut Vec<SolverTerm>) -> i64 {
+    out.push(node);
+    out.len() as i64 - 1
+}
+
+fn constant_at(at: i64, out: &[SolverTerm]) -> Option<i64> {
+    match nikaia_std::index::get(&out, nikaia_std::index::at(at)) {
+        SolverTerm::Int(n) => { let n = *n; Some(n) },
+        SolverTerm::Neg(a) => {
+            let a = *a;
+            let v = match constant_at(a, out) { Some(__nikaia_value) => __nikaia_value, None => return None };
+            v.checked_neg()
+        },
+        SolverTerm::Add(a, b) => {
+            let a = *a; let b = *b;
+            let x = match constant_at(a, out) { Some(__nikaia_value) => __nikaia_value, None => return None };
+            let y = match constant_at(b, out) { Some(__nikaia_value) => __nikaia_value, None => return None };
+            x.checked_add(y)
+        },
+        SolverTerm::Sub(a, b) => {
+            let a = *a; let b = *b;
+            let x = match constant_at(a, out) { Some(__nikaia_value) => __nikaia_value, None => return None };
+            let y = match constant_at(b, out) { Some(__nikaia_value) => __nikaia_value, None => return None };
+            x.checked_sub(y)
+        },
+        SolverTerm::Mul(a, b) => {
+            let a = *a; let b = *b;
+            let x = match constant_at(a, out) { Some(__nikaia_value) => __nikaia_value, None => return None };
+            let y = match constant_at(b, out) { Some(__nikaia_value) => __nikaia_value, None => return None };
+            x.checked_mul(y)
+        },
+        _ => None,
+    }
+}
+
+fn literal_value(value: u64, negative: bool) -> Option<i64> {
+    if value <= 9223372036854775807u64 {
+        let n = i64::try_from(value).unwrap_or_else(|_| panic!("the value does not fit in an `i64`"));
+        if negative { return Some(-n); }
+        return Some(n);
+    }
+    if negative && value == 9223372036854775808u64 { return Some(-9223372036854775808i64); }
+    None
+}
+
+
 // --- prove_text.nika ---
 
 pub fn rust_of(id: i64, term_of: &impl Fn(i64) -> SolverTerm, escape: &impl Fn(&str) -> String) -> String {
@@ -18471,6 +18611,10 @@ pub mod parse_notes {
 pub mod paths {
     #[allow(unused_imports)]
     pub use super::{Export, Named, after, module_of, joined, exported, named, bases, split_top_level};
+}
+pub mod prove_terms {
+    #[allow(unused_imports)]
+    pub use super::{lin_term, claim_term};
 }
 pub mod prove_text {
     #[allow(unused_imports)]

@@ -1799,6 +1799,37 @@ fn breaks(parsed: &Parsed, body: &Block) -> bool {
 
 // --- interval propagation (ADR-306) ---------------------------------------------
 
+/// **Nodes a tool written in Nikaia built, put into `arena`** in the order
+/// they were made (`tools/prove_terms.nika`): each child names an earlier
+/// node of the list. The ids, by the place each node had.
+pub(crate) fn into_arena(arena: &mut Arena, nodes: &[SolverTerm]) -> Vec<TermId> {
+    let mut ids: Vec<TermId> = Vec::with_capacity(nodes.len());
+    for node in nodes {
+        let at = |i: &i64| ids[*i as usize];
+        let id = match node {
+            SolverTerm::Bool(b) => arena.bool(*b),
+            SolverTerm::Int(n) => arena.int(*n),
+            SolverTerm::Var(name) => arena.var(name),
+            SolverTerm::Add(a, b) => arena.add(at(a), at(b)),
+            SolverTerm::Sub(a, b) => arena.sub(at(a), at(b)),
+            SolverTerm::Neg(a) => arena.neg(at(a)),
+            SolverTerm::Mul(a, b) => arena.mul(at(a), at(b)),
+            SolverTerm::Le(a, b) => arena.le(at(a), at(b)),
+            SolverTerm::Lt(a, b) => arena.lt(at(a), at(b)),
+            SolverTerm::Ge(a, b) => arena.ge(at(a), at(b)),
+            SolverTerm::Gt(a, b) => arena.gt(at(a), at(b)),
+            SolverTerm::Eq(a, b) => arena.eq(at(a), at(b)),
+            SolverTerm::Ne(a, b) => arena.ne(at(a), at(b)),
+            SolverTerm::And(parts) => arena.and(parts.iter().map(at).collect()),
+            SolverTerm::Or(parts) => arena.or(parts.iter().map(at).collect()),
+            SolverTerm::Not(a) => arena.not(at(a)),
+            SolverTerm::Other => arena.bool(false),
+        };
+        ids.push(id);
+    }
+    ids
+}
+
 /// **One node of `arena`, by index, for the tools written in Nikaia**
 /// (`tools/solver_terms.nika`, ADR-294, #435, #436): they read the terms where
 /// they are, one node at a time, with each child named by its index.
