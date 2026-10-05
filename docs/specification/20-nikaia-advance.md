@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part II: Advanced Features & Metaprogramming**
-**Version:** 0.0.526 (Draft)
+**Version:** 0.0.527 (Draft)
 **Date:** 2026-10-05
 
 ---
@@ -134,7 +134,9 @@ default budget is 10 000 000 000 steps. The bytes the run holds are counted at
 each allocation, `std`'s included; the default bound is 4 GiB. Past either, the
 build is refused with `NK1152`, naming the `comptime` and the call path. Both
 counts are the same on every machine of one architecture. A `comptime` that
-needs more raises the bound itself, at its declaration. The call depth is
+needs more raises the bound itself, at its declaration:
+`comptime(steps: 50G, ram: 16Gi) TABLE = …`. Either may be left out; a name
+other than `steps` or `ram` is refused (`NK1109`). The call depth is
 bounded as well. A run that takes more than a few seconds is reported by name
 while it runs.
 

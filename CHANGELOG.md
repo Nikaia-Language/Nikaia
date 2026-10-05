@@ -4,6 +4,17 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.527] — 2026-10-05
+
+**A whole number may carry a scale, and a `comptime` names its bounds**
+(ADR-322; ADR-321 D11). `1G` is a billion and `4Gi` four gibibytes: a decimal
+whole number may end in `K M G T P` (decimal) or `Ki Mi Gi Ti Pi` (binary),
+which is a spelling of its value, typed by its use like any literal. An
+exponent is written with a lower-case `e`; `1E5` is refused. A `comptime`
+raises its bounds at its declaration, `comptime(steps: 50G, ram: 16Gi) TABLE =
+…`, and `NK1109` refuses another name. Exa and a scale on a float are not
+decided. Decided and specified; not built.
+
 ## [0.0.526] — 2026-10-05
 
 **An option's computed default is compiled too** (ADR-318 D1, ADR-321 D1,

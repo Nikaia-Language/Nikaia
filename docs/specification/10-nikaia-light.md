@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part I: The Language Core**
-**Version:** 0.0.526 (Draft)
+**Version:** 0.0.527 (Draft)
 **Date:** 2026-10-05
 
 ---
@@ -233,7 +233,8 @@ Nikaia provides basic types to represent simple values.
       conversion is written with `as`.
 * **Floats:** numbers with decimal points.
     * `f64`: a double-precision floating-point number. A literal may carry an
-      **exponent**: `1.5e-4`, `2e3`, `9.54791938424326609e-04`.
+      **exponent**, always written `e`: `1.5e-4`, `2e3`,
+      `9.54791938424326609e-04`. `1E5` is refused.
 * **Booleans:** logic values.
     * `bool`: `true` or `false`.
 * **Text:**
@@ -276,9 +277,12 @@ Nikaia provides basic types to represent simple values.
       names all three ways out — `Vec[T]` to own and grow, `ref Array[T]` to
       view, `Array[T, N]` to write the length down.
 
-**A number may carry a digit separator or a radix prefix, and nothing else.**
-`1_000_000`, `0xFF`, `0b1010` and `0o17` are the four forms, beside the
-exponent above. An underscore stands **between** digits and nowhere else. A
+**A number may carry a digit separator, a radix prefix or a scale, and nothing
+else.** `1_000_000`, `0xFF`, `0b1010` and `0o17` are the four forms, beside the
+exponent above. A decimal whole number may end in a **scale**: `K`, `M`, `G`,
+`T` and `P` are 10³ to 10¹⁵, `Ki`, `Mi`, `Gi`, `Ti` and `Pi` are 2¹⁰ to 2⁵⁰
+([ADR-322](adr/adr-322.md)). `1G` is `1000000000` and `4Gi` is `4294967296`. A
+radix-prefixed number and a float take no scale. An underscore stands **between** digits and nowhere else. A
 float takes the separator (`1_000.5`) and no prefix. A digit the radix does not
 have (`0b1210`, `0o19`) is refused. A **leading** underscore is not one of the
 four forms: `_000` is a name.
@@ -286,8 +290,8 @@ four forms: `_000` is a name.
 **The radix is a spelling, and a literal is a value.** `0xFF` is `255`, and it
 takes the first type that holds it exactly as `255` does. So `let mask = 0xFF`
 is an `i32` and `let mask: u8 = 0xFF` is a `u8`. The width is never read off
-the digits. The separator is not part of the value: `1_000` is `1000` to the
-checker, to the ledger and to a diagnostic's text.
+the digits. The separator and the scale are not part of the value: `1_000` is `1000` and
+`1K` is `1000` to the checker, to the ledger and to a diagnostic's text.
 
 **There is no type suffix.** `1i64` is a number beside a name, and the name
 beside it is refused with `NK1117` because nothing declares it (Part III, C.3).
