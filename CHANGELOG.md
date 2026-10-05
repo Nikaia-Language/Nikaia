@@ -4,6 +4,14 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.499] — 2026-10-05
+
+**Whether a claim reads data from outside is Nikaia** (ADR-294, #436 step 4).
+`prover_calls.nika`'s `from_outside` walks an expression as
+`contracts::sync`'s walk does and finds a tainted binding or a call of a
+source `std`'s ledger calls untrusted (ADR-010 D2), which makes a claim
+`NK1202`. Every bench and example lowers byte for byte as before.
+
 ## [0.0.498] — 2026-10-05
 
 **What the prover reads of a callee is Nikaia** (ADR-294, #436 step 4).

@@ -26,7 +26,6 @@
 // bindings this walk cannot see — a lambda's body, a `match` arm — starts with
 // no facts and no variables. Losing facts only costs proofs.
 
-use crate::contracts::LedgerOps;
 use std::collections::{BTreeMap, BTreeSet};
 
 use nikaia_logic::{Arena, Query, TermId, verify_model};
@@ -35,7 +34,7 @@ use nikaia_std::tools::solver_terms::SolverTerm;
 
 use crate::ast::{Block, Expr, Item, Span, Spanned, Stmt};
 use crate::check::{Finding, Severity};
-use crate::contracts::{Ledger, Provenance};
+use crate::contracts::Ledger;
 use crate::parser::Parsed;
 
 // **What the prover hands the rest of the compiler** is
@@ -1457,36 +1456,13 @@ impl<'a> Prover<'a> {
         prover_calls::free_function(&self.parsed.program, &self.parsed.interner, name)
     }
 
-    /// Whether a value came from outside the program (ADR-010 D2): it names a
-    /// tainted binding, or calls a source `std`'s ledger calls untrusted.
+    /// Whether a value came from outside the program (ADR-010 D2,
+    /// `prover_calls::from_outside`).
     fn tainted(&self, expr: &Expr, scope: &Scope) -> bool {
         let parsed = self.parsed;
-        let library = self.library;
-        let mut tainted = false;
-        crate::contracts::sync::visit_expr(parsed, expr, &mut |e| match e {
-            Expr::Variable(name) if scope.tainted.contains(parsed.text(*name)) => tainted = true,
-            Expr::Call { func, .. } => {
-                let name = match &**func {
-                    Expr::Variable(n) => Some(parsed.text(*n).to_string()),
-                    Expr::Path(segments) => Some(
-                        segments
-                            .iter()
-                            .map(|s| parsed.text(*s))
-                            .collect::<Vec<_>>()
-                            .join("::"),
-                    ),
-                    _ => None,
-                };
-                if let Some(name) = name
-                    && let Some((_, contract)) = library.lookup(&name)
-                    && contract.provenance == Some(Provenance::Untrusted)
-                {
-                    tainted = true;
-                }
-            }
-            _ => {}
-        });
-        tainted
+        prover_calls::from_outside(expr, &scope.tainted, &parsed.interner, self.library, &|e| {
+            crate::emit::literal_expressions(parsed, e)
+        })
     }
 }
 
