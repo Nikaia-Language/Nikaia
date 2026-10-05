@@ -18514,15 +18514,44 @@ impl<'a> Checker<'a> {
             .get(crate::comptime_run::VALUE_FN)
             .and_then(build_time::may_not_run)
         {
+            // **Named as the call resolves**: a function by its name or its
+            // path, a method by its key (`Reader::read`), read off this
+            // program's entries and then `std`'s.
+            let forbidden = |key: &str| {
+                derived
+                    .functions
+                    .get(key)
+                    .or_else(|| self.library.functions.get(key))
+                    .is_some_and(|contract| build_time::may_not_run(contract).is_some())
+            };
             let mut culprit = None;
             crate::emit::visit_expr(value, &mut |expr: &Expr| {
-                if culprit.is_none()
-                    && let Expr::Call { func, .. } = expr
-                    && let Expr::Variable(name) = &**func
-                    && let Some(contract) = derived.functions.get(self.parsed.text(*name))
-                    && build_time::may_not_run(contract).is_some()
-                {
-                    culprit = Some(self.parsed.text(*name).to_string());
+                if culprit.is_some() {
+                    return;
+                }
+                let key = match expr {
+                    Expr::Call { func, .. } => match &**func {
+                        Expr::Variable(name) => Some(self.parsed.text(*name).to_string()),
+                        Expr::Path(path) => Some(
+                            path.iter()
+                                .map(|segment| self.parsed.text(*segment))
+                                .collect::<Vec<_>>()
+                                .join("::"),
+                        ),
+                        _ => None,
+                    },
+                    Expr::MethodCall { method, .. } | Expr::SafeMethod { method, .. } => {
+                        let method = format!("::{}", self.parsed.text(*method));
+                        derived
+                            .functions
+                            .keys()
+                            .find(|key| key.ends_with(&method) && forbidden(key))
+                            .cloned()
+                    }
+                    _ => None,
+                };
+                if let Some(key) = key.filter(|key| forbidden(key)) {
+                    culprit = Some(key);
                 }
             });
             let callee = culprit.unwrap_or_else(|| bound.to_string());

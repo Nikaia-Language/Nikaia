@@ -4,6 +4,22 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.525] — 2026-10-05
+
+**A build-time call the rule forbids is named as it resolves** (ADR-321 D2,
+#468). The rule was read off the ledger before a `comptime` was compiled,
+but the refusal named the callee only when it was called by a bare name. It
+now also names one called by its path (`io::read_to_string`) and a method by
+its key (`Reader::read`), looked up in this program's entries and then in
+`std`'s.
+
+`build_time`'s 47 tests now run through a workshop, as a build does, so they
+exercise the compiled path. Three of them now expect ADR-321's answers:
+- a run that recurses without end is *more than 10000 calls deep*;
+- `io::read_to_string()` is not allowed (`NK1152`), where it was `NK1127`;
+- an index an `Array` does not have stops the build in the program's words,
+  where it was `NK1165`.
+
 ## [0.0.524] — 2026-10-05
 
 **A program that declares a grammar compiles its `comptime`s too** (ADR-321

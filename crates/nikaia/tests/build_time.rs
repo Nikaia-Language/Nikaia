@@ -14,14 +14,30 @@
 mod common;
 
 use nikaia::contracts::{Ledger, LedgerOps, STD};
-use nikaia::emit::{Build, emit_program};
+use nikaia::emit::Build;
 use nikaia::parser::parse_to_ast;
+
+/// **Where a `comptime`'s program is compiled and run** (ADR-321 D1): one
+/// workshop for the file, as a build keeps one beside its cache.
+fn reads() -> nikaia::assets::Reads {
+    let at = std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("comptime-compiled");
+    nikaia::assets::Reads::at(&at).building_in(&at)
+}
 
 fn findings(source: &str) -> Vec<nikaia::check::Finding> {
     let parsed = parse_to_ast(source).expect("the source parses");
     let own = Ledger::infer(&parsed);
     let library = Ledger::parse(STD).expect("std's ledger");
-    nikaia::check::check(&parsed, &own, &library).findings
+    nikaia::check::check_against(
+        &parsed,
+        &[],
+        &own,
+        &library,
+        &std::collections::BTreeSet::new(),
+        &nikaia::check::Newly::new(),
+        &reads(),
+    )
+    .findings
 }
 
 /// Compile the lowering as a binary, run it, hand back what it printed.
@@ -52,7 +68,7 @@ fn ran(purpose: &str, source: &str) -> String {
 
 fn lowered(source: &str) -> String {
     let parsed = parse_to_ast(source).expect("the source parses");
-    emit_program(&parsed, Build::default())
+    nikaia::emit::emit_program_reading(&parsed, Build::default(), &reads())
         .expect("it lowers")
         .rust
 }
@@ -164,21 +180,25 @@ fn an_unbounded_recursion_is_refused_rather_than_crashing() {
     .filter(|f| f.code == "NK1152")
     .collect();
     assert_eq!(found.len(), 1, "{found:#?}");
-    assert!(found[0].message.contains("too deeply"), "{found:#?}");
+    assert!(found[0].message.contains("calls deep"), "{found:#?}");
 }
 
-/// **A callee this unit does not declare is unevaluable, not forbidden** —
-/// there is no body here to run, and saying *you may not* about a function
-/// whose body is somewhere else would be a claim this cannot make. `NK1127`,
-/// which is the refusal that has always been there.
+/// **A callee of `std`'s is asked the rule as any other is**
+/// ([ADR-321](../../../docs/specification/adr/adr-321.md) D2): its Rust half
+/// runs at build time where its entry allows it, and reading standard input
+/// does not - `NK1152`, by its path. It was `NK1127` while the interpreter
+/// could run only code written in the program.
 #[test]
-fn a_callee_from_elsewhere_is_unevaluable() {
+fn a_callee_of_std_that_reads_input_is_forbidden() {
     let found: Vec<_> = findings("comptime N = io::read_to_string()\n")
         .into_iter()
         .filter(|f| f.code == "NK1127" || f.code == "NK1152")
         .collect();
     assert_eq!(found.len(), 1, "{found:#?}");
-    assert_eq!(found[0].code, "NK1127", "{found:#?}");
+    assert_eq!(
+        found[0].message, "You can't call `io::read_to_string` while the program is built.",
+        "{found:#?}"
+    );
 }
 
 /// **A `for` over a range**, which is issue #178's second step: the
@@ -383,10 +403,11 @@ fn a_comptime_that_disagrees_with_its_own_type_is_refused() {
     );
 }
 
-/// **`NK1165`: the index happening at the one moment there is no run to abort
-/// in.** [ADR-285](../../../docs/specification/adr/adr-285.md) D1 aborts with
-/// this sentence at run time; *this compiler cannot evaluate it* would send the
-/// reader looking for a missing feature rather than at the line.
+/// **An index the array does not have stops the build where it would stop
+/// the program** ([ADR-321](../../../docs/specification/adr/adr-321.md) D1):
+/// the build-time run is the program's own code, so it aborts as
+/// [ADR-285](../../../docs/specification/adr/adr-285.md) D1 aborts at run time,
+/// pointed at the line. It was `NK1165` while an interpreter computed it.
 #[test]
 fn a_build_time_index_the_array_does_not_have_is_named() {
     let source = "fn out() -> i64 {\n\
@@ -395,15 +416,16 @@ fn a_build_time_index_the_array_does_not_have_is_named() {
                   }\n\
                   comptime BAD: i64 = out()\n\
                   fn main() { println(f\"{BAD}\") }\n";
+    // **It stops as the program stops** (ADR-321 D1), in the program's words.
     let found = findings(source);
     let refusal = found
         .iter()
-        .find(|f| f.code == "NK1165")
-        .unwrap_or_else(|| panic!("NK1165: {found:#?}"));
-    assert!(
-        refusal.help.as_deref() == Some("The indexes go from 0 to 2."),
-        "the way out names the range that exists: {:?}",
-        refusal.help
+        .find(|f| f.code == "NK1152")
+        .unwrap_or_else(|| panic!("NK1152: {found:#?}"));
+    assert_eq!(
+        refusal.message,
+        "`BAD` stopped while the program was built: index out of bounds: the len is 3 \
+         but the index is 7."
     );
     // **And it is said once.** `NK1127` used to follow every refusal by name,
     // which is not a second fact — it is the first one with less in it.
