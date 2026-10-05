@@ -4,6 +4,19 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.506] — 2026-10-05
+
+**A tuple taken apart out of a place is lent, and a list's position is
+converted** (#465, found moving the prover's passes into Nikaia, #436).
+`let (name, n) = pairs[1]` moved out of a borrowed element; it now lends the
+tuple, as a one-name `let` over a place does, and a number, `bool` or `char`
+part is read out of its view. A part taken out of a lent tuple is a view where
+it is a map's key, so `counts[first]` after `let (first, _) = key` is no longer
+a `&&String`. `Vec::remove`, `swap_remove` and `truncate` are described in
+`std`'s ledger: a function that called them was taken to pause, and their
+`i64` position is converted as `insert`'s is (ADR-293 D20).
+`prover_passes.nika`'s workarounds go.
+
 ## [0.0.505] — 2026-10-05
 
 **The prover's passes are Nikaia** (ADR-294, #436 step 4).

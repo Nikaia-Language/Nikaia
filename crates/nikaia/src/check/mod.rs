@@ -470,6 +470,10 @@ pub struct Checked {
     /// [`crate::bounds`] proved it inside
     /// ([ADR-306](../../docs/specification/adr/adr-306.md) D5).
     pub list_indices: BTreeSet<usize>,
+    /// **A number, `bool` or `char` part of a tuple taken apart out of a place
+    /// or a view** (#465), by the `let`'s statement and the name: read out of
+    /// its view where it is bound.
+    pub copied_tuple_parts: BTreeSet<(usize, String)>,
     /// **`x.len()` of a `std` type**, by the node of `x`: a list, a run, text,
     /// a map or a set, whose length is a count that reading changes nothing
     /// of - what [`crate::bounds`] reads as a number of a proof (ADR-306 D4).
@@ -1798,6 +1802,8 @@ pub struct Propagation {
     pub slice_indices: BTreeSet<(usize, String)>,
     /// [`Checked::list_indices`].
     pub list_indices: BTreeSet<usize>,
+    /// [`Checked::copied_tuple_parts`].
+    pub copied_tuple_parts: BTreeSet<(usize, String)>,
     /// [`Checked::std_lengths`].
     pub std_lengths: BTreeSet<usize>,
     /// [`Checked::sized_lengths`].
@@ -2107,6 +2113,7 @@ pub fn propagation_against(
         map_keys: checked.map_keys,
         slice_indices: checked.slice_indices,
         list_indices: checked.list_indices,
+        copied_tuple_parts: checked.copied_tuple_parts,
         std_lengths: checked.std_lengths,
         sized_lengths: checked.sized_lengths,
         arithmetic: checked.arithmetic,
@@ -5289,8 +5296,10 @@ impl<'a> Checker<'a> {
         // bound to a map read beside a jump - is a reference already (found
         // moving `describe`'s draft into Nikaia, #125).
         if crate::contracts::keeps::moves(ty)
-            && matches!(given, Expr::Variable(name)
+            && (matches!(given, Expr::Variable(name)
                 if self.binding(self.parsed.text(*name)).is_some_and(|local| local.lent))
+                // Or a part of a tuple taken apart out of a place (#465).
+                || self.a_lent_let(given))
         {
             return;
         }
@@ -9738,7 +9747,7 @@ impl<'a> Checker<'a> {
                 // every other unanswered question here keeps, and never a guess
                 // that the widths match.
                 if let [_, _, ..] = names.as_slice() {
-                    return self.tuple_let(names, ty.as_ref(), &found, span);
+                    return self.tuple_let(names, ty.as_ref(), &found, value, span);
                 }
                 let name = self.parsed.text(names[0]).to_string();
                 // **`let _ = expr` is a statement wearing a `let`**
@@ -16251,6 +16260,9 @@ impl<'a> Checker<'a> {
                 || matches!(index, Expr::LitStr { .. })
                 || matches!(index, Expr::Variable(name)
                     if self.binding(self.parsed.text(*name)).is_some_and(|local| local.lent))
+                // A `let` over a place, or a part of a tuple taken apart out
+                // of one (#465), is a view below too.
+                || self.a_lent_let(index)
                 || (!matches!(found, Ty::Named { name, .. } if matches!(ty::base(name), "String" | "str"))
                     && self.a_lent_parameter(index))
             {
@@ -22130,6 +22142,7 @@ impl<'a> Checker<'a> {
         names: &[Ident],
         ty: Option<&crate::ast::Type>,
         found: &Ty,
+        value: &Expr,
         span: &Span,
     ) -> Ty {
         if ty.is_some() {
@@ -22153,9 +22166,25 @@ impl<'a> Checker<'a> {
             Ty::Tuple(parts) if parts.len() == names.len() => parts.clone(),
             _ => vec![Ty::Unknown; names.len()],
         };
+        // **A tuple taken apart out of a place or a view is lent** (#465), as
+        // a `let` of one name over a place is (`lent_lets`): its parts are
+        // views of the tuple's, and a number, a `bool` or a `char` among them
+        // is read out of its view where it is bound, as a loop binding is.
+        let lent = self.checked.lent_lets.contains(&span.at())
+            || matches!(value, Expr::Variable(name) if self.lent_here(self.parsed.text(*name)));
+        let frame = self.scope.len().saturating_sub(1);
         for (name, part) in names.iter().zip(parts) {
             let bound = self.parsed.text(*name).to_string();
             self.nameable(&bound, span, "a `let`");
+            if lent && bound != "_" {
+                if a_copy_by_value(&part) {
+                    self.checked
+                        .copied_tuple_parts
+                        .insert((span.at(), bound.clone()));
+                } else {
+                    self.lent_lets.insert((bound.clone(), frame));
+                }
+            }
             self.bind_with(bound, part, None);
         }
         Ty::Tuple(Vec::new())
@@ -23152,6 +23181,9 @@ const COUNTS: &[(&str, usize)] = &[
     ("Vec::chunks", 0),
     ("Vec::windows", 0),
     ("Vec::insert", 0),
+    ("Vec::remove", 0),
+    ("Vec::swap_remove", 0),
+    ("Vec::truncate", 0),
     ("Vec::resize", 0),
     ("str::splitn", 0),
 ];

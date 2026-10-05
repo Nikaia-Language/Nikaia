@@ -2510,6 +2510,35 @@ touches = []
 keeps = ["value"]
 signature = "[T](mut self: ref Vec[T], at: i64, value: T)"
 
+# **Taking an element out at a position** (#465). Nothing described it, so a
+# call was one no ledger knew - a function that took an element out was taken
+# to pause and lowered `async` - and an `i64` position reached `rustc` as
+# *expected `usize`*; the position is converted as `insert`'s is (ADR-293 D20).
+# Take the element at a position out, moving everything after it one back.
+[fn."Vec::remove"]
+pub = true
+sync = true
+touches = []
+signature = "[T](mut self: ref Vec[T], at: i64) -> T"
+
+# **Taking an element out without moving the rest** (#465): the last one takes
+# its place. The position is converted as `insert`'s is (ADR-293 D20).
+# Take the element at a position out, putting the last one in its place.
+[fn."Vec::swap_remove"]
+pub = true
+sync = true
+touches = []
+signature = "[T](mut self: ref Vec[T], at: i64) -> T"
+
+# **Cutting a list short** (#465). The length is converted as `insert`'s
+# position is (ADR-293 D20).
+# Keep the first `length` elements and drop the rest.
+[fn."Vec::truncate"]
+pub = true
+sync = true
+touches = []
+signature = "[T](mut self: ref Vec[T], length: i64)"
+
 # **A list of a given length in one call** ([ADR-270](../../docs/specification/adr/adr-270.md)
 # D8 step 1): without it a list of `n` zeros was `n` pushes, which cost the
 # solver's big-integer kernel 4 % and its watch lists 8 % against the same

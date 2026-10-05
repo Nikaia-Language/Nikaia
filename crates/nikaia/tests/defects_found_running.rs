@@ -1426,6 +1426,44 @@ fn a_recursive_method_hands_its_function_value_on() {
     );
 }
 
+/// **A tuple taken apart out of a list, a list's position, and a part used
+/// as a key** (#465, found moving the prover's passes into Nikaia, #436):
+/// `let (name, n) = pairs[1]` moved out of a borrowed element; `xs.remove(i)`
+/// with an `i64` was handed to a `usize` (and, described by no ledger, made
+/// its function pause); and `counts[first]` after `let (first, _) = key` over
+/// a lent tuple was a `&&String`.
+#[test]
+fn tuples_taken_apart_and_list_positions_lower() {
+    runs(
+        "tuple-parts-positions",
+        "use std::collections\n\
+         \n\
+         fn main() {\n\
+         \x20   let mut pairs: Vec[(String, i64)] = []\n\
+         \x20   pairs.push((f\"a\", 1))\n\
+         \x20   pairs.push((f\"b\", 2))\n\
+         \x20   let (name, n) = pairs[1]\n\
+         \x20   let mut seen: collections::BTreeMap[(String, String), i64] = collections::BTreeMap()\n\
+         \x20   seen.insert((f\"x\", f\"y\"), 3)\n\
+         \x20   let mut counts: collections::BTreeMap[String, i64] = collections::BTreeMap()\n\
+         \x20   counts.insert(\"x\", 5)\n\
+         \x20   for (key, value) in seen {\n\
+         \x20       let (first, _) = key\n\
+         \x20       let c = counts[first] ?? 0\n\
+         \x20       println(f\"{first} {c} {value}\")\n\
+         \x20   }\n\
+         \x20   let mut xs: Vec[i64] = [10, 20, 30, 40]\n\
+         \x20   let i: i64 = 1\n\
+         \x20   xs.remove(i)\n\
+         \x20   xs.insert(i, 99)\n\
+         \x20   xs.swap_remove(0)\n\
+         \x20   xs.truncate(i + 1)\n\
+         \x20   println(f\"{name} {n + 1} {xs.len()} {xs[0]} {xs[1]}\")\n\
+         }\n",
+        "x 5 3\nb 3 2 40 99\n",
+    );
+}
+
 /// **Found by the solver's kernels** ([ADR-270](../../../docs/specification/adr/adr-270.md)
 /// D8 step 1): an index into a `mut` parameter, read and written. The
 /// parameter is a `&mut Vec<u32>` below, and the write was `set(&mut out, …)` -

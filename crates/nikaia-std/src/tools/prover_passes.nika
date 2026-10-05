@@ -70,24 +70,17 @@ pub fn prover_passes(mut walk: ProverWalk, program: ref Program, words: ref winn
 /// The postconditions an exit did not show, struck - from the last place
 /// back, so that each place is still the one it named.
 fn strike_broken(mut state: ProverState) {
-    let mut functions: Vec[String] = []
-    let mut places: Vec[i64] = []
-    for (function, index) in state.broken {
-        functions.push(function.clone())
-        places.push(index)
+    let mut broken: Vec[(String, i64)] = []
+    for one in state.broken {
+        broken.push(one.clone())
     }
-    let mut k = functions.len()
+    let mut k = broken.len()
     while k > 0 {
         k -= 1
-        let place = places[k]
-        let posts = state.postconditions.remove(functions[k]) ?? continue
-        let mut kept: Vec[PostClaim] = []
-        for at in 0..<posts.len() {
-            if at != place {
-                kept.push(posts[at].clone())
-            }
-        }
-        state.postconditions.insert(functions[k].clone(), kept)
+        let (function, index) = broken[k]
+        let mut posts = state.postconditions.remove(function) ?? continue
+        posts.remove(index)
+        state.postconditions.insert(function.clone(), posts)
     }
     state.broken = collections::BTreeSet()
 }
@@ -177,10 +170,9 @@ fn count_checked_calls(mut walk: ProverWalk) {
     for (key, reach) in walk.reaches {
         match reach {
             CallReach::Checked(_) => {
-                let (named, _) = key
-                let callee = named.clone()
+                let (callee, _) = key
                 let so_far = checked[callee] ?? 0
-                checked.insert(callee, so_far + 1)
+                checked.insert(callee.clone(), so_far + 1)
             },
             else => {},
         }

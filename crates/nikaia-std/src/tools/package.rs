@@ -10771,21 +10771,15 @@ pub fn prover_passes(walk: &mut ProverWalk, program: &Program, words: &winnow_gr
 }
 
 fn strike_broken(state: &mut ProverState) {
-    let mut functions: Vec<String> = vec![];
-    let mut places: Vec<i64> = vec![];
-    for (function, index) in state.broken.iter() {
-        let index = nikaia_std::num::value(index);
-        functions.push(function.to_owned());
-        places.push(index);
-    }
-    let mut k = functions.len() as i64;
+    let mut broken: Vec<(String, i64)> = vec![];
+    for one in state.broken.iter() { broken.push(one.clone()); }
+    let mut k = broken.len() as i64;
     while k > 0 {
         k -= 1;
-        let place = *nikaia_std::index::get(&places, nikaia_std::index::at(k));
-        let posts = match state.postconditions.remove(nikaia_std::index::get(&functions, nikaia_std::index::at(k))) { Some(__nikaia_value) => __nikaia_value, None => continue };
-        let mut kept: Vec<PostClaim> = vec![];
-        for at in 0..posts.len() as i64 { if at != place { kept.push((*nikaia_std::index::get(&posts, (at) as usize)).clone()); } }
-        state.postconditions.insert((*nikaia_std::index::get(&functions, nikaia_std::index::at(k))).to_owned(), kept);
+        let (function, index) = nikaia_std::index::get(&broken, nikaia_std::index::at(k)); let index = nikaia_std::num::value(index);
+        let mut posts = match state.postconditions.remove(function) { Some(__nikaia_value) => __nikaia_value, None => continue };
+        posts.remove(nikaia_std::count::of(index));
+        state.postconditions.insert(function.to_owned(), posts);
     }
     state.broken = collections::BTreeSet::new();
 }
@@ -10851,10 +10845,9 @@ fn count_checked_calls(walk: &mut ProverWalk) {
     for (key, reach) in walk.reaches.iter() {
         match reach {
             CallReach::Checked(_) => {
-                let (named, _) = key;
-                let callee = named.to_owned();
-                let so_far = nikaia_std::index::or(*nikaia_std::index::get(&checked, &callee), || 0);
-                checked.insert(callee, so_far + 1);
+                let (callee, _) = key;
+                let so_far = nikaia_std::index::or(*nikaia_std::index::get(&checked, callee), || 0);
+                checked.insert(callee.to_owned(), so_far + 1);
             },
             _ => { },
         }

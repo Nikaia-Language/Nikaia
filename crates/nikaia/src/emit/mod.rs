@@ -1259,6 +1259,8 @@ struct Emitter<'p> {
     copied_view_bindings: std::collections::BTreeSet<(usize, String)>,
     /// [`check::Checked::unsigned_literals`].
     unsigned_literals: std::collections::BTreeMap<(usize, i128), String>,
+    /// [`check::Checked::copied_tuple_parts`].
+    copied_tuple_parts: std::collections::BTreeSet<(usize, String)>,
     /// [`check::Checked::number_lets`].
     number_lets: std::collections::BTreeMap<usize, String>,
     /// [`check::Checked::changed_elements`].
@@ -2642,6 +2644,7 @@ impl<'p> Emitter<'p> {
             copied_loop_bindings: propagation.copied_loop_bindings,
             copied_view_bindings: propagation.copied_view_bindings,
             unsigned_literals: propagation.unsigned_literals,
+            copied_tuple_parts: propagation.copied_tuple_parts,
             number_lets: propagation.number_lets,
             changed_elements: propagation.changed_elements,
             count_args: propagation.count_args,
@@ -6667,9 +6670,24 @@ impl<'p> Emitter<'p> {
                     let (before, after) =
                         Self::around_value(self.nullable_sites.get(&span.at()).copied(), value);
                     out.push(before);
+                    // **Out of a place, the tuple is lent** (#465), as one
+                    // name's `let` over a place is.
+                    if mutable.is_empty() && self.lent_lets.contains(&span.at()) {
+                        out.push("&");
+                    }
                     self.expr(out, value, depth, flow)?;
                     out.push(after);
                     out.push(";");
+                    // A number among its parts is read out of its view.
+                    for name in names {
+                        if self
+                            .copied_tuple_parts
+                            .contains(&(span.at(), self.text(*name).to_string()))
+                        {
+                            let name = escaped(self.text(*name));
+                            out.push(&format!(" let {name} = nikaia_std::num::value({name});"));
+                        }
+                    }
                     return Ok(());
                 }
                 let bound = self.text(names[0]);
