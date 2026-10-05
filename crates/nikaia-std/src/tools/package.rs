@@ -11582,7 +11582,7 @@ pub fn rust_of(id: i64, term_of: &impl Fn(i64) -> SolverTerm, escape: &impl Fn(&
     match term_of(id) {
         SolverTerm::Bool(b) => if b { String::from("true") } else { String::from("false") },
         SolverTerm::Int(n) => format!("({}i128)", n),
-        SolverTerm::Var(ref name) => rust_of_name(&name, escape),
+        SolverTerm::Var(ref name) => rust_of_name(name, escape),
         SolverTerm::Neg(a) => format!("(-{})", rust_of(a, term_of, escape)),
         SolverTerm::Not(a) => format!("(!{})", rust_of(a, term_of, escape)),
         SolverTerm::Add(a, b) => format!("({} + {})", rust_of(a, term_of, escape), rust_of(b, term_of, escape)),
@@ -11594,8 +11594,8 @@ pub fn rust_of(id: i64, term_of: &impl Fn(i64) -> SolverTerm, escape: &impl Fn(&
         SolverTerm::Gt(a, b) => format!("({} > {})", rust_of(a, term_of, escape), rust_of(b, term_of, escape)),
         SolverTerm::Eq(a, b) => format!("({} == {})", rust_of(a, term_of, escape), rust_of(b, term_of, escape)),
         SolverTerm::Ne(a, b) => format!("({} != {})", rust_of(a, term_of, escape), rust_of(b, term_of, escape)),
-        SolverTerm::And(ref parts) => rust_joined(" && ", &parts, "true", term_of, escape),
-        SolverTerm::Or(ref parts) => rust_joined(" || ", &parts, "false", term_of, escape),
+        SolverTerm::And(ref parts) => rust_joined(" && ", parts, "true", term_of, escape),
+        SolverTerm::Or(ref parts) => rust_joined(" || ", parts, "false", term_of, escape),
         _ => String::from(""),
     }
 }
@@ -11687,7 +11687,7 @@ fn term_whole(id: i64, arrow: bool, term_of: &impl Fn(i64) -> SolverTerm) -> Str
             }
             term_joined(" || ", parts, r, arrow, term_of)
         },
-        SolverTerm::And(ref parts) => term_joined(" && ", &parts, r, arrow, term_of),
+        SolverTerm::And(ref parts) => term_joined(" && ", parts, r, arrow, term_of),
         _ => String::from(""),
     }
 }
@@ -11869,10 +11869,7 @@ impl TermArena {
     pub fn substitute(&mut self, id: i64, given: &collections::BTreeMap<String, i64>) -> i64 {
         let node = (*nikaia_std::index::get(&self.nodes, nikaia_std::index::at(id))).clone();
         match node {
-            SolverTerm::Var(ref name) => {
-                let found = nikaia_std::index::or(given.get(name), || id.into());
-                found
-            },
+            SolverTerm::Var(ref name) => nikaia_std::index::or(given.get(name), || id.into()),
             SolverTerm::Bool(_) => id,
             SolverTerm::Int(_) => id,
             SolverTerm::Neg(a) => {
@@ -12497,7 +12494,7 @@ pub fn joined_reach(a: CallReach, b: CallReach) -> CallReach {
         CallReach::Checked(first) => match b {
             CallReach::Through => CallReach::Through,
             CallReach::Proved => CallReach::Checked(first),
-            CallReach::Checked(ref second) => CallReach::Checked(both_checks(first, &second)),
+            CallReach::Checked(ref second) => CallReach::Checked(both_checks(first, second)),
         },
     }
 }
@@ -18831,7 +18828,7 @@ pub fn worst_of(worst: Crossing, answer: Crossing) -> Crossing {
 
 fn name_the_field(field: &str, answer: Crossing) -> Crossing {
     match answer {
-        Crossing::MayNot { ref part, ref at, why } => field_named_at(field, &part, (at).as_deref(), &why),
+        Crossing::MayNot { ref part, ref at, why } => field_named_at(field, part, (at).as_deref(), &why),
         _ => answer,
     }
 }
@@ -21692,9 +21689,9 @@ fn ours_is(asked: &Asked<'_>, ours: Option<&str>, name: winnow_grammar::Symbol) 
 
 fn assigned(unit: &Unit, asked: &Asked<'_>, target: &Expr, span: &Span, here: &mut Here) {
     match root(unit, asked, &here, target) {
-        Root::SubjectField(ref field) => field_of_subject(unit, asked, &field, span, here),
+        Root::SubjectField(ref field) => field_of_subject(unit, asked, field, span, here),
         Root::Subject => subject_destination(unit, asked, span, here),
-        Root::ParamField(param, ref field) => field_of_param(unit, asked, param, &field, span, here),
+        Root::ParamField(param, ref field) => field_of_param(unit, asked, param, field, span, here),
         Root::Param(_) => { },
         Root::Elsewhere => { },
     }
@@ -21877,7 +21874,7 @@ fn handed_to(unit: &Unit, asked: &Asked<'_>, receiver: &Expr, args: &[Expr], con
     for setting in config.iter() { if mentions(unit, asked, &here, &setting.value) { handed_over = true; } }
     if !handed_over { return; }
     match root(unit, asked, &here, receiver) {
-        Root::SubjectField(ref field) => field_of_subject(unit, asked, &field, span, here),
+        Root::SubjectField(ref field) => field_of_subject(unit, asked, field, span, here),
         Root::Subject => subject_destination(unit, asked, span, here),
         _ => { },
     }

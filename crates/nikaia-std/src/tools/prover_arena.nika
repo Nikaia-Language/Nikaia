@@ -226,11 +226,7 @@ impl TermArena {
     pub fn substitute(ref mut self, id: i64, given: ref collections::BTreeMap[String, i64]) -> i64 {
         let node = self.nodes[id].clone()
         return match node {
-            // A block arm, until #456's second lowering lends once.
-            SolverTerm::Var(name) => {
-                let found = given.get(name) ?? id
-                found
-            },
+            SolverTerm::Var(name) => given.get(name) ?? id,
             SolverTerm::Bool(_) => id,
             SolverTerm::Int(_) => id,
             SolverTerm::Neg(a) => {

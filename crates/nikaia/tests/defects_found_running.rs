@@ -1176,6 +1176,48 @@ fn a_number_read_past_a_jump_is_the_number() {
     );
 }
 
+/// **A part an expression arm binds as a view is handed on as it is**
+/// (#456, found moving the prover's terms into Nikaia, #436): the arm only
+/// reads `name`, so it is bound `ref`, and the call still wrote the
+/// compiler's `&` in front of it - `given.get(&name)`, a `&&String` `rustc`
+/// refused. A block arm was already right; an expression arm has no
+/// statements to find its arguments by.
+#[test]
+fn a_part_an_expression_arm_lends_is_handed_on_as_it_is() {
+    runs(
+        "expression-arm-view",
+        "use std::collections\n\
+         \n\
+         enum Node {\n\
+         \x20   Var(String),\n\
+         \x20   Int(i64),\n\
+         \x20   Pair(String, String),\n\
+         }\n\
+         \n\
+         fn lookup(nodes: ref Vec[Node], at: i64, given: ref collections::BTreeMap[String, i64]) -> i64 {\n\
+         \x20   let node = nodes[at].clone()\n\
+         \x20   return match node {\n\
+         \x20       Node::Var(name) => given.get(name) ?? -1,\n\
+         \x20       Node::Int(n) => n,\n\
+         \x20       Node::Pair(a, b) => {\n\
+         \x20           let x = given.get(a) ?? 0\n\
+         \x20           let y = given.get(b) ?? 0\n\
+         \x20           x + y\n\
+         \x20       },\n\
+         \x20   }\n\
+         }\n\
+         \n\
+         fn main() {\n\
+         \x20   let mut m: collections::BTreeMap[String, i64] = collections::BTreeMap()\n\
+         \x20   m.insert(\"a\", 2)\n\
+         \x20   m.insert(\"b\", 3)\n\
+         \x20   let nodes: Vec[Node] = [Node::Var(\"a\"), Node::Var(\"z\"), Node::Int(7), Node::Pair(\"a\", \"b\")]\n\
+         \x20   println(f\"{lookup(nodes, 0, m)} {lookup(nodes, 1, m)} {lookup(nodes, 2, m)} {lookup(nodes, 3, m)}\")\n\
+         }\n",
+        "2 -1 7 5\n",
+    );
+}
+
 /// **A list a function value only reads is a slice** (#458, found moving
 /// the prover's solver questions into Nikaia, #436): a `ref Vec[i64]`
 /// parameter is a `&[i64]`, and the function type that took one was a

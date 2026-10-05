@@ -547,6 +547,11 @@ pub struct Checked {
     /// does not copy, and the arm does not keep it - so the name stays whole
     /// after the `match` (Part I 6.5, ADR-291).
     pub lent_bindings: BTreeMap<usize, BTreeSet<String>>,
+    /// **A part an expression arm binds as a view, handed on**, by the node
+    /// of the argument that names it (#456): it is a view already, so the
+    /// call writes it without the compiler's `&`. A block arm's arguments are
+    /// found by its statements instead.
+    pub views_handed_on: BTreeSet<usize>,
     /// **A `match` over a field reached through a view**, by the scrutinee's
     /// address: matched by reference below, so its parts are bound as the
     /// views they are here.
@@ -1836,6 +1841,8 @@ pub struct Propagation {
     pub counted: BTreeSet<(usize, String)>,
     /// [`Checked::lent_bindings`].
     pub lent_bindings: BTreeMap<usize, BTreeSet<String>>,
+    /// [`Checked::views_handed_on`].
+    pub views_handed_on: BTreeSet<usize>,
     /// [`Checked::guards_inside_boxes`].
     pub guards_inside_boxes: BTreeMap<usize, BTreeSet<String>>,
     /// [`Checked::lent_scrutinees`].
@@ -2130,6 +2137,7 @@ pub fn propagation_against(
         text_in_lists: checked.text_in_lists,
         counted: checked.counted,
         lent_bindings: checked.lent_bindings,
+        views_handed_on: checked.views_handed_on,
         guards_inside_boxes: checked.guards_inside_boxes,
         lent_scrutinees: checked.lent_scrutinees,
         collected_into: checked.collected_into,
@@ -23100,6 +23108,7 @@ impl<'a> Checker<'a> {
     /// the name again.
     fn a_lent_part_is_handed_on_as_it_is(&mut self, body: &Expr, lent: &BTreeSet<String>) {
         let Expr::Block(block) = body else {
+            self.a_lent_part_in_an_expression_arm(body, lent);
             return;
         };
         let (Some(first), Some(last)) = (block.stmts.first(), block.stmts.last()) else {
@@ -23143,6 +23152,32 @@ impl<'a> Checker<'a> {
             if (from..to).contains(&(*at as u32)) {
                 given.retain(|shape| !shapes.contains(shape));
             }
+        }
+    }
+
+    /// **The same for an arm that is an expression** (#456): it has no
+    /// statements of its own to find its arguments by, so each argument that
+    /// names a lent part is marked by its node. Not where a block inside the
+    /// arm binds the name again, as for a block arm; an `f"…"` hole is read
+    /// again from its text, so its nodes are not these and keep the `&`.
+    fn a_lent_part_in_an_expression_arm(&mut self, body: &Expr, lent: &BTreeSet<String>) {
+        let parsed = self.parsed;
+        let mut named: Vec<usize> = Vec::new();
+        let mut bound_again = false;
+        crate::emit::visit_expr(body, &mut |expr: &Expr| match expr {
+            Expr::Variable(name) if lent.contains(parsed.text(*name)) => {
+                named.push(value_node(expr));
+            }
+            Expr::Block(inner) => {
+                bound_again |= inner.stmts.iter().any(|stmt| {
+                    matches!(&stmt.node, Stmt::Let { names, .. }
+                        if names.iter().any(|n| lent.contains(parsed.text(*n))))
+                });
+            }
+            _ => {}
+        });
+        if !bound_again {
+            self.checked.views_handed_on.extend(named);
         }
     }
 

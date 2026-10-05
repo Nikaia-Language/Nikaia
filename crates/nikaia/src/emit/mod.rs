@@ -1300,6 +1300,8 @@ struct Emitter<'p> {
     /// **The names a `match` arm binds as a view**, by the arm's pattern
     /// (ADR-291): written `ref name`, so the scrutinee stays whole.
     lent_bindings: std::collections::BTreeMap<usize, std::collections::BTreeSet<String>>,
+    /// Arguments that name a part an expression arm binds as a view (#456).
+    views_handed_on: std::collections::BTreeSet<usize>,
     /// **A guard that reads names bound inside a boxed part**, by the arm's
     /// pattern, and which of them copy (ADR-246 D5 item 2).
     guards_inside_boxes: std::collections::BTreeMap<usize, std::collections::BTreeSet<String>>,
@@ -2675,6 +2677,7 @@ impl<'p> Emitter<'p> {
             copied_jump_reads: propagation.copied_jump_reads,
             counted: propagation.counted,
             lent_bindings: propagation.lent_bindings,
+            views_handed_on: propagation.views_handed_on,
             guards_inside_boxes: propagation.guards_inside_boxes,
             lent_scrutinees: propagation.lent_scrutinees,
             collected_into: propagation.collected_into,
@@ -13121,7 +13124,11 @@ impl<'p> Emitter<'p> {
             if pointer.is_none() {
                 if change {
                     out.push("&mut ");
-                } else if lend {
+                } else if lend
+                    // **A part an expression arm binds as a view** is one
+                    // already (#456, `Checked::views_handed_on`).
+                    && !self.views_handed_on.contains(&crate::check::value_node(arg))
+                {
                     out.push("&");
                 }
             }

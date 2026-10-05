@@ -4,6 +4,18 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.510] — 2026-10-05
+
+**A part an expression arm binds as a view is handed on as it is** (#456,
+found moving the prover's terms into Nikaia, #436). `SolverTerm::Var(name) =>
+given.get(name) ?? id` over a `match` of an owned value binds `name` `ref`,
+and the call still wrote the compiler's `&` in front of it, a `&&String`
+`rustc` refused. A block arm was already right, found by its statements; an
+expression arm's arguments that name a lent part are now marked by their node
+(`Checked::views_handed_on`). `prover_arena.nika`'s `substitute` is back to
+the plain arm, and the compiler's own Nikaia half loses eleven `&`s it wrote in
+front of such parts. Every bench and example lowers byte for byte as before.
+
 ## [0.0.509] — 2026-10-05
 
 **The aggressive bounds and overflow walk is Nikaia** (ADR-294, #435 step 3).
