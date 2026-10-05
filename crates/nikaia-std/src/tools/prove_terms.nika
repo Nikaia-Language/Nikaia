@@ -5,11 +5,10 @@
 // term, and a claim as a formula over them, where they are ones the prover
 // reads.
 //
-// **The terms are built, not stored.** Each node is appended to `out` in the
-// order it is made, its children named by their place in `out`, and the
-// compiler replays the list into its arena (`solver_terms.nika`'s nodes): the
-// same terms in the same order the Rust made them, with nothing of the arena
-// reached from here.
+// **The terms are built into the prover's arena.** Each node is appended to
+// `out` - `prover_arena.nika`'s nodes - in the order it is made, its children
+// named by their place in `out`: the same terms in the same order the Rust
+// made them.
 
 /// `expr` as a linear term over the names `var` admits: the node's place in
 /// `out`, or nothing where it is not one. A product is linear where one side

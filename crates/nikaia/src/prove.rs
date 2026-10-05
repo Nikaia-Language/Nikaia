@@ -30,6 +30,8 @@ use crate::contracts::LedgerOps;
 use std::collections::{BTreeMap, BTreeSet};
 
 use nikaia_logic::{Arena, Query, TermId, verify_model};
+use nikaia_std::tools::prover_arena::TermArena;
+use nikaia_std::tools::solver_terms::SolverTerm;
 
 use crate::ast::{Block, Expr, Item, Span, Spanned, Stmt};
 use crate::check::{Finding, Severity};
@@ -172,7 +174,7 @@ pub fn prove(
         collecting: true,
         out: Proved::default(),
         in_test: false,
-        arena: Arena::new(),
+        arena: Terms::default(),
     };
     // Pass 1: which parameter claims are preconditions (D5) - a function's
     // own `assert`s, and what its calls ask that it cannot show (D15). The
@@ -414,7 +416,7 @@ struct Prover<'a> {
     out: Proved,
     in_test: bool,
     /// Every term the walk builds, facts and claims alike (ADR-270 D2).
-    arena: Arena,
+    arena: Terms,
 }
 
 /// What a body may know at one point.
@@ -452,7 +454,7 @@ struct Scope {
 
 impl Scope {
     /// `name` is bound again: nothing known about the old binding holds.
-    fn rebind(&mut self, arena: &Arena, name: &str) {
+    fn rebind(&mut self, arena: &Terms, name: &str) {
         let length = length_of(name);
         self.ints.remove(name);
         self.ints.remove(&length);
@@ -474,7 +476,7 @@ impl Scope {
     /// `name` is a list or text that does not change, so `name.len()` is a
     /// variable of the proof: a length is never negative, and a literal's is
     /// known.
-    fn has_length(&mut self, arena: &mut Arena, name: &str, known: Option<i128>) {
+    fn has_length(&mut self, arena: &mut Terms, name: &str, known: Option<i128>) {
         let length = length_of(name);
         self.ints.insert(length.clone());
         let (len, zero) = (arena.var(&length), arena.int(0));
@@ -489,7 +491,7 @@ impl Scope {
     }
 
     /// `name` is a whole number that is never negative.
-    fn not_negative(&mut self, arena: &mut Arena, name: &str) {
+    fn not_negative(&mut self, arena: &mut Terms, name: &str) {
         let (n, zero) = (arena.var(name), arena.int(0));
         self.facts.push(arena.ge(n, zero));
     }
@@ -1579,7 +1581,7 @@ impl<'a> Prover<'a> {
     /// claim nobody holds. `Err(Some(_))` says the certificate was rejected.
     fn proves(&self, facts: &[TermId], goal: TermId) -> Result<(), Option<String>> {
         let query = Query {
-            arena: &self.arena,
+            arena: self.arena.logic(),
             facts,
             goal,
         };
@@ -1659,7 +1661,7 @@ impl<'a> Prover<'a> {
             scope
                 .entry
                 .get(&key)
-                .is_some_and(|e| *self.arena.get(*e) == nikaia_logic::Term::Var(key.clone()))
+                .is_some_and(|e| self.arena.is_the_variable(*e, &key))
         });
         for (index, post) in posts.iter().enumerate() {
             let shown = unshadowed
@@ -1871,7 +1873,7 @@ impl<'a> Prover<'a> {
         self.proves(facts, negation).ok()?;
         let falsum = self.arena.bool(false);
         let query = Query {
-            arena: &self.arena,
+            arena: self.arena.logic(),
             facts,
             goal: falsum,
         };
@@ -1924,7 +1926,7 @@ impl<'a> Prover<'a> {
             return None;
         }
         let query = Query {
-            arena: &self.arena,
+            arena: self.arena.logic(),
             facts: &scope.facts,
             goal: claim,
         };
@@ -2065,7 +2067,7 @@ fn leaves_expr(
 
 /// Whether two walks found the same preconditions, claim by claim.
 fn same_preconditions(
-    arena: &Arena,
+    arena: &Terms,
     a: &BTreeMap<String, Precondition>,
     b: &BTreeMap<String, Precondition>,
 ) -> bool {
@@ -2096,12 +2098,10 @@ fn refusal(span: Span, message: String, notes: Vec<String>, help: &str) -> Findi
 // `tools/prove_text.nika` (ADR-294, #436): these hand it the arena one node
 // at a time and the emitter's escaping of a name.
 
-fn rust_of(arena: &Arena, id: TermId) -> String {
-    prove_text::rust_of(
-        id.index() as i64,
-        &|at| crate::bounds::solver_term(arena, at),
-        &|name| crate::emit::escaped(name).into_owned(),
-    )
+fn rust_of(arena: &Terms, id: TermId) -> String {
+    prove_text::rust_of(id.index() as i64, &|at| arena.held.at(at), &|name| {
+        crate::emit::escaped(name).into_owned()
+    })
 }
 
 fn rust_of_name(name: &str) -> String {
@@ -2110,18 +2110,14 @@ fn rust_of_name(name: &str) -> String {
 
 /// A term as a reader writes it, with `→` for the implication a branch makes
 /// of a precondition.
-fn term_text(arena: &Arena, id: TermId) -> String {
-    prove_text::term_text(id.index() as i64, &|at| {
-        crate::bounds::solver_term(arena, at)
-    })
+fn term_text(arena: &Terms, id: TermId) -> String {
+    prove_text::term_text(id.index() as i64, &|at| arena.held.at(at))
 }
 
 /// A term in the language's own syntax, as the ledger writes it and reads it
 /// back ([ADR-251](../../docs/specification/adr/adr-251.md) D4).
-fn ledger_text(arena: &Arena, id: TermId) -> String {
-    prove_text::term_ledger_text(id.index() as i64, &|at| {
-        crate::bounds::solver_term(arena, at)
-    })
+fn ledger_text(arena: &Terms, id: TermId) -> String {
+    prove_text::term_ledger_text(id.index() as i64, &|at| arena.held.at(at))
 }
 
 use nikaia_std::tools::prove_terms;
@@ -2168,7 +2164,7 @@ fn implies(from: &[String], to: &[String], names: &BTreeSet<String>) -> bool {
     if to.iter().all(|c| from.contains(c)) {
         return true;
     }
-    let mut arena = Arena::new();
+    let mut arena = Terms::default();
     let Some(facts) = from
         .iter()
         .map(|c| condition(&mut arena, c, names))
@@ -2185,7 +2181,7 @@ fn implies(from: &[String], to: &[String], names: &BTreeSet<String>) -> bool {
     };
     let goal = arena.and(goals);
     let query = Query {
-        arena: &arena,
+        arena: arena.logic(),
         facts: &facts,
         goal,
     };
@@ -2196,7 +2192,7 @@ fn implies(from: &[String], to: &[String], names: &BTreeSet<String>) -> bool {
 /// the language's own syntax, so the compiler's parser reads it, inside an
 /// `assert` of a function nobody calls, and the prover's own reading turns it
 /// into a term. Only `names` are variables of it.
-fn condition(arena: &mut Arena, text: &str, names: &BTreeSet<String>) -> Option<TermId> {
+fn condition(arena: &mut Terms, text: &str, names: &BTreeSet<String>) -> Option<TermId> {
     let source = format!("fn __condition() {{\n    assert({text})\n}}\n");
     let parsed = crate::parser::parse_to_ast(&source).ok()?;
     let Item::Fn { body, .. } = &parsed.program.items.first()?.node else {
@@ -2235,37 +2231,177 @@ fn is_a_parameter(name: &str, at: &Where) -> bool {
 const PRECONDITION_TERMS: usize = 64;
 
 /// A whole-number expression, where it is one this prover reads (ADR-269 D9).
-fn lin(arena: &mut Arena, parsed: &Parsed, expr: &Expr, scope: &Scope) -> Option<TermId> {
+fn lin(arena: &mut Terms, parsed: &Parsed, expr: &Expr, scope: &Scope) -> Option<TermId> {
     lin_with(arena, parsed, expr, &|name| scope.ints.contains(name))
 }
 
 /// `expr` as a linear term over the names `var` admits
 /// (`tools/prove_terms.nika`, ADR-294, #436), its nodes put into `arena`.
 fn lin_with(
-    arena: &mut Arena,
+    arena: &mut Terms,
     parsed: &Parsed,
     expr: &Expr,
     var: &dyn Fn(&str) -> bool,
 ) -> Option<TermId> {
-    let mut nodes = Vec::new();
-    let at = prove_terms::lin_term(expr, &parsed.interner, &|name| var(name), &mut nodes);
-    let ids = crate::bounds::into_arena(arena, &nodes);
-    at.map(|at| ids[at as usize])
+    arena.built(|nodes| prove_terms::lin_term(expr, &parsed.interner, &|name| var(name), nodes))
 }
 
 /// The claim `expr` as a term, where it is one this prover reads.
-fn claim(arena: &mut Arena, parsed: &Parsed, expr: &Expr, scope: &Scope) -> Option<TermId> {
+fn claim(arena: &mut Terms, parsed: &Parsed, expr: &Expr, scope: &Scope) -> Option<TermId> {
     claim_with(arena, parsed, expr, &|name| scope.ints.contains(name))
 }
 
 fn claim_with(
-    arena: &mut Arena,
+    arena: &mut Terms,
     parsed: &Parsed,
     expr: &Expr,
     var: &dyn Fn(&str) -> bool,
 ) -> Option<TermId> {
-    let mut nodes = Vec::new();
-    let at = prove_terms::claim_term(expr, &parsed.interner, &|name| var(name), &mut nodes);
-    let ids = crate::bounds::into_arena(arena, &nodes);
-    at.map(|at| ids[at as usize])
+    arena.built(|nodes| prove_terms::claim_term(expr, &parsed.interner, &|name| var(name), nodes))
+}
+
+/// **The walk's terms, held in Nikaia** (`tools/prover_arena.nika`, #436):
+/// every term is built and read there. The solver reads `nikaia-logic`'s
+/// arena, which `logic` keeps as a copy node for node, so that a term's place
+/// is the same in both and its `TermId` names it in either.
+#[derive(Debug, Clone)]
+struct Terms {
+    held: TermArena,
+    logic: Arena,
+    /// The copy's `TermId` of each node of `held`, by place.
+    ids: Vec<TermId>,
+}
+
+impl Default for Terms {
+    fn default() -> Terms {
+        Terms {
+            held: TermArena::empty(),
+            logic: Arena::new(),
+            ids: Vec::new(),
+        }
+    }
+}
+
+impl Terms {
+    /// The arena the solver reads, holding every term built so far.
+    fn logic(&self) -> &Arena {
+        &self.logic
+    }
+
+    /// The nodes of `held` the copy does not have yet, copied; and the
+    /// `TermId` of the place `at`.
+    fn copied(&mut self, at: i64) -> TermId {
+        for node in &self.held.nodes[self.ids.len()..] {
+            let at = |i: &i64| self.ids[*i as usize];
+            let id = match node {
+                SolverTerm::Bool(b) => self.logic.bool(*b),
+                SolverTerm::Int(n) => self.logic.int(*n),
+                SolverTerm::Var(name) => self.logic.var(name),
+                SolverTerm::Add(a, b) => self.logic.add(at(a), at(b)),
+                SolverTerm::Sub(a, b) => self.logic.sub(at(a), at(b)),
+                SolverTerm::Neg(a) => self.logic.neg(at(a)),
+                SolverTerm::Mul(a, b) => self.logic.mul(at(a), at(b)),
+                SolverTerm::Le(a, b) => self.logic.le(at(a), at(b)),
+                SolverTerm::Lt(a, b) => self.logic.lt(at(a), at(b)),
+                SolverTerm::Ge(a, b) => self.logic.ge(at(a), at(b)),
+                SolverTerm::Gt(a, b) => self.logic.gt(at(a), at(b)),
+                SolverTerm::Eq(a, b) => self.logic.eq(at(a), at(b)),
+                SolverTerm::Ne(a, b) => self.logic.ne(at(a), at(b)),
+                SolverTerm::And(parts) => self.logic.and(parts.iter().map(at).collect()),
+                SolverTerm::Or(parts) => self.logic.or(parts.iter().map(at).collect()),
+                SolverTerm::Not(a) => self.logic.not(at(a)),
+                SolverTerm::Other => self.logic.bool(false),
+            };
+            self.ids.push(id);
+        }
+        self.ids[at as usize]
+    }
+
+    fn at(id: TermId) -> i64 {
+        id.index() as i64
+    }
+
+    fn var(&mut self, name: &str) -> TermId {
+        let at = self.held.var(name);
+        self.copied(at)
+    }
+
+    fn int(&mut self, value: i64) -> TermId {
+        let at = self.held.int(value);
+        self.copied(at)
+    }
+
+    fn bool(&mut self, value: bool) -> TermId {
+        let at = self.held.boolean(value);
+        self.copied(at)
+    }
+
+    fn le(&mut self, a: TermId, b: TermId) -> TermId {
+        let at = self.held.le(Terms::at(a), Terms::at(b));
+        self.copied(at)
+    }
+
+    fn lt(&mut self, a: TermId, b: TermId) -> TermId {
+        let at = self.held.lt(Terms::at(a), Terms::at(b));
+        self.copied(at)
+    }
+
+    fn ge(&mut self, a: TermId, b: TermId) -> TermId {
+        let at = self.held.ge(Terms::at(a), Terms::at(b));
+        self.copied(at)
+    }
+
+    fn eq(&mut self, a: TermId, b: TermId) -> TermId {
+        let at = self.held.equal(Terms::at(a), Terms::at(b));
+        self.copied(at)
+    }
+
+    fn and(&mut self, parts: Vec<TermId>) -> TermId {
+        let at = self.held.and(parts.into_iter().map(Terms::at).collect());
+        self.copied(at)
+    }
+
+    fn or(&mut self, parts: Vec<TermId>) -> TermId {
+        let at = self.held.or(parts.into_iter().map(Terms::at).collect());
+        self.copied(at)
+    }
+
+    fn not(&mut self, a: TermId) -> TermId {
+        let at = self.held.not(Terms::at(a));
+        self.copied(at)
+    }
+
+    fn mentions(&self, id: TermId, name: &str) -> bool {
+        self.held.mentions(Terms::at(id), name)
+    }
+
+    fn variables(&self, id: TermId, names: &mut BTreeSet<String>) {
+        self.held.variables(Terms::at(id), names)
+    }
+
+    fn int_value(&self, id: TermId, values: &BTreeMap<String, i64>) -> Option<i64> {
+        self.held.int_value(Terms::at(id), values)
+    }
+
+    fn substitute(&mut self, id: TermId, with: &BTreeMap<String, TermId>) -> TermId {
+        let given = with
+            .iter()
+            .map(|(name, term)| (name.clone(), Terms::at(*term)))
+            .collect();
+        let at = self.held.substitute(Terms::at(id), &given);
+        self.copied(at)
+    }
+
+    fn size(&self, id: TermId) -> usize {
+        self.held.size(Terms::at(id)) as usize
+    }
+
+    fn is_the_variable(&self, id: TermId, name: &str) -> bool {
+        self.held.is_the_variable(Terms::at(id), name)
+    }
+
+    /// A term `prove_terms` builds, its nodes appended to `held`.
+    fn built(&mut self, build: impl FnOnce(&mut Vec<SolverTerm>) -> Option<i64>) -> Option<TermId> {
+        build(&mut self.held.nodes).map(|at| self.copied(at))
+    }
 }

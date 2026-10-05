@@ -4,6 +4,15 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.486] — 2026-10-05
+
+**The prover's walk holds its terms in Nikaia** (ADR-294, #436 step 4). Every
+term `prove` builds and reads - its facts, claims, substitutions and the terms
+`prove_terms` makes - is in `tools/prover_arena.nika`'s arena; the solver
+reads a copy in `nikaia-logic`'s arena, kept node for node, so a term has the
+same place in both. `bounds::into_arena` goes: `prove_terms` builds into the
+arena directly. Every bench and example lowers byte for byte as before.
+
 ## [0.0.485] — 2026-10-05
 
 **What the language offers is not measured by what this repository calls.**
