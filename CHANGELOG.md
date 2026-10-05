@@ -4,6 +4,16 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.524] — 2026-10-05
+
+**A program that declares a grammar compiles its `comptime`s too** (ADR-321
+D3, #468). The library build-time code links against now names the grammar
+runtime beside `std`, so a program with a `grammar` is lowered whole into a
+`comptime`'s program, and an ordinary call in it runs compiled. Running the
+grammar itself, `Cfg::file(…)`, stays the grammar run's (ADR-177); whether it
+joins this crate is ADR-321 §6's open question. Every bench and example lowers
+byte for byte as before.
+
 ## [0.0.523] — 2026-10-05
 
 **What an earlier `comptime` came to is carried into a later compiled one,

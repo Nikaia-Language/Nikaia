@@ -511,3 +511,43 @@ fn an_earlier_struct_or_variant_is_carried_into_a_later_run() {
     assert!(rust.contains("const BIG: i64 = 30;"), "{rust}");
     assert!(rust.contains("const W: i64 = 4;"), "{rust}");
 }
+
+/// **A program that declares a grammar is compiled with it** (ADR-321 D3):
+/// the library build-time code links against names the grammar runtime too,
+/// so an ordinary call in such a program runs compiled. Running the grammar
+/// itself stays the grammar run's (ADR-177).
+#[test]
+fn a_program_with_a_grammar_compiles_its_other_comptimes() {
+    let source = "struct Setting {\n\
+                  \x20   key: ref String,\n\
+                  \x20   value: ref String,\n\
+                  }\n\
+                  \n\
+                  grammar Cfg {\n\
+                  \x20   rule NAME -> ref String = s:raw_ident { s }\n\
+                  \x20   rule VALUE -> ref String = s:until(line_ending) { s.trim() }\n\
+                  \x20   rule setting -> Setting = key:NAME \"=\" value:VALUE { Setting { key, value } }\n\
+                  \x20   entry rule file -> Vec[Setting] = settings:setting* { settings }\n\
+                  }\n\
+                  \n\
+                  fn triple(n: i64) -> i64 {\n\
+                  \x20   return n * 3\n\
+                  }\n\
+                  \n\
+                  fn sq(x: i32) -> i32 {\n\
+                  \x20   return x * x\n\
+                  }\n\
+                  \n\
+                  comptime T = triple(14)\n\
+                  comptime C = sq(100000)\n\
+                  \n\
+                  fn main() {\n\
+                  \x20   println(f\"{T} {C}\")\n\
+                  }\n";
+    // The overflow is the compiled run's answer: the interpreter computed it.
+    let stopped = the_one(findings(source));
+    assert_eq!(
+        stopped.message,
+        "`C` stopped while the program was built: attempt to multiply with overflow."
+    );
+}

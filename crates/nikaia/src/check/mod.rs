@@ -18371,14 +18371,42 @@ impl<'a> Checker<'a> {
         let here = files
             .iter()
             .position(|other| std::ptr::eq(*other, self.parsed))?;
-        if !workshop.somewhere()
-            || files.iter().any(|file| {
+        if !workshop.somewhere() {
+            return None;
+        }
+        // **A grammar run is its own** (ADR-177; whether it joins this crate
+        // is ADR-321 §6's open question): an initialiser that runs one is
+        // answered as before. A program that merely declares a grammar is
+        // compiled with it.
+        let grammars: BTreeSet<String> = files
+            .iter()
+            .flat_map(|file| {
                 file.program
                     .items
                     .iter()
-                    .any(|item| matches!(item.node, Item::Grammar(_)))
+                    .filter_map(|item| match &item.node {
+                        Item::Grammar(def) => Some(file.text(def.name).to_string()),
+                        _ => None,
+                    })
             })
-        {
+            .collect();
+        let mut runs_a_grammar = false;
+        crate::emit::visit_expr(value, &mut |expr: &Expr| match expr {
+            Expr::Call { func, .. } => {
+                if let Expr::Path(path) = &**func
+                    && let Some(head) = path.first()
+                {
+                    runs_a_grammar |= grammars.contains(self.parsed.text(*head));
+                }
+            }
+            Expr::MethodCall { receiver, .. } => {
+                if let Expr::Variable(name) = &**receiver {
+                    runs_a_grammar |= grammars.contains(self.parsed.text(*name));
+                }
+            }
+            _ => {}
+        });
+        if runs_a_grammar {
             return None;
         }
         // **A call somewhere in it**, which is what D1 compiles: an

@@ -398,15 +398,17 @@ pub(crate) const STOPPED_AT: &str = "@";
 // --- compiling and running -----------------------------------------------------
 
 /// **The dynamic library build-time code links against** (D3): one crate that
-/// names `std`, built by Cargo from the same compiled dependencies as anything
-/// else in the workshop.
+/// names `std` and the grammar runtime a program's `grammar` lowers to, built
+/// by Cargo from the same compiled dependencies as anything else in the
+/// workshop.
 #[derive(Debug)]
 pub(crate) struct Bundle {
     /// The library itself.
     dylib: PathBuf,
-    /// `std` as Cargo compiled it, which `rustc` is pointed at so that a path
-    /// `nikaia_std::…` resolves in every module; the code is the library's.
-    std_rlib: PathBuf,
+    /// Each crate it names, as Cargo compiled it, which `rustc` is pointed at
+    /// so that a path `nikaia_std::…` resolves in every module; the code is
+    /// the library's.
+    rlibs: Vec<(String, PathBuf)>,
     /// Where the libraries it was built from are.
     deps: PathBuf,
     /// What changes when the library is rebuilt: part of every key.
@@ -420,6 +422,8 @@ pub(crate) struct Bundle {
 /// allocator is, and generated because `std` has none (ADR-218).
 const BUNDLE: &str = "// GENERATED (ADR-321 D3, D10).\n\
 pub extern crate nikaia_std;\n\
+pub extern crate winnow;\n\
+pub extern crate winnow_grammar;\n\
 \n\
 /// What every run has live, against the bound its program sets.\n\
 pub static LIVE: nikaia_std::build_time::Counted = nikaia_std::build_time::Counted::new();\n\
@@ -452,6 +456,9 @@ unsafe impl std::alloc::GlobalAlloc for Heap {\n\
 #[global_allocator]\n\
 static HEAP: Heap = Heap;\n";
 
+/// The crates the bundle names: `std`, and what a `grammar` lowers to.
+const NAMED: [&str; 3] = ["nikaia_std", "winnow", "winnow_grammar"];
+
 /// Build the bundle under `at`, or say why it could not be built.
 pub(crate) fn bundle(at: &Path) -> Result<Bundle, String> {
     let dir = at.join("bundle");
@@ -462,7 +469,7 @@ pub(crate) fn bundle(at: &Path) -> Result<Bundle, String> {
          [package]\nname = \"nikaia_bundle\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n\
          [lib]\npath = \"src/lib.rs\"\n\n[dependencies]\n",
     );
-    for (name, value) in crate::project::runtime_dependencies_for("nikaia_std") {
+    for (name, value) in crate::project::runtime_dependencies_for(NAMED.join(" ").as_str()) {
         manifest.push_str(&format!("{name} = {value}\n"));
     }
     write_if_changed(&dir.join("Cargo.toml"), &manifest)?;
@@ -481,7 +488,7 @@ pub(crate) fn bundle(at: &Path) -> Result<Bundle, String> {
         return Err(String::from_utf8_lossy(&built.stderr).to_string());
     }
     let mut dylib = None;
-    let mut std_rlib = None;
+    let mut rlibs: Vec<(String, PathBuf)> = Vec::new();
     for line in String::from_utf8_lossy(&built.stdout).lines() {
         let Ok(message) = serde_json::from_str::<serde_json::Value>(line) else {
             continue;
@@ -492,10 +499,13 @@ pub(crate) fn bundle(at: &Path) -> Result<Bundle, String> {
         let files = message["filenames"].as_array().cloned().unwrap_or_default();
         let files = files.iter().filter_map(|f| f.as_str()).map(PathBuf::from);
         match message["target"]["name"].as_str() {
-            Some("nikaia_std") => {
-                std_rlib = files
+            Some(name) if NAMED.contains(&name) => {
+                if let Some(rlib) = files
                     .clone()
                     .find(|f| f.extension().is_some_and(|e| e == "rlib"))
+                {
+                    rlibs.push((name.to_string(), rlib));
+                }
             }
             Some("nikaia_bundle") => {
                 dylib = files.clone().find(|f| {
@@ -506,15 +516,16 @@ pub(crate) fn bundle(at: &Path) -> Result<Bundle, String> {
             _ => {}
         }
     }
-    let (Some(dylib), Some(std_rlib)) = (dylib, std_rlib) else {
+    let (Some(dylib), true) = (dylib, rlibs.len() == NAMED.len()) else {
         return Err("cargo built the bundle and named no library".to_string());
     };
-    let deps = std_rlib
+    let deps = rlibs[0]
+        .1
         .parent()
         .map(Path::to_path_buf)
         .ok_or_else(|| "no directory for std".to_string())?;
-    let stamp = [&dylib, &std_rlib]
-        .iter()
+    let stamp = std::iter::once(&dylib)
+        .chain(rlibs.iter().map(|(_, rlib)| rlib))
         .map(|file| {
             let meta = std::fs::metadata(file).map_err(|e| format!("{}: {e}", file.display()))?;
             let modified = meta
@@ -529,7 +540,7 @@ pub(crate) fn bundle(at: &Path) -> Result<Bundle, String> {
         .join("\n");
     Ok(Bundle {
         dylib,
-        std_rlib,
+        rlibs,
         deps,
         stamp,
     })
@@ -573,8 +584,9 @@ pub(crate) fn run(at: &Path, bundle: &Bundle, program: &str, name: &str) -> Resu
         ])
         .arg("--extern")
         .arg(format!("nikaia_bundle={}", bundle.dylib.display()))
-        .arg("--extern")
-        .arg(format!("nikaia_std={}", bundle.std_rlib.display()))
+        .args(bundle.rlibs.iter().flat_map(|(name, rlib)| {
+            ["--extern".to_string(), format!("{name}={}", rlib.display())]
+        }))
         .arg("-L")
         .arg(format!("dependency={}", bundle.deps.display()))
         .arg("-o")
