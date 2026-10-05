@@ -358,8 +358,6 @@ struct PostClaim {
     written: String,
 }
 
-/// The name a postcondition calls the value a function hands back.
-
 /// One claim of a precondition (ADR-269 D15).
 #[derive(Debug, Clone)]
 struct PreClaim {
