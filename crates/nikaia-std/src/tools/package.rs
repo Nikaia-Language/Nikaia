@@ -10123,6 +10123,274 @@ pub fn lowered_first(text: &str) -> String {
 pub fn has_a_length(ty: &str) -> bool { matches!(ty, "Vec" | "String" | "str" | "Array") }
 
 
+// --- prover_arena.nika ---
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TermArena {
+    pub nodes: Vec<SolverTerm>,
+}
+
+impl TermArena {
+    pub fn empty() -> TermArena { TermArena { nodes: vec![] } }
+    fn push(&mut self, node: SolverTerm) -> i64 {
+        self.nodes.push(node);
+        self.nodes.len() as i64 - 1
+    }
+    pub fn at(&self, id: i64) -> SolverTerm { (*nikaia_std::index::get(&self.nodes, nikaia_std::index::at(id))).clone() }
+    pub fn boolean(&mut self, value: bool) -> i64 { self.push(SolverTerm::Bool(value)) }
+    pub fn int(&mut self, value: i64) -> i64 { self.push(SolverTerm::Int(value)) }
+    pub fn var(&mut self, name: &str) -> i64 { self.push(SolverTerm::Var(name.to_owned())) }
+    pub fn add(&mut self, a: i64, b: i64) -> i64 { self.push(SolverTerm::Add(a, b)) }
+    pub fn sub(&mut self, a: i64, b: i64) -> i64 { self.push(SolverTerm::Sub(a, b)) }
+    pub fn neg(&mut self, a: i64) -> i64 { self.push(SolverTerm::Neg(a)) }
+    pub fn mul(&mut self, a: i64, b: i64) -> i64 { self.push(SolverTerm::Mul(a, b)) }
+    pub fn le(&mut self, a: i64, b: i64) -> i64 { self.push(SolverTerm::Le(a, b)) }
+    pub fn lt(&mut self, a: i64, b: i64) -> i64 { self.push(SolverTerm::Lt(a, b)) }
+    pub fn ge(&mut self, a: i64, b: i64) -> i64 { self.push(SolverTerm::Ge(a, b)) }
+    pub fn gt(&mut self, a: i64, b: i64) -> i64 { self.push(SolverTerm::Gt(a, b)) }
+    pub fn equal(&mut self, a: i64, b: i64) -> i64 { self.push(SolverTerm::Eq(a, b)) }
+    pub fn unequal(&mut self, a: i64, b: i64) -> i64 { self.push(SolverTerm::Ne(a, b)) }
+    pub fn and(&mut self, parts: Vec<i64>) -> i64 { self.push(SolverTerm::And(parts)) }
+    pub fn or(&mut self, parts: Vec<i64>) -> i64 { self.push(SolverTerm::Or(parts)) }
+    pub fn not(&mut self, a: i64) -> i64 { self.push(SolverTerm::Not(a)) }
+    pub fn mentions(&self, id: i64, name: &str) -> bool {
+        match nikaia_std::index::get(&self.nodes, nikaia_std::index::at(id)) {
+            SolverTerm::Var(n) => n == name,
+            SolverTerm::Neg(a) => { let a = *a; self.mentions(a, name) },
+            SolverTerm::Not(a) => { let a = *a; self.mentions(a, name) },
+            SolverTerm::Add(a, b) => { let a = *a; let b = *b; self.mentions(a, name) || self.mentions(b, name) },
+            SolverTerm::Sub(a, b) => { let a = *a; let b = *b; self.mentions(a, name) || self.mentions(b, name) },
+            SolverTerm::Mul(a, b) => { let a = *a; let b = *b; self.mentions(a, name) || self.mentions(b, name) },
+            SolverTerm::Le(a, b) => { let a = *a; let b = *b; self.mentions(a, name) || self.mentions(b, name) },
+            SolverTerm::Lt(a, b) => { let a = *a; let b = *b; self.mentions(a, name) || self.mentions(b, name) },
+            SolverTerm::Ge(a, b) => { let a = *a; let b = *b; self.mentions(a, name) || self.mentions(b, name) },
+            SolverTerm::Gt(a, b) => { let a = *a; let b = *b; self.mentions(a, name) || self.mentions(b, name) },
+            SolverTerm::Eq(a, b) => { let a = *a; let b = *b; self.mentions(a, name) || self.mentions(b, name) },
+            SolverTerm::Ne(a, b) => { let a = *a; let b = *b; self.mentions(a, name) || self.mentions(b, name) },
+            SolverTerm::And(parts) => self.any_mentions(parts, name),
+            SolverTerm::Or(parts) => self.any_mentions(parts, name),
+            _ => false,
+        }
+    }
+    fn any_mentions(&self, parts: &[i64], name: &str) -> bool {
+        for part in parts.iter() {
+            let part = nikaia_std::num::value(part);
+            if self.mentions(part, name) { return true; }
+        }
+        false
+    }
+    pub fn variables(&self, id: i64, names: &mut collections::BTreeSet<String>) {
+        match nikaia_std::index::get(&self.nodes, nikaia_std::index::at(id)) {
+            SolverTerm::Var(name) => { names.insert(name.to_owned()); },
+            SolverTerm::Neg(a) => { let a = *a; self.variables(a, names) },
+            SolverTerm::Not(a) => { let a = *a; self.variables(a, names) },
+            SolverTerm::Add(a, b) => { let a = *a; let b = *b; self.both_variables(a, b, names) },
+            SolverTerm::Sub(a, b) => { let a = *a; let b = *b; self.both_variables(a, b, names) },
+            SolverTerm::Mul(a, b) => { let a = *a; let b = *b; self.both_variables(a, b, names) },
+            SolverTerm::Le(a, b) => { let a = *a; let b = *b; self.both_variables(a, b, names) },
+            SolverTerm::Lt(a, b) => { let a = *a; let b = *b; self.both_variables(a, b, names) },
+            SolverTerm::Ge(a, b) => { let a = *a; let b = *b; self.both_variables(a, b, names) },
+            SolverTerm::Gt(a, b) => { let a = *a; let b = *b; self.both_variables(a, b, names) },
+            SolverTerm::Eq(a, b) => { let a = *a; let b = *b; self.both_variables(a, b, names) },
+            SolverTerm::Ne(a, b) => { let a = *a; let b = *b; self.both_variables(a, b, names) },
+            SolverTerm::And(parts) => {
+                for part in parts.iter() {
+                    let part = nikaia_std::num::value(part);
+                    self.variables(part, names);
+                }
+            },
+            SolverTerm::Or(parts) => {
+                for part in parts.iter() {
+                    let part = nikaia_std::num::value(part);
+                    self.variables(part, names);
+                }
+            },
+            _ => { },
+        }
+    }
+    fn both_variables(&self, a: i64, b: i64, names: &mut collections::BTreeSet<String>) {
+        self.variables(a, names);
+        self.variables(b, names);
+    }
+    pub fn constant(&self, id: i64) -> Option<i64> {
+        match nikaia_std::index::get(&self.nodes, nikaia_std::index::at(id)) {
+            SolverTerm::Int(n) => { let n = *n; Some(n) },
+            SolverTerm::Neg(a) => {
+                let a = *a;
+                let v = match self.constant(a) { Some(__nikaia_value) => __nikaia_value, None => return None };
+                v.checked_neg()
+            },
+            SolverTerm::Add(a, b) => {
+                let a = *a; let b = *b;
+                let x = match self.constant(a) { Some(__nikaia_value) => __nikaia_value, None => return None };
+                let y = match self.constant(b) { Some(__nikaia_value) => __nikaia_value, None => return None };
+                x.checked_add(y)
+            },
+            SolverTerm::Sub(a, b) => {
+                let a = *a; let b = *b;
+                let x = match self.constant(a) { Some(__nikaia_value) => __nikaia_value, None => return None };
+                let y = match self.constant(b) { Some(__nikaia_value) => __nikaia_value, None => return None };
+                x.checked_sub(y)
+            },
+            SolverTerm::Mul(a, b) => {
+                let a = *a; let b = *b;
+                let x = match self.constant(a) { Some(__nikaia_value) => __nikaia_value, None => return None };
+                let y = match self.constant(b) { Some(__nikaia_value) => __nikaia_value, None => return None };
+                x.checked_mul(y)
+            },
+            _ => None,
+        }
+    }
+    pub fn int_value(&self, id: i64, values: &collections::BTreeMap<String, i64>) -> Option<i64> {
+        match nikaia_std::index::get(&self.nodes, nikaia_std::index::at(id)) {
+            SolverTerm::Int(n) => { let n = *n; Some(n) },
+            SolverTerm::Var(name) => {
+                if !values.contains_key(name) { return None; }
+                let found: i64 = nikaia_std::index::or(*nikaia_std::index::get(&values, name), || 0);
+                Some(found)
+            },
+            SolverTerm::Neg(a) => {
+                let a = *a;
+                let v = match self.int_value(a, values) { Some(__nikaia_value) => __nikaia_value, None => return None };
+                v.checked_neg()
+            },
+            SolverTerm::Add(a, b) => {
+                let a = *a; let b = *b;
+                let x = match self.int_value(a, values) { Some(__nikaia_value) => __nikaia_value, None => return None };
+                let y = match self.int_value(b, values) { Some(__nikaia_value) => __nikaia_value, None => return None };
+                x.checked_add(y)
+            },
+            SolverTerm::Sub(a, b) => {
+                let a = *a; let b = *b;
+                let x = match self.int_value(a, values) { Some(__nikaia_value) => __nikaia_value, None => return None };
+                let y = match self.int_value(b, values) { Some(__nikaia_value) => __nikaia_value, None => return None };
+                x.checked_sub(y)
+            },
+            SolverTerm::Mul(a, b) => {
+                let a = *a; let b = *b;
+                let x = match self.int_value(a, values) { Some(__nikaia_value) => __nikaia_value, None => return None };
+                let y = match self.int_value(b, values) { Some(__nikaia_value) => __nikaia_value, None => return None };
+                x.checked_mul(y)
+            },
+            _ => None,
+        }
+    }
+    pub fn substitute(&mut self, id: i64, given: &collections::BTreeMap<String, i64>) -> i64 {
+        let node = (*nikaia_std::index::get(&self.nodes, nikaia_std::index::at(id))).clone();
+        match node {
+            SolverTerm::Var(ref name) => {
+                let found = nikaia_std::index::or(given.get(name), || id.into());
+                found
+            },
+            SolverTerm::Bool(_) => id,
+            SolverTerm::Int(_) => id,
+            SolverTerm::Neg(a) => {
+                let x = self.substitute(a, given);
+                self.push(SolverTerm::Neg(x))
+            },
+            SolverTerm::Not(a) => {
+                let x = self.substitute(a, given);
+                self.push(SolverTerm::Not(x))
+            },
+            SolverTerm::Add(a, b) => {
+                let x = self.substitute(a, given);
+                let y = self.substitute(b, given);
+                self.push(SolverTerm::Add(x, y))
+            },
+            SolverTerm::Sub(a, b) => {
+                let x = self.substitute(a, given);
+                let y = self.substitute(b, given);
+                self.push(SolverTerm::Sub(x, y))
+            },
+            SolverTerm::Mul(a, b) => {
+                let x = self.substitute(a, given);
+                let y = self.substitute(b, given);
+                self.push(SolverTerm::Mul(x, y))
+            },
+            SolverTerm::Le(a, b) => {
+                let x = self.substitute(a, given);
+                let y = self.substitute(b, given);
+                self.push(SolverTerm::Le(x, y))
+            },
+            SolverTerm::Lt(a, b) => {
+                let x = self.substitute(a, given);
+                let y = self.substitute(b, given);
+                self.push(SolverTerm::Lt(x, y))
+            },
+            SolverTerm::Ge(a, b) => {
+                let x = self.substitute(a, given);
+                let y = self.substitute(b, given);
+                self.push(SolverTerm::Ge(x, y))
+            },
+            SolverTerm::Gt(a, b) => {
+                let x = self.substitute(a, given);
+                let y = self.substitute(b, given);
+                self.push(SolverTerm::Gt(x, y))
+            },
+            SolverTerm::Eq(a, b) => {
+                let x = self.substitute(a, given);
+                let y = self.substitute(b, given);
+                self.push(SolverTerm::Eq(x, y))
+            },
+            SolverTerm::Ne(a, b) => {
+                let x = self.substitute(a, given);
+                let y = self.substitute(b, given);
+                self.push(SolverTerm::Ne(x, y))
+            },
+            SolverTerm::And(ref parts) => {
+                let mut changed: Vec<i64> = vec![];
+                for part in parts.iter() {
+                    let part = nikaia_std::num::value(part);
+                    changed.push(self.substitute(part, given));
+                }
+                self.push(SolverTerm::And(changed))
+            },
+            SolverTerm::Or(ref parts) => {
+                let mut changed: Vec<i64> = vec![];
+                for part in parts.iter() {
+                    let part = nikaia_std::num::value(part);
+                    changed.push(self.substitute(part, given));
+                }
+                self.push(SolverTerm::Or(changed))
+            },
+            _ => id,
+        }
+    }
+    pub fn size(&self, id: i64) -> i64 {
+        1 + match nikaia_std::index::get(&self.nodes, nikaia_std::index::at(id)) {
+            SolverTerm::Neg(a) => { let a = *a; self.size(a) },
+            SolverTerm::Not(a) => { let a = *a; self.size(a) },
+            SolverTerm::Add(a, b) => { let a = *a; let b = *b; self.size(a) + self.size(b) },
+            SolverTerm::Sub(a, b) => { let a = *a; let b = *b; self.size(a) + self.size(b) },
+            SolverTerm::Mul(a, b) => { let a = *a; let b = *b; self.size(a) + self.size(b) },
+            SolverTerm::Le(a, b) => { let a = *a; let b = *b; self.size(a) + self.size(b) },
+            SolverTerm::Lt(a, b) => { let a = *a; let b = *b; self.size(a) + self.size(b) },
+            SolverTerm::Ge(a, b) => { let a = *a; let b = *b; self.size(a) + self.size(b) },
+            SolverTerm::Gt(a, b) => { let a = *a; let b = *b; self.size(a) + self.size(b) },
+            SolverTerm::Eq(a, b) => { let a = *a; let b = *b; self.size(a) + self.size(b) },
+            SolverTerm::Ne(a, b) => { let a = *a; let b = *b; self.size(a) + self.size(b) },
+            SolverTerm::And(parts) => self.parts_size(parts),
+            SolverTerm::Or(parts) => self.parts_size(parts),
+            _ => 0,
+        }
+    }
+    fn parts_size(&self, parts: &[i64]) -> i64 {
+        let mut total: i64 = 0;
+        for part in parts.iter() {
+            let part = nikaia_std::num::value(part);
+            total += self.size(part);
+        }
+        total
+    }
+    pub fn is_the_variable(&self, id: i64, name: &str) -> bool {
+        match nikaia_std::index::get(&self.nodes, nikaia_std::index::at(id)) {
+            SolverTerm::Var(n) => n == name,
+            _ => false,
+        }
+    }
+}
+
+
 // --- render.nika ---
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -18817,6 +19085,10 @@ pub mod prove_terms {
 pub mod prove_text {
     #[allow(unused_imports)]
     pub use super::{rust_of, rust_of_name, term_text, term_ledger_text, shown, lowered_first, has_a_length};
+}
+pub mod prover_arena {
+    #[allow(unused_imports)]
+    pub use super::{TermArena};
 }
 pub mod render {
     #[allow(unused_imports)]

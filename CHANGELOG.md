@@ -4,6 +4,16 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.484] — 2026-10-05
+
+**The prover's terms can be held in Nikaia** (ADR-294, #436 step 4, the
+first of two parts). `tools/prover_arena.nika` holds an arena of
+`SolverTerm` nodes, with the operations the prover's walk uses:
+constructors, `mentions`, `variables`, `constant`, `int_value`, `substitute`
+and `size`. A test checks each one against `nikaia-logic`'s `Arena` on the same
+terms; `substitute` builds the same nodes in the same places. The walk does not
+use it yet. Two places are written around lowerings `rustc` refuses (#456).
+
 ## [0.0.483] — 2026-10-05
 
 **A view of a list takes a list as its default** (ADR-318 D4, #374). An option
