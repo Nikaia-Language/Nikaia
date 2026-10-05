@@ -4,6 +4,18 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.517] — 2026-10-05
+
+**A build-time run is bounded in steps and in memory** (ADR-321 D7, D10-D12).
+The step budget is 10 000 000 000 by default, chosen so that a mistake costs
+about twenty seconds; the run's memory is counted by its own allocator and
+bounded at 4 GiB, so a list that grows without end stops the build instead of
+the machine. A `comptime` that needs more raises either bound at its
+declaration, never in the manifest or on the command line; how it is written
+is not decided yet. A run that takes more than a few seconds is reported by
+name. ADR-287 D17 and ADR-310 §6 change with it. Decided and specified; not
+built.
+
 ## [0.0.516] — 2026-10-05
 
 **No Rust code but `std`'s runs at build time** (ADR-321 D9, corrected). 0.0.515

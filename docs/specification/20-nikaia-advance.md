@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part II: Advanced Features & Metaprogramming**
-**Version:** 0.0.516 (Draft)
+**Version:** 0.0.517 (Draft)
 **Date:** 2026-10-05
 
 ---
@@ -128,10 +128,15 @@ would stop the program. An initialiser of literals alone is folded by the
 checker. A package's build-time code is compiled once per change and its
 results are kept; an unchanged `comptime` is not run again.
 
-**A build-time run has a step budget.** Each turn of a loop and each call
-counts; past the budget the build is refused with `NK1152`, naming the
-`comptime` and the call path. The count does not depend on the machine. The call
-depth is bounded as well.
+**A build-time run has a step budget and a memory bound.** Each turn of a loop
+and each call counts as a step, and a call into `std` counts as one; the
+default budget is 10 000 000 000 steps. The bytes the run holds are counted at
+each allocation, `std`'s included; the default bound is 4 GiB. Past either, the
+build is refused with `NK1152`, naming the `comptime` and the call path. Both
+counts are the same on every machine of one architecture. A `comptime` that
+needs more raises the bound itself, at its declaration. The call depth is
+bounded as well. A run that takes more than a few seconds is reported by name
+while it runs.
 
 **What crosses from build time to run time.** A result arrives in its **view**
 form: `Vec[T]` as a `ref Array[T]`, or as an `Array[T, N]` where the program
