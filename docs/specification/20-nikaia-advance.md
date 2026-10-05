@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part II: Advanced Features & Metaprogramming**
-**Version:** 0.0.512 (Draft)
+**Version:** 0.0.513 (Draft)
 **Date:** 2026-10-05
 
 ---
@@ -93,12 +93,10 @@ evaluate is refused with `NK1127`. It is never evaluated at run time instead.
 **pair** or a **struct**: literals, `f"… {n} …"`, arithmetic and comparisons
 over them and over other constants, `+`, `==` and `.len()` over text, `xs[i]`,
 `xs[i] = …`, `xs.push(…)` and `xs.len()` over a list, a struct literal and a
-field of one, an `if`, and a **call** to a function or a **method** this program
-declares, in any of its files, or `std` declares in its Nikaia half, whose body
-is made of those. A `std` function with no Nikaia body cannot be evaluated. A called body may
-recurse with a base case, and it may loop: a `for` over a range, a `while`,
-`break` and `continue`. A called body must be `sync` and must touch nothing but
-the build's own parameters. A callee that fails either condition is refused with
+field of one, an `if`, and a **call** to a function or a **method** that this
+program, `std` or a dependency declares. A called body must be `sync` and must
+touch nothing but the build's own parameters, as the ledger records it; a
+function the ledger does not describe touches everything. A callee that fails either condition is refused with
 `NK1152`. `NK1127` says *not yet*; `NK1152` says *not allowed*.
 
 **`comptime` marks the name.** It is not an expression: `let x = comptime f()`
@@ -118,9 +116,17 @@ refused with `NK1168`. A `comptime` inside a function body is read in written
 order, as a `let` is: one declared further down is `NK1117`. It may read an
 item-level one.
 
-A loop has no step budget. A `while` that does not end hangs the build. Call
-depth is bounded, so an unbounded recursion does not exhaust the compiler's
-stack.
+**A `comptime` whose initialiser calls a function is compiled and run** on the
+machine that builds, against the package's dependencies, and behaves exactly as
+the same code does when the program runs: an overflow stops the build where it
+would stop the program. An initialiser of literals alone is folded by the
+checker. A package's build-time code is compiled once per change and its
+results are kept; an unchanged `comptime` is not run again.
+
+**A build-time run has a step budget.** Each turn of a loop and each call
+counts; past the budget the build is refused with `NK1152`, naming the
+`comptime` and the call path. The count does not depend on the machine. The call
+depth is bounded as well.
 
 **What crosses from build time to run time.** A result arrives in its **view**
 form: `Vec[T]` as a `ref Array[T]`, or as an `Array[T, N]` where the program

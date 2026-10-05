@@ -4,6 +4,19 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.513] — 2026-10-05
+
+**Build-time code is compiled and run, not interpreted** (ADR-321). The
+interpreter that ran a `comptime`'s calls was a second implementation of the
+language: `sq(100000)` with an `i32` result came out as `10000000000` at build
+time where the program stops on the overflow, and a `std` function written in
+Rust could not run. A `comptime` that calls a function is now compiled against
+the package's dependencies, which are linked through one generated dynamic
+library, one crate per package, with its results cached; a build-time run is
+bounded by a step budget counted in loop turns and calls (`NK1152`). ADR-287
+D16 and D18 and ADR-318 D6 change with it. Decided and specified; not built.
+The budget's default and how a program raises it are not decided.
+
 ## [0.0.512] — 2026-10-05
 
 **A mapped file is text wherever text is read** (#452). Three spellings
