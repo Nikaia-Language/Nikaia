@@ -4,6 +4,18 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.473] — 2026-10-05
+
+**A call to an expression function is its expression** (ADR-314 D3, #421, in
+part). The bounds walk knew nothing of a call's result, so `xs[before(xs.len())]`
+with `fn before(n: i64) -> i64 { return n - 1 }` kept its check. A free
+function of the file whose body is one `return e` and that returns a whole
+number is now read at the call as `e`, with the arguments for its parameters,
+through a helper over a helper up to a depth of four. A name in `e` that is not
+a parameter belongs to the callee and is not read. Where `e` overflows, the
+callee's own check stops the program. Not built yet: a callee's published
+`ensures` from the ledger, across packages (the rest of D3), and D1-D2.
+
 ## [0.0.472] — 2026-10-05
 
 **`--locked` checks `nikaia.proofs`** (ADR-270 D22, #448 step 4). A lowering

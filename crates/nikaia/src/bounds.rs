@@ -865,9 +865,97 @@ impl Walk<'_> {
             {
                 self.lin(expr, facts)
             }
+            Expr::Call { func, args, config } if config.is_empty() => {
+                let Expr::Variable(name) = &**func else {
+                    return None;
+                };
+                let mut given = Vec::with_capacity(args.len());
+                for arg in args {
+                    given.push(self.lin(arg, facts)?);
+                }
+                let name = self.text(*name).to_string();
+                self.called(&name, &given, 0)
+            }
             Expr::Binary { op, lhs, rhs, .. } => {
                 let l = self.lin(lhs, facts)?;
                 let r = self.lin(rhs, facts)?;
+                match op {
+                    BinaryOp::Add => Some(self.arena.add(l, r)),
+                    BinaryOp::Sub => Some(self.arena.sub(l, r)),
+                    BinaryOp::Mul
+                        if self.arena.constant(l).is_some() || self.arena.constant(r).is_some() =>
+                    {
+                        Some(self.arena.mul(l, r))
+                    }
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
+    }
+
+    /// **A call to an expression function is its expression**
+    /// ([ADR-314](../../docs/specification/adr/adr-314.md) D3, #421): a free
+    /// function whose body is one `return e` gives `e` with the arguments for
+    /// its parameters, which is the `ensures result == e` it publishes. Where
+    /// `e` overflows, the function's own check stops the program, so where
+    /// the caller goes on the value is the one written.
+    ///
+    /// **Only what `e` says of its parameters**: a name the body does not
+    /// take as a parameter belongs to the callee's scope, not the caller's,
+    /// and is not read. A call inside `e` is followed as far as
+    /// [`CALL_DEPTH`].
+    fn called(&mut self, name: &str, given: &[TermId], depth: usize) -> Option<TermId> {
+        if depth >= CALL_DEPTH {
+            return None;
+        }
+        let (params, value) = expression_function(self.parsed, name)?;
+        if params.len() != given.len() {
+            return None;
+        }
+        let env: BTreeMap<String, TermId> = params.into_iter().zip(given.iter().copied()).collect();
+        self.inline(&value, &env, depth)
+    }
+
+    /// `expr`, a callee's expression, over `env`'s terms for its parameters.
+    fn inline(
+        &mut self,
+        expr: &Expr,
+        env: &BTreeMap<String, TermId>,
+        depth: usize,
+    ) -> Option<TermId> {
+        match expr {
+            Expr::LitInt { value, negative } => {
+                let n = i64::try_from(crate::ast::int_value(*value, *negative)).ok()?;
+                Some(self.arena.int(n))
+            }
+            Expr::Variable(name) => env.get(self.text(*name)).copied(),
+            Expr::Unary {
+                op: UnaryOp::Neg,
+                expr,
+            } => {
+                let a = self.inline(expr, env, depth)?;
+                Some(self.arena.neg(a))
+            }
+            Expr::Cast { expr, ty }
+                if ty.generics.is_empty() && is_whole_number(self.text(ty.name)) =>
+            {
+                self.inline(expr, env, depth)
+            }
+            Expr::Call { func, args, config } if config.is_empty() => {
+                let Expr::Variable(name) = &**func else {
+                    return None;
+                };
+                let mut given = Vec::with_capacity(args.len());
+                for arg in args {
+                    given.push(self.inline(arg, env, depth)?);
+                }
+                let name = self.text(*name).to_string();
+                self.called(&name, &given, depth + 1)
+            }
+            Expr::Binary { op, lhs, rhs, .. } => {
+                let l = self.inline(lhs, env, depth)?;
+                let r = self.inline(rhs, env, depth)?;
                 match op {
                     BinaryOp::Add => Some(self.arena.add(l, r)),
                     BinaryOp::Sub => Some(self.arena.sub(l, r)),
@@ -1765,6 +1853,48 @@ impl Changed {
         self.values.extend(other.values);
         self.lengths.extend(other.lengths);
     }
+}
+
+/// How deep [`Walk::called`] follows an expression function into another:
+/// far enough for a helper over a helper, and a recursion stops.
+const CALL_DEPTH: usize = 4;
+
+/// **A free function of this file whose body is one `return e`**, returning a
+/// whole number: its parameters' names and `e`
+/// ([ADR-314](../../docs/specification/adr/adr-314.md) D3).
+fn expression_function(parsed: &Parsed, name: &str) -> Option<(Vec<String>, Expr)> {
+    parsed.program.items.iter().find_map(|item| {
+        let Item::Fn {
+            name: Some(declared),
+            args,
+            receiver: None,
+            config,
+            ret_type: Some(ret),
+            body,
+            ..
+        } = &item.node
+        else {
+            return None;
+        };
+        if parsed.text(*declared) != name
+            || !config.is_empty()
+            || !ret.generics.is_empty()
+            || !is_whole_number(parsed.text(ret.name))
+        {
+            return None;
+        }
+        let [only] = body.stmts.as_slice() else {
+            return None;
+        };
+        let Stmt::Return(Some(value)) = &only.node else {
+            return None;
+        };
+        let params = args
+            .iter()
+            .map(|a| parsed.text(a.name).to_string())
+            .collect();
+        Some((params, value.clone()))
+    })
 }
 
 /// `xs.len()` is about `xs`.
