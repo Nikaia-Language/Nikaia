@@ -4,6 +4,21 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.512] — 2026-10-05
+
+**A mapped file is text wherever text is read** (#452). Three spellings
+passed the checker and failed in `rustc`, about generated code. All three now
+work:
+- `data[0..<7]` slices the mapping's text, by the same rule as a `String`'s.
+- `data.deref()` is the ledger's `fs::Mapped::deref`, now a method of the
+  type itself, so `Deref` need not be in scope.
+- `let c: ref String = data` lends the mapping rather than handing it over:
+  a `let` that declares a view of what a container holds is written `&data`,
+  and `data` stays usable after it.
+
+Every bench and example lowers byte for byte as before. `Bytes`' content and
+text's `find` are still open, and wait on #453's decision.
+
 ## [0.0.511] — 2026-10-05
 
 **`fs::exists(path, root)` is in `std`** (#454, Part III 17.1, ADR-108 D1).

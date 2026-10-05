@@ -9716,7 +9716,23 @@ impl<'a> Checker<'a> {
                 // ADR-293 D29) - except `let _ = s`, which binds nothing and so
                 // takes nothing.
                 let bound: Vec<&str> = names.iter().map(|n| self.parsed.text(*n)).collect();
-                if bound.iter().any(|n| *n != "_") {
+                // **A container a `let` declares a view of what it holds is
+                // lent, not handed over** (#452): `let c: ref String = data`
+                // over a mapped file is a view of its text, so `data` stays
+                // where it is and the line is written `&data`.
+                let seen_through = matches!(value, Expr::Variable(_) | Expr::Field { .. })
+                    && ty.as_ref().is_some_and(|t| {
+                        let want = Ty::from_ast(self.parsed, t);
+                        !found.fits(&want) && self.fits_through_deref(&found, &want)
+                    });
+                if seen_through {
+                    self.checked.lent_lets.insert(span.at());
+                    for name in names {
+                        let name = self.parsed.text(*name).to_string();
+                        self.lent_lets
+                            .insert((name, self.scope.len().saturating_sub(1)));
+                    }
+                } else if bound.iter().any(|n| *n != "_") {
                     let to = format!("bound to `{}` by a `let`", bound.join("`, `"));
                     self.hands_over(value, &found, &to, span);
                 }

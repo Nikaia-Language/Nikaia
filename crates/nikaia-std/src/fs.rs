@@ -157,6 +157,33 @@ enum Backing {
     Empty,
 }
 
+impl Mapped {
+    /// **The mapped file, as text**: what the ledger's `fs::Mapped::deref`
+    /// names, written as a call (#452). The lowering writes `data.deref()`,
+    /// and the trait's method is reached only where `Deref` is in scope.
+    #[allow(clippy::should_implement_trait)]
+    pub fn deref(&self) -> &str {
+        self
+    }
+}
+
+/// **A mapped file is sliced as text is** (#452): `data[a..<b]` is a view of
+/// its text, by the same rule as a `String`'s.
+impl<I> crate::index::Get<I> for Mapped
+where
+    I: std::slice::SliceIndex<str> + 'static,
+{
+    type Out<'a>
+        = &'a I::Output
+    where
+        Self: 'a;
+
+    #[track_caller]
+    fn get(&self, key: I) -> &I::Output {
+        &(**self)[key]
+    }
+}
+
 impl std::ops::Deref for Mapped {
     type Target = str;
 

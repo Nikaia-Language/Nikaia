@@ -1176,6 +1176,33 @@ fn a_number_read_past_a_jump_is_the_number() {
     );
 }
 
+/// **A mapped file is text wherever text is read** (#452): sliced by a
+/// range, through its `deref`, as a `ref String` a `let` declares, and handed
+/// to a function that reads text - each the same as the file read whole.
+/// The three first ones passed the checker and failed in `rustc`.
+#[test]
+fn a_mapped_file_is_read_as_text() {
+    runs_in(
+        "mapped-as-text",
+        "use std::fs\n\
+         \n\
+         fn length(text: ref String) -> i64 {\n\
+         \x20   return text.len()\n\
+         }\n\
+         \n\
+         fn main() throws {\n\
+         \x20   let data = fs::map(\"m.txt\", fs::Root::Anywhere)\n\
+         \x20   let a = data[0..<7]\n\
+         \x20   let b = data.deref()\n\
+         \x20   let c: ref String = data\n\
+         \x20   let whole = fs::read_to_string(\"m.txt\", fs::Root::Anywhere)\n\
+         \x20   println(f\"{a}|{b == whole}|{c == whole}|{length(data)}\")\n\
+         }\n",
+        "Hamburg|true|true|13\n",
+        |dir| std::fs::write(dir.join("m.txt"), "Hamburg;12.3\n").expect("write the input"),
+    );
+}
+
 /// **A part an expression arm binds as a view is handed on as it is**
 /// (#456, found moving the prover's terms into Nikaia, #436): the arm only
 /// reads `name`, so it is bound `ref`, and the call still wrote the
