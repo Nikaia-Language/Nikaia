@@ -1221,7 +1221,34 @@ pub fn check_against<'a>(
     // nothing.
     reads: &'a Reads,
 ) -> Checked {
-    walked(parsed, beside, own, library, modules, newly, reads, false)
+    walked(
+        parsed, beside, own, library, modules, newly, reads, false, true,
+    )
+}
+
+/// **The pass the ledger's inference reads**: the same walk, asked for what a
+/// call resolves to and not for what a `comptime` comes to
+/// ([ADR-321](../../docs/specification/adr/adr-321.md) D1). A value is computed
+/// once, by the check that reports it, and compiled there; this pass has no
+/// workshop to compile it in, and nothing it hands on reads one.
+pub(crate) fn check_for_the_ledger<'a>(
+    parsed: &'a Parsed,
+    beside: &'a [&'a Parsed],
+    own: &'a Ledger,
+    library: &'a Ledger,
+    reads: &'a Reads,
+) -> Checked {
+    walked(
+        parsed,
+        beside,
+        own,
+        library,
+        &BTreeSet::new(),
+        &Newly::default(),
+        reads,
+        false,
+        false,
+    )
 }
 
 /// **Which types the program's other files called this unit's shape walks
@@ -1251,6 +1278,7 @@ fn instantiations_in<'a>(
         &Newly::new(),
         reads,
         true,
+        true,
     )
     .unrolled
 }
@@ -1266,6 +1294,7 @@ fn walked<'a>(
     newly: &'a Newly,
     reads: &'a Reads,
     harvesting: bool,
+    computes: bool,
 ) -> Checked {
     let mut checker = Checker {
         newly,
@@ -1274,6 +1303,7 @@ fn walked<'a>(
         reads,
         said_rings: BTreeSet::new(),
         computing_default: false,
+        computes,
         option_values: Vec::new(),
         own,
         library,
@@ -2723,6 +2753,9 @@ struct Checker<'a> {
     /// refusal's way out for it is a `T?`, not a `let` in place of a
     /// `comptime` it never was.
     computing_default: bool,
+    /// **Whether this walk computes build-time values at all**: the ledger's
+    /// pass ([`check_for_the_ledger`]) does not, and says nothing for them.
+    computes: bool,
     /// The addresses of the values a call names after its `;`, in the order
     /// [`Checker::arguments`] is handed them (#455).
     option_values: Vec<usize>,
@@ -18366,6 +18399,9 @@ impl<'a> Checker<'a> {
         bound: &str,
         span: &Span,
     ) -> Option<(Option<build_time::Value>, bool)> {
+        if !self.computes {
+            return Some((None, true));
+        }
         let workshop = self.reads.workshop();
         // **Every file of the program** (Part I 9.1), this one among them; a
         // check handed none is this file alone.
@@ -18417,6 +18453,22 @@ impl<'a> Checker<'a> {
         // **A call somewhere in it**, which is what D1 compiles: an
         // initialiser of literals alone is folded. A read of a file is not a
         // call here: it is the build's, and what it read goes in as text.
+        //
+        // **Nor is a variant built** (`Shape::Num(1.5)`): it is a value
+        // written down, as a struct literal is, and what it carries is asked
+        // on its own.
+        let enums: BTreeSet<String> = files
+            .iter()
+            .flat_map(|file| {
+                file.program
+                    .items
+                    .iter()
+                    .filter_map(|item| match &item.node {
+                        Item::Enum { name, .. } => Some(file.text(*name).to_string()),
+                        _ => None,
+                    })
+            })
+            .collect();
         let mut calls = false;
         let mut assets: Vec<Option<String>> = Vec::new();
         crate::emit::visit_expr(value, &mut |expr: &Expr| match expr {
@@ -18426,6 +18478,8 @@ impl<'a> Checker<'a> {
                         [Expr::LitStr { text, .. }] => build_time::decoded(text),
                         _ => None,
                     }),
+                Expr::Path(path)
+                    if path.len() == 2 && enums.contains(self.parsed.text(path[0])) => {}
                 _ => calls = true,
             },
             Expr::MethodCall { .. } | Expr::SafeMethod { .. } => calls = true,

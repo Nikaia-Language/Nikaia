@@ -695,13 +695,11 @@ impl LedgerOps for Ledger {
                     .filter(|(other, _)| *other != at)
                     .map(|(_, other)| *other)
                     .collect();
-                crate::check::check_against(
+                crate::check::check_for_the_ledger(
                     parsed,
                     &beside,
                     &ledger,
                     library,
-                    &BTreeSet::new(),
-                    &crate::check::Newly::default(),
                     &crate::assets::Reads::none(),
                 )
             })

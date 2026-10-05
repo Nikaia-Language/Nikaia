@@ -4,6 +4,19 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.528] — 2026-10-05
+
+**The ledger's pass no longer computes a `comptime`** (ADR-321 D1, #468). The
+ledger's inference checks every file to learn what each call resolves to. That
+check also computed every `comptime` and computed default, through the
+interpreter, before the real check compiled and ran them again.
+- The inference's check now leaves build-time values alone and says nothing
+  about them. A value is computed once, by the check that reports it.
+- A variant built in an initialiser (`Shape::Num(1.5)`) is a value written
+  down, not a call: it no longer sends the initialiser to be compiled.
+
+Every bench and example lowers byte for byte as before.
+
 ## [0.0.527] — 2026-10-05
 
 **A whole number may carry a scale, and a `comptime` names its bounds**
