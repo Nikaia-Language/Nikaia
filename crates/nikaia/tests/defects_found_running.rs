@@ -1359,6 +1359,41 @@ fn a_methods_nullable_text_parameter_takes_an_option() {
     );
 }
 
+/// **A function value a method took whole is lent on to code that only
+/// runs it** (#463, found moving the prover's `a_call` into Nikaia, #436): a
+/// method's code parameter is an `impl Fn` by value, and handing it to
+/// another method inside a loop moved it on the first turn.
+#[test]
+fn a_methods_function_value_is_handed_on_in_a_loop() {
+    runs(
+        "method-code-handed-on",
+        "struct Walk {\n\
+         \x20   pub total: i64,\n\
+         }\n\
+         \n\
+         impl Walk {\n\
+         \x20   fn one(ref mut self, k: i64, ask: fn(i64) -> bool sync) {\n\
+         \x20       if ask(k) {\n\
+         \x20           self.total += k\n\
+         \x20       }\n\
+         \x20   }\n\
+         \n\
+         \x20   fn all(ref mut self, n: i64, ask: fn(i64) -> bool sync) {\n\
+         \x20       for k in 0..<n {\n\
+         \x20           self.one(k, ask)\n\
+         \x20       }\n\
+         \x20   }\n\
+         }\n\
+         \n\
+         fn main() {\n\
+         \x20   let mut walk = Walk { total: 0 }\n\
+         \x20   walk.all(6) fn(k) { k % 2 == 0 }\n\
+         \x20   println(f\"{walk.total}\")\n\
+         }\n",
+        "6\n",
+    );
+}
+
 /// **Found by the solver's kernels** ([ADR-270](../../../docs/specification/adr/adr-270.md)
 /// D8 step 1): an index into a `mut` parameter, read and written. The
 /// parameter is a `&mut Vec<u32>` below, and the write was `set(&mut out, …)` -

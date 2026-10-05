@@ -4,6 +4,17 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.501] — 2026-10-05
+
+**A function value a method took whole is lent on to code that only runs
+it** (#463). A method's code parameter is never lent (`lends.nika` waits on
+knowing which entry a method call reaches, ADR-288), so it is an `impl Fn`
+taken by value, and handing it to another method moved it - in a loop,
+before the second turn. A call now writes `&f` for such a parameter where
+the callee only runs the code at that place, by its entry or by every method
+of that name; `&F` is a `Fn` wherever `F` is. `ProverState::carry_back` and
+`precondition_call` are methods again.
+
 ## [0.0.500] — 2026-10-05
 
 **A call to a function with a precondition is Nikaia** (ADR-294, #436 step

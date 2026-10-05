@@ -1045,7 +1045,7 @@ impl<'a> Prover<'a> {
     }
 
     /// **A call to a function with a precondition** (ADR-269 D5, D8, D15,
-    /// D20; `prover_state::precondition_call`): its findings, and how the
+    /// D20; `ProverState::precondition_call`): its findings, and how the
     /// call reaches the callee.
     #[allow(clippy::too_many_arguments)]
     fn a_call(
@@ -1059,8 +1059,7 @@ impl<'a> Prover<'a> {
         at: &Where,
     ) {
         let Terms { held, copy } = &mut self.arena;
-        let outcome = prover_state::precondition_call(
-            &mut self.state,
+        let outcome = self.state.precondition_call(
             held,
             &self.parsed.interner,
             callee,
@@ -1070,9 +1069,9 @@ impl<'a> Prover<'a> {
             span,
             scope,
             at,
-            &|arena, facts, goal| answer_of(copy, arena, facts, goal),
-            &|arena, facts, goal| model_of(copy, arena, facts, goal),
-            &|name| crate::emit::escaped(name).into_owned(),
+            |arena, facts, goal| answer_of(copy, arena, facts, goal),
+            |arena, facts, goal| model_of(copy, arena, facts, goal),
+            |name| crate::emit::escaped(name).into_owned(),
         );
         self.out
             .findings

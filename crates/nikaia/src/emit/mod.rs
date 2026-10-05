@@ -11159,6 +11159,53 @@ impl<'p> Emitter<'p> {
             if matches!(func.as_ref(), Expr::Variable(name) if self.text(*name) == PANIC))
     }
 
+    /// A code parameter `function` takes whole and does not keep: a
+    /// method's, which `lends.nika` never lends (#463).
+    fn a_code_parameter_taken_whole(&self, function: &str, name: &str) -> bool {
+        let Some(contract) = self.own_contracts.functions.get(function) else {
+            return false;
+        };
+        let Some(signature) = &contract.signature else {
+            return false;
+        };
+        signature
+            .params
+            .iter()
+            .enumerate()
+            .any(|(at, (param, ty))| {
+                param == name
+                    && matches!(ty, crate::contracts::ty::Ty::Fn { .. })
+                    && !contract.keeps.iter().any(|kept| kept == name)
+                    && !crate::contracts::keeps::lends_in(
+                        contract,
+                        at,
+                        &[self.library, &self.described],
+                    )
+            })
+    }
+
+    /// Whether the code a call hands `callee` at argument `i` is only run
+    /// there, not kept - by its entry, or by every method of that name.
+    fn runs_code_at(&self, callee: &str, i: usize) -> bool {
+        let runs = |contract: &crate::contracts::FnContract| {
+            contract
+                .signature
+                .as_ref()
+                .and_then(|s| s.arguments().get(i))
+                .is_some_and(|(name, ty)| {
+                    matches!(ty, crate::contracts::ty::Ty::Fn { .. })
+                        && !contract.keeps.iter().any(|kept| kept == name)
+                })
+        };
+        match self.own_contracts.functions.get(callee) {
+            Some(contract) => runs(contract),
+            None => {
+                let candidates = self.own_contracts.candidates(callee);
+                !candidates.is_empty() && candidates.iter().all(|(_, contract)| runs(contract))
+            }
+        }
+    }
+
     /// How a sum is **named** wherever it is used.
     ///
     /// `crate::…`, always: the type is defined once at the crate root
@@ -13029,6 +13076,16 @@ impl<'p> Emitter<'p> {
                 _ => inside_the_option,
             };
             let lend = lend && inside_the_option.is_none();
+            // **A function value a method took whole is lent on to code that
+            // only runs it** (#463): a method's code parameter is never lent
+            // (`lends.nika`), so it is an `impl Fn` by value, and handing it
+            // on moved it - in a loop, before the second turn. `&f` is a `Fn`
+            // wherever `f` is.
+            let lend = lend
+                || (!change
+                    && matches!(arg, Expr::Variable(name)
+                        if self.a_code_parameter_taken_whole(flow.function, self.text(*name)))
+                    && self.runs_code_at(callee, i));
             if matches!(arg, Expr::LitNull) && inside_the_option.is_some() {
                 out.push("None");
                 out.push(after);
