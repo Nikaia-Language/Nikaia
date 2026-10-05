@@ -882,6 +882,11 @@ pub struct Checked {
     /// is `Some(1)` below. A conversion around the whole choice was a `1`
     /// beside a `None` in the language below.
     pub some_tails: BTreeSet<usize>,
+    /// **The values an option of a `ref` type is lent** (#455), by the
+    /// address of the value: what is passed owned to `xs: ref Vec[i64]` is
+    /// written `&value` below, as an argument to a `ref` parameter is
+    /// (ADR-094 D1).
+    pub lent_options: BTreeSet<usize>,
     /// **A plain value put into a nullable slot, by its own address**
     /// (Part I 2.3): what a `return` written as an expression hands back -
     /// `let h = half(k) ?? return 0` in an `i64?` function is `return
@@ -1250,6 +1255,7 @@ fn walked<'a>(
         reads,
         said_rings: BTreeSet::new(),
         computing_default: false,
+        option_values: Vec::new(),
         own,
         library,
         structs: BTreeMap::new(),
@@ -1932,6 +1938,8 @@ pub struct Propagation {
     /// is `Some(1)` below. A conversion around the whole choice was a `1`
     /// beside a `None` in the language below.
     pub some_tails: BTreeSet<usize>,
+    /// [`Checked::lent_options`].
+    pub lent_options: BTreeSet<usize>,
     /// [`Checked::wrapped`].
     pub wrapped: BTreeMap<usize, Wrap>,
     /// [`Checked::compared_views`].
@@ -2157,6 +2165,7 @@ pub fn propagation_against(
         boxed_reads: checked.boxed_reads,
         copied_bindings: checked.copied_bindings,
         some_tails: checked.some_tails,
+        lent_options: checked.lent_options,
         wrapped: checked.wrapped,
         compared_views: checked.compared_views,
         claims: checked.claims,
@@ -2682,6 +2691,9 @@ struct Checker<'a> {
     /// refusal's way out for it is a `T?`, not a `let` in place of a
     /// `comptime` it never was.
     computing_default: bool,
+    /// The addresses of the values a call names after its `;`, in the order
+    /// [`Checker::arguments`] is handed them (#455).
+    option_values: Vec<usize>,
     /// This unit's own contracts, inferred from the source being checked.
     own: &'a Ledger,
     /// `std`'s, as `std` ships them.
@@ -6519,8 +6531,12 @@ impl<'a> Checker<'a> {
         // refused for what it is, as a `comptime` is, with the length the
         // build computed in the way out.
         let declared = Ty::from_ast(self.parsed, &option.ty);
+        // **A view of a list takes one** (D4): `xs: ref Vec[i64] = [4, 5]`
+        // crosses as the `&[4, 5]` the parameter is below. Only one it owns
+        // is refused.
         if let Some(computed @ build_time::Value::List(_)) = &value
             && is_growable(&declared)
+            && !declared.is_a_view()
         {
             let computed = computed.clone();
             self.a_constant_that_owns_memory(&name, &declared, &computed, "a default", &span);
@@ -6539,8 +6555,8 @@ impl<'a> Checker<'a> {
                 format!("The default of `{name}` can't be computed while the program is built.")
             }
             Some(value) if crate::contracts::literal_of(value).is_none() => format!(
-                "The default of `{name}` is a list, or holds one, and a default of that shape \
-                 is not built yet."
+                "The default of `{name}` is a list of something other than numbers or \
+                 `bool`s, or a list it would own, and a default of that shape is not built yet."
             ),
             Some(_) => return,
         };
@@ -14524,7 +14540,12 @@ impl<'a> Checker<'a> {
                 Some(declared) => declared.clone(),
                 None => Ty::named(ty),
             });
+        self.option_values = config
+            .iter()
+            .map(|a| &a.value as *const Expr as usize)
+            .collect();
         let result = self.arguments(&key, &name, contract, args, &found, &passed, span);
+        self.option_values.clear();
         // **What the arguments tell the signature**
         // ([ADR-295](../../docs/specification/adr/adr-295.md) D2). A free
         // function has no receiver, so ADR-288's binding had nothing to work
@@ -14603,10 +14624,22 @@ impl<'a> Checker<'a> {
 
         // Kap 5.1: an option is named, so it is checked by name - that it
         // exists, and that what is passed is what it takes.
-        for (name, found) in passed {
+        for (at, (name, found)) in passed.iter().enumerate() {
             match signature.config.iter().find(|c| c.name == *name) {
                 Some(option) => {
                     if found.fits(&option.ty) {
+                        continue;
+                    }
+                    // **An option of a `ref` type lends what it is passed**
+                    // (#455), as a `ref` parameter does (ADR-094 D1): the
+                    // owned value fits the view, and the `&` is the
+                    // compiler's to write.
+                    if let Some(value) = self.option_values.get(at).copied()
+                        && option.ty.is_a_view()
+                        && !found.is_a_view()
+                        && found.fits(&option.ty.owned())
+                    {
+                        self.checked.lent_options.insert(value);
                         continue;
                     }
                     let (want, ty) = (option.ty.clone(), option.ty.text());

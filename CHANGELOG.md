@@ -4,6 +4,20 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.483] — 2026-10-05
+
+**A view of a list takes a list as its default** (ADR-318 D4, #374). An option
+`xs: ref Vec[i64]` may default to a list of numbers or `bool`s, computed
+(`= three()`) or written (`= [4, 5]`). The ledger records it as `[4, 5]`, and a
+call that leaves the option out lends it, `&vec![4, 5]`. A list the option
+would own is still `NK1167`. A list of anything else is still refused as not
+built yet.
+
+**An option of a `ref` type lends what it is passed** (#455), as a `ref`
+parameter does (ADR-094 D1). `total("c"; xs: [10, 20])` was refused with
+`NK1106`; the checker now accepts the owned value and the emitter writes the
+`&`.
+
 ## [0.0.482] — 2026-10-05
 
 **The names a claim reads are Nikaia** (ADR-294, #436 step 4). `names_in` and

@@ -1189,6 +1189,21 @@ pub fn literal_of(value: &crate::build_time::Value) -> Option<String> {
             }
             Some(format!("{name} {{ {} }}", written.join(", ")))
         }
+        // **A list of numbers or `bool`s** (ADR-318 D4), written as the
+        // language writes it; it crosses to a call as the view an option of
+        // `ref Vec[T]` takes (`emit`'s `&vec![…]`). A list of anything else has no
+        // form both sides read alike.
+        Value::List(items)
+            if items
+                .iter()
+                .all(|item| matches!(item, Value::Int(_) | Value::Float(_) | Value::Bool(_))) =>
+        {
+            let mut written = Vec::with_capacity(items.len());
+            for item in items {
+                written.push(literal_of(item)?);
+            }
+            Some(format!("[{}]", written.join(", ")))
+        }
         Value::Variant {
             ty,
             variant,

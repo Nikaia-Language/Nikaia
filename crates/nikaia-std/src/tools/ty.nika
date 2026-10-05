@@ -1310,6 +1310,15 @@ impl Ty {
         return self.clone()
     }
 
+    /// **The value a view is of**: `ref Vec[i64]` is a view of `Vec[i64]`,
+    /// and any other type is itself. What a view of a value is lent (#455).
+    pub fn owned(ref self) -> Ty {
+        return match self {
+            Ty::Named { name, args, view } => if view { Ty::Named { name: name.clone(), args: args.clone(), view: false } } else { self.clone() },
+            else => self.clone(),
+        }
+    }
+
     /// Whether this type **is** a view: whether a second `&` would be written
     /// in front of one (ADR-094 D1). A nullable of a view counts; `ref
     /// Array[T]` is a view of a run (ADR-179 D1) and `ref mut Array[T]` is not,

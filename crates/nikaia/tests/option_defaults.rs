@@ -348,3 +348,36 @@ fn a_refused_default_offers_an_optional_not_a_let() {
         "{help}"
     );
 }
+
+/// **A view of a list takes a list as its default** (ADR-318 D4): computed or
+/// written, recorded as `[…]`, and lent to a call that leaves the option out.
+/// A list the option would own is still `NK1167`.
+#[test]
+fn a_view_of_a_list_takes_a_list_default() {
+    let source = "fn three() -> Vec[i64] {\n\
+         \x20   return [1, 2, 3]\n\
+         }\n\
+         \n\
+         fn total(label: ref String; xs: ref Vec[i64] = three()) -> String {\n\
+         \x20   let mut sum = 0\n\
+         \x20   for x in xs {\n\
+         \x20       sum = sum + x\n\
+         \x20   }\n\
+         \x20   return f\"{label} {sum}\"\n\
+         }\n\
+         \n\
+         fn lit(label: ref String; xs: ref Vec[i64] = [4, 5]) -> String {\n\
+         \x20   return f\"{label} {xs.len()}\"\n\
+         }\n\
+         \n\
+         fn main() {\n\
+         \x20   println(total(\"a\"))\n\
+         \x20   println(lit(\"b\"))\n\
+         \x20   println(total(\"c\"; xs: [10, 20]))\n\
+         }\n";
+    assert_eq!(ran(source), "a 6\nb 2\nc 30\n");
+    let parsed = parse_to_ast(source).expect("the source parses");
+    let ledger = Ledger::infer(&parsed).render();
+    assert!(ledger.contains("xs: ref Vec[i64] = [1, 2, 3]"), "{ledger}");
+    assert!(ledger.contains("xs: ref Vec[i64] = [4, 5]"), "{ledger}");
+}

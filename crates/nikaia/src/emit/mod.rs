@@ -1615,6 +1615,9 @@ struct Emitter<'p> {
     copied_bindings: std::collections::BTreeSet<(usize, String)>,
     /// `check::Checked::some_tails`: a plain arm beside a `null`, by address.
     some_tails: std::collections::BTreeSet<usize>,
+    /// `check::Checked::lent_options`: a value an option of a `ref` type is
+    /// lent, by address (#455).
+    lent_options: std::collections::BTreeSet<usize>,
     /// `check::Checked::wrapped`: a plain value in a nullable slot, by address.
     wrapped: std::collections::BTreeMap<usize, crate::check::Wrap>,
     /// `check::Checked::compared_views` (0.0.238).
@@ -2749,6 +2752,7 @@ impl<'p> Emitter<'p> {
             boxed_reads: propagation.boxed_reads,
             copied_bindings: propagation.copied_bindings,
             some_tails: propagation.some_tails,
+            lent_options: propagation.lent_options,
             wrapped: propagation.wrapped,
             compared_views: propagation.compared_views,
             claims: propagation.claims,
@@ -10007,10 +10011,25 @@ impl<'p> Emitter<'p> {
                     out.push(", ");
                 }
                 match config.iter().find(|a| self.text(a.name) == option.name) {
-                    Some(passed) => self.expr(out, &passed.value, depth, flow)?,
+                    Some(passed) => {
+                        if self
+                            .lent_options
+                            .contains(&(&passed.value as *const Expr as usize))
+                        {
+                            out.push("&");
+                        }
+                        self.expr(out, &passed.value, depth, flow)?
+                    }
                     // Not passed, so the declaration's default is the value.
                     // It is a literal, and Nikaia spells a literal the way the
                     // language below does (ADR-296 D17).
+                    // A list crosses as the view the parameter is
+                    // (ADR-318 D4): `[4, 5]` for a `ref Vec[i64]` is a list
+                    // lent for the call, which a view of a slice takes too.
+                    None if option.default.starts_with('[') && option.ty.is_a_view() => {
+                        out.push("&vec!");
+                        out.push(&option.default);
+                    }
                     None => out.push(&option.default),
                 }
             }

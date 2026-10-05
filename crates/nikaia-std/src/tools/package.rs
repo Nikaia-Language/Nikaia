@@ -16835,6 +16835,12 @@ impl Ty {
         }
         self.clone()
     }
+    pub fn owned(&self) -> Ty {
+        match self {
+            Ty::Named { name, args, view } => { let view = *view; if view { Ty::Named { name: name.to_owned(), args: args.to_owned(), view: false } } else { self.clone() } },
+            _ => self.clone(),
+        }
+    }
     pub fn is_a_view(&self) -> bool {
         match self {
             Ty::Named { view, .. } => { let view = *view; view },
