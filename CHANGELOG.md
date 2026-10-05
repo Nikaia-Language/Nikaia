@@ -4,6 +4,16 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.494] — 2026-10-05
+
+**What the prover asks the solver is Nikaia** (ADR-294, #436 step 4).
+`tools/prover_solver.nika` holds the two questions behind a refutation:
+`refuting_values`, the values that show a claim false every time it is
+reached, and `breaking_values`, a state that reaches a claim and makes it
+false. The solver stays `nikaia-logic`, reached through two callbacks that
+read the walk's arena - `ask` (a `SolverAnswer`) and `model`. Every bench
+and example lowers byte for byte as before.
+
 ## [0.0.493] — 2026-10-05
 
 **A list a function value only reads is a slice** (#458). A `ref Vec[T]`

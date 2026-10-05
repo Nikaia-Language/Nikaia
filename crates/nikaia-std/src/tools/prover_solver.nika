@@ -1,0 +1,67 @@
+// crates/nikaia-std/src/tools/prover_solver.nika
+//
+// **What the prover asks the solver** (ADR-269 D8, ADR-270 D3-D5), moved
+// from the compiler's `prove` (ADR-294, #436 step 4). The solver itself is
+// `nikaia-logic`, reached through two callbacks that read the walk's arena:
+// `ask`, whether facts imply a goal with a checked certificate, and
+// `model`, values that make the facts true and the goal false, checked by
+// evaluating them.
+
+use std::collections
+
+/// What the solver says to one question.
+pub enum SolverAnswer {
+    /// Shown, with a certificate that was checked.
+    Proved,
+    /// The certificate was rejected, for the reason given.
+    Rejected(String),
+    /// Not shown.
+    NotProved,
+}
+
+/// **The values that show a claim false every time it is reached**
+/// (ADR-269 D8): the solver proves, with a checked certificate, that the
+/// facts rule the claim out - so it is false in every state the program
+/// reaches it in - and a model of the facts, checked by evaluating it, gives
+/// values for the claim's names. A model alone would not do: the facts are
+/// true but not all that is true, so a value they allow need not be one the
+/// program reaches. Nothing where either is missing.
+pub fn refuting_values(mut arena: TermArena, facts: ref Vec[i64], claim: i64, ask: fn(ref TermArena, ref Vec[i64], i64) -> SolverAnswer sync, model: fn(ref TermArena, ref Vec[i64], i64) -> collections::BTreeMap[String, i64]? sync) -> collections::BTreeMap[String, i64]? {
+    let negation = arena.not(claim)
+    match ask(arena, facts, negation) {
+        SolverAnswer::Proved => {},
+        else => return null,
+    }
+    let falsum = arena.boolean(false)
+    let values = model(arena, facts, falsum) ?? return null
+    let mut names: collections::BTreeSet[String] = collections::BTreeSet()
+    arena.variables(claim, names)
+    return values_of(names, values)
+}
+
+/// **Values that reach a claim and make it false** (ADR-269 D8), where it
+/// is not false every time: a model of the facts and the claim's negation,
+/// checked by evaluating it, read where the facts are exactly what reaches
+/// here and pin every name the claim depends on (`ProverScope::pinned_names`).
+/// Then the model is a state the program reaches, unless it stops or leaves
+/// before. Every name the state is made of is given, so that a loop's counter
+/// is shown beside what was computed from it. Nothing everywhere else.
+pub fn breaking_values(mut arena: TermArena, scope: ref ProverScope, claim: i64, model: fn(ref TermArena, ref Vec[i64], i64) -> collections::BTreeMap[String, i64]? sync) -> collections::BTreeMap[String, i64]? {
+    let names = scope.pinned_names(arena, claim) ?? return null
+    let values = model(arena, scope.facts, claim) ?? return null
+    let shown = values_of(names, values)
+    if shown.is_empty() {
+        return null
+    }
+    return shown
+}
+
+/// Each of `names` the model gives a value, with it.
+fn values_of(names: ref collections::BTreeSet[String], values: ref collections::BTreeMap[String, i64]) -> collections::BTreeMap[String, i64] {
+    let mut shown: collections::BTreeMap[String, i64] = collections::BTreeMap()
+    for name in names {
+        let value = values[name] ?? continue
+        shown.insert(name.clone(), value)
+    }
+    return shown
+}

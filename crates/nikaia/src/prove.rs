@@ -234,6 +234,7 @@ pub fn prove(
 // **The claims carried between functions** are `tools/prover_claims.nika`
 // (ADR-294, #436).
 use nikaia_std::tools::prover_claims::{CarriedFrom, Foreign, PostClaim, PreClaim, Precondition};
+use nikaia_std::tools::prover_solver::{self, SolverAnswer};
 use nikaia_std::tools::prover_state::ProverState;
 
 struct Prover<'a> {
@@ -1536,43 +1537,25 @@ impl<'a> Prover<'a> {
     }
 
     /// The values that show a claim false every time it is reached
-    /// (ADR-269 D8): the solver proves, with a checked certificate, that the
-    /// facts rule the claim out - so it is false in every state the program
-    /// reaches it in - and a model of the facts, checked by evaluating it,
-    /// gives values for the claim's names. A model alone would not do: the
-    /// facts are true but not all that is true, so a value they allow need not
-    /// be one the program reaches. `None` where either is missing.
+    /// (`prover_solver::refuting_values`).
     fn refutes(&mut self, facts: &[i64], claim: i64) -> Option<BTreeMap<String, i64>> {
-        let negation = self.arena.not(claim);
-        self.proves(facts, negation).ok()?;
-        let falsum = self.arena.bool(false);
-        let model = self.arena.query(facts, falsum, refuted)?;
-        let mut names = BTreeSet::new();
-        self.arena.variables(claim, &mut names);
-        let values: BTreeMap<String, i64> = names
-            .into_iter()
-            .filter_map(|n| Some((n.clone(), *model.values.get(&n)?)))
-            .collect();
-        Some(values)
+        let Terms { held, copy } = &mut self.arena;
+        prover_solver::refuting_values(
+            held,
+            facts,
+            claim,
+            &|arena, facts, goal| answer_of(copy, arena, facts, goal),
+            &|arena, facts, goal| model_of(copy, arena, facts, goal),
+        )
     }
 
-    /// **Values that reach a claim and make it false** (ADR-269 D8), where
-    /// it is not false every time: a model of the facts and the claim's
-    /// negation, checked by evaluating it, read where the facts are exactly
-    /// what reaches here (`Scope::exact`) and pin every name the claim
-    /// depends on - no parameter, no call's result, nothing they lean on.
-    /// Then the model is a state the program reaches, unless it stops or
-    /// leaves before. `None` everywhere else.
+    /// **Values that reach a claim and make it false**
+    /// (`prover_solver::breaking_values`).
     fn breaks_when(&mut self, scope: &Scope, claim: i64) -> Option<BTreeMap<String, i64>> {
-        let names = scope.pinned_names(&self.arena.held, claim)?;
-        let model = self.arena.query(&scope.facts, claim, refuted)?;
-        // Every name the state is made of, so that a loop's counter is
-        // shown beside what was computed from it.
-        let values: BTreeMap<String, i64> = names
-            .into_iter()
-            .filter_map(|n| Some((n.clone(), *model.values.get(&n)?)))
-            .collect();
-        (!values.is_empty()).then_some(values)
+        let Terms { held, copy } = &mut self.arena;
+        prover_solver::breaking_values(held, scope, claim, &|arena, facts, goal| {
+            model_of(copy, arena, facts, goal)
+        })
     }
 
     /// Whether a call may throw out of the function `at` is, which `throws`:
@@ -1898,49 +1881,13 @@ impl Default for Terms {
 }
 
 impl Terms {
-    /// The solver's question whether `facts` imply `goal`, handed to `ask`,
-    /// once the copy has every node of `held`.
+    /// The solver's question whether `facts` imply `goal`, handed to `ask`.
     fn query<R>(&self, facts: &[i64], goal: i64, ask: impl FnOnce(&Query) -> R) -> R {
-        let mut copy = self.copy.borrow_mut();
-        let SolverCopy { logic, ids } = &mut *copy;
-        for node in &self.held.nodes[ids.len()..] {
-            let at = |i: &i64| ids[*i as usize];
-            let id = match node {
-                SolverTerm::Bool(b) => logic.bool(*b),
-                SolverTerm::Int(n) => logic.int(*n),
-                SolverTerm::Var(name) => logic.var(name),
-                SolverTerm::Add(a, b) => logic.add(at(a), at(b)),
-                SolverTerm::Sub(a, b) => logic.sub(at(a), at(b)),
-                SolverTerm::Neg(a) => logic.neg(at(a)),
-                SolverTerm::Mul(a, b) => logic.mul(at(a), at(b)),
-                SolverTerm::Le(a, b) => logic.le(at(a), at(b)),
-                SolverTerm::Lt(a, b) => logic.lt(at(a), at(b)),
-                SolverTerm::Ge(a, b) => logic.ge(at(a), at(b)),
-                SolverTerm::Gt(a, b) => logic.gt(at(a), at(b)),
-                SolverTerm::Eq(a, b) => logic.eq(at(a), at(b)),
-                SolverTerm::Ne(a, b) => logic.ne(at(a), at(b)),
-                SolverTerm::And(parts) => logic.and(parts.iter().map(at).collect()),
-                SolverTerm::Or(parts) => logic.or(parts.iter().map(at).collect()),
-                SolverTerm::Not(a) => logic.not(at(a)),
-                SolverTerm::Other => logic.bool(false),
-            };
-            ids.push(id);
-        }
-        let id = |at: &i64| ids[*at as usize];
-        let facts: Vec<TermId> = facts.iter().map(id).collect();
-        ask(&Query {
-            arena: logic,
-            facts: &facts,
-            goal: id(&goal),
-        })
+        asked_of(&self.copy, &self.held, facts, goal, ask)
     }
 
     fn var(&mut self, name: &str) -> i64 {
         self.held.var(name)
-    }
-
-    fn bool(&mut self, value: bool) -> i64 {
-        self.held.boolean(value)
     }
 
     fn le(&mut self, a: i64, b: i64) -> i64 {
@@ -1991,6 +1938,73 @@ impl Terms {
     fn built(&mut self, build: impl FnOnce(&mut Vec<SolverTerm>) -> Option<i64>) -> Option<i64> {
         build(&mut self.held.nodes)
     }
+}
+
+/// The solver's question whether `facts` imply `goal`, handed to `ask`,
+/// once `copy` has every node of `held`.
+fn asked_of<R>(
+    copy: &std::cell::RefCell<SolverCopy>,
+    held: &TermArena,
+    facts: &[i64],
+    goal: i64,
+    ask: impl FnOnce(&Query) -> R,
+) -> R {
+    let mut copy = copy.borrow_mut();
+    let SolverCopy { logic, ids } = &mut *copy;
+    for node in &held.nodes[ids.len()..] {
+        let at = |i: &i64| ids[*i as usize];
+        let id = match node {
+            SolverTerm::Bool(b) => logic.bool(*b),
+            SolverTerm::Int(n) => logic.int(*n),
+            SolverTerm::Var(name) => logic.var(name),
+            SolverTerm::Add(a, b) => logic.add(at(a), at(b)),
+            SolverTerm::Sub(a, b) => logic.sub(at(a), at(b)),
+            SolverTerm::Neg(a) => logic.neg(at(a)),
+            SolverTerm::Mul(a, b) => logic.mul(at(a), at(b)),
+            SolverTerm::Le(a, b) => logic.le(at(a), at(b)),
+            SolverTerm::Lt(a, b) => logic.lt(at(a), at(b)),
+            SolverTerm::Ge(a, b) => logic.ge(at(a), at(b)),
+            SolverTerm::Gt(a, b) => logic.gt(at(a), at(b)),
+            SolverTerm::Eq(a, b) => logic.eq(at(a), at(b)),
+            SolverTerm::Ne(a, b) => logic.ne(at(a), at(b)),
+            SolverTerm::And(parts) => logic.and(parts.iter().map(at).collect()),
+            SolverTerm::Or(parts) => logic.or(parts.iter().map(at).collect()),
+            SolverTerm::Not(a) => logic.not(at(a)),
+            SolverTerm::Other => logic.bool(false),
+        };
+        ids.push(id);
+    }
+    let id = |at: &i64| ids[*at as usize];
+    let facts: Vec<TermId> = facts.iter().map(id).collect();
+    ask(&Query {
+        arena: logic,
+        facts: &facts,
+        goal: id(&goal),
+    })
+}
+
+/// What the solver says to `facts` and `goal`, as `prover_solver` reads it.
+fn answer_of(
+    copy: &std::cell::RefCell<SolverCopy>,
+    held: &TermArena,
+    facts: &[i64],
+    goal: i64,
+) -> SolverAnswer {
+    match asked_of(copy, held, facts, goal, crate::proofs::ask) {
+        crate::proofs::Asked::Proved => SolverAnswer::Proved,
+        crate::proofs::Asked::Rejected(why) => SolverAnswer::Rejected(why),
+        crate::proofs::Asked::Refuted(_) | crate::proofs::Asked::Unknown => SolverAnswer::NotProved,
+    }
+}
+
+/// A checked model of `facts` and `goal`'s negation: the values it gives.
+fn model_of(
+    copy: &std::cell::RefCell<SolverCopy>,
+    held: &TermArena,
+    facts: &[i64],
+    goal: i64,
+) -> Option<BTreeMap<String, i64>> {
+    asked_of(copy, held, facts, goal, refuted).map(|model| model.values)
 }
 
 /// A model of a question the solver refutes, checked by evaluating it.

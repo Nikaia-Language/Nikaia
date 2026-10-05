@@ -10676,6 +10676,46 @@ fn ties(read: &collections::BTreeSet<String>, names: &collections::BTreeSet<Stri
 }
 
 
+// --- prover_solver.nika ---
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SolverAnswer {
+    Proved,
+    Rejected(String),
+    NotProved,
+}
+
+pub fn refuting_values(arena: &mut TermArena, facts: &[i64], claim: i64, ask: &impl Fn(&TermArena, &[i64], i64) -> SolverAnswer, model: &impl Fn(&TermArena, &[i64], i64) -> Option<collections::BTreeMap<String, i64>>) -> Option<collections::BTreeMap<String, i64>> {
+    let negation = arena.not(claim);
+    match ask(&arena, facts, negation) {
+        SolverAnswer::Proved => { },
+        _ => return None,
+    }
+    let falsum = arena.boolean(false);
+    let values = match model(&arena, facts, falsum) { Some(__nikaia_value) => __nikaia_value, None => return None };
+    let mut names: collections::BTreeSet<String> = collections::BTreeSet::new();
+    arena.variables(claim, &mut names);
+    Some(values_of(&names, &values))
+}
+
+pub fn breaking_values(arena: &mut TermArena, scope: &ProverScope, claim: i64, model: &impl Fn(&TermArena, &[i64], i64) -> Option<collections::BTreeMap<String, i64>>) -> Option<collections::BTreeMap<String, i64>> {
+    let names = match scope.pinned_names(&arena, claim) { Some(__nikaia_value) => __nikaia_value, None => return None };
+    let values = match model(&arena, &scope.facts, claim) { Some(__nikaia_value) => __nikaia_value, None => return None };
+    let shown = values_of(&names, &values);
+    if shown.is_empty() { return None; }
+    Some(shown)
+}
+
+fn values_of(names: &collections::BTreeSet<String>, values: &collections::BTreeMap<String, i64>) -> collections::BTreeMap<String, i64> {
+    let mut shown: collections::BTreeMap<String, i64> = collections::BTreeMap::new();
+    for name in names.iter() {
+        let value = match *nikaia_std::index::get(&values, name) { Some(__nikaia_value) => nikaia_std::num::value(__nikaia_value), None => continue };
+        shown.insert(name.to_owned(), value);
+    }
+    shown
+}
+
+
 // --- prover_state.nika ---
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -19419,6 +19459,10 @@ pub mod prover_results {
 pub mod prover_scope {
     #[allow(unused_imports)]
     pub use super::{ProverScope, length_of, result_name, precondition_terms};
+}
+pub mod prover_solver {
+    #[allow(unused_imports)]
+    pub use super::{SolverAnswer, refuting_values, breaking_values};
 }
 pub mod prover_state {
     #[allow(unused_imports)]
