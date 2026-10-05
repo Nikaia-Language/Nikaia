@@ -4,6 +4,17 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.478] — 2026-10-05
+
+**What leaves a block is Nikaia** (ADR-294, #436 step 3). `leaves_stmt`,
+`leaves_block` and `leaves_expr` move from `prove.rs` into
+`tools/leaves.nika`. They decide whether a `return`, `break`, `throw`, `?`, a
+counted `continue` or a call that may fail can end what is being proved before
+the code after it runs. The walk keeps `contracts::sync`'s reading of the
+tree exactly: the expressions a statement holds, the holes of its literals
+(handed in, since only the compiler parses them), and then the blocks that
+walk's companion finds. Every bench and example lowers to byte-identical Rust.
+
 ## [0.0.477] — 2026-10-05
 
 **A contract that changed in the breaking direction is said by Nikaia**

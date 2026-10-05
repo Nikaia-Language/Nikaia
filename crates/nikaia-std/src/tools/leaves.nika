@@ -1,0 +1,239 @@
+// crates/nikaia-std/src/tools/leaves.nika
+//
+// **What leaves a block** (ADR-269), moved from the compiler's `prove`
+// (ADR-294, #436 step 3): whether a statement, a block or an expression can
+// end the function, or the loop it stands in, before the code after it runs -
+// a `return`, a `break`, a `throw`, a `?`, a `continue` where it counts, or a
+// call that may fail (`throwing`).
+//
+// It reads the tree as `contracts::sync`'s walk does: every expression a
+// statement holds without going into its blocks, each hole a literal holds
+// (`holes_of`), and then the blocks that walk's companion finds - which is
+// not every block an expression holds, and is kept so, because what the
+// prover believes has to be what it believed.
+
+/// Whether `stmt` can leave before what follows it.
+pub fn leaves_stmt(stmt: ref Stmt, throwing: fn(ref Expr) -> bool sync, holes_of: fn(ref Expr) -> Vec[Expr] sync, with_continue: bool) -> bool {
+    match stmt {
+        Stmt::Return(_) => return true,
+        Stmt::Break => return true,
+        Stmt::Continue if with_continue => return true,
+        else => {},
+    }
+    let found = match stmt {
+        Stmt::Let { value, .. } => leaves_within(value, throwing, holes_of, with_continue),
+        Stmt::Comptime { value, .. } => leaves_within(value, throwing, holes_of, with_continue),
+        Stmt::Assign { target, value, .. } => leaves_within(target, throwing, holes_of, with_continue) || leaves_within(value, throwing, holes_of, with_continue),
+        Stmt::For { iter, .. } => leaves_within(iter, throwing, holes_of, with_continue),
+        Stmt::While { cond, .. } => leaves_within(cond, throwing, holes_of, with_continue),
+        Stmt::Return(value) => maybe_leaves_within(value, throwing, holes_of, with_continue),
+        Stmt::Expr(value) => leaves_within(value, throwing, holes_of, with_continue),
+        else => false,
+    }
+    if found {
+        return true
+    }
+    return match stmt {
+        Stmt::For { body, .. } => leaves_block(body, throwing, holes_of, with_continue),
+        Stmt::While { body, .. } => leaves_block(body, throwing, holes_of, with_continue),
+        Stmt::Let { value, .. } => blocks_leave(value, throwing, holes_of, with_continue),
+        Stmt::Comptime { value, .. } => blocks_leave(value, throwing, holes_of, with_continue),
+        Stmt::Expr(value) => blocks_leave(value, throwing, holes_of, with_continue),
+        Stmt::Assign { target, value, .. } => blocks_leave(target, throwing, holes_of, with_continue) || blocks_leave(value, throwing, holes_of, with_continue),
+        Stmt::Return(value) => maybe_blocks_leave(value, throwing, holes_of, with_continue),
+        else => false,
+    }
+}
+
+/// Whether any statement of `block` can leave.
+pub fn leaves_block(block: ref Block, throwing: fn(ref Expr) -> bool sync, holes_of: fn(ref Expr) -> Vec[Expr] sync, with_continue: bool) -> bool {
+    for stmt in block.stmts {
+        if leaves_stmt(stmt.node, throwing, holes_of, with_continue) {
+            return true
+        }
+    }
+    return false
+}
+
+/// Whether `expr` can leave: an expression in it that does, or a block its
+/// companion walk finds.
+pub fn leaves_expr(expr: ref Expr, throwing: fn(ref Expr) -> bool sync, holes_of: fn(ref Expr) -> Vec[Expr] sync, with_continue: bool) -> bool {
+    return leaves_within(expr, throwing, holes_of, with_continue) || blocks_leave(expr, throwing, holes_of, with_continue)
+}
+
+/// One expression, by itself.
+fn leaves_here(e: ref Expr, throwing: fn(ref Expr) -> bool sync, with_continue: bool) -> bool {
+    return match e {
+        Expr::Throw(_) => true,
+        Expr::Return(_) => true,
+        Expr::Break => true,
+        Expr::Try(_) => true,
+        Expr::Continue => with_continue,
+        Expr::Call { .. } => throwing(e),
+        Expr::MethodCall { .. } => throwing(e),
+        Expr::SafeMethod { .. } => throwing(e),
+        else => false,
+    }
+}
+
+/// **Every expression inside `expr`, itself included, not into its blocks**
+/// - `contracts::sync::visit_expr` - and whether one leaves.
+fn leaves_within(expr: ref Expr, throwing: fn(ref Expr) -> bool sync, holes_of: fn(ref Expr) -> Vec[Expr] sync, with_continue: bool) -> bool {
+    if leaves_here(expr, throwing, with_continue) {
+        return true
+    }
+    for hole in holes_of(expr) {
+        if leaves_within(hole, throwing, holes_of, with_continue) {
+            return true
+        }
+    }
+    return match expr {
+        Expr::Call { func, args, config } => {
+            if leaves_within(func, throwing, holes_of, with_continue) {
+                return true
+            }
+            any_leaves_within(args, throwing, holes_of, with_continue) || config_leaves_within(config, throwing, holes_of, with_continue)
+        },
+        Expr::MethodCall { receiver, args, config, .. } => leaves_within(receiver, throwing, holes_of, with_continue) || any_leaves_within(args, throwing, holes_of, with_continue) || config_leaves_within(config, throwing, holes_of, with_continue),
+        Expr::SafeMethod { receiver, args, config, .. } => leaves_within(receiver, throwing, holes_of, with_continue) || any_leaves_within(args, throwing, holes_of, with_continue) || config_leaves_within(config, throwing, holes_of, with_continue),
+        Expr::Binary { lhs, rhs, .. } => leaves_within(lhs, throwing, holes_of, with_continue) || leaves_within(rhs, throwing, holes_of, with_continue),
+        Expr::Unary { expr, .. } => leaves_within(expr, throwing, holes_of, with_continue),
+        Expr::Try(inner) => leaves_within(inner, throwing, holes_of, with_continue),
+        Expr::Throw(inner) => leaves_within(inner, throwing, holes_of, with_continue),
+        Expr::Cast { expr, .. } => leaves_within(expr, throwing, holes_of, with_continue),
+        Expr::Field { base, .. } => leaves_within(base, throwing, holes_of, with_continue),
+        Expr::SafeField { base, .. } => leaves_within(base, throwing, holes_of, with_continue),
+        Expr::Index { base, index } => leaves_within(base, throwing, holes_of, with_continue) || leaves_within(index, throwing, holes_of, with_continue),
+        Expr::Range { start, end, .. } => leaves_within(start, throwing, holes_of, with_continue) || leaves_within(end, throwing, holes_of, with_continue),
+        Expr::Tuple(parts) => any_leaves_within(parts, throwing, holes_of, with_continue),
+        Expr::Coalesce { value, fallback } => leaves_within(value, throwing, holes_of, with_continue) || leaves_within(fallback, throwing, holes_of, with_continue),
+        Expr::TryCatch { expr, .. } => leaves_within(expr, throwing, holes_of, with_continue),
+        Expr::If { cond, .. } => leaves_within(cond, throwing, holes_of, with_continue),
+        Expr::Match { value, arms } => {
+            if leaves_within(value, throwing, holes_of, with_continue) {
+                return true
+            }
+            for arm in arms {
+                if maybe_leaves_within(arm.guard, throwing, holes_of, with_continue) || leaves_within(arm.body, throwing, holes_of, with_continue) {
+                    return true
+                }
+            }
+            false
+        },
+        Expr::StructLit { fields, .. } => fields_leave_within(fields, throwing, holes_of, with_continue),
+        Expr::ListLit { items, .. } => any_leaves_within(items, throwing, holes_of, with_continue),
+        Expr::With { base, fields, .. } => leaves_within(base, throwing, holes_of, with_continue) || fields_leave_within(fields, throwing, holes_of, with_continue),
+        Expr::Return(value) => maybe_leaves_within(value, throwing, holes_of, with_continue),
+        Expr::Select(arms) => {
+            for arm in arms {
+                if leaves_within(arm.value, throwing, holes_of, with_continue) {
+                    return true
+                }
+            }
+            false
+        },
+        else => false,
+    }
+}
+
+/// [`leaves_within`] of an expression that may not be there.
+fn maybe_leaves_within(expr: ref Expr?, throwing: fn(ref Expr) -> bool sync, holes_of: fn(ref Expr) -> Vec[Expr] sync, with_continue: bool) -> bool {
+    let present = expr ?? return false
+    return leaves_within(present, throwing, holes_of, with_continue)
+}
+
+/// [`blocks_leave`] of an expression that may not be there.
+fn maybe_blocks_leave(expr: ref Expr?, throwing: fn(ref Expr) -> bool sync, holes_of: fn(ref Expr) -> Vec[Expr] sync, with_continue: bool) -> bool {
+    let present = expr ?? return false
+    return blocks_leave(present, throwing, holes_of, with_continue)
+}
+
+fn any_leaves_within(exprs: ref Vec[Expr], throwing: fn(ref Expr) -> bool sync, holes_of: fn(ref Expr) -> Vec[Expr] sync, with_continue: bool) -> bool {
+    for e in exprs {
+        if leaves_within(e, throwing, holes_of, with_continue) {
+            return true
+        }
+    }
+    return false
+}
+
+fn config_leaves_within(config: ref Vec[ConfigArg], throwing: fn(ref Expr) -> bool sync, holes_of: fn(ref Expr) -> Vec[Expr] sync, with_continue: bool) -> bool {
+    for c in config {
+        if leaves_within(c.value, throwing, holes_of, with_continue) {
+            return true
+        }
+    }
+    return false
+}
+
+fn fields_leave_within(fields: ref Vec[FieldInit], throwing: fn(ref Expr) -> bool sync, holes_of: fn(ref Expr) -> Vec[Expr] sync, with_continue: bool) -> bool {
+    for field in fields {
+        if maybe_leaves_within(field.value, throwing, holes_of, with_continue) {
+            return true
+        }
+    }
+    return false
+}
+
+/// **The blocks `expr` holds as `contracts::sync::visit_expr_blocks` finds
+/// them** - its own, an `if`'s and a `match`'s, a `select`'s bodies, and the
+/// lambdas a call is handed - and whether one leaves.
+fn blocks_leave(expr: ref Expr, throwing: fn(ref Expr) -> bool sync, holes_of: fn(ref Expr) -> Vec[Expr] sync, with_continue: bool) -> bool {
+    return match expr {
+        Expr::Block(block) => leaves_block(block, throwing, holes_of, with_continue),
+        Expr::Unsafe(block) => leaves_block(block, throwing, holes_of, with_continue),
+        Expr::Overlap(block) => leaves_block(block, throwing, holes_of, with_continue),
+        Expr::Closure { body, .. } => leaves_block(body, throwing, holes_of, with_continue),
+        Expr::Call { func, args, config } => {
+            if blocks_leave(func, throwing, holes_of, with_continue) {
+                return true
+            }
+            any_blocks_leave(args, throwing, holes_of, with_continue) || config_blocks_leave(config, throwing, holes_of, with_continue)
+        },
+        Expr::MethodCall { receiver, args, config, .. } => blocks_leave(receiver, throwing, holes_of, with_continue) || any_blocks_leave(args, throwing, holes_of, with_continue) || config_blocks_leave(config, throwing, holes_of, with_continue),
+        Expr::SafeMethod { receiver, args, config, .. } => blocks_leave(receiver, throwing, holes_of, with_continue) || any_blocks_leave(args, throwing, holes_of, with_continue) || config_blocks_leave(config, throwing, holes_of, with_continue),
+        Expr::If { then_branch, else_branch, .. } => {
+            if leaves_block(then_branch, throwing, holes_of, with_continue) {
+                return true
+            }
+            let otherwise = else_branch ?? return false
+            leaves_block(otherwise, throwing, holes_of, with_continue)
+        },
+        Expr::TryCatch { expr, handler } => blocks_leave(expr, throwing, holes_of, with_continue) || leaves_block(handler, throwing, holes_of, with_continue),
+        Expr::Match { arms, .. } => {
+            for arm in arms {
+                if blocks_leave(arm.body, throwing, holes_of, with_continue) {
+                    return true
+                }
+            }
+            false
+        },
+        Expr::Select(arms) => {
+            for arm in arms {
+                if leaves_block(arm.body, throwing, holes_of, with_continue) {
+                    return true
+                }
+            }
+            false
+        },
+        else => false,
+    }
+}
+
+fn any_blocks_leave(exprs: ref Vec[Expr], throwing: fn(ref Expr) -> bool sync, holes_of: fn(ref Expr) -> Vec[Expr] sync, with_continue: bool) -> bool {
+    for e in exprs {
+        if blocks_leave(e, throwing, holes_of, with_continue) {
+            return true
+        }
+    }
+    return false
+}
+
+fn config_blocks_leave(config: ref Vec[ConfigArg], throwing: fn(ref Expr) -> bool sync, holes_of: fn(ref Expr) -> Vec[Expr] sync, with_continue: bool) -> bool {
+    for c in config {
+        if blocks_leave(c.value, throwing, holes_of, with_continue) {
+            return true
+        }
+    }
+    return false
+}

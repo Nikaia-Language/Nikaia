@@ -6420,6 +6420,168 @@ fn resolved_callee(func: &Expr, interner: &winnow_grammar::InternerContext, own:
 fn name_as_it_is(name: &str) -> String { name.to_owned() }
 
 
+// --- leaves.nika ---
+
+pub fn leaves_stmt(stmt: &Stmt, throwing: &impl Fn(&Expr) -> bool, holes_of: &impl Fn(&Expr) -> Vec<Expr>, with_continue: bool) -> bool {
+    match stmt {
+        Stmt::Return(_) => return true,
+        Stmt::Break => return true,
+        Stmt::Continue if with_continue => return true,
+        _ => { },
+    }
+    let found = match stmt {
+        Stmt::Let { value, .. } => leaves_within(value, throwing, holes_of, with_continue),
+        Stmt::Comptime { value, .. } => leaves_within(value, throwing, holes_of, with_continue),
+        Stmt::Assign { target, value, .. } => leaves_within(target, throwing, holes_of, with_continue) || leaves_within(value, throwing, holes_of, with_continue),
+        Stmt::For { iter, .. } => leaves_within(iter, throwing, holes_of, with_continue),
+        Stmt::While { cond, .. } => leaves_within(cond, throwing, holes_of, with_continue),
+        Stmt::Return(value) => maybe_leaves_within((value).as_ref(), throwing, holes_of, with_continue),
+        Stmt::Expr(value) => leaves_within(value, throwing, holes_of, with_continue),
+        _ => false,
+    };
+    if found { return true; }
+    match stmt {
+        Stmt::For { body, .. } => leaves_block(body, throwing, holes_of, with_continue),
+        Stmt::While { body, .. } => leaves_block(body, throwing, holes_of, with_continue),
+        Stmt::Let { value, .. } => blocks_leave(value, throwing, holes_of, with_continue),
+        Stmt::Comptime { value, .. } => blocks_leave(value, throwing, holes_of, with_continue),
+        Stmt::Expr(value) => blocks_leave(value, throwing, holes_of, with_continue),
+        Stmt::Assign { target, value, .. } => blocks_leave(target, throwing, holes_of, with_continue) || blocks_leave(value, throwing, holes_of, with_continue),
+        Stmt::Return(value) => maybe_blocks_leave((value).as_ref(), throwing, holes_of, with_continue),
+        _ => false,
+    }
+}
+
+pub fn leaves_block(block: &Block, throwing: &impl Fn(&Expr) -> bool, holes_of: &impl Fn(&Expr) -> Vec<Expr>, with_continue: bool) -> bool {
+    for stmt in block.stmts.iter() { if leaves_stmt(&stmt.node, throwing, holes_of, with_continue) { return true; } }
+    false
+}
+
+pub fn leaves_expr(expr: &Expr, throwing: &impl Fn(&Expr) -> bool, holes_of: &impl Fn(&Expr) -> Vec<Expr>, with_continue: bool) -> bool { leaves_within(expr, throwing, holes_of, with_continue) || blocks_leave(expr, throwing, holes_of, with_continue) }
+
+fn leaves_here(e: &Expr, throwing: &impl Fn(&Expr) -> bool, with_continue: bool) -> bool {
+    match e {
+        Expr::Throw(_) => true,
+        Expr::Return(_) => true,
+        Expr::Break => true,
+        Expr::Try(_) => true,
+        Expr::Continue => with_continue,
+        Expr::Call { .. } => throwing(e),
+        Expr::MethodCall { .. } => throwing(e),
+        Expr::SafeMethod { .. } => throwing(e),
+        _ => false,
+    }
+}
+
+fn leaves_within(expr: &Expr, throwing: &impl Fn(&Expr) -> bool, holes_of: &impl Fn(&Expr) -> Vec<Expr>, with_continue: bool) -> bool {
+    if leaves_here(expr, throwing, with_continue) { return true; }
+    for hole in holes_of(expr) { if leaves_within(&hole, throwing, holes_of, with_continue) { return true; } }
+    match expr {
+        Expr::Call { func, args, config } => {
+            let func = nikaia_std::boxed::open(func);
+            if leaves_within(func, throwing, holes_of, with_continue) { return true; }
+            any_leaves_within(args, throwing, holes_of, with_continue) || config_leaves_within(config, throwing, holes_of, with_continue)
+        },
+        Expr::MethodCall { receiver, args, config, .. } => { let receiver = nikaia_std::boxed::open(receiver); leaves_within(receiver, throwing, holes_of, with_continue) || any_leaves_within(args, throwing, holes_of, with_continue) || config_leaves_within(config, throwing, holes_of, with_continue) },
+        Expr::SafeMethod { receiver, args, config, .. } => { let receiver = nikaia_std::boxed::open(receiver); leaves_within(receiver, throwing, holes_of, with_continue) || any_leaves_within(args, throwing, holes_of, with_continue) || config_leaves_within(config, throwing, holes_of, with_continue) },
+        Expr::Binary { lhs, rhs, .. } => { let lhs = nikaia_std::boxed::open(lhs); let rhs = nikaia_std::boxed::open(rhs); leaves_within(lhs, throwing, holes_of, with_continue) || leaves_within(rhs, throwing, holes_of, with_continue) },
+        Expr::Unary { expr, .. } => { let expr = nikaia_std::boxed::open(expr); leaves_within(expr, throwing, holes_of, with_continue) },
+        Expr::Try(inner) => { let inner = nikaia_std::boxed::open(inner); leaves_within(inner, throwing, holes_of, with_continue) },
+        Expr::Throw(inner) => { let inner = nikaia_std::boxed::open(inner); leaves_within(inner, throwing, holes_of, with_continue) },
+        Expr::Cast { expr, .. } => { let expr = nikaia_std::boxed::open(expr); leaves_within(expr, throwing, holes_of, with_continue) },
+        Expr::Field { base, .. } => { let base = nikaia_std::boxed::open(base); leaves_within(base, throwing, holes_of, with_continue) },
+        Expr::SafeField { base, .. } => { let base = nikaia_std::boxed::open(base); leaves_within(base, throwing, holes_of, with_continue) },
+        Expr::Index { base, index } => { let base = nikaia_std::boxed::open(base); let index = nikaia_std::boxed::open(index); leaves_within(base, throwing, holes_of, with_continue) || leaves_within(index, throwing, holes_of, with_continue) },
+        Expr::Range { start, end, .. } => { let start = nikaia_std::boxed::open(start); let end = nikaia_std::boxed::open(end); leaves_within(start, throwing, holes_of, with_continue) || leaves_within(end, throwing, holes_of, with_continue) },
+        Expr::Tuple(parts) => any_leaves_within(parts, throwing, holes_of, with_continue),
+        Expr::Coalesce { value, fallback } => { let value = nikaia_std::boxed::open(value); let fallback = nikaia_std::boxed::open(fallback); leaves_within(value, throwing, holes_of, with_continue) || leaves_within(fallback, throwing, holes_of, with_continue) },
+        Expr::TryCatch { expr, .. } => { let expr = nikaia_std::boxed::open(expr); leaves_within(expr, throwing, holes_of, with_continue) },
+        Expr::If { cond, .. } => { let cond = nikaia_std::boxed::open(cond); leaves_within(cond, throwing, holes_of, with_continue) },
+        Expr::Match { value, arms } => {
+            let value = nikaia_std::boxed::open(value);
+            if leaves_within(value, throwing, holes_of, with_continue) { return true; }
+            for arm in arms.iter() { if maybe_leaves_within((arm.guard).as_ref(), throwing, holes_of, with_continue) || leaves_within(&arm.body, throwing, holes_of, with_continue) { return true; } }
+            false
+        },
+        Expr::StructLit { fields, .. } => fields_leave_within(fields, throwing, holes_of, with_continue),
+        Expr::ListLit { items, .. } => any_leaves_within(items, throwing, holes_of, with_continue),
+        Expr::With { base, fields, .. } => { let base = nikaia_std::boxed::open(base); leaves_within(base, throwing, holes_of, with_continue) || fields_leave_within(fields, throwing, holes_of, with_continue) },
+        Expr::Return(value) => { let value = nikaia_std::boxed::open(value); maybe_leaves_within((value).as_ref(), throwing, holes_of, with_continue) },
+        Expr::Select(arms) => {
+            for arm in arms.iter() { if leaves_within(&arm.value, throwing, holes_of, with_continue) { return true; } }
+            false
+        },
+        _ => false,
+    }
+}
+
+fn maybe_leaves_within(expr: Option<&Expr>, throwing: &impl Fn(&Expr) -> bool, holes_of: &impl Fn(&Expr) -> Vec<Expr>, with_continue: bool) -> bool {
+    let present = match expr { Some(__nikaia_value) => __nikaia_value, None => return false };
+    leaves_within(present, throwing, holes_of, with_continue)
+}
+
+fn maybe_blocks_leave(expr: Option<&Expr>, throwing: &impl Fn(&Expr) -> bool, holes_of: &impl Fn(&Expr) -> Vec<Expr>, with_continue: bool) -> bool {
+    let present = match expr { Some(__nikaia_value) => __nikaia_value, None => return false };
+    blocks_leave(present, throwing, holes_of, with_continue)
+}
+
+fn any_leaves_within(exprs: &[Expr], throwing: &impl Fn(&Expr) -> bool, holes_of: &impl Fn(&Expr) -> Vec<Expr>, with_continue: bool) -> bool {
+    for e in exprs.iter() { if leaves_within(e, throwing, holes_of, with_continue) { return true; } }
+    false
+}
+
+fn config_leaves_within(config: &[ConfigArg], throwing: &impl Fn(&Expr) -> bool, holes_of: &impl Fn(&Expr) -> Vec<Expr>, with_continue: bool) -> bool {
+    for c in config.iter() { if leaves_within(&c.value, throwing, holes_of, with_continue) { return true; } }
+    false
+}
+
+fn fields_leave_within(fields: &[FieldInit], throwing: &impl Fn(&Expr) -> bool, holes_of: &impl Fn(&Expr) -> Vec<Expr>, with_continue: bool) -> bool {
+    for field in fields.iter() { if maybe_leaves_within((field.value).as_ref(), throwing, holes_of, with_continue) { return true; } }
+    false
+}
+
+fn blocks_leave(expr: &Expr, throwing: &impl Fn(&Expr) -> bool, holes_of: &impl Fn(&Expr) -> Vec<Expr>, with_continue: bool) -> bool {
+    match expr {
+        Expr::Block(block) => leaves_block(block, throwing, holes_of, with_continue),
+        Expr::Unsafe(block) => leaves_block(block, throwing, holes_of, with_continue),
+        Expr::Overlap(block) => leaves_block(block, throwing, holes_of, with_continue),
+        Expr::Closure { body, .. } => leaves_block(body, throwing, holes_of, with_continue),
+        Expr::Call { func, args, config } => {
+            let func = nikaia_std::boxed::open(func);
+            if blocks_leave(func, throwing, holes_of, with_continue) { return true; }
+            any_blocks_leave(args, throwing, holes_of, with_continue) || config_blocks_leave(config, throwing, holes_of, with_continue)
+        },
+        Expr::MethodCall { receiver, args, config, .. } => { let receiver = nikaia_std::boxed::open(receiver); blocks_leave(receiver, throwing, holes_of, with_continue) || any_blocks_leave(args, throwing, holes_of, with_continue) || config_blocks_leave(config, throwing, holes_of, with_continue) },
+        Expr::SafeMethod { receiver, args, config, .. } => { let receiver = nikaia_std::boxed::open(receiver); blocks_leave(receiver, throwing, holes_of, with_continue) || any_blocks_leave(args, throwing, holes_of, with_continue) || config_blocks_leave(config, throwing, holes_of, with_continue) },
+        Expr::If { then_branch, else_branch, .. } => {
+            if leaves_block(then_branch, throwing, holes_of, with_continue) { return true; }
+            let otherwise = match else_branch { Some(__nikaia_value) => __nikaia_value, None => return false };
+            leaves_block(otherwise, throwing, holes_of, with_continue)
+        },
+        Expr::TryCatch { expr, handler } => { let expr = nikaia_std::boxed::open(expr); blocks_leave(expr, throwing, holes_of, with_continue) || leaves_block(handler, throwing, holes_of, with_continue) },
+        Expr::Match { arms, .. } => {
+            for arm in arms.iter() { if blocks_leave(&arm.body, throwing, holes_of, with_continue) { return true; } }
+            false
+        },
+        Expr::Select(arms) => {
+            for arm in arms.iter() { if leaves_block(&arm.body, throwing, holes_of, with_continue) { return true; } }
+            false
+        },
+        _ => false,
+    }
+}
+
+fn any_blocks_leave(exprs: &[Expr], throwing: &impl Fn(&Expr) -> bool, holes_of: &impl Fn(&Expr) -> Vec<Expr>, with_continue: bool) -> bool {
+    for e in exprs.iter() { if blocks_leave(e, throwing, holes_of, with_continue) { return true; } }
+    false
+}
+
+fn config_blocks_leave(config: &[ConfigArg], throwing: &impl Fn(&Expr) -> bool, holes_of: &impl Fn(&Expr) -> Vec<Expr>, with_continue: bool) -> bool {
+    for c in config.iter() { if blocks_leave(&c.value, throwing, holes_of, with_continue) { return true; } }
+    false
+}
+
+
 // --- ledger.nika ---
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -18261,6 +18423,10 @@ pub mod keep {
 pub mod keeps {
     #[allow(unused_imports)]
     pub use super::{KeepsBody, uses_in};
+}
+pub mod leaves {
+    #[allow(unused_imports)]
+    pub use super::{leaves_stmt, leaves_block, leaves_expr};
 }
 pub mod ledger {
     #[allow(unused_imports)]

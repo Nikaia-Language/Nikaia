@@ -2018,28 +2018,21 @@ impl<'a> Prover<'a> {
 /// **Whether a statement may leave the block it stands in** for some states:
 /// a `return`, a `break`, a `throw`, a `?`, a `continue` where `with_continue`
 /// says it counts, and a call `throwing` says may throw. Inside nested
-/// blocks too, lambdas included: it only ever costs a warning.
+/// blocks too, lambdas included: it only ever costs a warning. The walk is
+/// `tools/leaves.nika` (ADR-294, #436); this hands it the holes a literal
+/// holds, which only the compiler can parse.
 fn leaves_stmt(
     parsed: &Parsed,
     stmt: &Stmt,
     throwing: &dyn Fn(&Expr) -> bool,
     with_continue: bool,
 ) -> bool {
-    match stmt {
-        Stmt::Return(_) | Stmt::Break => return true,
-        Stmt::Continue if with_continue => return true,
-        _ => {}
-    }
-    let mut leaves = false;
-    crate::contracts::sync::visit_stmt(parsed, stmt, &mut |e| {
-        leaves |= leaves_here(e, throwing, with_continue);
-    });
-    let mut blocks = Vec::new();
-    crate::contracts::sync::visit_stmt_blocks(stmt, &mut |b| blocks.push(b));
-    leaves
-        || blocks
-            .into_iter()
-            .any(|b| leaves_block(parsed, b, throwing, with_continue))
+    nikaia_std::tools::leaves::leaves_stmt(
+        stmt,
+        &|e| throwing(e),
+        &|e| crate::emit::literal_expressions(parsed, e),
+        with_continue,
+    )
 }
 
 fn leaves_block(
@@ -2048,10 +2041,12 @@ fn leaves_block(
     throwing: &dyn Fn(&Expr) -> bool,
     with_continue: bool,
 ) -> bool {
-    block
-        .stmts
-        .iter()
-        .any(|s| leaves_stmt(parsed, &s.node, throwing, with_continue))
+    nikaia_std::tools::leaves::leaves_block(
+        block,
+        &|e| throwing(e),
+        &|e| crate::emit::literal_expressions(parsed, e),
+        with_continue,
+    )
 }
 
 fn leaves_expr(
@@ -2060,25 +2055,12 @@ fn leaves_expr(
     throwing: &dyn Fn(&Expr) -> bool,
     with_continue: bool,
 ) -> bool {
-    let mut leaves = false;
-    crate::contracts::sync::visit_expr(parsed, expr, &mut |e| {
-        leaves |= leaves_here(e, throwing, with_continue);
-    });
-    let mut blocks = Vec::new();
-    crate::contracts::sync::visit_expr_blocks(expr, &mut |b| blocks.push(b));
-    leaves
-        || blocks
-            .into_iter()
-            .any(|b| leaves_block(parsed, b, throwing, with_continue))
-}
-
-fn leaves_here(e: &Expr, throwing: &dyn Fn(&Expr) -> bool, with_continue: bool) -> bool {
-    match e {
-        Expr::Throw(_) | Expr::Return(_) | Expr::Break | Expr::Try(_) => true,
-        Expr::Continue => with_continue,
-        Expr::Call { .. } | Expr::MethodCall { .. } | Expr::SafeMethod { .. } => throwing(e),
-        _ => false,
-    }
+    nikaia_std::tools::leaves::leaves_expr(
+        expr,
+        &|e| throwing(e),
+        &|e| crate::emit::literal_expressions(parsed, e),
+        with_continue,
+    )
 }
 
 /// Whether two walks found the same preconditions, claim by claim.
