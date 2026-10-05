@@ -1249,6 +1249,7 @@ fn walked<'a>(
         beside,
         reads,
         said_rings: BTreeSet::new(),
+        computing_default: false,
         own,
         library,
         structs: BTreeMap::new(),
@@ -2677,6 +2678,10 @@ struct Checker<'a> {
     /// loop from a different corner — which is one mistake said as many times
     /// as it has members.
     said_rings: BTreeSet<Vec<String>>,
+    /// **The option whose default is being computed** (ADR-318 D7): a
+    /// refusal's way out for it is a `T?`, not a `let` in place of a
+    /// `comptime` it never was.
+    computing_default: bool,
     /// This unit's own contracts, inferred from the source being checked.
     own: &'a Ledger,
     /// `std`'s, as `std` ships them.
@@ -6504,7 +6509,9 @@ impl<'a> Checker<'a> {
         {
             return;
         }
+        self.computing_default = true;
         let (value, said) = self.build_time_value(&option.default, &name, &span);
+        self.computing_default = false;
         if said {
             return;
         }
@@ -18454,10 +18461,16 @@ impl<'a> Checker<'a> {
             // The second half is the generic refusal's own sentence, with the
             // reader's name in it: a value meant to be computed while the
             // program runs was never a constant (ADR-287 D4).
-            help: Some(format!(
-                "{}. Or write `let {bound} = …` to compute it while the program runs.",
-                sentence(way_out)
-            )),
+            help: Some(match self.computing_default {
+                true => format!(
+                    "{}. Or make `{bound}` a `T?` and compute it in the body.",
+                    sentence(way_out)
+                ),
+                false => format!(
+                    "{}. Or write `let {bound} = …` to compute it while the program runs.",
+                    sentence(way_out)
+                ),
+            }),
             labels: Vec::new(),
         });
     }
@@ -20176,10 +20189,16 @@ impl<'a> Checker<'a> {
                  the program can run."
                     .to_string(),
             ],
-            help: Some(format!(
-                "Call it while the program runs, with `let` instead of `comptime`, or \
-                 make `{callee}` `sync` so it touches nothing outside the program."
-            )),
+            help: Some(match self.computing_default {
+                true => format!(
+                    "Make `{callee}` `sync` so it touches nothing outside the program, or \
+                     make the option a `T?` and call it in the body."
+                ),
+                false => format!(
+                    "Call it while the program runs, with `let` instead of `comptime`, or \
+                     make `{callee}` `sync` so it touches nothing outside the program."
+                ),
+            }),
             labels: Vec::new(),
         });
     }

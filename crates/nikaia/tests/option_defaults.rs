@@ -314,3 +314,37 @@ fn a_computed_default_reaches_another_package() {
         "{ledger}"
     );
 }
+
+/// **The way out of a refused default is a `T?`** (D7): an option was never
+/// a `comptime`, so *write `let` instead* is not something its author can do.
+/// `30.seconds()` meets `std`'s Rust half (step 8), and the note names it.
+#[test]
+fn a_refused_default_offers_an_optional_not_a_let() {
+    let source = "use std::time\n\
+         \n\
+         fn wait(label: ref String; timeout: time::Duration = 30.seconds()) -> i64 {\n\
+         \x20   return timeout.in_seconds()\n\
+         }\n\
+         \n\
+         fn main() {\n\
+         \x20   println(f\"{wait(\"a\")}\")\n\
+         }\n";
+    let parsed = parse_to_ast(source).expect("the source parses");
+    let own = Ledger::infer(&parsed);
+    let library = Ledger::parse(STD).expect("std ships a ledger");
+    let found =
+        nikaia::check::check_program(&parsed, &own, &library, &std::collections::BTreeSet::new())
+            .findings;
+    assert_eq!(found.len(), 1, "{found:#?}");
+    let finding = &found[0];
+    assert_eq!(finding.code, "NK1127");
+    assert!(
+        finding.notes.iter().any(|n| n.contains("`.seconds()`")),
+        "{finding:#?}"
+    );
+    let help = finding.help.clone().unwrap_or_default();
+    assert!(
+        help.contains("`timeout` a `T?`") && !help.contains("`let"),
+        "{help}"
+    );
+}

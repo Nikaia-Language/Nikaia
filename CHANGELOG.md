@@ -4,6 +4,16 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.469] — 2026-10-05
+
+**A refused default's way out is a `T?`** (ADR-318 D7, #374). `NK1127` and
+`NK1152` at a default offered what they offer a `comptime`: *write `let
+timeout = …`*, or *call it with `let` instead of `comptime`*. An option was
+never a `comptime`, so that was not something its author could do. At a
+default they now say to make the option a `T?` and compute it in the body. A
+`std` method with no Nikaia body, `30.seconds()`, is refused there with
+`NK1127` naming `.seconds()` (step 8).
+
 ## [0.0.468] — 2026-10-05
 
 **The build cache knows when the compiler's Nikaia half changed** (#447).
