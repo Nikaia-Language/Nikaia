@@ -4,6 +4,14 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.480] — 2026-10-05
+
+**Why a check stayed is said by Nikaia** (ADR-294, #435). The reasons
+`--bounds` gives for a check it kept (a field, a list of lists, a product of
+two unknowns, a call's result, or no fact at all) are read off the site in
+`tools/bounds_reasons.nika` now, not in `bounds_report.rs`. The reports for
+every bench and example are the same, line for line.
+
 ## [0.0.479] — 2026-10-05
 
 **An expression as a term of the proof is Nikaia** (ADR-294, #436 step 4, the

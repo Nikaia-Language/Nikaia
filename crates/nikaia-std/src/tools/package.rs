@@ -1495,6 +1495,87 @@ fn evaluate(form: &Form, known: &collections::BTreeMap<String, Range>) -> Range 
 }
 
 
+// --- bounds_reasons.nika ---
+
+pub fn blocked_index(base: &Expr, index: &Expr) -> String {
+    match base {
+        Expr::Index { .. } => list_of_lists(),
+        _ => site_shape(base, index),
+    }
+}
+
+pub fn blocked_operation(op: &BinaryOp, lhs: &Expr, rhs: &Expr) -> String {
+    let shape = site_shape(lhs, rhs);
+    if shape == unbounded() && *op == BinaryOp::Mul && !is_int_literal(lhs) && !is_int_literal(rhs) { return String::from("a product of two unknowns (#386)"); }
+    shape
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SiteReads {
+    field: bool,
+    call: bool,
+    nested: bool,
+}
+
+fn site_shape(a: &Expr, b: &Expr) -> String {
+    let mut read = SiteReads { field: false, call: false, nested: false };
+    site_reads(a, &mut read);
+    site_reads(b, &mut read);
+    if read.field { return String::from("it reads a field, of which the walk keeps no facts (#384)"); }
+    if read.nested { return list_of_lists(); }
+    if read.call { return String::from("a call's result, which the walk knows nothing of (#382)"); }
+    unbounded()
+}
+
+fn site_reads(expr: &Expr, read: &mut SiteReads) {
+    match expr {
+        Expr::Field { base, .. } => {
+            let base = nikaia_std::boxed::open(base);
+            read.field = true;
+            site_reads(base, read);
+        },
+        Expr::Call { args, .. } => {
+            read.call = true;
+            for arg in args.iter() { site_reads(arg, read); }
+        },
+        Expr::MethodCall { receiver, args, .. } => {
+            let receiver = nikaia_std::boxed::open(receiver);
+            if !args.is_empty() { read.call = true; }
+            site_reads(receiver, read);
+            for arg in args.iter() { site_reads(arg, read); }
+        },
+        Expr::SafeMethod { receiver, args, .. } => {
+            let receiver = nikaia_std::boxed::open(receiver);
+            read.call = true;
+            site_reads(receiver, read);
+            for arg in args.iter() { site_reads(arg, read); }
+        },
+        Expr::Index { base, index } => {
+            let base = nikaia_std::boxed::open(base); let index = nikaia_std::boxed::open(index);
+            match base {
+                Expr::Index { .. } => { read.nested = true; },
+                _ => { },
+            }
+            site_reads(base, read);
+            site_reads(index, read);
+        },
+        Expr::Binary { lhs, rhs, .. } => {
+            let lhs = nikaia_std::boxed::open(lhs); let rhs = nikaia_std::boxed::open(rhs);
+            site_reads(lhs, read);
+            site_reads(rhs, read);
+        },
+        Expr::Unary { expr, .. } => { let expr = nikaia_std::boxed::open(expr); site_reads(expr, read) },
+        _ => { },
+    }
+}
+
+fn is_int_literal(expr: &Expr) -> bool { matches!(expr, Expr::LitInt { .. }) }
+
+fn list_of_lists() -> String { String::from("a list of lists, whose inner lengths the walk does not know (#385)") }
+
+fn unbounded() -> String { String::from("no fact bounds what it reads - a counter, a loop, a length, or one list as long as another (#432, #383, #388)") }
+
+
 // --- bounds_shape.nika ---
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -18467,6 +18548,10 @@ pub mod bounds_body {
 pub mod bounds_interval {
     #[allow(unused_imports)]
     pub use super::{Range, candidate};
+}
+pub mod bounds_reasons {
+    #[allow(unused_imports)]
+    pub use super::{blocked_index, blocked_operation};
 }
 pub mod bounds_shape {
     #[allow(unused_imports)]

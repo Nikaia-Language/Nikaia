@@ -1,0 +1,114 @@
+// crates/nikaia-std/src/tools/bounds_reasons.nika
+//
+// **Why a check stayed** (#389), moved from the compiler's `bounds_report`
+// (ADR-294, #435): the shape that stopped the walk, read off the site - a
+// field, a list of lists, a product of two unknowns, a call's result, or none
+// of those. Each names the issue that would supply the fact; it says where the
+// next fact pays off, not that it would be enough.
+
+/// The shape that kept an index's check, read off the site.
+pub fn blocked_index(base: ref Expr, index: ref Expr) -> String {
+    return match base {
+        Expr::Index { .. } => list_of_lists(),
+        else => site_shape(base, index),
+    }
+}
+
+/// **The shape that kept an operation's check**, read off the site. A side
+/// the walk has no fact for at all - a field, a list of lists, a call - is
+/// named before the product: it would block the sum of the two as well.
+pub fn blocked_operation(op: BinaryOp, lhs: ref Expr, rhs: ref Expr) -> String {
+    let shape = site_shape(lhs, rhs)
+    if shape == unbounded() && op == BinaryOp::Mul && !is_int_literal(lhs) && !is_int_literal(rhs) {
+        return "a product of two unknowns (#386)"
+    }
+    return shape
+}
+
+/// What the expressions of the site read.
+struct SiteReads {
+    field: bool,
+    call: bool,
+    nested: bool,
+}
+
+fn site_shape(a: ref Expr, b: ref Expr) -> String {
+    let mut read = SiteReads { field: false, call: false, nested: false }
+    site_reads(a, read)
+    site_reads(b, read)
+    if read.field {
+        return "it reads a field, of which the walk keeps no facts (#384)"
+    }
+    if read.nested {
+        return list_of_lists()
+    }
+    if read.call {
+        return "a call's result, which the walk knows nothing of (#382)"
+    }
+    return unbounded()
+}
+
+/// Every expression inside `expr`, itself included, noted in `read`.
+fn site_reads(expr: ref Expr, mut read: SiteReads) {
+    match expr {
+        Expr::Field { base, .. } => {
+            read.field = true
+            site_reads(base, read)
+        },
+        Expr::Call { args, .. } => {
+            read.call = true
+            for arg in args {
+                site_reads(arg, read)
+            }
+        },
+        // `xs.len()` is a number of a proof, not a call's result; a call
+        // with arguments, or a `?.`, is one.
+        Expr::MethodCall { receiver, args, .. } => {
+            if !args.is_empty() {
+                read.call = true
+            }
+            site_reads(receiver, read)
+            for arg in args {
+                site_reads(arg, read)
+            }
+        },
+        Expr::SafeMethod { receiver, args, .. } => {
+            read.call = true
+            site_reads(receiver, read)
+            for arg in args {
+                site_reads(arg, read)
+            }
+        },
+        Expr::Index { base, index } => {
+            match base {
+                Expr::Index { .. } => {
+                    read.nested = true
+                },
+                else => {},
+            }
+            site_reads(base, read)
+            site_reads(index, read)
+        },
+        Expr::Binary { lhs, rhs, .. } => {
+            site_reads(lhs, read)
+            site_reads(rhs, read)
+        },
+        Expr::Unary { expr, .. } => site_reads(expr, read),
+        else => {},
+    }
+}
+
+fn is_int_literal(expr: ref Expr) -> bool {
+    return match expr {
+        Expr::LitInt { .. } => true,
+        else => false,
+    }
+}
+
+fn list_of_lists() -> String {
+    return "a list of lists, whose inner lengths the walk does not know (#385)"
+}
+
+fn unbounded() -> String {
+    return "no fact bounds what it reads - a counter, a loop, a length, or one list as long as another (#432, #383, #388)"
+}

@@ -36,7 +36,7 @@ struct Site {
     index: bool,
     proved: bool,
     /// Why it was not, where it was not.
-    blocked: Option<&'static str>,
+    blocked: Option<String>,
 }
 
 /// The report, for one file. What is proved does not depend on the build
@@ -107,7 +107,7 @@ pub fn report(
         .unwrap_or(0)
         .min(40);
     for site in &sites {
-        let how = match (site.proved, site.blocked) {
+        let how = match (site.proved, &site.blocked) {
             (true, _) => "proved".to_string(),
             (false, Some(why)) => format!("checked: {why}"),
             (false, None) => "checked".to_string(),
@@ -219,80 +219,11 @@ fn symbol(op: BinaryOp) -> &'static str {
     }
 }
 
-/// The shape that kept an index's check, read off the site.
-fn blocked_index(base: &Expr, index: &Expr) -> &'static str {
-    if matches!(base, Expr::Index { .. }) {
-        return LIST_OF_LISTS;
-    }
-    shape_of([base, index])
+/// **Why a check stayed** is `tools/bounds_reasons.nika` (ADR-294, #435).
+fn blocked_index(base: &Expr, index: &Expr) -> String {
+    nikaia_std::tools::bounds_reasons::blocked_index(base, index)
 }
 
-/// The shape that kept an operation's check, read off the site.
-///
-/// A side the walk has no fact for at all - a field, a list of lists, a call -
-/// is named before the product: it would block the sum of the two as well.
-fn blocked_operation(op: BinaryOp, lhs: &Expr, rhs: &Expr) -> &'static str {
-    let shape = shape_of([lhs, rhs]);
-    if shape == UNBOUNDED && matches!(op, BinaryOp::Mul) && !is_literal(lhs) && !is_literal(rhs) {
-        return PRODUCT;
-    }
-    shape
+fn blocked_operation(op: BinaryOp, lhs: &Expr, rhs: &Expr) -> String {
+    nikaia_std::tools::bounds_reasons::blocked_operation(&op, lhs, rhs)
 }
-
-fn shape_of(parts: [&Expr; 2]) -> &'static str {
-    let mut field = false;
-    let mut call = false;
-    let mut nested = false;
-    for part in parts {
-        reads(part, &mut |expr| match expr {
-            Expr::Field { .. } => field = true,
-            Expr::Call { .. } => call = true,
-            // `xs.len()` is a number of a proof, not a call's result; a call
-            // with arguments, or a `?.`, is one.
-            Expr::MethodCall { args, .. } if !args.is_empty() => call = true,
-            Expr::SafeMethod { .. } => call = true,
-            Expr::Index { base, .. } if matches!(**base, Expr::Index { .. }) => nested = true,
-            _ => {}
-        });
-    }
-    match (field, nested, call) {
-        (true, _, _) => FIELD,
-        (_, true, _) => LIST_OF_LISTS,
-        (_, _, true) => CALL,
-        _ => UNBOUNDED,
-    }
-}
-
-/// Every expression inside `expr`, itself included.
-fn reads(expr: &Expr, f: &mut impl FnMut(&Expr)) {
-    f(expr);
-    match expr {
-        Expr::Binary { lhs, rhs, .. } => {
-            reads(lhs, f);
-            reads(rhs, f);
-        }
-        Expr::Unary { expr, .. } => reads(expr, f),
-        Expr::Index { base, index } => {
-            reads(base, f);
-            reads(index, f);
-        }
-        Expr::Field { base, .. } => reads(base, f),
-        Expr::Call { args, .. } => args.iter().for_each(|a| reads(a, f)),
-        Expr::MethodCall { receiver, args, .. } | Expr::SafeMethod { receiver, args, .. } => {
-            reads(receiver, f);
-            args.iter().for_each(|a| reads(a, f));
-        }
-        _ => {}
-    }
-}
-
-fn is_literal(expr: &Expr) -> bool {
-    matches!(expr, Expr::LitInt { .. })
-}
-
-const FIELD: &str = "it reads a field, of which the walk keeps no facts (#384)";
-const LIST_OF_LISTS: &str = "a list of lists, whose inner lengths the walk does not know (#385)";
-const PRODUCT: &str = "a product of two unknowns (#386)";
-const CALL: &str = "a call's result, which the walk knows nothing of (#382)";
-const UNBOUNDED: &str = "no fact bounds what it reads - a counter, a loop, a length, or one list \
-     as long as another (#432, #383, #388)";
