@@ -4,6 +4,17 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.508] — 2026-10-05
+
+**`comptime` marks the name, and an integer `comptime` is an open number**
+(ADR-287 D20, D21; #115). The schema in ADR-299 and in Parts II and III was
+bound with `let app = comptime asset(…)`, which does not parse; it is
+`comptime APP = asset("schema.sql")`, and there is no `comptime` expression.
+An integer `comptime` without a written type now takes, at each use, the type
+the use asks for, checked against its value; where no use asks, its
+expression's type. The question leaves `open-decisions.md`. The typing is
+decided and specified, not built.
+
 ## [0.0.507] — 2026-10-05
 
 **A list of tuple literals builds each tuple's text** (#466). `let pairs:

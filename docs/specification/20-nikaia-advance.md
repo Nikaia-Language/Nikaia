@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part II: Advanced Features & Metaprogramming**
-**Version:** 0.0.507 (Draft)
+**Version:** 0.0.508 (Draft)
 **Date:** 2026-10-05
 
 ---
@@ -100,6 +100,18 @@ recurse with a base case, and it may loop: a `for` over a range, a `while`,
 `break` and `continue`. A called body must be `sync` and must touch nothing but
 the build's own parameters. A callee that fails either condition is refused with
 `NK1152`. `NK1127` says *not yet*; `NK1152` says *not allowed*.
+
+**`comptime` marks the name.** It is not an expression: `let x = comptime f()`
+does not parse, and a function is never marked.
+
+**An integer `comptime` without a written type is an open number** (Part I
+2.4): each use takes it in the type the use asks for, and the value is checked
+against that type (`NK1116`). Two uses may ask for two types. Where no use asks,
+it takes the type of its expression: a call's result type, or, for an
+expression of literals alone, the first type that holds the value. A written
+type, `comptime A: i64 = big(1)`, holds at every use. The body that computes the
+value keeps its own types: an overflow there stops the build as it would stop
+the program.
 
 A `comptime` at item level may read one declared below it; a ring of them is
 refused with `NK1168`. A `comptime` inside a function body is read in written
@@ -246,7 +258,7 @@ The `dsl` keyword embeds **foreign syntax** in a Nikaia file: SQL, HTML, regex, 
 | `meta::parameter(name, type)` | runtime, as a named argument | SQL placeholders — anything the statement should be *reusable* over |
 | `meta::column(name, type)` | build time, declared by the grammar | the statement's **result**: one field per column, so a row is a type |
 
-`meta::column(name, type)` gives a grammar control over the statement's result type. The compiler builds the row type from the declared columns, one typed field per column, as it builds the parameter type from the holes. A database driver's grammar reads the statement and the schema and declares one column per result column. The schema is a build-time argument of the block, `dsl sqlite(schema: app) { … } eod`, resolved from a `comptime` value. A column the schema lacks is refused by the grammar at the query, while the program is built. The compiler does not understand SQL; the driver owns the grammar, and a vendor's database is a package.
+`meta::column(name, type)` gives a grammar control over the statement's result type. The compiler builds the row type from the declared columns, one typed field per column, as it builds the parameter type from the holes. A database driver's grammar reads the statement and the schema and declares one column per result column. The schema is a build-time argument of the block, `dsl sqlite(schema: APP) { … } eod`, resolved from a `comptime` value. A column the schema lacks is refused by the grammar at the query, while the program is built. The compiler does not understand SQL; the driver owns the grammar, and a vendor's database is a package.
 
 **Example: Embedding SQL**
 SQL written in a `dsl` block is verified while the program is built, against the
@@ -255,15 +267,15 @@ schema the connection is typed by ([ADR-299](adr/adr-299.md)).
 ```nika
 use sqlite                                // a driver package, not `std`
 
-let app = comptime asset("schema.sql")    // the schema, read while building
+comptime APP = asset("schema.sql")        // the schema, read while building
 
 fn query_users(min_age: i32) {
-    let db = sqlite::open("app.db"; schema: app)   // typed by its schema
+    let db = sqlite::open("app.db"; schema: APP)   // typed by its schema
 
     // 1. The driver's grammar parses this SQL while the program is built,
     //    checks it against the schema, sees ':target_age' (a parameter hole)
     //    and declares the result columns; the compiler derives the row type.
-    let query = dsl sqlite(schema: app) {
+    let query = dsl sqlite(schema: APP) {
         SELECT name, email FROM users WHERE age >= :target_age
     } eod
 

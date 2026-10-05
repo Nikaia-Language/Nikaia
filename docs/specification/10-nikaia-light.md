@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part I: The Language Core**
-**Version:** 0.0.507 (Draft)
+**Version:** 0.0.508 (Draft)
 **Date:** 2026-10-05
 
 ---
@@ -496,7 +496,9 @@ println(f"{wide(small)}")  // an i64 here: the use decides, and 42 holds in one
 ```
 
 The use is asked first and the size second. So `small` may still become an
-`i64`, and `big` never has to be annotated to be one. A number too large for an
+`i64`, and `big` never has to be annotated to be one. An integer `comptime` is
+such a number whatever computed it, and each use may take it in its own type
+(Part II 10.2). A number too large for an
 `i64` is refused unless a use asks for a `u64`.
 
 **A use is anything the function does with the name**: the parameter it is

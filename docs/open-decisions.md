@@ -19,29 +19,6 @@ blocked by a question, the question comes here in that shape.
 
 ## Open
 
-### How a schema is bound while the program is built
-
-**What is blocked.** The examples of [ADR-299](specification/adr/adr-299.md)
-D3 and Part III 17.1 bind the schema a statement is checked against with
-`let app = comptime asset("schema.sql")` at the top of a file. That line is
-not the language as the rest of the specification writes it: a `let` is a
-statement, not an item, and a value computed while the program is built is
-declared `comptime NAME: T = …` (Part II 7, [ADR-310](specification/adr/adr-310.md)).
-[ADR-299](specification/adr/adr-299.md) D11 makes the schema's *name* decide
-which connection a statement may run on, so the spelling now matters.
-
-**Why it is the owner's.** Two accepted texts write the same line, and the
-language's own rules refuse it; either the rule or the two texts change.
-
-**The options.** (1) `comptime APP: db::Schema = asset("schema.sql")`, the
-item form, and the examples change; (2) `let … = comptime …` becomes a form of
-the language for a build-time value in function scope, and the examples move
-it into a function.
-
-**What this file recommends: (1).** It is the form the language has; (2) adds
-a second spelling for one thing. **Costs:** (1) wrong is two examples written
-again; (2) wrong is a spelling kept for one use.
-
 ### Which of two `Shared`s Part I 6.2 means
 
 **What is blocked.** Part I 6.2 shows the three places a shared value is
