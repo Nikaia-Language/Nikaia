@@ -839,8 +839,12 @@ grammar SignatureText {
 
     // One unit of a type: a bracket group with what is inside it, a quoted
     // string, or one character.
-    rule SPAN = PARENS { } | BRACKETS { } | STRING { } | any { }
+    // A brace group too: a default may be a struct, `Point { x: 1, y: 2 }`
+    // (ADR-318 D3), whose commas are its own.
+    rule SPAN = PARENS { } | BRACKETS { } | BRACES { } | STRING { } | any { }
     rule PARENS = "(" IN_PARENS* ")" { }
+    rule BRACES = "{" IN_BRACES* "}" { }
+    rule IN_BRACES = not("}") SPAN { }
     rule IN_PARENS = not(")") SPAN { }
     rule BRACKETS = "[" IN_BRACKETS* "]" { }
     rule IN_BRACKETS = not("]") SPAN { }

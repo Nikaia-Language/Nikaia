@@ -6487,9 +6487,9 @@ impl<'a> Checker<'a> {
 
     /// **An option's default that is computed rather than written** (ADR-318
     /// D1, D7): evaluated as a `comptime` is, and refused as one is where it
-    /// cannot be. A value that is a number, text or a `bool` is what the
-    /// ledger records today; a struct or a list as a default is not built yet,
-    /// and is said to be rather than handed to the language below empty.
+    /// cannot be. A number, text, a `bool`, and a struct or a variant of
+    /// those, is what the ledger records; a list as a default is not built
+    /// yet, and is said to be rather than handed to the language below empty.
     fn a_computed_default(&mut self, option: &ast::ConfigParam) {
         let span = option.default_span;
         if crate::contracts::a_literal(&option.default) {
@@ -6519,13 +6519,21 @@ impl<'a> Checker<'a> {
             self.a_constant_that_owns_memory(&name, &declared, &computed, "a default", &span);
             return;
         }
+        // **A struct is only as writable as its fields** (D4), named as a
+        // `comptime`'s is.
+        if let Some(computed) = &value
+            && let Some((field, held)) = self.unwritable_in(computed)
+        {
+            self.a_field_that_owns_memory(&name, &field, &held, "a default", &span);
+            return;
+        }
         let message = match &value {
             None => {
                 format!("The default of `{name}` can't be computed while the program is built.")
             }
             Some(value) if crate::contracts::literal_of(value).is_none() => format!(
-                "The default of `{name}` is a value of its own type, and a default that is not \
-                 a number, text or a `bool` is not built yet."
+                "The default of `{name}` is a list, or holds one, and a default of that shape \
+                 is not built yet."
             ),
             Some(_) => return,
         };
@@ -19912,17 +19920,22 @@ impl<'a> Checker<'a> {
     /// `Bag { items: [1, 2, 3] }` the language below refuses — the struct is
     /// fine and the `Vec` in it is not, and *this cannot be evaluated* leaves
     /// them to work that out.
-    fn a_field_that_owns_memory(&mut self, bound: &str, field: &str, held: &str, span: &Span) {
+    fn a_field_that_owns_memory(
+        &mut self,
+        bound: &str,
+        field: &str,
+        held: &str,
+        holder: &str,
+        span: &Span,
+    ) {
         // **A variant is named whole** — `Shape::Many` — where a field is named
         // under its binding. The `::` is what tells them apart, and it is worth
         // a different sentence: what a reader changes is the *declaration*, and
         // the two declarations do not look alike.
         let carries = field.contains("::");
         let message = match carries {
-            true => format!("`{field}` carries a `{held}`, which a `comptime` can't hold."),
-            false => {
-                format!("`{bound}.{field}` is a `{held}`, which a `comptime` can't hold.")
-            }
+            true => format!("`{field}` carries a `{held}`, which {holder} can't hold."),
+            false => format!("`{bound}.{field}` is a `{held}`, which {holder} can't hold."),
         };
         let note = match carries {
             true => "A value computed at build time can't own memory. Another variant \
@@ -22203,7 +22216,13 @@ impl<'a> Checker<'a> {
                             if self.unwritable_field(want).is_some() =>
                         {
                             let (field, held) = self.unwritable_field(want).expect("just asked");
-                            self.a_field_that_owns_memory(&bound, &field, &held, span);
+                            self.a_field_that_owns_memory(
+                                &bound,
+                                &field,
+                                &held,
+                                "a `comptime`",
+                                span,
+                            );
                         }
                         (
                             Some(
@@ -22375,7 +22394,13 @@ impl<'a> Checker<'a> {
         let said_a_part = match &evaluated {
             Some(value) => match self.unwritable_in(value) {
                 Some((where_it_is, held)) => {
-                    self.a_field_that_owns_memory(&bound, &where_it_is, &held, span);
+                    self.a_field_that_owns_memory(
+                        &bound,
+                        &where_it_is,
+                        &held,
+                        "a `comptime`",
+                        span,
+                    );
                     true
                 }
                 None => false,

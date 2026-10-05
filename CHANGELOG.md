@@ -4,6 +4,16 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.466] — 2026-10-05
+
+**A struct is a default** (ADR-318 D3, D4, #374). A default whose value is a
+struct or an `enum` variant of literals is recorded in the ledger as its
+literal, `at: Point = Point { x: 1, y: 2 }`, and a call that leaves the option
+out receives it. The ledger's signature grammar reads a brace group as one
+piece, so the struct's commas are not taken for the signature's. A struct with
+a field that owns memory is `NK1167` at the default, naming the field, as a
+`comptime` of it is. A list as a default is still refused as not built yet.
+
 ## [0.0.465] — 2026-10-04
 
 **A default is refused at the default, and one that owns memory is `NK1167`**

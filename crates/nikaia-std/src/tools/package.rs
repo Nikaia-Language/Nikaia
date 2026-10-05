@@ -6858,6 +6858,8 @@ grammar! {
             -> { }
           | BRACKETS
             -> { }
+          | BRACES
+            -> { }
           | STRING
             -> { }
           | any
@@ -6865,6 +6867,14 @@ grammar! {
 
         rule PARENS =
             "(" IN_PARENS* ")"
+            -> { }
+
+        rule BRACES =
+            "{" IN_BRACES* "}"
+            -> { }
+
+        rule IN_BRACES =
+            not("}") SPAN
             -> { }
 
         rule IN_PARENS =

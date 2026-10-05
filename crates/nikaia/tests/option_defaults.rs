@@ -190,3 +190,70 @@ fn a_refused_default_is_pointed_at() {
         vec![("NK1152".to_string(), "loud()".to_string())]
     );
 }
+
+const A_STRUCT: &str = "struct Point {\n\
+     \x20   x: i64,\n\
+     \x20   y: i64,\n\
+     }\n\
+     \n\
+     fn origin() -> Point {\n\
+     \x20   return Point { x: 1, y: 2 }\n\
+     }\n\
+     \n\
+     fn show(label: ref String; at: Point = origin()) -> String {\n\
+     \x20   return f\"{label} {at.x} {at.y}\"\n\
+     }\n\
+     \n\
+     fn main() {\n\
+     \x20   println(show(\"p\"))\n\
+     \x20   println(show(\"q\"; at: Point { x: 5, y: 6 }))\n\
+     }\n";
+
+/// **A struct of literals is a default** (ADR-318 D3, D4): the ledger records
+/// its value as a struct literal, and a call that leaves the option out
+/// receives it.
+#[test]
+fn a_struct_default_is_recorded_and_handed_to_the_call() {
+    assert_eq!(ran(A_STRUCT), "p 1 2\nq 5 6\n");
+    let parsed = parse_to_ast(A_STRUCT).expect("the source parses");
+    let ledger = Ledger::infer(&parsed).render();
+    assert!(
+        ledger.contains("at: Point = Point { x: 1, y: 2 }"),
+        "{ledger}"
+    );
+}
+
+/// **A consumer reads it back**: the commas inside the braces are the
+/// struct's, not the signature's.
+#[test]
+fn a_struct_default_is_read_back_from_a_ledger() {
+    let parsed = parse_to_ast(A_STRUCT).expect("the source parses");
+    let written = Ledger::infer(&parsed).render();
+    let read = Ledger::parse(&written).expect("the ledger reads back");
+    assert_eq!(read.render(), written);
+}
+
+/// A struct whose field owns memory is refused as a `comptime` of it is
+/// (`NK1167`), at the default.
+#[test]
+fn a_struct_default_with_a_field_that_owns_memory_is_refused() {
+    let source = "struct Bag {\n\
+         \x20   items: Vec[i64],\n\
+         }\n\
+         \n\
+         fn bag() -> Bag {\n\
+         \x20   return Bag { items: [1, 2] }\n\
+         }\n\
+         \n\
+         fn f(b: Bag = bag()) -> i64 {\n\
+         \x20   return b.items.len()\n\
+         }\n\
+         \n\
+         fn main() {\n\
+         \x20   println(f\"{f()}\")\n\
+         }\n";
+    assert_eq!(
+        refused(source),
+        vec![("NK1167".to_string(), "bag()".to_string())]
+    );
+}

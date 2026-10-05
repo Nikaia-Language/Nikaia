@@ -1180,6 +1180,29 @@ pub fn literal_of(value: &crate::build_time::Value) -> Option<String> {
         Value::Float(f) if f.is_finite() => Some(format!("{f:?}")),
         Value::Bool(b) => Some(b.to_string()),
         Value::Text(text) => Some(format!("\"{}\"", crate::build_time::written(text))),
+        // **A struct of literals is a literal too** (ADR-318 D3), and spelled
+        // the same in both languages: `Point { x: 1, y: 2 }`.
+        Value::Struct { name, fields } => {
+            let mut written = Vec::with_capacity(fields.len());
+            for (field, held) in fields {
+                written.push(format!("{field}: {}", literal_of(held)?));
+            }
+            Some(format!("{name} {{ {} }}", written.join(", ")))
+        }
+        Value::Variant {
+            ty,
+            variant,
+            payload,
+        } => {
+            if payload.is_empty() {
+                return Some(format!("{ty}::{variant}"));
+            }
+            let mut written = Vec::with_capacity(payload.len());
+            for held in payload {
+                written.push(literal_of(held)?);
+            }
+            Some(format!("{ty}::{variant}({})", written.join(", ")))
+        }
         _ => None,
     }
 }
