@@ -233,6 +233,7 @@ pub fn prove(
 
 // **The claims carried between functions** are `tools/prover_claims.nika`
 // (ADR-294, #436).
+use nikaia_std::tools::prover_calls::{self, FreeFunction};
 use nikaia_std::tools::prover_claims::{
     self, CarriedFrom, Foreign, PostClaim, PreClaim, Precondition,
 };
@@ -1002,13 +1003,10 @@ impl<'a> Prover<'a> {
                 false => self.state.preconditions.get(&callee).cloned(),
             };
             if let Some(pre) = pre {
-                let Some(Item::Fn { args: params, .. }) = self.function_named(&callee) else {
+                let Some(function) = self.function_named(&callee) else {
                     continue;
                 };
-                let params: Vec<String> = params
-                    .iter()
-                    .map(|p| self.parsed.text(p.name).to_string())
-                    .collect();
+                let params = function.params;
                 self.a_call(&callee, &params, &pre.claims, &args, span, scope, at);
             } else if let Some(foreign) = self.foreign_contract(&callee)
                 && !foreign.requires.is_empty()
@@ -1350,14 +1348,10 @@ impl<'a> Prover<'a> {
         let (posts, params): (Vec<PostClaim>, Vec<String>) =
             match self.state.postconditions.get(callee).cloned() {
                 Some(posts) => {
-                    let Some(Item::Fn { args: params, .. }) = self.function_named(callee) else {
+                    let Some(function) = self.function_named(callee) else {
                         return Vec::new();
                     };
-                    let params = params
-                        .iter()
-                        .map(|p| self.parsed.text(p.name).to_string())
-                        .collect();
-                    (posts, params)
+                    (posts, function.params)
                 }
                 None => match self.foreign_contract(callee) {
                     Some(foreign) => (foreign.ensures, foreign.params),
@@ -1378,10 +1372,8 @@ impl<'a> Prover<'a> {
     /// Whether a free function hands back a whole number.
     fn returns_whole(&mut self, callee: &str) -> bool {
         match self.function_named(callee) {
-            Some(Item::Fn { ret_type, .. }) => ret_type.as_ref().is_some_and(|t| {
-                t.generics.is_empty() && is_whole_number(self.parsed.text(t.name))
-            }),
-            _ => self
+            Some(function) => function.whole_result,
+            None => self
                 .foreign_contract(callee)
                 .is_some_and(|foreign| foreign.whole_result),
         }
@@ -1445,43 +1437,24 @@ impl<'a> Prover<'a> {
         })
     }
 
-    /// Whether a call may throw out of the function `at` is, which `throws`:
-    /// what the callee declares, by its `throws` or its ledger's; a call
-    /// nothing describes may.
+    /// Whether a call may throw out of the function `at` is
+    /// (`prover_calls::may_throw`).
     fn throwing(&self, call: &Expr, at: &Where) -> bool {
-        if !at.throws {
-            return false;
-        }
-        let name = match call {
-            Expr::Call { func, .. } => match &**func {
-                Expr::Variable(name) => Some(self.parsed.text(*name).to_string()),
-                Expr::Path(_) => qualified(self.parsed, func),
-                _ => None,
-            },
-            _ => None,
-        };
-        let Some(name) = name else {
-            return true;
-        };
-        if let Some(Item::Fn { can_throw, .. }) = self.function_named(&name) {
-            return *can_throw;
-        }
-        match self
-            .own
-            .functions
-            .get(&name)
-            .or_else(|| self.library.functions.get(&name))
-        {
-            Some(contract) => !contract.fails_with.is_empty(),
-            None => true,
-        }
+        prover_calls::may_throw(
+            call,
+            at.throws,
+            &self.parsed.program,
+            &self.parsed.interner,
+            self.own,
+            self.library,
+            &|name| self.parsed.unaliased(name),
+        )
     }
 
-    fn function_named(&self, name: &str) -> Option<&'a Item> {
-        let parsed: &'a Parsed = self.parsed;
-        parsed.program.items.iter().map(|i| &i.node).find(|item| {
-            matches!(item, Item::Fn { name: Some(n), receiver: None, .. } if parsed.text(*n) == name)
-        })
+    /// The free function of this program named `name`
+    /// (`prover_calls::free_function`).
+    fn function_named(&self, name: &str) -> Option<FreeFunction> {
+        prover_calls::free_function(&self.parsed.program, &self.parsed.interner, name)
     }
 
     /// Whether a value came from outside the program (ADR-010 D2): it names a

@@ -4,6 +4,15 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.498] — 2026-10-05
+
+**What the prover reads of a callee is Nikaia** (ADR-294, #436 step 4).
+`tools/prover_calls.nika`'s `free_function` finds a free function of the
+program by name - its parameters, whether it `throws`, whether it hands back
+a whole number - and `may_throw` says whether a call may throw out of the
+function it stands in. Every bench and example lowers byte for byte as
+before.
+
 ## [0.0.497] — 2026-10-05
 
 **Another package's contract is read back in Nikaia** (ADR-294, #436 step 4).

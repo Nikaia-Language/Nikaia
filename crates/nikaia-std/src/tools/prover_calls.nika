@@ -1,0 +1,89 @@
+// crates/nikaia-std/src/tools/prover_calls.nika
+//
+// **What the prover reads of a call's callee** (ADR-269), moved from the
+// compiler's `prove` (ADR-294, #436 step 4): a free function of this
+// program by name, and whether a call may throw out of the function it
+// stands in.
+
+/// What the prover reads of a free function of this program.
+pub struct FreeFunction {
+    /// Its parameters' names, in order.
+    pub params: Vec[String],
+    /// It `throws`.
+    pub can_throw: bool,
+    /// It hands back a whole number.
+    pub whole_result: bool,
+}
+
+/// The free function of `program` named `wanted`: not a method, which a call
+/// by name never reaches.
+pub fn free_function(program: ref Program, words: ref winnow_grammar::InternerContext, wanted: ref String) -> FreeFunction? {
+    for item in program.items {
+        match item.node {
+            Item::Fn { name, receiver, args, ret_type, can_throw, .. } => {
+                if receiver == null && named_as(name, words, wanted) {
+                    let mut params: Vec[String] = []
+                    for arg in args {
+                        params.push(words.resolve(arg.name).clone())
+                    }
+                    return FreeFunction { params: params, can_throw: can_throw, whole_result: whole_type(ret_type, words) }
+                }
+            },
+            else => {},
+        }
+    }
+    return null
+}
+
+fn named_as(named: ref winnow_grammar::Symbol?, words: ref winnow_grammar::InternerContext, name: ref String) -> bool {
+    let symbol = named ?? return false
+    return words.resolve(symbol) == name
+}
+
+fn whole_type(ty: ref Type?, words: ref winnow_grammar::InternerContext) -> bool {
+    let t = ty ?? return false
+    return t.generics.is_empty() && is_whole_number(words.resolve(t.name))
+}
+
+/// **Whether a call may throw out of the function it stands in**, where
+/// that one `throws` (`in_throwing`): what the callee declares, by its
+/// `throws` or its ledger's; a call nothing describes may. `unaliased`
+/// resolves a package's alias.
+pub fn may_throw(call: ref Expr, in_throwing: bool, program: ref Program, words: ref winnow_grammar::InternerContext, own: ref Ledger, library: ref Ledger, unaliased: fn(ref String) -> String sync) -> bool {
+    if !in_throwing {
+        return false
+    }
+    let name = thrower_named(call, words, unaliased) ?? return true
+    let function = free_function(program, words, name)
+    if function != null {
+        let found = function ?? return true
+        return found.can_throw
+    }
+    if own.functions.contains_key(name) {
+        let contract = own.functions[name] ?? return true
+        return !contract.fails_with.is_empty()
+    }
+    let contract = library.functions[name] ?? return true
+    return !contract.fails_with.is_empty()
+}
+
+/// The callee a call names: a bare name, or a path as the ledger keys it.
+fn thrower_named(call: ref Expr, words: ref winnow_grammar::InternerContext, unaliased: fn(ref String) -> String sync) -> String? {
+    return match call {
+        Expr::Call { func, .. } => match func {
+            Expr::Variable(name) => words.resolve(name).clone(),
+            Expr::Path(segments) => {
+                let mut joined: String = ""
+                for segment in segments {
+                    if !joined.is_empty() {
+                        joined.push_str("::")
+                    }
+                    joined.push_str(words.resolve(segment))
+                }
+                unaliased(joined)
+            },
+            else => null,
+        },
+        else => null,
+    }
+}

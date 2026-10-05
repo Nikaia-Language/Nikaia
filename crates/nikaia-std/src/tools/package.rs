@@ -10405,6 +10405,77 @@ impl TermArena {
 }
 
 
+// --- prover_calls.nika ---
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FreeFunction {
+    pub params: Vec<String>,
+    pub can_throw: bool,
+    pub whole_result: bool,
+}
+
+pub fn free_function(program: &Program, words: &winnow_grammar::InternerContext, wanted: &str) -> Option<FreeFunction> {
+    for item in program.items.iter() {
+        match &item.node {
+            Item::Fn { name, receiver, args, ret_type, can_throw, .. } => {
+                let can_throw = *can_throw; let name = *name;
+                if receiver.is_none() && named_as((name).as_ref(), words, wanted) {
+                    let mut params: Vec<String> = vec![];
+                    for arg in args.iter() { params.push(words.resolve(arg.name).to_owned()); }
+                    return Some(FreeFunction { params, can_throw, whole_result: whole_type((ret_type).as_ref(), words) });
+                }
+            },
+            _ => { },
+        }
+    }
+    None
+}
+
+fn named_as(named: Option<&winnow_grammar::Symbol>, words: &winnow_grammar::InternerContext, name: &str) -> bool {
+    let symbol = match named { Some(__nikaia_value) => __nikaia_value, None => return false };
+    words.resolve(*symbol) == name
+}
+
+fn whole_type(ty: Option<&Type>, words: &winnow_grammar::InternerContext) -> bool {
+    let t = match ty { Some(__nikaia_value) => __nikaia_value, None => return false };
+    t.generics.is_empty() && is_whole_number(words.resolve(t.name))
+}
+
+pub fn may_throw(call: &Expr, in_throwing: bool, program: &Program, words: &winnow_grammar::InternerContext, own: &Ledger, library: &Ledger, unaliased: &impl Fn(&str) -> String) -> bool {
+    if !in_throwing { return false; }
+    let name = match thrower_named(call, words, unaliased) { Some(__nikaia_value) => __nikaia_value, None => return true };
+    let function = free_function(program, words, &name);
+    if function.is_some() {
+        let found = match function { Some(__nikaia_value) => __nikaia_value, None => return true };
+        return found.can_throw;
+    }
+    if own.functions.contains_key(&name) {
+        let contract = match *nikaia_std::index::get(&own.functions, &name) { Some(__nikaia_value) => __nikaia_value, None => return true };
+        return !contract.fails_with.is_empty();
+    }
+    let contract = match *nikaia_std::index::get(&library.functions, &name) { Some(__nikaia_value) => __nikaia_value, None => return true };
+    !contract.fails_with.is_empty()
+}
+
+fn thrower_named(call: &Expr, words: &winnow_grammar::InternerContext, unaliased: &impl Fn(&str) -> String) -> Option<String> {
+    match call {
+        Expr::Call { func, .. } => { let func = nikaia_std::boxed::open(func); match func {
+            Expr::Variable(name) => { let name = *name; Some(words.resolve(name).to_owned()) },
+            Expr::Path(segments) => {
+                let mut joined: String = String::from("");
+                for segment in segments.iter() {
+                    if !joined.is_empty() { joined.push_str("::"); }
+                    joined.push_str(words.resolve(*segment));
+                }
+                Some(unaliased(&joined))
+            },
+            _ => None,
+        } },
+        _ => None,
+    }
+}
+
+
 // --- prover_claims.nika ---
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -19615,6 +19686,10 @@ pub mod prove_text {
 pub mod prover_arena {
     #[allow(unused_imports)]
     pub use super::{TermArena};
+}
+pub mod prover_calls {
+    #[allow(unused_imports)]
+    pub use super::{FreeFunction, free_function, may_throw};
 }
 pub mod prover_claims {
     #[allow(unused_imports)]
