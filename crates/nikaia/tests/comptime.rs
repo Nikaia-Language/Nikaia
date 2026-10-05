@@ -13,7 +13,7 @@
 
 mod common;
 
-use nikaia::check::{self, Finding};
+use nikaia::check::Finding;
 use nikaia::contracts::{Ledger, LedgerOps, STD};
 use nikaia::emit;
 use nikaia::parser::parse_to_ast;
@@ -21,14 +21,14 @@ use std::process::Command;
 
 fn findings(source: &str) -> Vec<Finding> {
     let parsed = parse_to_ast(source).expect("the source parses");
-    let own = Ledger::infer(&parsed);
+    let own = common::infer(&parsed);
     let library = Ledger::parse(STD).expect("std's shipped ledger parses");
-    check::check(&parsed, &own, &library).findings
+    common::checked(&parsed, &own, &library).findings
 }
 
 fn lower(source: &str) -> String {
     let parsed = parse_to_ast(source).expect("the source parses");
-    emit::emit_program(&parsed, Default::default())
+    emit::emit_program_reading(&parsed, Default::default(), &common::reads())
         .expect("the source lowers")
         .rust
 }
@@ -117,32 +117,16 @@ fn a_program_with_comptime_bindings_compiles_and_prints_them() {
 /// It does exist now ([ADR-311](../../../docs/specification/adr/adr-311.md) D1,
 /// 0.0.112), so the example moved to one that still cannot fold.
 ///
-/// **And the reason 0.0.112 gave for it was wrong**, which 0.0.113 corrects
-/// twice over. `.to_uppercase()` is not refused because a question about the
-/// *value* cannot be answered — it never gets that far, and that question is
-/// answered now anyway, because text is **decoded**. What it is refused for is
-/// that this evaluator has **no value to call it on**: a method of a `struct`
-/// declared here folds since 0.0.114, and everything else is `std`'s or a
-/// package's, whose body is Rust.
+/// **A method of `std` is computed** ([ADR-321](../../../docs/specification/adr/adr-321.md)
+/// D1): its body is Rust, which the interpreter could not run and refused
+/// with `NK1127`; compiled, it runs as it does in the program.
 #[test]
-fn a_comptime_binding_this_compiler_cannot_evaluate_is_refused_by_name() {
-    let found =
-        findings("fn main() { comptime GREET = \"hallo\".to_uppercase() println(f\"{GREET}\") }");
-    let refused: Vec<&Finding> = found.iter().filter(|f| f.code == "NK1127").collect();
-    assert_eq!(refused.len(), 1, "{found:#?}");
-    let said = &refused[0];
-    assert!(
-        said.message
-            .contains("`GREET` can't be computed while the program is built"),
-        "{said:#?}"
-    );
-    assert!(
-        said.help
-            .as_deref()
-            .unwrap_or_default()
-            .contains("let GREET"),
-        "the way out is named: {said:#?}"
-    );
+fn a_comptime_binding_may_call_a_method_of_std() {
+    let source = "fn main() { comptime GREET = \"hallo\".to_uppercase() println(f\"{GREET}\") }";
+    let found = findings(source);
+    assert!(found.is_empty(), "{found:#?}");
+    let rust = lower(source);
+    assert!(rust.contains("const GREET: &str = \"HALLO\";"), "{rust}");
 }
 
 /// A constant reached **through another constant** folds, which is what makes
@@ -197,45 +181,10 @@ fn a_comptime_list_of_text_crosses_as_an_array_of_views() {
     );
 }
 
-/// **Three walls, and a reader is told which one they met** (0.0.113). The
-/// generic catalogue is right for a shape this evaluator does not read and is
-/// the wrong answer everywhere else — it invites somebody to go looking for the
-/// spelling that works when there is none.
+/// **A reader is told which wall they met** (0.0.113): a callee nothing
+/// declares is named.
 #[test]
 fn a_comptime_says_which_wall_it_met() {
-    // `std`'s body is Rust, and moving the call does not help.
-    let method = findings("comptime X = \"a\".to_uppercase()\nfn main() { println(X) }");
-    let said = method.iter().find(|f| f.code == "NK1127").expect("NK1127");
-    assert!(
-        said.message
-            .contains("`X` can't be computed while the program is built"),
-        "the headline is the binding's, as the generic one is: {}",
-        said.message
-    );
-    assert!(
-        said.notes[0].contains("`.to_uppercase()`") && said.notes[0].contains("which it can't run"),
-        "the note names what it met and which wall: {:#?}",
-        said.notes
-    );
-    assert!(
-        said.help.as_deref().is_some_and(
-            |h| h.contains("calls to functions in this file") && h.contains("`let X = …`")
-        ),
-        "the wall's way out, and the one every `comptime` has: {:?}",
-        said.help
-    );
-    // **`sync` is the permission and not the ability**: the note says what the
-    // compiler *can* call at build time, which ends the confusion without
-    // naming `sync` at all.
-    assert!(
-        said.notes[0].contains("can only call methods your program declares"),
-        "{:#?}",
-        said.notes
-    );
-
-    // And a callee in another file of the same program is the third: the files
-    // of a package share one namespace (Part I 9.1) and this walk reads one
-    // file, which is a limit of the walk rather than of the language.
     let elsewhere = findings("comptime N = doubled(21)\nfn main() { println(f\"{N}\") }");
     let said = elsewhere
         .iter()

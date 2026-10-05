@@ -364,3 +364,43 @@ pub const UNDESCRIBED_VALUE_METHOD: &str = "to_ascii_uppercase";
 pub fn undescribed_value(receiver: &str) -> String {
     format!("{receiver}.{UNDESCRIBED_VALUE_METHOD}()")
 }
+
+// --- build-time code ----------------------------------------------------------
+
+/// **One workshop for every test**, as a build keeps one beside its cache: a
+/// `comptime` or a default that calls something is compiled and run there
+/// ([ADR-321](../../../docs/specification/adr/adr-321.md) D1), and the library
+/// it links against is built once.
+pub fn workshop() -> PathBuf {
+    PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("comptime-compiled")
+}
+
+/// What a build may read, with the workshop it builds in.
+pub fn reads() -> nikaia::assets::Reads {
+    nikaia::assets::Reads::at(workshop()).building_in(workshop())
+}
+
+/// The ledger as a build infers it, its defaults compiled in the workshop.
+pub fn infer(parsed: &nikaia::parser::Parsed) -> nikaia::contracts::Ledger {
+    use nikaia::contracts::LedgerOps;
+    nikaia::comptime_run::defaults_compiled_in(Some(&workshop()), || {
+        nikaia::contracts::Ledger::infer(parsed)
+    })
+}
+
+/// The check a build runs, with the workshop.
+pub fn checked(
+    parsed: &nikaia::parser::Parsed,
+    own: &nikaia::contracts::Ledger,
+    library: &nikaia::contracts::Ledger,
+) -> nikaia::check::Checked {
+    nikaia::check::check_against(
+        parsed,
+        &[],
+        own,
+        library,
+        &std::collections::BTreeSet::new(),
+        &nikaia::check::Newly::new(),
+        &reads(),
+    )
+}

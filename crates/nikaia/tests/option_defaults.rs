@@ -6,14 +6,14 @@
 mod common;
 
 use nikaia::contracts::{Ledger, LedgerOps, STD};
-use nikaia::emit::{Build, emit_program};
+use nikaia::emit::{Build, emit_program_reading};
 use nikaia::parser::parse_to_ast;
 
 fn codes(source: &str) -> Vec<String> {
     let parsed = parse_to_ast(source).expect("the source parses");
-    let own = Ledger::infer(&parsed);
+    let own = common::infer(&parsed);
     let library = Ledger::parse(STD).expect("std ships a ledger");
-    nikaia::check::check_program(&parsed, &own, &library, &std::collections::BTreeSet::new())
+    common::checked(&parsed, &own, &library)
         .findings
         .into_iter()
         .map(|f| f.code.to_string())
@@ -23,7 +23,7 @@ fn codes(source: &str) -> Vec<String> {
 fn ran(source: &str) -> String {
     assert!(codes(source).is_empty(), "{:?}", codes(source));
     let parsed = parse_to_ast(source).expect("the source parses");
-    let rust = emit_program(&parsed, Build::default())
+    let rust = emit_program_reading(&parsed, Build::default(), &common::reads())
         .expect("the source lowers")
         .rust;
     let dir = common::scratch_dir("option-defaults");
@@ -64,7 +64,7 @@ fn a_computed_default_is_evaluated_once_and_handed_to_the_call() {
          }\n";
     assert_eq!(ran(source), "x 30000 14 ab\ny 30000 1 ab\n");
     let parsed = parse_to_ast(source).expect("the source parses");
-    let ledger = Ledger::infer(&parsed).render();
+    let ledger = common::infer(&parsed).render();
     assert!(ledger.contains("timeout: i64 = 30000"), "{ledger}");
     assert!(ledger.contains("tries: i64 = 14"), "{ledger}");
 }
@@ -140,9 +140,9 @@ fn a_default_that_needs_itself_is_a_ring() {
 
 fn refused(source: &str) -> Vec<(String, String)> {
     let parsed = parse_to_ast(source).expect("the source parses");
-    let own = Ledger::infer(&parsed);
+    let own = common::infer(&parsed);
     let library = Ledger::parse(STD).expect("std ships a ledger");
-    nikaia::check::check_program(&parsed, &own, &library, &std::collections::BTreeSet::new())
+    common::checked(&parsed, &own, &library)
         .findings
         .into_iter()
         .map(|f| (f.code.to_string(), source[f.span.bytes()].to_string()))
@@ -216,7 +216,7 @@ const A_STRUCT: &str = "struct Point {\n\
 fn a_struct_default_is_recorded_and_handed_to_the_call() {
     assert_eq!(ran(A_STRUCT), "p 1 2\nq 5 6\n");
     let parsed = parse_to_ast(A_STRUCT).expect("the source parses");
-    let ledger = Ledger::infer(&parsed).render();
+    let ledger = common::infer(&parsed).render();
     assert!(
         ledger.contains("at: Point = Point { x: 1, y: 2 }"),
         "{ledger}"
@@ -228,7 +228,7 @@ fn a_struct_default_is_recorded_and_handed_to_the_call() {
 #[test]
 fn a_struct_default_is_read_back_from_a_ledger() {
     let parsed = parse_to_ast(A_STRUCT).expect("the source parses");
-    let written = Ledger::infer(&parsed).render();
+    let written = common::infer(&parsed).render();
     let read = Ledger::parse(&written).expect("the ledger reads back");
     assert_eq!(read.render(), written);
 }
@@ -330,11 +330,9 @@ fn a_refused_default_offers_an_optional_not_a_let() {
          \x20   println(f\"{wait(\"a\")}\")\n\
          }\n";
     let parsed = parse_to_ast(source).expect("the source parses");
-    let own = Ledger::infer(&parsed);
+    let own = common::infer(&parsed);
     let library = Ledger::parse(STD).expect("std ships a ledger");
-    let found =
-        nikaia::check::check_program(&parsed, &own, &library, &std::collections::BTreeSet::new())
-            .findings;
+    let found = common::checked(&parsed, &own, &library).findings;
     assert_eq!(found.len(), 1, "{found:#?}");
     let finding = &found[0];
     assert_eq!(finding.code, "NK1127");
@@ -377,7 +375,7 @@ fn a_view_of_a_list_takes_a_list_default() {
          }\n";
     assert_eq!(ran(source), "a 6\nb 2\nc 30\n");
     let parsed = parse_to_ast(source).expect("the source parses");
-    let ledger = Ledger::infer(&parsed).render();
+    let ledger = common::infer(&parsed).render();
     assert!(ledger.contains("xs: ref Vec[i64] = [1, 2, 3]"), "{ledger}");
     assert!(ledger.contains("xs: ref Vec[i64] = [4, 5]"), "{ledger}");
 }

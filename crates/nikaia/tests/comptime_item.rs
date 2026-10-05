@@ -17,21 +17,21 @@ mod common;
 
 use nikaia::check;
 use nikaia::contracts::{Ledger, LedgerOps, STD};
-use nikaia::emit::{Build, emit_program};
+use nikaia::emit::Build;
 use nikaia::parser::parse_to_ast;
 
 fn findings(source: &str) -> Vec<check::Finding> {
     let parsed = parse_to_ast(source).expect("the source parses");
-    let own = Ledger::infer(&parsed);
+    let own = common::infer(&parsed);
     let library = Ledger::parse(STD).expect("std's shipped ledger parses");
-    check::check_program(&parsed, &own, &library, &std::collections::BTreeSet::new()).findings
+    common::checked(&parsed, &own, &library).findings
 }
 
 fn lowered(source: &str) -> String {
     let found = findings(source);
     assert!(found.is_empty(), "a correct program: {found:#?}");
     let parsed = parse_to_ast(source).expect("the source parses");
-    emit_program(&parsed, Build::default())
+    nikaia::emit::emit_program_reading(&parsed, Build::default(), &common::reads())
         .expect("the source lowers")
         .rust
 }
@@ -111,7 +111,7 @@ fn a_function_above_the_constant_still_sees_it() {
 /// 0.0.114, and `std`'s body is Rust either way.
 #[test]
 fn an_item_that_cannot_fold_is_refused() {
-    let found = findings("comptime BAD = \"x\".to_uppercase()\n\nfn main() { }\n");
+    let found = findings("comptime BAD = doubled(21)\n\nfn main() { }\n");
     let codes: Vec<&str> = found.iter().map(|f| f.code).collect();
     assert!(
         codes.contains(&"NK1127"),

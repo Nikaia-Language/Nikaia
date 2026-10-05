@@ -322,31 +322,31 @@ fn culprit(
 
 // --- the defaults a ledger records -------------------------------------------
 
-/// **Where an option's default is compiled** while a ledger is inferred
-/// ([ADR-318](../../../docs/specification/adr/adr-318.md) D1, ADR-321 D1): the
-/// workshop of the build that reads the program, for as long as it reads it.
-/// The inference has no `Reads` of its own; a build sets this around the read,
-/// and a caller that sets nothing gets the interpreter, as before.
-static DEFAULTS: std::sync::Mutex<Option<std::sync::Arc<crate::grammar_run::Workshop>>> =
-    std::sync::Mutex::new(None);
+thread_local! {
+    /// **Where an option's default is compiled** while a ledger is inferred
+    /// ([ADR-318](../../../docs/specification/adr/adr-318.md) D1, ADR-321 D1): the
+    /// workshop of the build that reads the program, for as long as it reads it.
+    /// The inference has no `Reads` of its own; a build sets this around the read,
+    /// and a caller that sets nothing gets the interpreter, as before.
+    ///
+    /// **One per thread**, because the inference runs on the thread that reads:
+    /// two builds side by side, as the tests are, each keep their own.
+    static DEFAULTS: std::cell::RefCell<Option<std::sync::Arc<crate::grammar_run::Workshop>>> =
+        const { std::cell::RefCell::new(None) };
+}
 
 /// Read a program with `at` as the workshop its defaults are compiled in.
 pub fn defaults_compiled_in<R>(at: Option<&Path>, read: impl FnOnce() -> R) -> R {
     let workshop = at.map(|at| std::sync::Arc::new(crate::grammar_run::Workshop::at(at)));
-    let before = match DEFAULTS.lock() {
-        Ok(mut held) => std::mem::replace(&mut *held, workshop),
-        Err(_) => None,
-    };
+    let before = DEFAULTS.with(|held| std::mem::replace(&mut *held.borrow_mut(), workshop));
     let out = read();
-    if let Ok(mut held) = DEFAULTS.lock() {
-        *held = before;
-    }
+    DEFAULTS.with(|held| *held.borrow_mut() = before);
     out
 }
 
 /// The workshop defaults are compiled in now, where a build set one.
 pub(crate) fn defaults_workshop() -> Option<std::sync::Arc<crate::grammar_run::Workshop>> {
-    DEFAULTS.lock().ok().and_then(|held| held.clone())
+    DEFAULTS.with(|held| held.borrow().clone())
 }
 
 fn a_function(

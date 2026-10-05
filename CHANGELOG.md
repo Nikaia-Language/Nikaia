@@ -4,6 +4,21 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.532] — 2026-10-05
+
+**The `comptime` and default tests run as a build does, through a workshop**
+(ADR-321 D1, #468 stage 4). `tests/comptime.rs`, `tests/comptime_item.rs` and
+`tests/option_defaults.rs` now check, infer and lower with a workshop, so they
+test the compiled path rather than the interpreter. The helpers live in
+`tests/common`.
+- `emit_program_reading` compiles an option's default in the workshop its
+  `Reads` names, as a project build does.
+- The workshop for defaults is kept per thread, so builds running side by side
+  no longer share it.
+- Two tests expected the interpreter's refusal of `"hallo".to_uppercase()`.
+  It is now computed, as `"HALLO"`. The refusal they also covered, a callee
+  nothing declares, still gets `NK1127`, naming the callee.
+
 ## [0.0.531] — 2026-10-05
 
 **`develop` is green again after 0.0.529.** `tests/expressions.rs` still
