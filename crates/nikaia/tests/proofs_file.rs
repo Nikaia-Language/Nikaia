@@ -72,3 +72,73 @@ fn a_build_records_the_provers_answers_and_a_second_one_keeps_them() {
     let _ = std::fs::remove_dir_all(&dir);
     assert_eq!(again, written);
 }
+
+/// **D22**: `--locked` builds from a file that answers every question, and
+/// fails where one is missing or one is left that nothing asks - naming the
+/// fix.
+#[test]
+fn locked_fails_on_a_file_that_does_not_answer_the_questions() {
+    let dir = common::scratch_dir("proofs-locked");
+    std::fs::create_dir_all(dir.join("src")).expect("the package");
+    std::fs::write(
+        dir.join("nikaia.toml"),
+        "[package]\nname = \"pl\"\nversion = \"0.1.0\"\n",
+    )
+    .expect("a manifest");
+    std::fs::write(dir.join("src/main.nika"), SOURCE).expect("a source");
+    let build = |args: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_nikaia"))
+            .current_dir(&dir)
+            .args(args)
+            .output()
+            .expect("the nikaia binary runs")
+    };
+    let first = build(&["build", "--no-cache"]);
+    assert!(
+        first.status.success(),
+        "{}",
+        String::from_utf8_lossy(&first.stderr)
+    );
+    let written = std::fs::read_to_string(dir.join("nikaia.proofs")).expect("written");
+
+    let locked = build(&["build", "--no-cache", "--locked"]);
+    assert!(
+        locked.status.success(),
+        "{}",
+        String::from_utf8_lossy(&locked.stderr)
+    );
+
+    // One answer gone: the build would have to search for it.
+    let missing: String = {
+        let mut dropped = false;
+        written
+            .lines()
+            .filter(|line| {
+                let drop = !dropped && !line.starts_with('#');
+                dropped |= drop;
+                !drop
+            })
+            .map(|line| format!("{line}\n"))
+            .collect()
+    };
+    std::fs::write(dir.join("nikaia.proofs"), &missing).expect("rewritten");
+    let refused = build(&["build", "--no-cache", "--locked"]);
+    let stderr = String::from_utf8_lossy(&refused.stderr).to_string();
+    assert!(!refused.status.success(), "{stderr}");
+    assert!(stderr.contains("commit `nikaia.proofs`"), "{stderr}");
+    assert_eq!(
+        std::fs::read_to_string(dir.join("nikaia.proofs")).expect("left alone"),
+        missing,
+        "--locked writes nothing"
+    );
+
+    // An entry nothing asks: the file would rot.
+    std::fs::write(
+        dir.join("nikaia.proofs"),
+        format!("{written}{} unknown fourier-motzkin-1\n", "f".repeat(64)),
+    )
+    .expect("rewritten");
+    let stale = build(&["build", "--no-cache", "--locked"]);
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(!stale.status.success());
+}

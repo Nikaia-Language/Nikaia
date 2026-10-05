@@ -257,6 +257,23 @@ impl Book {
         Ok(())
     }
 
+    /// Whether `root` holds exactly the file this book would write, long
+    /// certificates included (D22).
+    pub fn as_recorded(&self, root: &Path) -> bool {
+        let (text, long) = self.render();
+        if std::fs::read_to_string(root.join(FILE)).ok().as_deref() != Some(text.as_str()) {
+            return false;
+        }
+        let dir = root.join(LONG_DIR);
+        let on_disk = std::fs::read_dir(&dir)
+            .map(|entries| entries.flatten().count())
+            .unwrap_or(0);
+        on_disk == long.len()
+            && long.iter().all(|(key, certificate)| {
+                std::fs::read_to_string(dir.join(key)).ok().as_deref() == Some(certificate.as_str())
+            })
+    }
+
     /// How many entries the file would hold.
     pub fn len(&self) -> usize {
         self.entries

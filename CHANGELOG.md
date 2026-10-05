@@ -4,6 +4,17 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.472] — 2026-10-05
+
+**`--locked` checks `nikaia.proofs`** (ADR-270 D22, #448 step 4). A lowering
+now hands its book of answers back to the build instead of writing it itself:
+the `rustc` wrapper, which lowers too, writes nothing, and the command a person
+ran writes the file once per package, beside its ledger. Under `--locked` the
+file is not written. The build fails when a question had no entry that checks,
+or when the file holds an entry no question asked, with *run `nikaia build` and
+commit `nikaia.proofs`*. A cache hit asks nothing and checks nothing, as for
+the ledger.
+
 ## [0.0.471] — 2026-10-05
 
 **`nikaia.proofs` is written and read** (ADR-270 D4, D19-D21, #448 steps 2-3).

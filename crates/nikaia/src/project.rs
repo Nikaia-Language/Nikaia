@@ -380,6 +380,11 @@ pub struct Lowered {
     /// Handed back rather than printed, because the `rustc` wrapper lowers too
     /// and only the command a person ran should say it - once.
     pub notes: String,
+    /// **The prover's answers as this lowering left them**
+    /// ([ADR-270](../../docs/specification/adr/adr-270.md) D21, D22), for
+    /// [`write_proofs`]: `None` on a cache hit, where nothing was asked, and
+    /// outside a project, where there is no file.
+    pub proofs: Option<crate::proofs::Book>,
 }
 
 /// Stage 0: parse, check, lower, infer - or serve all four from the cache.
@@ -992,6 +997,7 @@ pub fn lower_reading(
         .and_then(|cache| cache.lookup(&unit, &key_source, &choices, &layout.root))
         .filter(|artifacts| artifacts.has_all(&[RUST, CONTRACTS, DERIVED]));
     let reused = cached.is_some();
+    let mut proofs = None;
 
     let (rust, ledger, derived) = match &cached {
         Some(artifacts) => (
@@ -1085,13 +1091,8 @@ pub fn lower_reading(
                 Ok(lowered)
             });
             let (lowered, mut program) = lowered?;
-            if layout.in_project
-                && let Err(error) = book.write(&layout.root)
-            {
-                eprintln!(
-                    "warning: {} could not be written: {error}",
-                    crate::proofs::FILE
-                );
+            if layout.in_project {
+                proofs = Some(book);
             }
             // **The contract the `assert`s make** (ADR-269 D18): the prover
             // decided it while the program was checked, and the ledger
@@ -1161,6 +1162,7 @@ pub fn lower_reading(
         sources,
         reused,
         notes,
+        proofs,
     })
 }
 
@@ -1831,6 +1833,37 @@ fn keeps_that_moved(committed: &Ledger, inferred: &Ledger) -> BTreeMap<String, V
         .collect()
 }
 
+/// **Write `nikaia.proofs`, or - under `--locked` - check that it did not
+/// need to change** ([ADR-270](../../docs/specification/adr/adr-270.md) D21,
+/// D22): every question the build asked has an entry that checks, and every
+/// entry is one a question asked, so the file cannot rot. Nothing to do where
+/// the lowering asked nothing - a cache hit, a file outside a project.
+pub fn write_proofs(root: &Path, book: Option<&crate::proofs::Book>, locked: bool) -> Result<()> {
+    let Some(book) = book else {
+        return Ok(());
+    };
+    if !locked {
+        return book
+            .write(root)
+            .with_context(|| format!("writing {}", root.join(crate::proofs::FILE).display()));
+    }
+    if book.searched > 0 || !book.as_recorded(root) {
+        return Err(anyhow!(
+            "--locked: {} does not hold the prover's answers for these sources \
+             ({} {} searched).\n\
+             Run `nikaia build` and commit `{}`.",
+            root.join(crate::proofs::FILE).display(),
+            book.searched,
+            match book.searched {
+                1 => "question was",
+                _ => "questions were",
+            },
+            crate::proofs::FILE
+        ));
+    }
+    Ok(())
+}
+
 /// Write the ledger, or - under `--locked` - check that it did not need
 /// writing.
 ///
@@ -2399,6 +2432,7 @@ impl Project {
                 &lowered.derived,
                 locked,
             )?;
+            write_proofs(&member.root, lowered.proofs.as_ref(), locked)?;
             // **The note is the entry's** (ADR-288 D29): what a dependency's
             // author could promise is theirs to hear, in their own build.
             if at == 0 {
