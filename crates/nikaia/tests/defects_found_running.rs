@@ -1394,6 +1394,38 @@ fn a_methods_function_value_is_handed_on_in_a_loop() {
     );
 }
 
+/// **A recursive method hands its function value on whole** (#464, a
+/// regression from #463's fix): lending it to a call of itself made each
+/// level a new type, `&&&…F`, and `rustc` stopped at its recursion limit.
+#[test]
+fn a_recursive_method_hands_its_function_value_on() {
+    runs(
+        "method-code-recursive",
+        "struct Walk {\n\
+         \x20   pub total: i64,\n\
+         }\n\
+         \n\
+         impl Walk {\n\
+         \x20   fn down(ref mut self, n: i64, ask: fn(i64) -> bool sync) {\n\
+         \x20       if n == 0 {\n\
+         \x20           return\n\
+         \x20       }\n\
+         \x20       if ask(n) {\n\
+         \x20           self.total += n\n\
+         \x20       }\n\
+         \x20       self.down(n - 1, ask)\n\
+         \x20   }\n\
+         }\n\
+         \n\
+         fn main() {\n\
+         \x20   let mut walk = Walk { total: 0 }\n\
+         \x20   walk.down(6) fn(k) { k % 2 == 0 }\n\
+         \x20   println(f\"{walk.total}\")\n\
+         }\n",
+        "12\n",
+    );
+}
+
 /// **Found by the solver's kernels** ([ADR-270](../../../docs/specification/adr/adr-270.md)
 /// D8 step 1): an index into a `mut` parameter, read and written. The
 /// parameter is a `&mut Vec<u32>` below, and the write was `set(&mut out, …)` -

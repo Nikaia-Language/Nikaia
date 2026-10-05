@@ -13081,8 +13081,17 @@ impl<'p> Emitter<'p> {
             // (`lends.nika`), so it is an `impl Fn` by value, and handing it
             // on moved it - in a loop, before the second turn. `&f` is a `Fn`
             // wherever `f` is.
+            // Not to a call of the function it stands in (#464): each `&` is
+            // a new type there, and the function would instantiate itself
+            // without end. The value goes on whole, as it did before.
+            let calls_itself = flow.function == callee
+                || flow
+                    .function
+                    .strip_suffix(callee)
+                    .is_some_and(|owner| owner.ends_with("::"));
             let lend = lend
                 || (!change
+                    && !calls_itself
                     && matches!(arg, Expr::Variable(name)
                         if self.a_code_parameter_taken_whole(flow.function, self.text(*name)))
                     && self.runs_code_at(callee, i));

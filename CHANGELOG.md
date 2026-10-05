@@ -4,6 +4,14 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.504] — 2026-10-05
+
+**A recursive method hands its function value on whole** (#464). #463's rule
+lent a method's function parameter to a call of the method itself, and each
+level of the recursion became a new type, `&&&…F`, until `rustc` stopped at
+its recursion limit. A call of the function it stands in gets the value
+whole, as before 0.0.501.
+
 ## [0.0.503] — 2026-10-05
 
 **The prover's walk is Nikaia** (ADR-294, #436 step 4).
