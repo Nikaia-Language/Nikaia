@@ -4,6 +4,19 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.470] — 2026-10-05
+
+**A query in normal form, and an answer as text** (ADR-270 D19, #448 step 1).
+`nikaia-logic` gains `Normal`: a query rewritten so that the same question has
+one form wherever it is asked. `>=` and `>` are turned round, the facts are
+put in an order by their shape with repeats dropped, and the variables are
+renamed `v0`, `v1`, … by first occurrence; `named` maps a model back to the
+program's names. A certificate is found on, and checked against, the normal
+form. `certificate_text` and `model_text` write an answer as one word,
+`R(h0,h2,c0:1:1:2,t3)`, `S1[…|…]` and `v0=3,v1=6`, and read it back. This is
+what a `nikaia.proofs` entry will be keyed by and hold; nothing reads or
+writes the file yet.
+
 ## [0.0.469] — 2026-10-05
 
 **A refused default's way out is a `T?`** (ADR-318 D7, #374). `NK1127` and

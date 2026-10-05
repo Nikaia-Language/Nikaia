@@ -23,11 +23,13 @@
 pub mod alethe;
 mod certificate;
 mod lia;
+mod normal;
 pub mod smtlib;
 mod term;
 
 pub use certificate::{Rejected, verify, verify_model};
 pub use lia::FourierMotzkin;
+pub use normal::{Normal, certificate_of, certificate_text, model_of, model_text};
 pub use term::{Arena, Term, TermId};
 
 /// One question: do the facts rule out every way the goal could be false?

@@ -7,7 +7,7 @@
 // depends on it, and today they do not.
 
 /// A term, named by its place in an [`Arena`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct TermId(u32);
 
 /// One term. Sorts are `Bool` and `Int` (unbounded integers); a variable is an
