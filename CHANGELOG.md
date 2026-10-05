@@ -4,6 +4,23 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.500] — 2026-10-05
+
+**A call to a function with a precondition is Nikaia** (ADR-294, #436 step
+4). `prover_state.nika`'s `precondition_call` proves each of the callee's
+claims with the call's arguments, carries one back to the caller's entry in
+the first pass (ADR-269 D15), finds the call breaking it - every time, or for
+a state that reaches it (D8, `NK1207`) - or makes the check the call carries,
+and says how the call reaches the callee (D20). Where a body is, `Where`, is
+`ProverWhere`. `carry_back` and `precondition_call` are free functions for now
+(#463). Every bench and example lowers byte for byte as before.
+
+**A method's nullable text parameter takes a `String?` inside its option**
+(#462). The rule that writes `x.as_deref()` for a `ref String?` parameter
+looked the parameter up by the callee's name, and a method call names only
+the method: the argument went as `&x`. Where no entry has the bare name, the
+methods of that name are asked, where they agree.
+
 ## [0.0.499] — 2026-10-05
 
 **Whether a claim reads data from outside is Nikaia** (ADR-294, #436 step 4).

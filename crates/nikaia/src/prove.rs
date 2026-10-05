@@ -233,9 +233,7 @@ pub fn prove(
 // **The claims carried between functions** are `tools/prover_claims.nika`
 // (ADR-294, #436).
 use nikaia_std::tools::prover_calls::{self, FreeFunction};
-use nikaia_std::tools::prover_claims::{
-    self, CarriedFrom, Foreign, PostClaim, PreClaim, Precondition,
-};
+use nikaia_std::tools::prover_claims::{self, Foreign, PostClaim, PreClaim, Precondition};
 use nikaia_std::tools::prover_solver::{self, SolverAnswer};
 use nikaia_std::tools::prover_state::{self, ProverState};
 
@@ -257,24 +255,8 @@ struct Prover<'a> {
 /// What a body may know at one point (`tools/prover_scope.nika`, #436).
 use nikaia_std::tools::prover_scope::{ProverScope as Scope, length_of};
 
-/// Where a function body is, for what an `assert` there may become.
-#[derive(Clone)]
-struct Where {
-    /// The free function this body is, where a precondition may belong to it.
-    function: Option<String>,
-    /// Its whole-number parameters.
-    params: BTreeSet<String>,
-    /// Why a parameter claim here cannot be a precondition, if it cannot.
-    no_precondition: Option<&'static str>,
-    /// The function body's own statements, not a nested block.
-    top: bool,
-    /// A free function's body, called by name: what has a postcondition.
-    free: bool,
-    /// Inside a lambda, whose `return` is not the function's.
-    lambda: bool,
-    /// The function `throws`, so a call in it may leave it.
-    throws: bool,
-}
+/// Where a function body is (`prover_state.nika`).
+use nikaia_std::tools::prover_state::ProverWhere as Where;
 
 impl<'a> Prover<'a> {
     fn every_body(&mut self) {
@@ -297,11 +279,11 @@ impl<'a> Prover<'a> {
                     let at = Where {
                         function: None,
                         params: BTreeSet::new(),
-                        no_precondition: Some("a test has no callers"),
+                        no_precondition: Some("a test has no callers".to_string()),
                         top: true,
                         free: false,
                         lambda: false,
-                        throws: true,
+                        throws_out: true,
                     };
                     self.block(body, &mut Scope::unknown(), &at);
                     self.state.in_test = false;
@@ -370,10 +352,11 @@ impl<'a> Prover<'a> {
         let no_precondition = if owner.is_some_and(|(_, of_a_trait)| of_a_trait) {
             Some(
                 "A method of a trait's implementation can't have a precondition: a call \
-                 through the trait doesn't know it, and there is no second entry to check it.",
+                 through the trait doesn't know it, and there is no second entry to check it."
+                    .to_string(),
             )
         } else if own.as_deref() == Some("main") {
-            Some("`main` has no callers.")
+            Some("`main` has no callers.".to_string())
         } else {
             None
         };
@@ -385,7 +368,7 @@ impl<'a> Prover<'a> {
             top: true,
             free,
             lambda: false,
-            throws: *can_throw,
+            throws_out: *can_throw,
         };
         self.state.in_test = was_a_test;
         let leaves = self.block(body, &mut scope, &at);
@@ -431,10 +414,7 @@ impl<'a> Prover<'a> {
     /// Walk one statement; whether control never goes past it.
     fn stmt(&mut self, stmt: &Spanned<Stmt>, scope: &mut Scope, at: &Where) -> bool {
         let span = stmt.span;
-        let nested = Where {
-            top: false,
-            ..at.clone()
-        };
+        let nested = at.inside(false);
         match &stmt.node {
             Stmt::Let {
                 names,
@@ -646,10 +626,7 @@ impl<'a> Prover<'a> {
     /// An expression standing as a statement: an `assert`, an `if` whose
     /// branches teach the rest of the block something, or anything else.
     fn expr_stmt(&mut self, expr: &Expr, span: Span, scope: &mut Scope, at: &Where) -> bool {
-        let nested = Where {
-            top: false,
-            ..at.clone()
-        };
+        let nested = at.inside(false);
         match expr {
             Expr::Call { func, args, config }
                 if matches!(&**func, Expr::Variable(_))
@@ -823,9 +800,12 @@ impl<'a> Prover<'a> {
             Some(claim) if !tainted_claim => self.refutes(&scope.facts, claim),
             _ => None,
         };
-        if let (Some(claim), None, Some(function), None) =
-            (claim, at.no_precondition, at.function.clone(), &refuted)
-            && let Some(term) = self.precondition_at(claim, scope, at)
+        if let (Some(claim), None, Some(function), None) = (
+            claim,
+            at.no_precondition.as_deref(),
+            at.function.clone(),
+            &refuted,
+        ) && let Some(term) = self.precondition_at(claim, scope, at)
         {
             if self.state.collecting {
                 let as_written = only_params && at.top;
@@ -940,7 +920,7 @@ impl<'a> Prover<'a> {
             format!("it is false when {}", shown(values))
         } else if claim.is_none() {
             "it is not a comparison of whole numbers the prover reads".to_string()
-        } else if only_params && let Some(no) = at.no_precondition {
+        } else if only_params && let Some(no) = &at.no_precondition {
             format!(
                 "nothing before it shows it; {}",
                 lowered_first(no.trim_end_matches('.'))
@@ -1060,19 +1040,13 @@ impl<'a> Prover<'a> {
                 }
                 None => scope.blind(),
             };
-            self.block(
-                block,
-                &mut inner,
-                &Where {
-                    top: false,
-                    lambda,
-                    ..at.clone()
-                },
-            );
+            self.block(block, &mut inner, &at.inside(lambda));
         }
     }
 
-    /// A call to a function with a precondition (D5).
+    /// **A call to a function with a precondition** (ADR-269 D5, D8, D15,
+    /// D20; `prover_state::precondition_call`): its findings, and how the
+    /// call reaches the callee.
     #[allow(clippy::too_many_arguments)]
     fn a_call(
         &mut self,
@@ -1084,209 +1058,31 @@ impl<'a> Prover<'a> {
         scope: &Scope,
         at: &Where,
     ) {
-        let mut reach = Reach::Proved;
-        for (index, pre) in claims.iter().enumerate() {
-            // Each parameter's term as this call gives it, and a list's
-            // length as the argument's: `p.len()` in the precondition is the
-            // argument's.
-            let mut with: BTreeMap<String, Option<i64>> = BTreeMap::new();
-            for (param, arg) in params.iter().zip(args) {
-                with.insert(param.clone(), lin(&mut self.arena, self.parsed, arg, scope));
-                if let Expr::Variable(name) = arg {
-                    let length = length_of(self.parsed.text(*name));
-                    let known = scope
-                        .ints
-                        .contains(&length)
-                        .then(|| self.arena.var(&length));
-                    with.insert(length_of(param), known);
-                }
-            }
-            let mut read = BTreeSet::new();
-            self.arena.variables(pre.term, &mut read);
-            let given: Option<BTreeMap<String, i64>> = read
-                .iter()
-                .map(|name| Some((name.clone(), with.get(name).copied().flatten()?)))
-                .collect();
-            let goal = given.map(|given| self.arena.substitute(pre.term, &given));
-            let proved = goal.is_some_and(|g| self.proves(&scope.facts, g).is_ok());
-            if proved {
-                continue;
-            }
-            let site = CarriedFrom {
-                at: span.at() as i64,
-                callee: callee.to_string(),
-                place: index as i64,
-            };
-            if self.state.collecting {
-                self.carry_back(goal, pre, callee, site, scope, at);
-                continue;
-            }
-            // **Carried back to this function's entry** in the first pass:
-            // its callers prove it, so the call needs no check of its own.
-            if let Some(function) = &at.function
-                && self
-                    .state
-                    .preconditions
-                    .get(function)
-                    .is_some_and(|p| p.claims.iter().any(|c| c.carried_from(&site)))
-            {
-                continue;
-            }
-            // **A call that breaks the precondition every time** (ADR-269
-            // D8): what is known at the call rules it out. The values shown
-            // are the parameters', as this call gives them.
-            let always = match goal {
-                Some(goal) => self.refutes(&scope.facts, goal),
-                None => None,
-            };
-            if let Some(values) = &always {
-                // The precondition's own names: the parameters it reads, and
-                // the lengths of them.
-                let given: BTreeMap<String, i64> = with
-                    .iter()
-                    .filter(|(name, _)| read.contains(*name))
-                    .filter_map(|(name, term)| {
-                        Some((name.clone(), self.arena.int_value((*term)?, values)?))
-                    })
-                    .collect();
-                let (written, from) = match (&pre.computed, &pre.origin) {
-                    (Some(computed), Some(origin)) => (
-                        computed.clone(),
-                        Some(format!(
-                            "The precondition is `assert({})` in `{origin}`, carried back to \
-                             `{callee}`'s entry.",
-                            pre.written
-                        )),
-                    ),
-                    (Some(computed), None) => (
-                        computed.clone(),
-                        Some(format!(
-                            "The precondition is `assert({})` in `{callee}`, carried back to its \
-                             entry.",
-                            pre.written
-                        )),
-                    ),
-                    (None, _) => (pre.written.clone(), None),
-                };
-                self.out.findings.push(Finding {
-                    severity: Severity::Error,
-                    span,
-                    code: "NK1207",
-                    message: format!(
-                        "This call breaks `{callee}`'s precondition `{written}` every time it is \
-                         reached."
-                    ),
-                    notes: [Some(format!("Here {}.", shown(&given))), from]
-                        .into_iter()
-                        .flatten()
-                        .collect(),
-                    help: Some(format!(
-                        "Pass `{callee}` arguments for which `{written}` holds, or check them \
-                         with a guard before the call."
-                    )),
-                    labels: Vec::new(),
-                });
-            }
-            // **A call that breaks it for some of the values that reach it**
-            // (D8): one such state, and what the parameters are in it.
-            if always.is_none()
-                && let Some(goal) = goal
-                && let Some(values) = self.breaks_when(scope, goal)
-            {
-                let given: BTreeMap<String, i64> = with
-                    .iter()
-                    .filter(|(name, _)| read.contains(*name))
-                    .filter_map(|(name, term)| {
-                        Some((name.clone(), self.arena.int_value((*term)?, &values)?))
-                    })
-                    .collect();
-                let written = pre.computed.clone().unwrap_or_else(|| pre.written.clone());
-                let from = pre.computed.as_ref().map(|_| {
-                    let origin = pre.origin.as_deref().unwrap_or(callee);
-                    format!(
-                        "The precondition is `assert({})` in `{origin}`.",
-                        pre.written
-                    )
-                });
-                self.out.findings.push(Finding {
-                    severity: Severity::Error,
-                    span,
-                    code: "NK1207",
-                    message: format!(
-                        "This call breaks `{callee}`'s precondition `{written}` when {}.",
-                        shown(&values)
-                    ),
-                    notes: [Some(format!("Then {}.", shown(&given))), from]
-                        .into_iter()
-                        .flatten()
-                        .collect(),
-                    help: Some(format!(
-                        "Pass `{callee}` arguments for which `{written}` holds, or check them \
-                         with a guard before the call."
-                    )),
-                    labels: Vec::new(),
-                });
-            }
-            // **Not proved: the call carries the check** (D5), with the
-            // arguments in place of the parameters - where every argument is
-            // one the prover reads, which also makes it pure, so evaluating it
-            // once more for the check changes nothing. Where one is not, the
-            // call reaches the checked entry (ADR-269 D20).
-            reach = joined_reach(
-                reach,
-                match goal {
-                    Some(goal) => Reach::Checked(vec![Check {
-                        rust: rust_of(&self.arena, goal),
-                        written: pre.failure(callee),
-                        message: pre.message.clone(),
-                        operands: read
-                            .iter()
-                            .filter_map(|name| {
-                                let value = with.get(name).copied().flatten()?;
-                                Some((name.clone(), rust_of(&self.arena, value)))
-                            })
-                            .collect(),
-                    }]),
-                    None => Reach::Through,
-                },
-            );
-        }
+        let Terms { held, copy } = &mut self.arena;
+        let outcome = prover_state::precondition_call(
+            &mut self.state,
+            held,
+            &self.parsed.interner,
+            callee,
+            params,
+            claims,
+            args,
+            span,
+            scope,
+            at,
+            &|arena, facts, goal| answer_of(copy, arena, facts, goal),
+            &|arena, facts, goal| model_of(copy, arena, facts, goal),
+            &|name| crate::emit::escaped(name).into_owned(),
+        );
+        self.out
+            .findings
+            .extend(outcome.findings.into_iter().map(crate::traits::from_nikaia));
         let key = call_key(self.parsed, callee, args);
         let joined = match self.out.reaches.remove(&key) {
-            Some(before) => joined_reach(before, reach),
-            None => reach,
+            Some(before) => joined_reach(before, outcome.reach),
+            None => outcome.reach,
         };
         self.out.reaches.insert(key, joined);
-    }
-
-    /// **A callee's precondition this function cannot show is its callers'**
-    /// (`ProverState::carry_back`).
-    fn carry_back(
-        &mut self,
-        goal: Option<i64>,
-        pre: &PreClaim,
-        callee: &str,
-        site: CarriedFrom,
-        scope: &Scope,
-        at: &Where,
-    ) {
-        let function = at
-            .function
-            .as_deref()
-            .filter(|_| at.no_precondition.is_none());
-        let Terms { held, copy } = &mut self.arena;
-        self.state.carry_back(
-            held,
-            goal,
-            pre,
-            callee,
-            site,
-            scope,
-            function,
-            &at.params,
-            |arena, facts, goal| answer_of(copy, arena, facts, goal),
-            |arena, facts, goal| model_of(copy, arena, facts, goal),
-        )
     }
 
     /// Whether the facts prove the goal: one query to the reference solver
@@ -1441,7 +1237,7 @@ impl<'a> Prover<'a> {
     fn throwing(&self, call: &Expr, at: &Where) -> bool {
         prover_calls::may_throw(
             call,
-            at.throws,
+            at.throws_out,
             &self.parsed.program,
             &self.parsed.interner,
             self.own,
@@ -1752,18 +1548,6 @@ impl Terms {
 
     fn variables(&self, id: i64, names: &mut BTreeSet<String>) {
         self.held.variables(id, names)
-    }
-
-    fn int_value(&self, id: i64, values: &BTreeMap<String, i64>) -> Option<i64> {
-        self.held.int_value(id, values)
-    }
-
-    fn substitute(&mut self, id: i64, with: &BTreeMap<String, i64>) -> i64 {
-        let given = with
-            .iter()
-            .map(|(name, term)| (name.clone(), *term))
-            .collect();
-        self.held.substitute(id, &given)
     }
 
     /// A term `prove_terms` builds, its nodes appended to `held`.

@@ -74,35 +74,6 @@ impl ProverState {
         return false
     }
 
-    /// **A callee's precondition this function cannot show is its callers'**
-    /// (ADR-269 D15), as an `assert` of it standing at the call would be:
-    /// carried back to the entry, where that reads only the parameters.
-    /// Not where what is known rules it out - that call is warned about
-    /// (D8) - nor through a call that can come back to this function, nor in
-    /// a test. `function` is the free function the call stands in, where a
-    /// precondition may belong to it.
-    pub fn carry_back(ref mut self, mut arena: TermArena, goal: i64?, pre: ref PreClaim, callee: ref String, site: CarriedFrom, scope: ref ProverScope, function: ref String?, params: ref collections::BTreeSet[String], ask: fn(ref TermArena, ref Vec[i64], i64) -> SolverAnswer sync, model: fn(ref TermArena, ref Vec[i64], i64) -> collections::BTreeMap[String, i64]? sync) {
-        let claim = goal ?? return
-        let owner = carrying_function(function) ?? return
-        if self.in_test || self.reaches(callee, owner) {
-            return
-        }
-        if refuting_values(arena, scope.facts, claim, ask, model) != null {
-            return
-        }
-        let term = scope.precondition_at(arena, claim, params) ?? return
-        let carried = PreClaim {
-            term: term,
-            written: pre.written.clone(),
-            computed: arena.text(term),
-            message: claim_text_of(pre.message),
-            origin: claim_text_of(pre.origin) ?? callee.clone(),
-            site: site,
-        }
-        let mut found = self.preconditions.remove(owner) ?? Precondition::none()
-        found.claims.push(carried)
-        self.preconditions.insert(owner, found)
-    }
 
     /// **An exit of a free function**: each postcondition standing has to be
     /// shown here, with the value handed back as `result`, or it falls
@@ -141,6 +112,176 @@ impl ProverState {
             }
         }
     }
+
+
+    /// Whether a claim was carried back from the call `site` to the entry
+    /// of `function` in the first pass.
+    fn carried_here(ref self, function: ref String?, site: ref CarriedFrom) -> bool {
+        let owner = carrying_function(function) ?? return false
+        let found = self.preconditions[owner] ?? return false
+        for claim in found.claims {
+            if claim.carried_from(site) {
+                return true
+            }
+        }
+        return false
+    }
+}
+
+/// **A call to a function with a precondition** (ADR-269 D5): each of
+/// the callee's `claims`, with this call's arguments in place of its
+/// `params`, is proved here, carried back to the caller's entry in the
+/// first pass (D15), shown broken - every time, or for a state that
+/// reaches the call (D8) - or checked by the call itself; where an
+/// argument is one the prover does not read, the call reaches the checked
+/// entry (D20). `escape` writes a name as the language below does. Free
+/// functions and not methods of the state, so that the callbacks can be
+/// handed on (#463).
+pub fn precondition_call(mut state: ProverState, mut arena: TermArena, words: ref winnow_grammar::InternerContext, callee: ref String, params: ref Vec[String], claims: ref Vec[PreClaim], args: ref Vec[Expr], span: Span, scope: ref ProverScope, at: ref ProverWhere, ask: fn(ref TermArena, ref Vec[i64], i64) -> SolverAnswer sync, model: fn(ref TermArena, ref Vec[i64], i64) -> collections::BTreeMap[String, i64]? sync, escape: fn(ref String) -> String sync) -> CallOutcome {
+    let mut outcome = CallOutcome { reach: CallReach::Proved, findings: [] }
+    for index in 0..<claims.len() {
+        let pre = claims[index]
+        // Each parameter's term as this call gives it, and a list's
+        // length as the argument's: `p.len()` in the precondition is the
+        // argument's.
+        let mut given_by: collections::BTreeMap[String, i64] = collections::BTreeMap()
+        let mut k = 0
+        for arg in args {
+            if k >= params.len() {
+                break
+            }
+            let param = params[k]
+            let term = lin_term(arg, words, fn(name) { scope.ints.contains(name) }, arena.nodes)
+            if term != null {
+                given_by.insert(param.clone(), term ?? 0)
+            }
+            match arg {
+                Expr::Variable(name) => {
+                    let length = length_of(words.resolve(name))
+                    if scope.ints.contains(length) {
+                        let known = arena.var(length)
+                        given_by.insert(length_of(param), known)
+                    }
+                },
+                else => {},
+            }
+            k += 1
+        }
+        let mut read: collections::BTreeSet[String] = collections::BTreeSet()
+        arena.variables(pre.term, read)
+        let mut goal: i64? = null
+        if every_given(read, given_by) {
+            goal = arena.substitute(pre.term, given_by)
+        }
+        if goal != null && is_proved(ask(arena, scope.facts, goal ?? 0)) {
+            continue
+        }
+        let site = CarriedFrom { at: span.start as i64, callee: callee.clone(), place: index }
+        if state.collecting {
+            let mut carrying: String? = null
+            if at.no_precondition == null {
+                carrying = carrying_function(at.function)
+            }
+            carry_back(state, arena, goal, pre, callee, site, scope, carrying, at.params, ask, model)
+            continue
+        }
+        // **Carried back to this function's entry** in the first pass:
+        // its callers prove it, so the call needs no check of its own.
+        if state.carried_here(at.function, site) {
+            continue
+        }
+        // **A call that breaks the precondition every time** (D8): what is
+        // known at the call rules it out. The values shown are the
+        // parameters', as this call gives them.
+        let mut always: collections::BTreeMap[String, i64]? = null
+        if goal != null {
+            always = refuting_values(arena, scope.facts, goal ?? 0, ask, model)
+        }
+        let broken_always = always != null
+        if broken_always {
+            let values = always ?? collections::BTreeMap()
+            let given = values_given(arena, given_by, read, values)
+            let computed = claim_text_of(pre.computed)
+            let mut written = pre.written.clone()
+            let mut notes: Vec[String] = [f"Here {shown(given)}."]
+            if computed != null {
+                written = computed ?? ""
+                let origin = claim_text_of(pre.origin)
+                if origin != null {
+                    notes.push(f"The precondition is `assert({pre.written})` in `{origin ?? ""}`, carried back to `{callee}`'s entry.")
+                } else {
+                    notes.push(f"The precondition is `assert({pre.written})` in `{callee}`, carried back to its entry.")
+                }
+            }
+            outcome.findings.push(Finding { code: "NK1207", span: span, message: f"This call breaks `{callee}`'s precondition `{written}` every time it is reached.", notes: notes, help: f"Pass `{callee}` arguments for which `{written}` holds, or check them with a guard before the call.", warning: false })
+        }
+        // **A call that breaks it for some of the values that reach it**
+        // (D8): one such state, and what the parameters are in it.
+        if !broken_always && goal != null {
+            let breaking = breaking_values(arena, scope, goal ?? 0, model)
+            if breaking != null {
+                let values = breaking ?? collections::BTreeMap()
+                let given = values_given(arena, given_by, read, values)
+                let computed = claim_text_of(pre.computed)
+                let has_computed = computed != null
+                let written = computed ?? pre.written.clone()
+                let mut notes: Vec[String] = [f"Then {shown(given)}."]
+                if has_computed {
+                    let origin = claim_text_of(pre.origin) ?? callee.clone()
+                    notes.push(f"The precondition is `assert({pre.written})` in `{origin}`.")
+                }
+                outcome.findings.push(Finding { code: "NK1207", span: span, message: f"This call breaks `{callee}`'s precondition `{written}` when {shown(values)}.", notes: notes, help: f"Pass `{callee}` arguments for which `{written}` holds, or check them with a guard before the call.", warning: false })
+            }
+        }
+        // **Not proved: the call carries the check** (D5), with the
+        // arguments in place of the parameters - where every argument is
+        // one the prover reads, which also makes it pure, so evaluating it
+        // once more for the check changes nothing. Where one is not, the
+        // call reaches the checked entry (D20).
+        let mut this_reach = CallReach::Through
+        if goal != null {
+            let mut operands: Vec[(String, String)] = []
+            for name in read {
+                let value = given_by[name] ?? continue
+                operands.push((name.clone(), rust_text(arena, value, escape)))
+            }
+            let check = PreconditionCheck { rust: rust_text(arena, goal ?? 0, escape), written: pre.failure(callee), message: claim_text_of(pre.message), operands: operands }
+            this_reach = CallReach::Checked([check])
+        }
+        outcome.reach = joined_reach(outcome.reach, this_reach)
+    }
+    return outcome
+}
+
+/// **A callee's precondition this function cannot show is its callers'**
+/// (ADR-269 D15), as an `assert` of it standing at the call would be:
+/// carried back to the entry, where that reads only the parameters.
+/// Not where what is known rules it out - that call is warned about
+/// (D8) - nor through a call that can come back to this function, nor in
+/// a test. `function` is the free function the call stands in, where a
+/// precondition may belong to it. A free function and not a method of the
+/// state, so that `precondition_call` can hand its callbacks on (#463).
+pub fn carry_back(mut state: ProverState, mut arena: TermArena, goal: i64?, pre: ref PreClaim, callee: ref String, site: CarriedFrom, scope: ref ProverScope, function: ref String?, params: ref collections::BTreeSet[String], ask: fn(ref TermArena, ref Vec[i64], i64) -> SolverAnswer sync, model: fn(ref TermArena, ref Vec[i64], i64) -> collections::BTreeMap[String, i64]? sync) {
+    let claim = goal ?? return
+    let owner = carrying_function(function) ?? return
+    if state.in_test || state.reaches(callee, owner) {
+        return
+    }
+    if refuting_values(arena, scope.facts, claim, ask, model) != null {
+        return
+    }
+    let term = scope.precondition_at(arena, claim, params) ?? return
+    let carried = PreClaim {
+        term: term,
+        written: pre.written.clone(),
+        computed: arena.text(term),
+        message: claim_text_of(pre.message),
+        origin: claim_text_of(pre.origin) ?? callee.clone(),
+        site: site,
+    }
+    let mut found = state.preconditions.remove(owner) ?? Precondition::none()
+    found.claims.push(carried)
+    state.preconditions.insert(owner, found)
 }
 
 /// **What a call's postconditions say of the name its result is bound to**
@@ -210,4 +351,66 @@ fn standing_posts(postconditions: ref collections::BTreeMap[String, Vec[PostClai
 fn carrying_function(function: ref String?) -> String? {
     let f = function ?? return null
     return f.clone()
+}
+
+/// **Where a function body is**, for what an `assert` there may become.
+pub struct ProverWhere {
+    /// The free function this body is, where a precondition may belong to it.
+    pub function: String?,
+    /// Its whole-number parameters.
+    pub params: collections::BTreeSet[String],
+    /// Why a parameter claim here cannot be a precondition, if it cannot.
+    pub no_precondition: String?,
+    /// The function body's own statements, not a nested block.
+    pub top: bool,
+    /// A free function's body, called by name: what has a postcondition.
+    pub free: bool,
+    /// Inside a lambda, whose `return` is not the function's.
+    pub lambda: bool,
+    /// The function `throws`, so a call in it may leave it.
+    pub throws_out: bool,
+}
+
+impl ProverWhere {
+    /// The same body, one block in - in a lambda where `lambda` says so.
+    pub fn inside(ref self, lambda: bool) -> ProverWhere {
+        let mut at = self.clone()
+        at.top = false
+        at.lambda = self.lambda || lambda
+        return at
+    }
+}
+
+/// What one call to a function with a precondition makes: how it reaches
+/// the callee, and what it was found to break.
+pub struct CallOutcome {
+    pub reach: CallReach,
+    pub findings: Vec[Finding],
+}
+
+fn is_proved(answer: SolverAnswer) -> bool {
+    return match answer {
+        SolverAnswer::Proved => true,
+        else => false,
+    }
+}
+
+/// The values the precondition's own names - the parameters it reads, and
+/// their lengths - have under `values`, as this call gives them.
+fn values_given(arena: ref TermArena, given_by: ref collections::BTreeMap[String, i64], read: ref collections::BTreeSet[String], values: ref collections::BTreeMap[String, i64]) -> collections::BTreeMap[String, i64] {
+    let mut out: collections::BTreeMap[String, i64] = collections::BTreeMap()
+    for (name, term) in given_by {
+        if !read.contains(name) {
+            continue
+        }
+        let value = arena.int_value(term, values) ?? continue
+        out.insert(name.clone(), value)
+    }
+    return out
+}
+
+/// A term as the language below writes it (`prove_text.nika`'s `rust_of`),
+/// each name as `escape` writes it.
+fn rust_text(arena: ref TermArena, id: i64, escape: fn(ref String) -> String sync) -> String {
+    return rust_of(id, fn(at) { arena.at(at) }, escape)
 }

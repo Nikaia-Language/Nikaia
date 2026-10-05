@@ -1321,6 +1321,44 @@ fn a_let_over_an_element_is_read_in_a_comparison() {
     );
 }
 
+/// **A method's nullable text parameter takes a `String?` inside its option**
+/// (#462, found moving the prover's `a_call` into Nikaia, #436): the call
+/// named only the method, the rule that writes `x.as_deref()` looked the
+/// parameter up by that name, and the argument went as `&x`, an
+/// `&Option<String>` where the method takes an `Option<&str>`.
+#[test]
+fn a_methods_nullable_text_parameter_takes_an_option() {
+    runs(
+        "method-nullable-text",
+        "struct Where {\n\
+         \x20   pub function: String?,\n\
+         }\n\
+         \n\
+         struct Walk {\n\
+         \x20   pub seen: i64,\n\
+         }\n\
+         \n\
+         impl Walk {\n\
+         \x20   fn named(ref self, function: ref String?) -> String {\n\
+         \x20       let f = function ?? return \"none\"\n\
+         \x20       return f.clone()\n\
+         \x20   }\n\
+         \n\
+         \x20   fn both(ref self, at: ref Where) -> String {\n\
+         \x20       let local: String? = \"local\"\n\
+         \x20       return f\"{self.named(at.function)} {self.named(local)}\"\n\
+         \x20   }\n\
+         }\n\
+         \n\
+         fn main() {\n\
+         \x20   let walk = Walk { seen: 0 }\n\
+         \x20   println(walk.both(Where { function: \"f\" }))\n\
+         \x20   println(walk.both(Where { function: null }))\n\
+         }\n",
+        "f local\nnone local\n",
+    );
+}
+
 /// **Found by the solver's kernels** ([ADR-270](../../../docs/specification/adr/adr-270.md)
 /// D8 step 1): an index into a `mut` parameter, read and written. The
 /// parameter is a `&mut Vec<u32>` below, and the write was `set(&mut out, …)` -

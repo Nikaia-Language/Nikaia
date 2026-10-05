@@ -12961,29 +12961,47 @@ impl<'p> Emitter<'p> {
             // issue #171): a `ref String?` parameter is an `Option<&str>` (Part I
             // 2.3), and what reaches it from a `String?` is `x.as_deref()` -
             // `&x` was an `&Option<String>`. A `null` is `None` as it is.
+            // A method is keyed `Type::method` in the ledger, and a call
+            // names only the method: its parameter is the one every method of
+            // that name agrees on (#462).
+            let opening_of = |ty: &crate::contracts::ty::Ty| match ty {
+                crate::contracts::ty::Ty::Nullable(inner) if inner.is_a_view() => {
+                    Some(match inner.as_ref() {
+                        crate::contracts::ty::Ty::Named { name, .. }
+                            if matches!(crate::contracts::ty::base(name), "String" | "str") =>
+                        {
+                            ".as_deref()"
+                        }
+                        _ => ".as_ref()",
+                    })
+                }
+                _ => None,
+            };
             let inside_the_option = lend
-                .then(|| {
-                    self.own_contracts
-                        .functions
-                        .get(callee)
-                        .and_then(|c| c.signature.as_ref())
+                .then(|| match self.own_contracts.functions.get(callee) {
+                    Some(contract) => contract
+                        .signature
+                        .as_ref()
                         .and_then(|s| s.arguments().get(i))
-                        .and_then(|(_, ty)| match ty {
-                            crate::contracts::ty::Ty::Nullable(inner) if inner.is_a_view() => {
-                                Some(match inner.as_ref() {
-                                    crate::contracts::ty::Ty::Named { name, .. }
-                                        if matches!(
-                                            crate::contracts::ty::base(name),
-                                            "String" | "str"
-                                        ) =>
-                                    {
-                                        ".as_deref()"
-                                    }
-                                    _ => ".as_ref()",
-                                })
-                            }
+                        .and_then(|(_, ty)| opening_of(ty)),
+                    None => {
+                        let openings: Vec<Option<&'static str>> = self
+                            .own_contracts
+                            .candidates(callee)
+                            .iter()
+                            .map(|(_, contract)| {
+                                contract
+                                    .signature
+                                    .as_ref()
+                                    .and_then(|s| s.arguments().get(i))
+                                    .and_then(|(_, ty)| opening_of(ty))
+                            })
+                            .collect();
+                        match openings.first() {
+                            Some(first) if openings.iter().all(|o| o == first) => *first,
                             _ => None,
-                        })
+                        }
+                    }
                 })
                 .flatten();
             // **A map's read is that option already**: `index::get` answers
