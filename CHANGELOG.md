@@ -4,6 +4,13 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.481] — 2026-10-05
+
+**Part I 7.1's `fs::exists` names its root.** The example wrote
+`fs::exists(path)`; ADR-108 D1 lists `fs::exists` among the calls that take an
+`fs::Root` right after the path, as Part III 17.1 does. The question leaves
+`open-decisions.md`: the record had settled it. `std` has no `exists` yet.
+
 ## [0.0.480] — 2026-10-05
 
 **Why a check stayed is said by Nikaia** (ADR-294, #435). The reasons

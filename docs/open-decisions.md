@@ -42,19 +42,6 @@ it into a function.
 a second spelling for one thing. **Costs:** (1) wrong is two examples written
 again; (2) wrong is a spelling kept for one use.
 
-### Whether `fs::exists` takes a root
-
-**What is blocked.** Part I 7.1 writes `if !fs::exists(path) { … }`, one
-argument. Part III 17.1 lists `pub fn exists(path: Path, root: Root) -> bool
-throws`, two. `std` has no `exists`, so the compiler cannot say which is
-right: the call is undescribed and passes the check.
-
-**Why it is the owner's.** Every other `fs` call takes a `Root`
-([ADR-108](specification/adr/adr-108.md)); an exception is a decision.
-
-**What this file recommends: the root, as Part III has it**, and Part I's
-example writes it. **Costs:** small either way; this is one example.
-
 ### Which of two `Shared`s Part I 6.2 means
 
 **What is blocked.** Part I 6.2 shows the three places a shared value is

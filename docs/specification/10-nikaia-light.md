@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part I: The Language Core**
-**Version:** 0.0.480 (Draft)
+**Version:** 0.0.481 (Draft)
 **Date:** 2026-10-05
 
 ---
@@ -2239,7 +2239,7 @@ character and text are not errors, and a `throw` of one is refused with
 **Raising: `throw`.**
 
 ```nika
-if !fs::exists(path) {
+if !fs::exists(path, fs::Root::Anywhere) {
     throw ConfigError::NotFound(path)
 }
 ```
