@@ -1,4 +1,5 @@
 target/
 nikaia.contracts
+nikaia.proofs
 nikaia.lock
 Cargo.lock
