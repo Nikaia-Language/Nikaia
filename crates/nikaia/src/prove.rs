@@ -353,7 +353,7 @@ struct Foreign {
 #[derive(Debug, Clone)]
 struct PostClaim {
     /// Over `result` and the function's parameters.
-    term: TermId,
+    term: i64,
     /// The `assert`'s condition, written.
     written: String,
 }
@@ -367,7 +367,7 @@ struct PreClaim {
     /// The condition at the function's entry, over its parameters: the
     /// `assert`'s claim carried back through the body - `mode == 1 → x > 1`
     /// for `assert(y > 0)` after `let y = x - 1` inside `if mode == 1`.
-    term: TermId,
+    term: i64,
     /// The `assert`'s condition, written, for messages.
     written: String,
     /// The condition at the entry as a reader writes it, where it is not the
@@ -419,97 +419,8 @@ struct Prover<'a> {
     arena: Terms,
 }
 
-/// What a body may know at one point.
-#[derive(Debug, Clone, Default)]
-struct Scope {
-    /// Names that are variables of the proof: immutable whole numbers.
-    ints: BTreeSet<String>,
-    /// Names whose value came from outside the program (ADR-010).
-    tainted: BTreeSet<String>,
-    /// Names bound anywhere in this body, so a callee's name that a local
-    /// shadows is not the callee.
-    locals: BTreeSet<String>,
-    facts: Vec<TermId>,
-    /// **Each whole number's value at the function's entry**, as a term over
-    /// its parameters (ADR-269 D15): after `let y = x - 1`, `y` is `x - 1`,
-    /// and after `let x = x + 1`, `x` is the parameter plus one.
-    entry: BTreeMap<String, TermId>,
-    /// **What holds of the parameters on the way here**: the branches taken
-    /// and the guards passed, at the entry. `None` once a loop, a lambda or a
-    /// block this walk cannot see stands between the entry and here (D3).
-    path: Option<Vec<TermId>>,
-    /// **Whether every state the facts allow is one the program reaches
-    /// here** - unless it stops or leaves before, which no claim is about.
-    /// Facts are as a rule weaker than what is true: a condition the prover
-    /// cannot read, a fact dropped with a name bound again, a loop that may
-    /// end early each narrow what reaches a point without a fact saying how.
-    /// Only where nothing did can a value the facts allow be shown to reach
-    /// a claim that is false for it (ADR-269 D8).
-    exact: bool,
-    /// The whole numbers the facts do not pin to what the program computes:
-    /// a parameter, whatever its callers pass; a call's result, of which
-    /// only its postconditions are known; a length nobody counted.
-    loose: BTreeSet<String>,
-}
-
-impl Scope {
-    /// `name` is bound again: nothing known about the old binding holds.
-    fn rebind(&mut self, arena: &Terms, name: &str) {
-        let length = length_of(name);
-        self.ints.remove(name);
-        self.ints.remove(&length);
-        self.tainted.remove(name);
-        self.entry.remove(name);
-        self.entry.remove(&length);
-        self.locals.insert(name.to_string());
-        self.loose.remove(name);
-        self.loose.remove(&length);
-        let before = self.facts.len();
-        self.facts
-            .retain(|fact| !arena.mentions(*fact, name) && !arena.mentions(*fact, &length));
-        // What a dropped fact said about another name is lost with it.
-        if self.facts.len() != before {
-            self.exact = false;
-        }
-    }
-
-    /// `name` is a list or text that does not change, so `name.len()` is a
-    /// variable of the proof: a length is never negative, and a literal's is
-    /// known.
-    fn has_length(&mut self, arena: &mut Terms, name: &str, known: Option<i128>) {
-        let length = length_of(name);
-        self.ints.insert(length.clone());
-        let (len, zero) = (arena.var(&length), arena.int(0));
-        self.facts.push(arena.ge(len, zero));
-        if let Some(n) = known.and_then(|n| i64::try_from(n).ok()) {
-            let n = arena.int(n);
-            self.facts.push(arena.eq(len, n));
-            self.entry.insert(length, n);
-        } else {
-            self.loose.insert(length);
-        }
-    }
-
-    /// `name` is a whole number that is never negative.
-    fn not_negative(&mut self, arena: &mut Terms, name: &str) {
-        let (n, zero) = (arena.var(name), arena.int(0));
-        self.facts.push(arena.ge(n, zero));
-    }
-
-    /// A block whose bindings this walk cannot see: no facts, no variables.
-    fn blind(&self) -> Scope {
-        Scope {
-            ints: BTreeSet::new(),
-            tainted: self.tainted.clone(),
-            locals: self.locals.clone(),
-            facts: Vec::new(),
-            entry: BTreeMap::new(),
-            path: None,
-            exact: false,
-            loose: BTreeSet::new(),
-        }
-    }
-}
+/// What a body may know at one point (`tools/prover_scope.nika`, #436).
+use nikaia_std::tools::prover_scope::{ProverScope as Scope, length_of};
 
 /// Where a function body is, for what an `assert` there may become.
 #[derive(Clone)]
@@ -557,7 +468,7 @@ impl<'a> Prover<'a> {
                         lambda: false,
                         throws: true,
                     };
-                    self.block(body, &mut Scope::default(), &at);
+                    self.block(body, &mut Scope::unknown(), &at);
                     self.in_test = false;
                 }
                 _ => {}
@@ -593,11 +504,7 @@ impl<'a> Prover<'a> {
         let was_a_test = own
             .as_deref()
             .is_some_and(crate::modules::is_a_test_function);
-        let mut scope = Scope {
-            path: Some(Vec::new()),
-            exact: true,
-            ..Scope::default()
-        };
+        let mut scope = Scope::at_the_entry();
         let mut params = BTreeSet::new();
         if receiver.is_some() {
             scope.locals.insert("self".to_string());
@@ -613,11 +520,11 @@ impl<'a> Prover<'a> {
                 let at_entry = self.arena.var(&arg_name);
                 scope.entry.insert(arg_name.clone(), at_entry);
                 if ty.starts_with('u') {
-                    scope.not_negative(&mut self.arena, &arg_name);
+                    scope.not_negative(&mut self.arena.held, &arg_name);
                 }
             }
             if !arg.mutable && has_a_length(ty) {
-                scope.has_length(&mut self.arena, &arg_name, None);
+                scope.has_length(&mut self.arena.held, &arg_name, None);
                 params.insert(arg_name.clone());
                 let length = length_of(&arg_name);
                 let at_entry = self.arena.var(&length);
@@ -726,7 +633,7 @@ impl<'a> Prover<'a> {
                 };
                 for name in names {
                     let name = self.parsed.text(*name).to_string();
-                    scope.rebind(&self.arena, &name);
+                    scope.rebind(&self.arena.held, &name);
                     if tainted {
                         scope.tainted.insert(name.clone());
                         scope.loose.insert(name.clone());
@@ -768,22 +675,22 @@ impl<'a> Prover<'a> {
                         && self.parsed.text(t.name).starts_with('u')
                         && scope.ints.contains(&name)
                     {
-                        scope.not_negative(&mut self.arena, &name);
+                        scope.not_negative(&mut self.arena.held, &name);
                     }
                     match value {
                         Expr::ListLit { items, .. } => {
                             scope.has_length(
-                                &mut self.arena,
+                                &mut self.arena.held,
                                 &name,
-                                i128::try_from(items.len()).ok(),
+                                i64::try_from(items.len()).ok(),
                             );
                         }
-                        Expr::LitStr { .. } => scope.has_length(&mut self.arena, &name, None),
+                        Expr::LitStr { .. } => scope.has_length(&mut self.arena.held, &name, None),
                         _ if ty
                             .as_ref()
                             .is_some_and(|t| has_a_length(self.parsed.text(t.name))) =>
                         {
-                            scope.has_length(&mut self.arena, &name, None)
+                            scope.has_length(&mut self.arena.held, &name, None)
                         }
                         _ => {}
                     }
@@ -792,7 +699,7 @@ impl<'a> Prover<'a> {
             }
             Stmt::Comptime { name, value, .. } => {
                 self.expr(value, span, scope, &nested);
-                scope.rebind(&self.arena, self.parsed.text(*name));
+                scope.rebind(&self.arena.held, self.parsed.text(*name));
                 false
             }
             Stmt::Assign { target, value, .. } => {
@@ -801,7 +708,7 @@ impl<'a> Prover<'a> {
                 if let Expr::Variable(name) = target {
                     let name = self.parsed.text(*name).to_string();
                     let tainted = self.tainted(value, scope);
-                    scope.rebind(&self.arena, &name);
+                    scope.rebind(&self.arena.held, &name);
                     if tainted {
                         scope.tainted.insert(name);
                     }
@@ -818,7 +725,7 @@ impl<'a> Prover<'a> {
                 let mut inner = scope.clone();
                 for binding in bindings {
                     let name = self.parsed.text(*binding).to_string();
-                    inner.rebind(&self.arena, &name);
+                    inner.rebind(&self.arena.held, &name);
                     if tainted {
                         inner.tainted.insert(name);
                     }
@@ -1308,7 +1215,7 @@ impl<'a> Prover<'a> {
                 Some(params) => {
                     let mut inner = scope.clone();
                     for param in params {
-                        inner.rebind(&self.arena, param);
+                        inner.rebind(&self.arena.held, param);
                         inner.loose.insert(param.clone());
                     }
                     inner.path = None;
@@ -1347,7 +1254,7 @@ impl<'a> Prover<'a> {
             // Each parameter's term as this call gives it, and a list's
             // length as the argument's: `p.len()` in the precondition is the
             // argument's.
-            let mut with: BTreeMap<String, Option<TermId>> = BTreeMap::new();
+            let mut with: BTreeMap<String, Option<i64>> = BTreeMap::new();
             for (param, arg) in params.iter().zip(args) {
                 with.insert(param.clone(), lin(&mut self.arena, self.parsed, arg, scope));
                 if let Expr::Variable(name) = arg {
@@ -1361,7 +1268,7 @@ impl<'a> Prover<'a> {
             }
             let mut read = BTreeSet::new();
             self.arena.variables(pre.term, &mut read);
-            let given: Option<BTreeMap<String, TermId>> = read
+            let given: Option<BTreeMap<String, i64>> = read
                 .iter()
                 .map(|name| Some((name.clone(), with.get(name).copied().flatten()?)))
                 .collect();
@@ -1516,7 +1423,7 @@ impl<'a> Prover<'a> {
     /// (D8) - nor through a call that can come back to this function.
     fn carry_back(
         &mut self,
-        goal: Option<TermId>,
+        goal: Option<i64>,
         pre: &PreClaim,
         callee: &str,
         site: (usize, String, usize),
@@ -1579,13 +1486,8 @@ impl<'a> Prover<'a> {
     /// solver's word would be enough; checking it costs a replay of a few
     /// steps, and a solver fault becomes a check at run time instead of a
     /// claim nobody holds. `Err(Some(_))` says the certificate was rejected.
-    fn proves(&self, facts: &[TermId], goal: TermId) -> Result<(), Option<String>> {
-        let query = Query {
-            arena: self.arena.logic(),
-            facts,
-            goal,
-        };
-        match crate::proofs::ask(&query) {
+    fn proves(&self, facts: &[i64], goal: i64) -> Result<(), Option<String>> {
+        match self.arena.query(facts, goal, crate::proofs::ask) {
             crate::proofs::Asked::Proved => Ok(()),
             crate::proofs::Asked::Rejected(why) => Err(Some(why)),
             crate::proofs::Asked::Refuted(_) | crate::proofs::Asked::Unknown => Err(None),
@@ -1595,10 +1497,10 @@ impl<'a> Prover<'a> {
     /// `term` at the function's entry: each name it reads replaced by its
     /// value there. `None` where it reads a name whose value at the entry is
     /// not known - the result of a call, a mutable binding.
-    fn at_entry(&mut self, term: TermId, scope: &Scope) -> Option<TermId> {
+    fn at_entry(&mut self, term: i64, scope: &Scope) -> Option<i64> {
         let mut read = BTreeSet::new();
         self.arena.variables(term, &mut read);
-        let values: Option<BTreeMap<String, TermId>> = read
+        let values: Option<BTreeMap<String, i64>> = read
             .into_iter()
             .map(|name| Some((name.clone(), *scope.entry.get(&name)?)))
             .collect();
@@ -1610,15 +1512,15 @@ impl<'a> Prover<'a> {
     /// parameter or the length of one.
     fn postcondition_at(
         &mut self,
-        claim: TermId,
+        claim: i64,
         returned: &str,
         scope: &Scope,
         at: &Where,
-    ) -> Option<TermId> {
+    ) -> Option<i64> {
         let mut read = BTreeSet::new();
         self.arena.variables(claim, &mut read);
         let result = self.arena.var(RESULT);
-        let values: Option<BTreeMap<String, TermId>> = read
+        let values: Option<BTreeMap<String, i64>> = read
             .into_iter()
             .map(|name| {
                 let value = if name == returned {
@@ -1686,7 +1588,7 @@ impl<'a> Prover<'a> {
         args: &[Expr],
         bound: &str,
         scope: &Scope,
-    ) -> Vec<TermId> {
+    ) -> Vec<i64> {
         let (posts, params): (Vec<PostClaim>, Vec<String>) =
             match self.postconditions.get(callee).cloned() {
                 Some(posts) => {
@@ -1704,7 +1606,7 @@ impl<'a> Prover<'a> {
                     None => return Vec::new(),
                 },
             };
-        let mut with: BTreeMap<String, TermId> = BTreeMap::new();
+        let mut with: BTreeMap<String, i64> = BTreeMap::new();
         for (param, arg) in params.iter().zip(args) {
             if let Some(term) = lin(&mut self.arena, self.parsed, arg, scope) {
                 with.insert(param.clone(), term);
@@ -1830,7 +1732,7 @@ impl<'a> Prover<'a> {
 
     /// A branch taken or a guard passed: what it says at the entry joins the
     /// path, or the path is no longer known.
-    fn on_the_path(&mut self, scope: &mut Scope, condition: Option<TermId>) {
+    fn on_the_path(&mut self, scope: &mut Scope, condition: Option<i64>) {
         let at_entry = condition.and_then(|c| self.at_entry(c, scope));
         match (&mut scope.path, at_entry) {
             (Some(path), Some(c)) => path.push(c),
@@ -1844,7 +1746,7 @@ impl<'a> Prover<'a> {
     /// lengths of its lists, and the result is no larger than a fixed number
     /// of terms - counted, so that whether a claim is a precondition does not
     /// depend on the machine.
-    fn precondition_at(&mut self, claim: TermId, scope: &Scope, at: &Where) -> Option<TermId> {
+    fn precondition_at(&mut self, claim: i64, scope: &Scope, at: &Where) -> Option<i64> {
         let path = scope.path.clone()?;
         let at_entry = self.at_entry(claim, scope)?;
         let term = match path.as_slice() {
@@ -1868,21 +1770,11 @@ impl<'a> Prover<'a> {
     /// gives values for the claim's names. A model alone would not do: the
     /// facts are true but not all that is true, so a value they allow need not
     /// be one the program reaches. `None` where either is missing.
-    fn refutes(&mut self, facts: &[TermId], claim: TermId) -> Option<BTreeMap<String, i64>> {
+    fn refutes(&mut self, facts: &[i64], claim: i64) -> Option<BTreeMap<String, i64>> {
         let negation = self.arena.not(claim);
         self.proves(facts, negation).ok()?;
         let falsum = self.arena.bool(false);
-        let query = Query {
-            arena: self.arena.logic(),
-            facts,
-            goal: falsum,
-        };
-        let crate::proofs::Asked::Refuted(model) = crate::proofs::ask(&query) else {
-            return None;
-        };
-        if !verify_model(&query, &model) {
-            return None;
-        }
+        let model = self.arena.query(facts, falsum, refuted)?;
         let mut names = BTreeSet::new();
         self.arena.variables(claim, &mut names);
         let values: BTreeMap<String, i64> = names
@@ -1899,7 +1791,7 @@ impl<'a> Prover<'a> {
     /// depends on - no parameter, no call's result, nothing they lean on.
     /// Then the model is a state the program reaches, unless it stops or
     /// leaves before. `None` everywhere else.
-    fn breaks_when(&mut self, scope: &Scope, claim: TermId) -> Option<BTreeMap<String, i64>> {
+    fn breaks_when(&mut self, scope: &Scope, claim: i64) -> Option<BTreeMap<String, i64>> {
         if !scope.exact {
             return None;
         }
@@ -1925,17 +1817,7 @@ impl<'a> Prover<'a> {
         {
             return None;
         }
-        let query = Query {
-            arena: self.arena.logic(),
-            facts: &scope.facts,
-            goal: claim,
-        };
-        let crate::proofs::Asked::Refuted(model) = crate::proofs::ask(&query) else {
-            return None;
-        };
-        if !verify_model(&query, &model) {
-            return None;
-        }
+        let model = self.arena.query(&scope.facts, claim, refuted)?;
         // Every name the state is made of, so that a loop's counter is
         // shown beside what was computed from it.
         let values: BTreeMap<String, i64> = names
@@ -2098,8 +1980,8 @@ fn refusal(span: Span, message: String, notes: Vec<String>, help: &str) -> Findi
 // `tools/prove_text.nika` (ADR-294, #436): these hand it the arena one node
 // at a time and the emitter's escaping of a name.
 
-fn rust_of(arena: &Terms, id: TermId) -> String {
-    prove_text::rust_of(id.index() as i64, &|at| arena.held.at(at), &|name| {
+fn rust_of(arena: &Terms, id: i64) -> String {
+    prove_text::rust_of(id, &|at| arena.held.at(at), &|name| {
         crate::emit::escaped(name).into_owned()
     })
 }
@@ -2110,23 +1992,18 @@ fn rust_of_name(name: &str) -> String {
 
 /// A term as a reader writes it, with `→` for the implication a branch makes
 /// of a precondition.
-fn term_text(arena: &Terms, id: TermId) -> String {
-    prove_text::term_text(id.index() as i64, &|at| arena.held.at(at))
+fn term_text(arena: &Terms, id: i64) -> String {
+    prove_text::term_text(id, &|at| arena.held.at(at))
 }
 
 /// A term in the language's own syntax, as the ledger writes it and reads it
 /// back ([ADR-251](../../docs/specification/adr/adr-251.md) D4).
-fn ledger_text(arena: &Terms, id: TermId) -> String {
-    prove_text::term_ledger_text(id.index() as i64, &|at| arena.held.at(at))
+fn ledger_text(arena: &Terms, id: i64) -> String {
+    prove_text::term_ledger_text(id, &|at| arena.held.at(at))
 }
 
 use nikaia_std::tools::prove_terms;
 use nikaia_std::tools::prove_text::{self, has_a_length, lowered_first, shown};
-
-/// The variable `name.len()` stands for.
-fn length_of(name: &str) -> String {
-    format!("{name}.len()")
-}
 
 fn is_whole_number(ty: &str) -> bool {
     nikaia_std::tools::bounds_shape::is_whole_number(ty)
@@ -2168,31 +2045,26 @@ fn implies(from: &[String], to: &[String], names: &BTreeSet<String>) -> bool {
     let Some(facts) = from
         .iter()
         .map(|c| condition(&mut arena, c, names))
-        .collect::<Option<Vec<TermId>>>()
+        .collect::<Option<Vec<i64>>>()
     else {
         return false;
     };
     let Some(goals) = to
         .iter()
         .map(|c| condition(&mut arena, c, names))
-        .collect::<Option<Vec<TermId>>>()
+        .collect::<Option<Vec<i64>>>()
     else {
         return false;
     };
     let goal = arena.and(goals);
-    let query = Query {
-        arena: arena.logic(),
-        facts: &facts,
-        goal,
-    };
-    crate::proofs::ask(&query) == crate::proofs::Asked::Proved
+    arena.query(&facts, goal, crate::proofs::ask) == crate::proofs::Asked::Proved
 }
 
 /// **A condition the ledger states, read back** (ADR-269 D18): the text is
 /// the language's own syntax, so the compiler's parser reads it, inside an
 /// `assert` of a function nobody calls, and the prover's own reading turns it
 /// into a term. Only `names` are variables of it.
-fn condition(arena: &mut Terms, text: &str, names: &BTreeSet<String>) -> Option<TermId> {
+fn condition(arena: &mut Terms, text: &str, names: &BTreeSet<String>) -> Option<i64> {
     let source = format!("fn __condition() {{\n    assert({text})\n}}\n");
     let parsed = crate::parser::parse_to_ast(&source).ok()?;
     let Item::Fn { body, .. } = &parsed.program.items.first()?.node else {
@@ -2231,7 +2103,7 @@ fn is_a_parameter(name: &str, at: &Where) -> bool {
 const PRECONDITION_TERMS: usize = 64;
 
 /// A whole-number expression, where it is one this prover reads (ADR-269 D9).
-fn lin(arena: &mut Terms, parsed: &Parsed, expr: &Expr, scope: &Scope) -> Option<TermId> {
+fn lin(arena: &mut Terms, parsed: &Parsed, expr: &Expr, scope: &Scope) -> Option<i64> {
     lin_with(arena, parsed, expr, &|name| scope.ints.contains(name))
 }
 
@@ -2242,12 +2114,12 @@ fn lin_with(
     parsed: &Parsed,
     expr: &Expr,
     var: &dyn Fn(&str) -> bool,
-) -> Option<TermId> {
+) -> Option<i64> {
     arena.built(|nodes| prove_terms::lin_term(expr, &parsed.interner, &|name| var(name), nodes))
 }
 
 /// The claim `expr` as a term, where it is one this prover reads.
-fn claim(arena: &mut Terms, parsed: &Parsed, expr: &Expr, scope: &Scope) -> Option<TermId> {
+fn claim(arena: &mut Terms, parsed: &Parsed, expr: &Expr, scope: &Scope) -> Option<i64> {
     claim_with(arena, parsed, expr, &|name| scope.ints.contains(name))
 }
 
@@ -2256,17 +2128,23 @@ fn claim_with(
     parsed: &Parsed,
     expr: &Expr,
     var: &dyn Fn(&str) -> bool,
-) -> Option<TermId> {
+) -> Option<i64> {
     arena.built(|nodes| prove_terms::claim_term(expr, &parsed.interner, &|name| var(name), nodes))
 }
 
 /// **The walk's terms, held in Nikaia** (`tools/prover_arena.nika`, #436):
 /// every term is built and read there. The solver reads `nikaia-logic`'s
-/// arena, which `logic` keeps as a copy node for node, so that a term's place
-/// is the same in both and its `TermId` names it in either.
+/// arena, a copy made node for node when a question is asked, so that a
+/// term's place is the same in both.
 #[derive(Debug, Clone)]
 struct Terms {
     held: TermArena,
+    copy: std::cell::RefCell<SolverCopy>,
+}
+
+/// `nikaia-logic`'s copy of the terms, as far as it has been made.
+#[derive(Debug, Clone, Default)]
+struct SolverCopy {
     logic: Arena,
     /// The copy's `TermId` of each node of `held`, by place.
     ids: Vec<TermId>,
@@ -2276,132 +2154,119 @@ impl Default for Terms {
     fn default() -> Terms {
         Terms {
             held: TermArena::empty(),
-            logic: Arena::new(),
-            ids: Vec::new(),
+            copy: Default::default(),
         }
     }
 }
 
 impl Terms {
-    /// The arena the solver reads, holding every term built so far.
-    fn logic(&self) -> &Arena {
-        &self.logic
-    }
-
-    /// The nodes of `held` the copy does not have yet, copied; and the
-    /// `TermId` of the place `at`.
-    fn copied(&mut self, at: i64) -> TermId {
-        for node in &self.held.nodes[self.ids.len()..] {
-            let at = |i: &i64| self.ids[*i as usize];
+    /// The solver's question whether `facts` imply `goal`, handed to `ask`,
+    /// once the copy has every node of `held`.
+    fn query<R>(&self, facts: &[i64], goal: i64, ask: impl FnOnce(&Query) -> R) -> R {
+        let mut copy = self.copy.borrow_mut();
+        let SolverCopy { logic, ids } = &mut *copy;
+        for node in &self.held.nodes[ids.len()..] {
+            let at = |i: &i64| ids[*i as usize];
             let id = match node {
-                SolverTerm::Bool(b) => self.logic.bool(*b),
-                SolverTerm::Int(n) => self.logic.int(*n),
-                SolverTerm::Var(name) => self.logic.var(name),
-                SolverTerm::Add(a, b) => self.logic.add(at(a), at(b)),
-                SolverTerm::Sub(a, b) => self.logic.sub(at(a), at(b)),
-                SolverTerm::Neg(a) => self.logic.neg(at(a)),
-                SolverTerm::Mul(a, b) => self.logic.mul(at(a), at(b)),
-                SolverTerm::Le(a, b) => self.logic.le(at(a), at(b)),
-                SolverTerm::Lt(a, b) => self.logic.lt(at(a), at(b)),
-                SolverTerm::Ge(a, b) => self.logic.ge(at(a), at(b)),
-                SolverTerm::Gt(a, b) => self.logic.gt(at(a), at(b)),
-                SolverTerm::Eq(a, b) => self.logic.eq(at(a), at(b)),
-                SolverTerm::Ne(a, b) => self.logic.ne(at(a), at(b)),
-                SolverTerm::And(parts) => self.logic.and(parts.iter().map(at).collect()),
-                SolverTerm::Or(parts) => self.logic.or(parts.iter().map(at).collect()),
-                SolverTerm::Not(a) => self.logic.not(at(a)),
-                SolverTerm::Other => self.logic.bool(false),
+                SolverTerm::Bool(b) => logic.bool(*b),
+                SolverTerm::Int(n) => logic.int(*n),
+                SolverTerm::Var(name) => logic.var(name),
+                SolverTerm::Add(a, b) => logic.add(at(a), at(b)),
+                SolverTerm::Sub(a, b) => logic.sub(at(a), at(b)),
+                SolverTerm::Neg(a) => logic.neg(at(a)),
+                SolverTerm::Mul(a, b) => logic.mul(at(a), at(b)),
+                SolverTerm::Le(a, b) => logic.le(at(a), at(b)),
+                SolverTerm::Lt(a, b) => logic.lt(at(a), at(b)),
+                SolverTerm::Ge(a, b) => logic.ge(at(a), at(b)),
+                SolverTerm::Gt(a, b) => logic.gt(at(a), at(b)),
+                SolverTerm::Eq(a, b) => logic.eq(at(a), at(b)),
+                SolverTerm::Ne(a, b) => logic.ne(at(a), at(b)),
+                SolverTerm::And(parts) => logic.and(parts.iter().map(at).collect()),
+                SolverTerm::Or(parts) => logic.or(parts.iter().map(at).collect()),
+                SolverTerm::Not(a) => logic.not(at(a)),
+                SolverTerm::Other => logic.bool(false),
             };
-            self.ids.push(id);
+            ids.push(id);
         }
-        self.ids[at as usize]
+        let id = |at: &i64| ids[*at as usize];
+        let facts: Vec<TermId> = facts.iter().map(id).collect();
+        ask(&Query {
+            arena: logic,
+            facts: &facts,
+            goal: id(&goal),
+        })
     }
 
-    fn at(id: TermId) -> i64 {
-        id.index() as i64
+    fn var(&mut self, name: &str) -> i64 {
+        self.held.var(name)
     }
 
-    fn var(&mut self, name: &str) -> TermId {
-        let at = self.held.var(name);
-        self.copied(at)
+    fn bool(&mut self, value: bool) -> i64 {
+        self.held.boolean(value)
     }
 
-    fn int(&mut self, value: i64) -> TermId {
-        let at = self.held.int(value);
-        self.copied(at)
+    fn le(&mut self, a: i64, b: i64) -> i64 {
+        self.held.le(a, b)
     }
 
-    fn bool(&mut self, value: bool) -> TermId {
-        let at = self.held.boolean(value);
-        self.copied(at)
+    fn lt(&mut self, a: i64, b: i64) -> i64 {
+        self.held.lt(a, b)
     }
 
-    fn le(&mut self, a: TermId, b: TermId) -> TermId {
-        let at = self.held.le(Terms::at(a), Terms::at(b));
-        self.copied(at)
+    fn eq(&mut self, a: i64, b: i64) -> i64 {
+        self.held.equal(a, b)
     }
 
-    fn lt(&mut self, a: TermId, b: TermId) -> TermId {
-        let at = self.held.lt(Terms::at(a), Terms::at(b));
-        self.copied(at)
+    fn and(&mut self, parts: Vec<i64>) -> i64 {
+        self.held.and(parts)
     }
 
-    fn ge(&mut self, a: TermId, b: TermId) -> TermId {
-        let at = self.held.ge(Terms::at(a), Terms::at(b));
-        self.copied(at)
+    fn or(&mut self, parts: Vec<i64>) -> i64 {
+        self.held.or(parts)
     }
 
-    fn eq(&mut self, a: TermId, b: TermId) -> TermId {
-        let at = self.held.equal(Terms::at(a), Terms::at(b));
-        self.copied(at)
+    fn not(&mut self, a: i64) -> i64 {
+        self.held.not(a)
     }
 
-    fn and(&mut self, parts: Vec<TermId>) -> TermId {
-        let at = self.held.and(parts.into_iter().map(Terms::at).collect());
-        self.copied(at)
+    fn mentions(&self, id: i64, name: &str) -> bool {
+        self.held.mentions(id, name)
     }
 
-    fn or(&mut self, parts: Vec<TermId>) -> TermId {
-        let at = self.held.or(parts.into_iter().map(Terms::at).collect());
-        self.copied(at)
+    fn variables(&self, id: i64, names: &mut BTreeSet<String>) {
+        self.held.variables(id, names)
     }
 
-    fn not(&mut self, a: TermId) -> TermId {
-        let at = self.held.not(Terms::at(a));
-        self.copied(at)
+    fn int_value(&self, id: i64, values: &BTreeMap<String, i64>) -> Option<i64> {
+        self.held.int_value(id, values)
     }
 
-    fn mentions(&self, id: TermId, name: &str) -> bool {
-        self.held.mentions(Terms::at(id), name)
-    }
-
-    fn variables(&self, id: TermId, names: &mut BTreeSet<String>) {
-        self.held.variables(Terms::at(id), names)
-    }
-
-    fn int_value(&self, id: TermId, values: &BTreeMap<String, i64>) -> Option<i64> {
-        self.held.int_value(Terms::at(id), values)
-    }
-
-    fn substitute(&mut self, id: TermId, with: &BTreeMap<String, TermId>) -> TermId {
+    fn substitute(&mut self, id: i64, with: &BTreeMap<String, i64>) -> i64 {
         let given = with
             .iter()
-            .map(|(name, term)| (name.clone(), Terms::at(*term)))
+            .map(|(name, term)| (name.clone(), *term))
             .collect();
-        let at = self.held.substitute(Terms::at(id), &given);
-        self.copied(at)
+        self.held.substitute(id, &given)
     }
 
-    fn size(&self, id: TermId) -> usize {
-        self.held.size(Terms::at(id)) as usize
+    fn size(&self, id: i64) -> usize {
+        self.held.size(id) as usize
     }
 
-    fn is_the_variable(&self, id: TermId, name: &str) -> bool {
-        self.held.is_the_variable(Terms::at(id), name)
+    fn is_the_variable(&self, id: i64, name: &str) -> bool {
+        self.held.is_the_variable(id, name)
     }
 
     /// A term `prove_terms` builds, its nodes appended to `held`.
-    fn built(&mut self, build: impl FnOnce(&mut Vec<SolverTerm>) -> Option<i64>) -> Option<TermId> {
-        build(&mut self.held.nodes).map(|at| self.copied(at))
+    fn built(&mut self, build: impl FnOnce(&mut Vec<SolverTerm>) -> Option<i64>) -> Option<i64> {
+        build(&mut self.held.nodes)
     }
+}
+
+/// A model of a question the solver refutes, checked by evaluating it.
+fn refuted(query: &Query) -> Option<nikaia_logic::Model> {
+    let crate::proofs::Asked::Refuted(model) = crate::proofs::ask(query) else {
+        return None;
+    };
+    verify_model(query, &model).then_some(model)
 }

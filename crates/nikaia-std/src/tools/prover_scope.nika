@@ -1,0 +1,126 @@
+// crates/nikaia-std/src/tools/prover_scope.nika
+//
+// **What a body may know at one point** (ADR-269), moved from the compiler's
+// `prove` (ADR-294, #436 step 4): the names that are variables of the proof,
+// the facts about them as terms of the walk's arena (`prover_arena.nika`),
+// and what holds of the parameters on the way here.
+
+use std::collections
+
+/// What a body may know at one point.
+pub struct ProverScope {
+    /// Names that are variables of the proof: immutable whole numbers.
+    pub ints: collections::BTreeSet[String],
+    /// Names whose value came from outside the program (ADR-010).
+    pub tainted: collections::BTreeSet[String],
+    /// Names bound anywhere in this body, so a callee's name that a local
+    /// shadows is not the callee.
+    pub locals: collections::BTreeSet[String],
+    pub facts: Vec[i64],
+    /// **Each whole number's value at the function's entry**, as a term over
+    /// its parameters (ADR-269 D15): after `let y = x - 1`, `y` is `x - 1`,
+    /// and after `let x = x + 1`, `x` is the parameter plus one.
+    pub entry: collections::BTreeMap[String, i64],
+    /// **What holds of the parameters on the way here**: the branches taken
+    /// and the guards passed, at the entry. Nothing once a loop, a lambda or a
+    /// block this walk cannot see stands between the entry and here (D3).
+    pub path: Vec[i64]?,
+    /// **Whether every state the facts allow is one the program reaches
+    /// here** - unless it stops or leaves before, which no claim is about.
+    /// Facts are as a rule weaker than what is true: a condition the prover
+    /// cannot read, a fact dropped with a name bound again, a loop that may
+    /// end early each narrow what reaches a point without a fact saying how.
+    /// Only where nothing did can a value the facts allow be shown to reach
+    /// a claim that is false for it (ADR-269 D8).
+    pub exact: bool,
+    /// The whole numbers the facts do not pin to what the program computes:
+    /// a parameter, whatever its callers pass; a call's result, of which
+    /// only its postconditions are known; a length nobody counted.
+    pub loose: collections::BTreeSet[String],
+}
+
+impl ProverScope {
+    /// Nothing known, and no path from the entry.
+    pub fn unknown() -> ProverScope {
+        return ProverScope {
+            ints: collections::BTreeSet(),
+            tainted: collections::BTreeSet(),
+            locals: collections::BTreeSet(),
+            facts: [],
+            entry: collections::BTreeMap(),
+            path: null,
+            exact: false,
+            loose: collections::BTreeSet(),
+        }
+    }
+
+    /// A function's entry: nothing known yet, and every state reaches it.
+    pub fn at_the_entry() -> ProverScope {
+        let mut scope = ProverScope::unknown()
+        scope.path = []
+        scope.exact = true
+        return scope
+    }
+
+    /// `name` is bound again: nothing known about the old binding holds.
+    pub fn rebind(ref mut self, arena: ref TermArena, name: ref String) {
+        let length = length_of(name)
+        self.ints.remove(name)
+        self.ints.remove(length)
+        self.tainted.remove(name)
+        self.entry.remove(name)
+        self.entry.remove(length)
+        self.locals.insert(name.clone())
+        self.loose.remove(name)
+        self.loose.remove(length)
+        let mut kept: Vec[i64] = []
+        for fact in self.facts {
+            if !arena.mentions(fact, name) && !arena.mentions(fact, length) {
+                kept.push(fact)
+            }
+        }
+        // What a dropped fact said about another name is lost with it.
+        if kept.len() != self.facts.len() {
+            self.exact = false
+        }
+        self.facts = kept
+    }
+
+    /// `name` is a list or text that does not change, so `name.len()` is a
+    /// variable of the proof: a length is never negative, and a literal's is
+    /// known.
+    pub fn has_length(ref mut self, mut arena: TermArena, name: ref String, known: i64?) {
+        let length = length_of(name)
+        self.ints.insert(length.clone())
+        let len = arena.var(length)
+        let zero = arena.int(0)
+        self.facts.push(arena.ge(len, zero))
+        let n = known ?? {
+            self.loose.insert(length)
+            return
+        }
+        let value = arena.int(n)
+        self.facts.push(arena.equal(len, value))
+        self.entry.insert(length, value)
+    }
+
+    /// `name` is a whole number that is never negative.
+    pub fn not_negative(ref mut self, mut arena: TermArena, name: ref String) {
+        let n = arena.var(name)
+        let zero = arena.int(0)
+        self.facts.push(arena.ge(n, zero))
+    }
+
+    /// A block whose bindings this walk cannot see: no facts, no variables.
+    pub fn blind(ref self) -> ProverScope {
+        let mut scope = ProverScope::unknown()
+        scope.tainted = self.tainted.clone()
+        scope.locals = self.locals.clone()
+        return scope
+    }
+}
+
+/// The variable `name.len()` stands for.
+pub fn length_of(name: ref String) -> String {
+    return f"{name}.len()"
+}

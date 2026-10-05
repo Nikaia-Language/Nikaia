@@ -10391,6 +10391,76 @@ impl TermArena {
 }
 
 
+// --- prover_scope.nika ---
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProverScope {
+    pub ints: collections::BTreeSet<String>,
+    pub tainted: collections::BTreeSet<String>,
+    pub locals: collections::BTreeSet<String>,
+    pub facts: Vec<i64>,
+    pub entry: collections::BTreeMap<String, i64>,
+    pub path: Option<Vec<i64>>,
+    pub exact: bool,
+    pub loose: collections::BTreeSet<String>,
+}
+
+impl ProverScope {
+    pub fn unknown() -> ProverScope { ProverScope { ints: collections::BTreeSet::new(), tainted: collections::BTreeSet::new(), locals: collections::BTreeSet::new(), facts: vec![], entry: collections::BTreeMap::new(), path: None, exact: false, loose: collections::BTreeSet::new() } }
+    pub fn at_the_entry() -> ProverScope {
+        let mut scope = ProverScope::unknown();
+        scope.path = Some(vec![]);
+        scope.exact = true;
+        scope
+    }
+    pub fn rebind(&mut self, arena: &TermArena, name: &str) {
+        let length = length_of(name);
+        self.ints.remove(name);
+        self.ints.remove(&length);
+        self.tainted.remove(name);
+        self.entry.remove(name);
+        self.entry.remove(&length);
+        self.locals.insert(name.to_owned());
+        self.loose.remove(name);
+        self.loose.remove(&length);
+        let mut kept: Vec<i64> = vec![];
+        for fact in self.facts.iter() {
+            let fact = nikaia_std::num::value(fact);
+            if !arena.mentions(fact, name) && !arena.mentions(fact, &length) { kept.push(fact); }
+        }
+        if (kept.len() as i64) != self.facts.len() as i64 { self.exact = false; }
+        self.facts = kept;
+    }
+    pub fn has_length(&mut self, arena: &mut TermArena, name: &str, known: Option<i64>) {
+        let length = length_of(name);
+        self.ints.insert(length.to_owned());
+        let len = arena.var(&length);
+        let zero = arena.int(0);
+        self.facts.push(arena.ge(len, zero));
+        let n = match known { Some(__nikaia_value) => __nikaia_value, None => {
+            self.loose.insert(length);
+            return;
+        } };
+        let value = arena.int(n);
+        self.facts.push(arena.equal(len, value));
+        self.entry.insert(length, value);
+    }
+    pub fn not_negative(&mut self, arena: &mut TermArena, name: &str) {
+        let n = arena.var(name);
+        let zero = arena.int(0);
+        self.facts.push(arena.ge(n, zero));
+    }
+    pub fn blind(&self) -> ProverScope {
+        let mut scope = ProverScope::unknown();
+        scope.tainted = self.tainted.to_owned();
+        scope.locals = self.locals.to_owned();
+        scope
+    }
+}
+
+pub fn length_of(name: &str) -> String { format!("{}.len()", name) }
+
+
 // --- render.nika ---
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -19089,6 +19159,10 @@ pub mod prove_text {
 pub mod prover_arena {
     #[allow(unused_imports)]
     pub use super::{TermArena};
+}
+pub mod prover_scope {
+    #[allow(unused_imports)]
+    pub use super::{ProverScope, length_of};
 }
 pub mod render {
     #[allow(unused_imports)]

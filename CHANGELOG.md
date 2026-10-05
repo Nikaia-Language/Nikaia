@@ -4,6 +4,15 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.488] — 2026-10-05
+
+**What the prover knows at a point is Nikaia** (ADR-294, #436 step 4).
+`tools/prover_scope.nika`'s `ProverScope` holds the walk's variables, facts,
+entry values and path, with `rebind`, `has_length`, `not_negative` and
+`blind`; `prove.rs`'s `Scope` and `length_of` go. A term is a place in the
+Nikaia arena throughout the walk, and `nikaia-logic`'s copy is made when the
+solver is asked. Every bench and example lowers byte for byte as before.
+
 ## [0.0.487] — 2026-10-05
 
 **A `??` whose fallback block ends in a jump is a fallback that jumps**
