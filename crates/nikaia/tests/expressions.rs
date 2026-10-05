@@ -119,10 +119,12 @@ fn a_postfix_leaves_a_plain_receiver_alone() {
 
 /// A float may carry an exponent, which is how a program about physical
 /// quantities is written: `9.54791938424326609e-04` beside a `1.0`, rather
-/// than the same number spelled out in zeroes with one of them lost.
+/// than the same number spelled out in zeroes with one of them lost. Always a
+/// lower-case `e` ([ADR-322](../../../docs/specification/adr/adr-322.md));
+/// `tests/number_literal.rs` refuses the upper-case one.
 #[test]
 fn a_float_may_carry_an_exponent() {
-    for literal in ["1.5e5", "1.5e-4", "1.5e+4", "2e3", "2e-3", "1.5E-4"] {
+    for literal in ["1.5e5", "1.5e-4", "1.5e+4", "2e3", "2e-3"] {
         let emitted = emit(&format!("fn main() {{ let a = {literal} }}"));
         assert!(
             emitted.contains(&format!("let a = {literal};")),

@@ -4,6 +4,13 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.531] — 2026-10-05
+
+**`develop` is green again after 0.0.529.** `tests/expressions.rs` still
+counted `1.5E-4` among the exponents a float may carry; ADR-322 refuses it, and
+`tests/number_literal.rs` holds the refusal. The test now lists the lower-case
+spellings only.
+
 ## [0.0.530] — 2026-10-05
 
 **A `comptime` raises its own bounds: `comptime(steps: 50G, ram: 16Gi)`**
