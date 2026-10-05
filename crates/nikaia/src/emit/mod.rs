@@ -5739,7 +5739,7 @@ impl<'p> Emitter<'p> {
             let params: Vec<String> = ty
                 .generics
                 .iter()
-                .map(|g| self.ty_counted(g, lifetimes, count))
+                .map(|g| a_list_read_as_a_slice(self.ty_counted(g, lifetimes, count)))
                 .collect();
             let outcome = match (&*code.result, code.can_throw) {
                 (Some(r), false) => self.ty_counted(r, lifetimes, count),
@@ -5821,7 +5821,7 @@ impl<'p> Emitter<'p> {
                 let params: Vec<String> = ty
                     .generics
                     .iter()
-                    .map(|g| self.ty_counted(g, Lifetimes::ELIDED, count))
+                    .map(|g| a_list_read_as_a_slice(self.ty_counted(g, Lifetimes::ELIDED, count)))
                     .collect();
                 return format!(
                     "nikaia_std::func::Kept<dyn Fn({}) -> {outcome}{crossing}>",
@@ -13480,6 +13480,20 @@ fn jumps(expr: &Expr) -> bool {
         expr,
         Expr::Throw(_) | Expr::Return(_) | Expr::Break | Expr::Continue
     )
+}
+
+/// **A list a function value only reads is a slice** (#458), as a
+/// function's own parameter is (`plain_list`): a `ref Vec[T]` parameter is
+/// written `&[T]`, and a function type that took `&Vec<T>` could not be
+/// handed it.
+fn a_list_read_as_a_slice(written: String) -> String {
+    match written
+        .strip_prefix("&Vec<")
+        .and_then(|rest| rest.strip_suffix('>'))
+    {
+        Some(element) => format!("&[{element}]"),
+        None => written,
+    }
 }
 
 /// Whether a `??`'s fallback ends in a jump: a jump itself, another `??`

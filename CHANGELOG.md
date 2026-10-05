@@ -4,6 +4,14 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.493] — 2026-10-05
+
+**A list a function value only reads is a slice** (#458). A `ref Vec[T]`
+parameter is written `&[T]`, and the parameter of a function type that read
+one was written `&Vec<T>`, so `read(xs)` with `read: fn(ref Vec[i64]) -> i64`
+and `xs: ref Vec[i64]` was refused by `rustc`. A function type's list
+parameter is now a slice too, as its text parameter was already a `&str`.
+
 ## [0.0.492] — 2026-10-05
 
 **What the prover's walk keeps across functions is Nikaia** (ADR-294, #436

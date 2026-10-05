@@ -3920,7 +3920,7 @@ fn each_name(exprs: &[Expr], words: &winnow_grammar::InternerContext, holes_of: 
 
 // --- contract_changes.nika ---
 
-pub fn changed_contracts(now: &Ledger, committed: &Ledger, mine: &impl Fn(&str) -> bool, implies: &impl Fn(&Vec<String>, &Vec<String>, &collections::BTreeSet<String>) -> bool) -> String {
+pub fn changed_contracts(now: &Ledger, committed: &Ledger, mine: &impl Fn(&str) -> bool, implies: &impl Fn(&[String], &[String], &collections::BTreeSet<String>) -> bool) -> String {
     let mut out: String = String::from("");
     for (key, new) in now.functions.iter() {
         let old = match committed.functions.get(key) { Some(__nikaia_value) => __nikaia_value, None => continue };

@@ -1176,6 +1176,35 @@ fn a_number_read_past_a_jump_is_the_number() {
     );
 }
 
+/// **A list a function value only reads is a slice** (#458, found moving
+/// the prover's solver questions into Nikaia, #436): a `ref Vec[i64]`
+/// parameter is a `&[i64]`, and the function type that took one was a
+/// `Fn(&Vec<i64>)`, so handing the one to the other was refused by `rustc`.
+#[test]
+fn a_list_parameter_is_handed_to_a_function_value() {
+    runs(
+        "list-to-function-value",
+        "fn total(xs: ref Vec[i64]) -> i64 {\n\
+         \x20   let mut sum = 0\n\
+         \x20   for x in xs {\n\
+         \x20       sum += x\n\
+         \x20   }\n\
+         \x20   return sum\n\
+         }\n\
+         \n\
+         fn through(xs: ref Vec[i64], read: fn(ref Vec[i64]) -> i64 sync) -> i64 {\n\
+         \x20   return read(xs)\n\
+         }\n\
+         \n\
+         fn main() {\n\
+         \x20   let xs: Vec[i64] = [3, 4, 5]\n\
+         \x20   let counted = through(xs) fn(ys) { ys.len() }\n\
+         \x20   println(f\"{through(xs, total)} {counted}\")\n\
+         }\n",
+        "12 3\n",
+    );
+}
+
 /// **Found by the solver's kernels** ([ADR-270](../../../docs/specification/adr/adr-270.md)
 /// D8 step 1): an index into a `mut` parameter, read and written. The
 /// parameter is a `&mut Vec<u32>` below, and the write was `set(&mut out, …)` -
