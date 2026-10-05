@@ -4,6 +4,14 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.482] — 2026-10-05
+
+**The names a claim reads are Nikaia** (ADR-294, #436 step 4). `names_in` and
+`is_a_parameter` move from `prove.rs` into `tools/claim_names.nika`, which
+reads the claim the way `contracts::sync` reads it: every expression in it,
+the holes of its literals included. Every bench and example lowers to
+byte-identical Rust.
+
 ## [0.0.481] — 2026-10-05
 
 **Part I 7.1's `fs::exists` names its root.** The example wrote

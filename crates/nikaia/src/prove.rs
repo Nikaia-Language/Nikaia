@@ -2138,13 +2138,9 @@ fn is_whole_number(ty: &str) -> bool {
 
 /// Every name a claim reads.
 fn names_in(parsed: &Parsed, expr: &Expr) -> BTreeSet<String> {
-    let mut names = BTreeSet::new();
-    crate::contracts::sync::visit_expr(parsed, expr, &mut |e| {
-        if let Expr::Variable(name) = e {
-            names.insert(parsed.text(*name).to_string());
-        }
-    });
-    names
+    nikaia_std::tools::claim_names::claim_names_in(expr, &parsed.interner, &|e| {
+        crate::emit::literal_expressions(parsed, e)
+    })
 }
 
 // --- A program's numbers as terms -----------------------------------------
@@ -2231,10 +2227,7 @@ fn qualified(parsed: &Parsed, func: &Expr) -> Option<String> {
 /// Whether a name of the proof is one of the function's parameters, or the
 /// length of one.
 fn is_a_parameter(name: &str, at: &Where) -> bool {
-    at.params.contains(name)
-        || name
-            .strip_suffix(".len()")
-            .is_some_and(|base| at.params.contains(base))
+    nikaia_std::tools::claim_names::is_a_parameter(name, &at.params)
 }
 
 /// How many terms a precondition carried back to the entry may have

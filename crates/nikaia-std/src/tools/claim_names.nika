@@ -1,0 +1,129 @@
+// crates/nikaia-std/src/tools/claim_names.nika
+//
+// **Every name a claim reads** (ADR-269), moved from the compiler's `prove`
+// (ADR-294, #436 step 4): the variables of an expression, read as
+// `contracts::sync`'s walk reads it - every expression inside it, not into
+// its blocks, the holes of its literals included (`holes_of`).
+
+use std::collections
+
+/// The names `expr` reads, as the prover asks.
+pub fn claim_names_in(expr: ref Expr, words: ref winnow_grammar::InternerContext, holes_of: fn(ref Expr) -> Vec[Expr] sync) -> collections::BTreeSet[String] {
+    let mut names: collections::BTreeSet[String] = collections::BTreeSet()
+    collect_names(expr, words, holes_of, names)
+    return names
+}
+
+/// Whether a name of the proof is one of `params`, or the length of one.
+pub fn is_a_parameter(name: ref String, params: ref collections::BTreeSet[String]) -> bool {
+    if params.contains(name) {
+        return true
+    }
+    if !name.ends_with(".len()") {
+        return false
+    }
+    let c: Vec[char] = name.chars().collect()
+    let mut base: String = ""
+    for k in 0..<c.len() - 6 {
+        base.push(c[k])
+    }
+    return params.contains(base)
+}
+
+fn collect_names(expr: ref Expr, words: ref winnow_grammar::InternerContext, holes_of: fn(ref Expr) -> Vec[Expr] sync, mut names: collections::BTreeSet[String]) {
+    match expr {
+        Expr::Variable(name) => {
+            names.insert(words.resolve(name).clone())
+        },
+        else => {},
+    }
+    for hole in holes_of(expr) {
+        collect_names(hole, words, holes_of, names)
+    }
+    match expr {
+        Expr::Call { func, args, config } => {
+            collect_names(func, words, holes_of, names)
+            each_name(args, words, holes_of, names)
+            for c in config {
+                collect_names(c.value, words, holes_of, names)
+            }
+        },
+        Expr::MethodCall { receiver, args, config, .. } => {
+            collect_names(receiver, words, holes_of, names)
+            each_name(args, words, holes_of, names)
+            for c in config {
+                collect_names(c.value, words, holes_of, names)
+            }
+        },
+        Expr::SafeMethod { receiver, args, config, .. } => {
+            collect_names(receiver, words, holes_of, names)
+            each_name(args, words, holes_of, names)
+            for c in config {
+                collect_names(c.value, words, holes_of, names)
+            }
+        },
+        Expr::Binary { lhs, rhs, .. } => {
+            collect_names(lhs, words, holes_of, names)
+            collect_names(rhs, words, holes_of, names)
+        },
+        Expr::Unary { expr, .. } => collect_names(expr, words, holes_of, names),
+        Expr::Try(inner) => collect_names(inner, words, holes_of, names),
+        Expr::Throw(inner) => collect_names(inner, words, holes_of, names),
+        Expr::Cast { expr, .. } => collect_names(expr, words, holes_of, names),
+        Expr::Field { base, .. } => collect_names(base, words, holes_of, names),
+        Expr::SafeField { base, .. } => collect_names(base, words, holes_of, names),
+        Expr::Index { base, index } => {
+            collect_names(base, words, holes_of, names)
+            collect_names(index, words, holes_of, names)
+        },
+        Expr::Range { start, end, .. } => {
+            collect_names(start, words, holes_of, names)
+            collect_names(end, words, holes_of, names)
+        },
+        Expr::Tuple(parts) => each_name(parts, words, holes_of, names),
+        Expr::Coalesce { value, fallback } => {
+            collect_names(value, words, holes_of, names)
+            collect_names(fallback, words, holes_of, names)
+        },
+        Expr::TryCatch { expr, .. } => collect_names(expr, words, holes_of, names),
+        Expr::If { cond, .. } => collect_names(cond, words, holes_of, names),
+        Expr::Match { value, arms } => {
+            collect_names(value, words, holes_of, names)
+            for arm in arms {
+                collect_maybe(arm.guard, words, holes_of, names)
+                collect_names(arm.body, words, holes_of, names)
+            }
+        },
+        Expr::StructLit { fields, .. } => {
+            for field in fields {
+                collect_maybe(field.value, words, holes_of, names)
+            }
+        },
+        Expr::ListLit { items, .. } => each_name(items, words, holes_of, names),
+        Expr::With { base, fields, .. } => {
+            collect_names(base, words, holes_of, names)
+            for field in fields {
+                collect_maybe(field.value, words, holes_of, names)
+            }
+        },
+        Expr::Return(value) => collect_maybe(value, words, holes_of, names),
+        Expr::Select(arms) => {
+            for arm in arms {
+                collect_names(arm.value, words, holes_of, names)
+            }
+        },
+        else => {},
+    }
+}
+
+/// [`collect_names`] of an expression that may not be there.
+fn collect_maybe(expr: ref Expr?, words: ref winnow_grammar::InternerContext, holes_of: fn(ref Expr) -> Vec[Expr] sync, mut names: collections::BTreeSet[String]) {
+    let present = expr ?? return
+    collect_names(present, words, holes_of, names)
+}
+
+fn each_name(exprs: ref Vec[Expr], words: ref winnow_grammar::InternerContext, holes_of: fn(ref Expr) -> Vec[Expr] sync, mut names: collections::BTreeSet[String]) {
+    for e in exprs {
+        collect_names(e, words, holes_of, names)
+    }
+}

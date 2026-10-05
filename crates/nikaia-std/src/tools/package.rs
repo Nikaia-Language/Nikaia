@@ -3815,6 +3815,109 @@ pub fn boxed_member(owner: &str, at: i64, field: &str) -> String {
 }
 
 
+// --- claim_names.nika ---
+
+pub fn claim_names_in(expr: &Expr, words: &winnow_grammar::InternerContext, holes_of: &impl Fn(&Expr) -> Vec<Expr>) -> collections::BTreeSet<String> {
+    let mut names: collections::BTreeSet<String> = collections::BTreeSet::new();
+    collect_names(expr, words, holes_of, &mut names);
+    names
+}
+
+pub fn is_a_parameter(name: &str, params: &collections::BTreeSet<String>) -> bool {
+    if params.contains(name) { return true; }
+    if !name.ends_with(".len()") { return false; }
+    let c: Vec<char> = nikaia_std::list::chars(name.chars());
+    let mut base: String = String::from("");
+    for k in 0..c.len() as i64 - 6 { base.push(*nikaia_std::index::get(&c, (k) as usize)); }
+    params.contains(&base)
+}
+
+fn collect_names(expr: &Expr, words: &winnow_grammar::InternerContext, holes_of: &impl Fn(&Expr) -> Vec<Expr>, names: &mut collections::BTreeSet<String>) {
+    match expr {
+        Expr::Variable(name) => {
+            let name = *name;
+            names.insert(words.resolve(name).to_owned());
+        },
+        _ => { },
+    }
+    for hole in holes_of(expr) { collect_names(&hole, words, holes_of, names); }
+    match expr {
+        Expr::Call { func, args, config } => {
+            let func = nikaia_std::boxed::open(func);
+            collect_names(func, words, holes_of, names);
+            each_name(args, words, holes_of, names);
+            for c in config.iter() { collect_names(&c.value, words, holes_of, names); }
+        },
+        Expr::MethodCall { receiver, args, config, .. } => {
+            let receiver = nikaia_std::boxed::open(receiver);
+            collect_names(receiver, words, holes_of, names);
+            each_name(args, words, holes_of, names);
+            for c in config.iter() { collect_names(&c.value, words, holes_of, names); }
+        },
+        Expr::SafeMethod { receiver, args, config, .. } => {
+            let receiver = nikaia_std::boxed::open(receiver);
+            collect_names(receiver, words, holes_of, names);
+            each_name(args, words, holes_of, names);
+            for c in config.iter() { collect_names(&c.value, words, holes_of, names); }
+        },
+        Expr::Binary { lhs, rhs, .. } => {
+            let lhs = nikaia_std::boxed::open(lhs); let rhs = nikaia_std::boxed::open(rhs);
+            collect_names(lhs, words, holes_of, names);
+            collect_names(rhs, words, holes_of, names);
+        },
+        Expr::Unary { expr, .. } => { let expr = nikaia_std::boxed::open(expr); collect_names(expr, words, holes_of, names) },
+        Expr::Try(inner) => { let inner = nikaia_std::boxed::open(inner); collect_names(inner, words, holes_of, names) },
+        Expr::Throw(inner) => { let inner = nikaia_std::boxed::open(inner); collect_names(inner, words, holes_of, names) },
+        Expr::Cast { expr, .. } => { let expr = nikaia_std::boxed::open(expr); collect_names(expr, words, holes_of, names) },
+        Expr::Field { base, .. } => { let base = nikaia_std::boxed::open(base); collect_names(base, words, holes_of, names) },
+        Expr::SafeField { base, .. } => { let base = nikaia_std::boxed::open(base); collect_names(base, words, holes_of, names) },
+        Expr::Index { base, index } => {
+            let base = nikaia_std::boxed::open(base); let index = nikaia_std::boxed::open(index);
+            collect_names(base, words, holes_of, names);
+            collect_names(index, words, holes_of, names);
+        },
+        Expr::Range { start, end, .. } => {
+            let start = nikaia_std::boxed::open(start); let end = nikaia_std::boxed::open(end);
+            collect_names(start, words, holes_of, names);
+            collect_names(end, words, holes_of, names);
+        },
+        Expr::Tuple(parts) => each_name(parts, words, holes_of, names),
+        Expr::Coalesce { value, fallback } => {
+            let value = nikaia_std::boxed::open(value); let fallback = nikaia_std::boxed::open(fallback);
+            collect_names(value, words, holes_of, names);
+            collect_names(fallback, words, holes_of, names);
+        },
+        Expr::TryCatch { expr, .. } => { let expr = nikaia_std::boxed::open(expr); collect_names(expr, words, holes_of, names) },
+        Expr::If { cond, .. } => { let cond = nikaia_std::boxed::open(cond); collect_names(cond, words, holes_of, names) },
+        Expr::Match { value, arms } => {
+            let value = nikaia_std::boxed::open(value);
+            collect_names(value, words, holes_of, names);
+            for arm in arms.iter() {
+                collect_maybe((arm.guard).as_ref(), words, holes_of, names);
+                collect_names(&arm.body, words, holes_of, names);
+            }
+        },
+        Expr::StructLit { fields, .. } => { for field in fields.iter() { collect_maybe((field.value).as_ref(), words, holes_of, names); } },
+        Expr::ListLit { items, .. } => each_name(items, words, holes_of, names),
+        Expr::With { base, fields, .. } => {
+            let base = nikaia_std::boxed::open(base);
+            collect_names(base, words, holes_of, names);
+            for field in fields.iter() { collect_maybe((field.value).as_ref(), words, holes_of, names); }
+        },
+        Expr::Return(value) => { let value = nikaia_std::boxed::open(value); collect_maybe((value).as_ref(), words, holes_of, names) },
+        Expr::Select(arms) => { for arm in arms.iter() { collect_names(&arm.value, words, holes_of, names); } },
+        _ => { },
+    }
+}
+
+fn collect_maybe(expr: Option<&Expr>, words: &winnow_grammar::InternerContext, holes_of: &impl Fn(&Expr) -> Vec<Expr>, names: &mut collections::BTreeSet<String>) {
+    let present = match expr { Some(__nikaia_value) => __nikaia_value, None => return };
+    collect_names(present, words, holes_of, names);
+}
+
+fn each_name(exprs: &[Expr], words: &winnow_grammar::InternerContext, holes_of: &impl Fn(&Expr) -> Vec<Expr>, names: &mut collections::BTreeSet<String>) { for e in exprs.iter() { collect_names(e, words, holes_of, names); } }
+
+
 // --- contract_changes.nika ---
 
 pub fn changed_contracts(now: &Ledger, committed: &Ledger, mine: &impl Fn(&str) -> bool, implies: &impl Fn(&Vec<String>, &Vec<String>, &collections::BTreeSet<String>) -> bool) -> String {
@@ -18584,6 +18687,10 @@ pub mod check_types {
 pub mod check_words {
     #[allow(unused_imports)]
     pub use super::{reserved_elsewhere, nearest_name, with_article, counted, names_listed, indented_text, brace_groups, not_promised_note, is_a_lookup, boxed_member};
+}
+pub mod claim_names {
+    #[allow(unused_imports)]
+    pub use super::{claim_names_in, is_a_parameter};
 }
 pub mod contract_changes {
     #[allow(unused_imports)]
