@@ -4,6 +4,20 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.515] — 2026-10-05
+
+**A dependency's code runs at build time only on what this build checked**
+(ADR-321 D8, D9). Compiling build-time code (0.0.513) would have run a
+dependency's functions natively on the strength of the ledger it ships, which
+is believed while its sources hash as recorded and is not re-derived; a
+package could ship honest hashes beside a false `touches = []`. Before a Nikaia
+dependency's function runs at build time, the build now derives that package's
+ledger from its sources and refuses where the two disagree; a package without
+sources runs nothing then. A Rust crate's function needs `build_time = true`
+in its description, a column `nikaia describe` never writes. A Rust
+dependency's `build.rs` and procedural macros are outside this and not
+decided. Decided and specified; not built.
+
 ## [0.0.514] — 2026-10-05
 
 **An integer `comptime` is an open number, typed at each use** (ADR-287 D21,

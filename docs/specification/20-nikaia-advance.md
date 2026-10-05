@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part II: Advanced Features & Metaprogramming**
-**Version:** 0.0.514 (Draft)
+**Version:** 0.0.515 (Draft)
 **Date:** 2026-10-05
 
 ---
@@ -96,7 +96,12 @@ over them and over other constants, `+`, `==` and `.len()` over text, `xs[i]`,
 field of one, an `if`, and a **call** to a function or a **method** that this
 program, `std` or a dependency declares. A called body must be `sync` and must
 touch nothing but the build's own parameters, as the ledger records it; a
-function the ledger does not describe touches everything. A callee that fails either condition is refused with
+function the ledger does not describe touches everything. For a Nikaia
+dependency the build reads the entries it derives from the dependency's
+sources, and refuses where they disagree with the ledger the dependency ships;
+a dependency without sources runs nothing at build time. A Rust crate's
+function runs at build time only where its description says
+`build_time = true`. A callee that fails either condition is refused with
 `NK1152`. `NK1127` says *not yet*; `NK1152` says *not allowed*.
 
 **`comptime` marks the name.** It is not an expression: `let x = comptime f()`
