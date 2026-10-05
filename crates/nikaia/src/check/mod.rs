@@ -18382,22 +18382,67 @@ impl<'a> Checker<'a> {
             return None;
         }
         // **A call somewhere in it**, which is what D1 compiles: an
-        // initialiser of literals alone is folded, and one that reads a file
-        // is the interpreter's until the run can read one (ADR-310).
+        // initialiser of literals alone is folded. A read of a file is not a
+        // call here: it is the build's, and what it read goes in as text.
         let mut calls = false;
-        let mut reads = false;
+        let mut assets: Vec<Option<String>> = Vec::new();
         crate::emit::visit_expr(value, &mut |expr: &Expr| match expr {
-            Expr::Call { func, .. } => {
-                calls = true;
-                reads |= matches!(&**func, Expr::Variable(name)
-                    if self.parsed.text(*name) == crate::assets::ASSET);
-            }
+            Expr::Call { func, args, .. } => match &**func {
+                Expr::Variable(name) if self.parsed.text(*name) == crate::assets::ASSET => assets
+                    .push(match args.as_slice() {
+                        [Expr::LitStr { text, .. }] => build_time::decoded(text),
+                        _ => None,
+                    }),
+                _ => calls = true,
+            },
             Expr::MethodCall { .. } | Expr::SafeMethod { .. } => calls = true,
             _ => {}
         });
-        if !calls || reads {
+        if !calls {
             return None;
         }
+        // **The build reads, the run does not** (ADR-310): each file is read
+        // here, by the rules every read keeps, and its text stands where the
+        // `asset` did.
+        let mut read: BTreeMap<String, String> = BTreeMap::new();
+        for path in assets {
+            let Some(path) = path else {
+                self.a_path_that_is_not_a_literal(span);
+                return Some((None, true));
+            };
+            match self.reads.read(&path) {
+                Ok(text) => {
+                    read.insert(path, text);
+                }
+                Err(why) => {
+                    self.a_file_this_build_may_not_read(&path, &why, span);
+                    return Some((None, true));
+                }
+            }
+        }
+        let mut value = value.clone();
+        if !read.is_empty() {
+            let parsed = self.parsed;
+            crate::text_tiers::visit_expr_mut(
+                &mut value,
+                &mut |expr: &mut Expr| {
+                    if let Expr::Call { func, args, .. } = expr
+                        && matches!(&**func, Expr::Variable(name)
+                            if parsed.text(*name) == crate::assets::ASSET)
+                        && let [Expr::LitStr { text, .. }] = args.as_slice()
+                        && let Some(content) =
+                            build_time::decoded(text).and_then(|path| read.get(&path))
+                    {
+                        *expr = Expr::LitStr {
+                            text: build_time::written(content),
+                            at: 0,
+                        };
+                    }
+                },
+                &mut |_, _| {},
+            );
+        }
+        let value = &value;
         let outermost: BTreeMap<String, build_time::Value> = self
             .scope
             .first()

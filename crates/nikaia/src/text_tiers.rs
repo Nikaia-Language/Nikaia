@@ -384,7 +384,7 @@ fn visit_block_mut(
     }
 }
 
-fn visit_expr_mut(
+pub(crate) fn visit_expr_mut(
     expr: &mut Expr,
     f: &mut dyn FnMut(&mut Expr),
     s: &mut dyn FnMut(&mut Stmt, usize),

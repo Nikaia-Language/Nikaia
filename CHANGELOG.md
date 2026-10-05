@@ -4,6 +4,16 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.522] — 2026-10-05
+
+**A file the build reads is handed to a compiled call** (ADR-310, ADR-321 D1,
+#468). `comptime N = twice(asset("data.txt"))` went to the interpreter. Now the
+build reads the file by ADR-310's rules, the `asset` stands as the text it
+read, and the call is compiled and run. A file the allowlist does not name is
+`NK1175`, and a computed path `NK1176`, before anything is compiled. A program
+with a grammar is still the interpreter's. Every bench and example lowers byte
+for byte as before.
+
 ## [0.0.521] — 2026-10-05
 
 **A `comptime` in a program of several files is compiled and run too** (ADR-321

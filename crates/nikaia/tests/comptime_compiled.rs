@@ -393,3 +393,64 @@ fn a_callee_in_another_file_runs_and_a_stop_there_is_named() {
         stopped.notes
     );
 }
+
+/// **A file the build reads goes in as its text** (ADR-310, ADR-321 D1): the
+/// build reads it by the rules every read keeps, and the run computes with
+/// what was read. A file the list does not name is refused before anything
+/// is compiled.
+#[test]
+fn a_file_the_build_reads_is_handed_to_a_compiled_call() {
+    let dir = common::scratch_dir("comptime-compiled-asset");
+    std::fs::write(dir.join("data.txt"), "four").expect("write the asset");
+    std::fs::write(dir.join("reads.txt"), "data.txt\n").expect("write the allowlist");
+    let reads = Reads::with(
+        &dir,
+        nikaia::assets::Allowlist::read(&dir.join("reads.txt")).expect("the list reads"),
+    )
+    .building_in(workshop());
+    let checked = |source: &str| {
+        let parsed = parse_to_ast(source).expect("the source parses");
+        let own = Ledger::infer(&parsed);
+        let library = Ledger::parse(STD).expect("std's shipped ledger parses");
+        let found = check::check_against(
+            &parsed,
+            &[],
+            &own,
+            &library,
+            &BTreeSet::new(),
+            &check::Newly::new(),
+            &reads,
+        )
+        .findings;
+        let rust = nikaia::emit::emit_program_reading(&parsed, Default::default(), &reads)
+            .map(|lowered| lowered.rust)
+            .unwrap_or_default();
+        (found, rust)
+    };
+    let (found, rust) = checked(
+        "fn twice(text: ref String) -> i64 {\n\
+         \x20   return text.len() * 2\n\
+         }\n\
+         \n\
+         comptime N = twice(asset(\"data.txt\"))\n\
+         \n\
+         fn main() {\n\
+         \x20   println(f\"{N}\")\n\
+         }\n",
+    );
+    assert!(found.is_empty(), "{found:#?}");
+    assert!(rust.contains("const N: i64 = 8;"), "{rust}");
+    let (found, _) = checked(
+        "fn twice(text: ref String) -> i64 {\n\
+         \x20   return text.len() * 2\n\
+         }\n\
+         \n\
+         comptime N = twice(asset(\"other.txt\"))\n\
+         \n\
+         fn main() {\n\
+         \x20   println(f\"{N}\")\n\
+         }\n",
+    );
+    assert!(found.iter().any(|f| f.code == "NK1175"), "{found:#?}");
+    std::fs::remove_dir_all(&dir).ok();
+}
