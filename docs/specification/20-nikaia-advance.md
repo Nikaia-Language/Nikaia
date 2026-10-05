@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part II: Advanced Features & Metaprogramming**
-**Version:** 0.0.495 (Draft)
+**Version:** 0.0.496 (Draft)
 **Date:** 2026-10-05
 
 ---
@@ -461,11 +461,11 @@ and `rule WS = "" { }` skips nothing.
 | `intern(p)`, `ident` | `p`'s text interned (10.6); `ident` is an identifier, interned | a symbol |
 | `raw_ident` | an identifier | text |
 | `string` | a quoted string, quotes excluded | text |
-| `char` | a character literal such as `'\n'` | a `char` |
-| `any` | one character | a `char` |
-| `digit` | one decimal digit; `digit+` is a run of them | a `char`; text for the run |
+| `char` | a character literal such as `'\n'` | a `scalar` |
+| `any` | one scalar | a `scalar` |
+| `digit` | one decimal digit; `digit+` is a run of them | a `scalar`; text for the run |
 | `alpha1` | a run of letters | text |
-| `hex_digit` | one hexadecimal digit | a `char` |
+| `hex_digit` | one hexadecimal digit | a `scalar` |
 | `multispace0`, `multispace1` | zero or more, one or more whitespace characters, newlines included | text |
 | `line_ending` | `\n` or `\r\n` | nothing |
 | `empty` | nothing, always succeeding | nothing |
@@ -510,7 +510,7 @@ Calling a function runs it now. A task that runs concurrently or in parallel is 
 * **Ordinary data is cloned.** A program that keeps **data** in the parent, a string, a number, a struct or a collection of those, calls `.clone()` before spawning, and the copy is what the task takes (Part I 8.3).
 * **A handle is duplicated.** A handle on a `Shared[T]` is **duplicated** where it is handed to the task, so the name in the parent keeps working and there is nothing to call. Copying a handle copies none of the data (Part I 6.2). `--sharing` names the duplication site.
 
-A move is refused only where the type is **known** and a move takes the value away. A number, a `bool`, a `char` and a view are *copied*, so the parent keeps them: `let message = "Hello"` is not this case, and `let message: String = "Hello"` is. A value whose type nothing describes is not refused (Part III C.4). An assignment between the spawn and the later use clears the refusal.
+A move is refused only where the type is **known** and a move takes the value away. A number, a `bool`, a `scalar` and a view are *copied*, so the parent keeps them: `let message = "Hello"` is not this case, and `let message: String = "Hello"` is. A value whose type nothing describes is not refused (Part III C.4). An assignment between the spawn and the later use clears the refusal.
 
 #### What a task may take with it
 At `yes` a task runs on a thread of its own, so **everything it uses must be able to cross a thread**. The compiler checks that structurally, with no syntax to write. A type built out of plain data may cross, and so may a struct or collection of those. A value that counts its owners may cross when **what it holds** may cross; which count it gets follows that answer. **A lock may cross** into a task of the program's own. A `SharedMut[T]` may therefore be used by a task, and a struct holding one is no worse than the field. A lock may **not** go to code nothing written down describes (Part III 15.2): there the caller opens the lock and hands over the value inside it, so the called code sees an ordinary value and no lock.
@@ -667,7 +667,7 @@ To share data that changes, a program uses **`SharedMut[T]`**: several owners, o
 * **Purpose:** the check catches a **logical deadlock**: task A locks data and waits for the network, task B tries to lock the same data. 12.3 refuses that nesting when the program is compiled, so the check is self-control of the refusal rather than error handling (below).
 
 **At `user_parallelism = yes`:**
-* **Implementation:** decided per value: an OS-level **mutex** where something may cross a thread with the value, an atomic word for a number, `bool` or `char` that crosses and no door over several locks names, and the cell above where nothing crosses.
+* **Implementation:** decided per value: an OS-level **mutex** where something may cross a thread with the value, an atomic word for a number, `bool` or `scalar` that crosses and no door over several locks names, and the cell above where nothing crosses.
 * **Cost:** atomic operations.
 * **Purpose:** it protects against **memory corruption**. Two threads cannot write to the same memory address at the same time.
 

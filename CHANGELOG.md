@@ -4,6 +4,21 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.496] — 2026-10-05
+
+**Text is read through a view that names its unit, and there is no `char`**
+(ADR-320, #453). Text stays UTF-8 and a position in it is a byte position.
+`s.bytes` indexes and cuts in constant time; `s.scalars` and `s.graphemes` are
+sequences. There is no `s.len()` and no `s[i]`; `s.is_empty()` stays. A
+position the text hands out - `s.find(needle; from:) -> i64?`, a grammar's
+match - cuts it without a view, and a number the program makes up needs one
+(`NK1214`). `char` gives way to `scalar` and `u8`, and a `'…'` is either by its
+use (`NK1212`; a decomposed one that normalises to one scalar is taken, with
+`NK1213`). `Bytes` is read as a run of bytes. Graphemes are `std`'s, `==` and
+hashing compare bytes, and normalising is written. Part I 2.2 and the new 2.6,
+Part II's grammar table and Part III's code table say what; the compiler side
+is open in #453.
+
 ## [0.0.495] — 2026-10-05
 
 **Carrying a precondition back and showing a postcondition are Nikaia**
@@ -124,7 +139,7 @@ arena directly. Every bench and example lowers byte for byte as before.
 ADR-288 D11 says how a `std` entry is made - by hand, reviewed, never copied
 from Rust's whole surface - and now says that this is all it says: what `std`
 provides is decided from what the language is for, the coherence of its types
-and what other languages count as basic. Eight records had cited it, or its
+and what other languages count as basic. Fourteen records had cited it, or its
 wording, as *waits for a program that needs it* to leave a capability out
 (ADR-019, 042, 105, 150, 247, 282, 283, 284, 290, 291, 295, 299, 302, 312);
 each now says *not decided here*. ADR-286's Cargo defaults and the owner's own

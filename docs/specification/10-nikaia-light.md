@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part I: The Language Core**
-**Version:** 0.0.495 (Draft)
+**Version:** 0.0.496 (Draft)
 **Date:** 2026-10-05
 
 ---
@@ -224,8 +224,8 @@ Nikaia provides basic types to represent simple values.
       meets an `i64` is widened where the program says so, with `as i64`.
     * `u8`: one byte. It has the same conversion and arithmetic names as the
       other integer types. A file read whole is a `Bytes` (`fs::read`): one
-      shared buffer of them, handed on by a count and not copied.
-      `text.bytes()` is a text's UTF-8, one `u8` at a time.
+      shared buffer of them, handed on by a count and not copied, and read
+      as a run of bytes (2.6). `text.bytes` is a text's UTF-8 as `u8`s.
     * `u64` and `u32`: unsigned, 64 and 32 bits. They are written where the
       bits are the point: a hash, a mask, a wire format's field
       ([ADR-285](adr/adr-285.md)). No two integer types mix on their own:
@@ -251,11 +251,12 @@ Nikaia provides basic types to represent simple values.
     * `ref String`: the same text with a promise attached: *this is a borrowed
       view, no copy and no handle*. The compiler holds the program to the
       promise. It is written where allocating would be a mistake.
-    * `char`: one character, a Unicode scalar value, not a byte. It is
-      written between single quotes, with the escapes a string uses: `'a'`,
-      `'\n'`, `'\''`. Iterating a text yields it (`for c in name.chars()`),
-      and a `match` over one compares against it (3.4). A text is not a list
-      of `char`; turning one into the other is written in the program.
+    * `scalar`: one Unicode scalar value - a code point that is not a
+      surrogate - and not a byte. It is written between single quotes, with
+      the escapes a string uses: `'a'`, `'ä'`, `'\n'` (2.6). Walking a text's
+      scalars yields it (`for c in name.scalars`), and a `match` over one
+      compares against it (3.4). There is no `char`: what one character is
+      depends on the unit, and 2.6 names the three.
 * **A run of elements:**
     * `ref Array[T]`: a **view** of a run of `T`, with the promise
       `ref String` carries — *this points at elements somebody else keeps, no
@@ -372,7 +373,7 @@ it does for wrapping. The name carries the type it converts to:
 ```nika
 let small = big.truncating_i32()                  // keep the low digits, on purpose
 let floored = measurement.truncating_i32()        // a float, toward zero, clamped
-let n = text.len().truncating_i32()               // a count that may not fit
+let n = text.bytes.len().truncating_i32()         // a count that may not fit
 ```
 
 The names are `truncating_i32`, `truncating_i64`, `truncating_u32` and
@@ -545,7 +546,7 @@ There are two string literals, and the difference is one character at the front.
 ```nika
 let name = "Nikaia"
 
-println(f"hello, {name} - {name.len()} characters")   // f"…" - the braces are code
+println(f"hello, {name} - {name.to_uppercase()}")   // f"…" - the braces are code
 println("hello, {name}")                              // "…"  - the braces are braces
 ```
 
@@ -586,7 +587,7 @@ or, if there is none, to the end of the file.
 | `\n` `\r` `\t` | newline, carriage return, tab |
 | `\0` | the zero character |
 | `\\` `\'` `\"` | the backslash and the two quotes, standing for themselves |
-| `\xNN` | two hexadecimal digits, naming a byte below `\x80` |
+| `\xNN` | two hexadecimal digits, naming a byte: below `\x80` in text, any byte in a `'…'` that is a `u8` |
 | `\u{…}` | up to six hexadecimal digits, naming any character: `\u{1F600}` |
 
 The same set holds in a `'…'`, in an `f"…"` and in a template. A `\` in front of
@@ -605,6 +606,63 @@ in a hole is written as its bytes are.
 
 **A template's holes need no `f`.** `dsl html { <p>{name}</p> } eod` (Part II)
 marks the construct as a place where code appears.
+
+### 2.6. Text: Bytes, Scalars and Graphemes
+
+Text is UTF-8, and a position in it is a byte position
+([ADR-320](adr/adr-320.md)). A text is read through a **view** that names what
+it counts:
+
+| view | an element | reads |
+| :--- | :--- | :--- |
+| `s.bytes` | `u8` | `s.bytes[i]`, `s.bytes[a..<b]`, `s.bytes.len()`, `s.bytes.find(…)`, `for` |
+| `s.scalars` | `scalar` | `take(n)`, `skip(n)`, `count()`, `for` |
+| `s.graphemes` | `ref String`, one grapheme | `take(n)`, `skip(n)`, `count()`, `for` |
+
+There is no `s.len()` and no `s[i]`. `s.is_empty()` needs no view. `split`,
+`lines`, `trim`, `starts_with`, `ends_with`, `contains`, `==` and `find` work
+on the text itself.
+
+```nika
+let preview = title.graphemes.take(10).collect()   // ten things a reader sees
+let field = record.bytes[0..<8]                     // eight bytes of a fixed format
+for c in name.scalars { if c == 'ä' { … } }
+```
+
+**A position the text hands out cuts it without a view.** `s.find(needle; from:
+i64) -> i64?` gives the byte position of the first match at or after `from`
+(default `0`), or `null`. That position, a grammar's match in the text, and
+either moved by the byte length of a text literal, cut the text they came from:
+
+```nika
+let sep = line.find(";") ?? return
+let name = line[..<sep]
+let rest = line[sep + 1..]
+```
+
+A number the program makes up does not: `s[0..<10]` is refused (`NK1214`) and
+says the view - `s.bytes[0..<10].text()` for bytes, `s.graphemes.take(10)` for
+what a reader sees. So is a position from one text used on another. A cut inside
+a scalar stops the program.
+
+**A `Bytes` is read as a run of bytes:** `b[i] -> u8`, `b[a..<b]`, `b.len()`,
+`b.find(byte; from: i64) -> i64?`, and `b.text()`, which checks UTF-8 and is
+`NotText` where it fails. An index outside stops the program, as a list's does.
+
+**A `'…'` is a `u8` or a `scalar`, by its use.** One ASCII character is either;
+`'\xNN'` above `\x7F` is only a `u8`; one scalar that is not ASCII is only a
+`scalar`. A literal its uses do not type is a `scalar`. A surrogate is refused.
+Several scalars that normalise (NFC) to one are that one, with the warning
+`NK1213`; anything else is refused with `NK1212`, which hands over the text
+literal: `"👍🏽"`.
+
+**A grapheme is the standard library's.** `s.graphemes` follows Unicode's
+segmentation rules in the version of the `std` the program is built with. A
+grapheme is a `ref String`, compared with a text literal.
+
+**`==` compares bytes, and so does a hash.** A precomposed and a decomposed `ä`
+differ. `s.normalized(; form: nfc)` - or `nfd`, `nfkc`, `nfkd` - makes a text
+that compares as its form says.
 
 ---
 
@@ -742,7 +800,7 @@ after `let days = 0..<n`, both `for d in days` and
 back from the last. A sequence something **produces** — `keys()`,
 `io::lines()`, `xs.iter().map(…)` — is walked once, and a second walk is refused
 (`NK2702`, Part III C.3). Whether one can be walked from its back end is known
-to the compiler: a range, a list's `iter()`, `chars()` and a `map` over any of
+to the compiler: a range, a list's `iter()`, `scalars` and a `map` over any of
 them can; `io::lines()` cannot, and `rev()` on it is refused. A range in a
 list's brackets reads a **run** of it, `ref Array[T]`, whether the range is
 written there or kept in a name.
@@ -750,7 +808,7 @@ written there or kept in a name.
 A `for` over a list **lends** it: the elements are looked at, and the list is
 still there when the loop is over. A binding is a view of its element, so an
 element kept past the turn, text in a field for instance, is kept as a copy,
-`.clone()`; a number, a `bool` and a `char` are the element itself. A map is
+`.clone()`; a number, a `bool` and a `scalar` are the element itself. A map is
 walked as pairs, `for (key, value) in scores`. Taking the elements away is written,
 `for x in xs.drain()` (6.5). A `ref` written in front of the list is refused with
 `NK1137`, because the compiler writes that reference.
@@ -809,7 +867,7 @@ Three rules govern them:
   ```nika
   for p in paths {
       let text = fs::read_to_string(p, fs::Root::Anywhere) catch { break }
-      seen += text.len()
+      seen += text.bytes.len()
   }
   ```
 
@@ -899,7 +957,7 @@ only reads a part it binds takes a view of it (6.5), and the name is whole
 after the `match`: it may be matched again, printed, or handed on. An arm that
 keeps the part — pushes it into a list, returns it, hands it back as the arm's
 value, changes it — takes it, and the name is gone afterwards, as it is after
-any hand-over. A number, a `bool` and a `char` are copied either way.
+any hand-over. A number, a `bool` and a `scalar` are copied either way.
 
 **Every case is covered.** A `match` over an **enum** is complete when every
 variant is named (an or-pattern names each variant in it), and needs no `else`. A `match` over anything else needs an
@@ -982,7 +1040,7 @@ handed over (6.6). `println(user ?? "Guest")` leaves `user` usable on the next
 line; `let shown = user ?? "Guest"` takes `user`, as `let b = a` takes `a`.
 The positions that only read are an argument the function only reads, an
 `f"…"` hole, a comparison of text, and the receiver of a method that only
-reads it. A value that is a word by its kind - a number, a `bool`, a `char`, an
+reads it. A value that is a word by its kind - a number, a `bool`, a `scalar`, an
 enum whose variants hold nothing - is copied at a read rather than lent; every
 other type is lent, at every size ([ADR-279](adr/adr-279.md) D8).
 
@@ -2562,7 +2620,7 @@ error[NK2101]: You're using `message` after a background task took it.
 after the task is built is not refused, and no `.clone()` is written.
 
 `NK2101` is raised only where the type is known and a move takes the value
-away. A number, a `bool`, a `char` and a **view** are copied, so
+away. A number, a `bool`, a `scalar` and a **view** are copied, so
 `let message = "Hello"` is not this case and `let message: String = "Hello"`
 is. An **assignment** between the task and the later use clears it. The form
 above is the one spelling of a `spawn`, the trailing lambda of 5.3. A lambda
