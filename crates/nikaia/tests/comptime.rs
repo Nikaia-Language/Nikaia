@@ -247,3 +247,109 @@ fn a_comptime_says_which_wall_it_met() {
         said.notes
     );
 }
+
+// --- ADR-287 D21: an integer `comptime` is an open number --------------------
+
+const OPEN: &str = "fn big(n: i64) -> i64 {\n\
+     \x20   return n * 1000000000\n\
+     }\n\
+     \n\
+     fn fib(n: i64) -> i64 {\n\
+     \x20   if n < 2 {\n\
+     \x20       return n\n\
+     \x20   }\n\
+     \x20   return fib(n - 1) + fib(n - 2)\n\
+     }\n\
+     \n\
+     fn take_i32(x: i32) -> i32 {\n\
+     \x20   return x\n\
+     }\n\
+     \n\
+     fn take_i64(x: i64) -> i64 {\n\
+     \x20   return x\n\
+     }\n\
+     \n\
+     comptime A = big(1)\n\
+     comptime B = big(3)\n\
+     comptime FIB_10 = fib(10)\n\
+     comptime N = 4 * 1024\n\
+     comptime W: i64 = big(1)\n\
+     \n\
+     fn main() {\n\
+     \x20   let y: i64 = FIB_10\n\
+     \x20   println(f\"{take_i32(A)} {take_i64(A)} {y} {take_i64(N)} {take_i32(A + 1)}\")\n\
+     \x20   let x = A + 1\n\
+     \x20   let m = N\n\
+     \x20   println(f\"{x} {m} {B} {W}\")\n\
+     }\n";
+
+/// **Each use takes the value in the type it asks for**
+/// ([ADR-287](../../../docs/specification/adr/adr-287.md) D21): one function
+/// hands `A` to an `i32` and to an `i64` parameter, and `FIB_10` to an `i64`
+/// `let`, which `rustc` refused while the `const` was an `i32`.
+#[test]
+fn an_integer_comptime_takes_the_type_each_use_asks_for() {
+    assert!(findings(OPEN).is_empty(), "{:#?}", findings(OPEN));
+    assert_eq!(
+        run("comptime-open", OPEN),
+        "1000000000 1000000000 55 4096 1000000001\n1000000001 4096 3000000000 1000000000\n"
+    );
+}
+
+/// **Where no use asks, the type is the expression's** (D21): a call's result
+/// type, never one picked by the value, so `big(1)` and `big(3)` are both
+/// `i64`; literals alone take the first type that holds them; a written type
+/// pins it everywhere.
+#[test]
+fn where_no_use_asks_the_type_is_the_expressions() {
+    let rust = lower(OPEN);
+    assert!(rust.contains("const A: i64 = 1000000000;"), "{rust}");
+    assert!(rust.contains("const B: i64 = 3000000000;"), "{rust}");
+    assert!(rust.contains("const N: i32 = 4096;"), "{rust}");
+    assert!(rust.contains("const W: i64 = 1000000000;"), "{rust}");
+    assert!(rust.contains("take_i32(1000000000i32)"), "{rust}");
+}
+
+/// **A use that cannot hold the value is `NK1116` at the use**, with the
+/// `comptime` that computed it shown beside it (D21).
+#[test]
+fn a_use_that_cannot_hold_the_value_is_refused_where_it_stands() {
+    let source = "fn big(n: i64) -> i64 {\n\
+                  \x20   return n * 1000000000\n\
+                  }\n\
+                  \n\
+                  fn take_u8(x: u8) -> u8 {\n\
+                  \x20   return x\n\
+                  }\n\
+                  \n\
+                  comptime A = big(1)\n\
+                  \n\
+                  fn main() {\n\
+                  \x20   println(f\"{take_u8(A)}\")\n\
+                  }\n";
+    let found = findings(source);
+    let refusal = found
+        .iter()
+        .find(|f| f.code == "NK1116")
+        .unwrap_or_else(|| panic!("a use too narrow for the value is refused: {found:#?}"));
+    assert_eq!(
+        refusal.message,
+        "This comes to 1000000000, which doesn't fit in a `u8`."
+    );
+    assert!(
+        refusal
+            .labels
+            .iter()
+            .any(|l| !l.main && l.text == "`A` is computed here"),
+        "{:#?}",
+        refusal.labels
+    );
+    assert!(
+        refusal
+            .labels
+            .iter()
+            .any(|l| l.main && l.text == "taken as a `u8` here"),
+        "{:#?}",
+        refusal.labels
+    );
+}

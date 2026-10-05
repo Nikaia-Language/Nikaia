@@ -552,6 +552,11 @@ pub struct Checked {
     /// call writes it without the compiler's `&`. A block arm's arguments are
     /// found by its statements instead.
     pub views_handed_on: BTreeSet<usize>,
+    /// **An integer `comptime` read where a use asks for a type**
+    /// ([ADR-287](../../docs/specification/adr/adr-287.md) D21), by the node of
+    /// the name: its value spelled in that type below, `1000000000i32`. A use
+    /// that asks nothing reads the `const`, which has the expression's type.
+    pub comptime_uses: BTreeMap<usize, String>,
     /// **A `match` over a field reached through a view**, by the scrutinee's
     /// address: matched by reference below, so its parts are bound as the
     /// views they are here.
@@ -1409,6 +1414,7 @@ fn walked<'a>(
         read_seq: 0,
         empty_lists: BTreeMap::new(),
         open_numbers: BTreeMap::new(),
+        open_comptimes: BTreeMap::new(),
         overflowed: BTreeSet::new(),
         grown_text: BTreeSet::new(),
         opaque_methods: BTreeSet::new(),
@@ -1843,6 +1849,8 @@ pub struct Propagation {
     pub lent_bindings: BTreeMap<usize, BTreeSet<String>>,
     /// [`Checked::views_handed_on`].
     pub views_handed_on: BTreeSet<usize>,
+    /// [`Checked::comptime_uses`].
+    pub comptime_uses: BTreeMap<usize, String>,
     /// [`Checked::guards_inside_boxes`].
     pub guards_inside_boxes: BTreeMap<usize, BTreeSet<String>>,
     /// [`Checked::lent_scrutinees`].
@@ -2138,6 +2146,7 @@ pub fn propagation_against(
         counted: checked.counted,
         lent_bindings: checked.lent_bindings,
         views_handed_on: checked.views_handed_on,
+        comptime_uses: checked.comptime_uses,
         guards_inside_boxes: checked.guards_inside_boxes,
         lent_scrutinees: checked.lent_scrutinees,
         collected_into: checked.collected_into,
@@ -3126,6 +3135,10 @@ struct Checker<'a> {
     /// once the body has been walked, as `empty_lists` is: the use that
     /// answers stands after the `let`.
     open_numbers: BTreeMap<usize, OpenNumber>,
+    /// **The integer `comptime`s without a written type**, by their binding
+    /// ([`Local::id`]): open numbers each use takes in its own type
+    /// ([ADR-287](../../docs/specification/adr/adr-287.md) D21).
+    open_comptimes: BTreeMap<usize, Span>,
     /// **The statements an operation in has already overflowed**, by the byte
     /// they start at: one refusal for one cause (`an_operation_that_overflows`).
     overflowed: BTreeSet<usize>,
@@ -9122,7 +9135,45 @@ impl<'a> Checker<'a> {
             None => return,
         };
         let bare = matches!(value, Expr::LitInt { .. });
+        let before = self.checked.findings.len();
         self.a_number_that_does_not_fit(&folded, bare, &ty, span, None);
+        // **The use is the error, and the `comptime` that computed the value
+        // is shown beside it** ([ADR-287](../../docs/specification/adr/adr-287.md)
+        // D21): the number came from there.
+        if self.checked.findings.len() > before
+            && let Some((name, at)) = self.an_open_comptime_in(value)
+            && let Some(finding) = self.checked.findings.last_mut()
+        {
+            finding.labels.push(Label {
+                span: *span,
+                word: name.clone(),
+                text: format!("taken as a `{ty}` here"),
+                main: true,
+            });
+            finding.labels.push(Label {
+                span: at,
+                word: name.clone(),
+                text: format!("`{name}` is computed here"),
+                main: false,
+            });
+        }
+    }
+
+    /// The first integer `comptime` with no written type in `expr`, by name
+    /// and where it is declared.
+    fn an_open_comptime_in(&self, expr: &Expr) -> Option<(String, Span)> {
+        match expr {
+            Expr::Variable(name) => {
+                let local = self.binding(self.parsed.text(*name))?;
+                let at = self.open_comptimes.get(&local.id)?;
+                Some((local.name.clone(), *at))
+            }
+            Expr::Binary { lhs, rhs, .. } => self
+                .an_open_comptime_in(lhs)
+                .or_else(|| self.an_open_comptime_in(rhs)),
+            Expr::Unary { expr, .. } => self.an_open_comptime_in(expr),
+            _ => None,
+        }
     }
 
     /// `NK1116` for a number and the type it has to fit, where it does not;
@@ -9262,6 +9313,43 @@ impl<'a> Checker<'a> {
             if let Some(number) = self.open_numbers.get_mut(&number) {
                 number.asks.push((ty.clone(), *at, beside));
             }
+        }
+        self.comptimes_asked(value, &ty);
+    }
+
+    /// **Each integer `comptime` in a value a use asks a type of is written in
+    /// it** ([ADR-287](../../docs/specification/adr/adr-287.md) D21), through
+    /// the operations of one type [`Self::open_numbers_in`] walks.
+    fn comptimes_asked(&mut self, expr: &Expr, ty: &str) {
+        match expr {
+            Expr::Variable(name) => {
+                let Some(local) = self.binding(self.parsed.text(*name)) else {
+                    return;
+                };
+                let Some(value) = &local.constant else {
+                    return;
+                };
+                if !self.open_comptimes.contains_key(&local.id) {
+                    return;
+                }
+                let digits = nikaia_std::tools::integers::integer_text(value);
+                let written = match value.negative {
+                    true => format!("({digits}{ty})"),
+                    false => format!("{digits}{ty}"),
+                };
+                self.checked.comptime_uses.insert(value_node(expr), written);
+            }
+            Expr::Binary { op, lhs, rhs, .. } if an_operation_of_one_type(*op) => {
+                self.comptimes_asked(lhs, ty);
+                if !matches!(op, BinaryOp::Shl | BinaryOp::Shr) {
+                    self.comptimes_asked(rhs, ty);
+                }
+            }
+            Expr::Unary {
+                op: UnaryOp::Neg | UnaryOp::Not,
+                expr,
+            } => self.comptimes_asked(expr, ty),
+            _ => {}
         }
     }
 
@@ -22516,9 +22604,14 @@ impl<'a> Checker<'a> {
                 // A `bool` from the interpreter is a `bool` below, whether it
                 // was written `true` or came out of a call.
                 Some(build_time::Value::Bool(_)) => Some("bool".to_string()),
-                Some(build_time::Value::Int(value)) => {
-                    Some(Constant::of(*value).first_type().to_string())
-                }
+                // **The expression's type, never the value's**
+                // ([ADR-287](../../docs/specification/adr/adr-287.md) D21): a
+                // call's result type, so `big(1)` and `big(3)` are one type
+                // and no type waits on an evaluation.
+                Some(build_time::Value::Int(value)) => Some(
+                    integer_named(&found)
+                        .unwrap_or_else(|| Constant::of(*value).first_type().to_string()),
+                ),
                 // **An array with nothing declaring its type.** The element
                 // type is the **checker's** where it has one - a body declared
                 // `-> Vec[i64]` says `i64`, and reading it off the values
@@ -22641,7 +22734,19 @@ impl<'a> Checker<'a> {
             }),
         }
 
-        let held = want.unwrap_or(found);
+        // **An integer with no written type is an open number**
+        // ([ADR-287](../../docs/specification/adr/adr-287.md) D21): each use
+        // takes it in the type it asks for, checked against the value, as a
+        // literal is taken.
+        let open = want.is_none() && matches!(evaluated, Some(build_time::Value::Int(_)));
+        let held = match open {
+            true => Ty::Unknown,
+            false => want.unwrap_or(found),
+        };
+        let id = a_new_binding();
+        if open {
+            self.open_comptimes.insert(id, *span);
+        }
         // **What the name is worth is what was *evaluated*, not what folded.**
         // They were the same thing while the fold was the whole evaluator; with
         // a call in it they are not, and binding the fold left
@@ -22649,7 +22754,7 @@ impl<'a> Checker<'a> {
         // the next constant that read it was `NK1127` although the one before
         // it had just been computed.
         self.bind_local(Local {
-            id: a_new_binding(),
+            id,
             literal: None,
             name: bound,
             ty: held,

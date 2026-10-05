@@ -1302,6 +1302,8 @@ struct Emitter<'p> {
     lent_bindings: std::collections::BTreeMap<usize, std::collections::BTreeSet<String>>,
     /// Arguments that name a part an expression arm binds as a view (#456).
     views_handed_on: std::collections::BTreeSet<usize>,
+    /// An integer `comptime` where a use asks a type, spelled in it (ADR-287 D21).
+    comptime_uses: std::collections::BTreeMap<usize, String>,
     /// **A guard that reads names bound inside a boxed part**, by the arm's
     /// pattern, and which of them copy (ADR-246 D5 item 2).
     guards_inside_boxes: std::collections::BTreeMap<usize, std::collections::BTreeSet<String>>,
@@ -2678,6 +2680,7 @@ impl<'p> Emitter<'p> {
             counted: propagation.counted,
             lent_bindings: propagation.lent_bindings,
             views_handed_on: propagation.views_handed_on,
+            comptime_uses: propagation.comptime_uses,
             guards_inside_boxes: propagation.guards_inside_boxes,
             lent_scrutinees: propagation.lent_scrutinees,
             collected_into: propagation.collected_into,
@@ -7876,6 +7879,15 @@ impl<'p> Emitter<'p> {
                     out.push(&format!(") as {}<_>", self.boxed_future()));
                 }
                 out.push("))");
+            }
+            // **An integer `comptime` where a use asks a type is its value in
+            // that type** (ADR-287 D21, `Checked::comptime_uses`).
+            Expr::Variable(_)
+                if self
+                    .comptime_uses
+                    .contains_key(&crate::check::value_node(expr)) =>
+            {
+                out.push(&self.comptime_uses[&crate::check::value_node(expr)]);
             }
             Expr::Variable(name) => {
                 out.push(&self.name(*name));

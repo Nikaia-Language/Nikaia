@@ -65,7 +65,7 @@ fn a_call_is_evaluated_while_the_program_is_built() {
                   fn main() { println(f\"{ANSWER}\") }\n";
     assert!(findings(source).is_empty(), "{:#?}", findings(source));
     assert!(
-        lowered(source).contains("const ANSWER: i32 = 42;"),
+        lowered(source).contains("const ANSWER: i64 = 42;"),
         "{}",
         lowered(source)
     );
@@ -82,7 +82,7 @@ fn a_recursion_with_a_base_case_is_evaluated() {
                   comptime SIX = factorial(3)\n\
                   fn main() { println(f\"{SIX}\") }\n";
     assert!(findings(source).is_empty(), "{:#?}", findings(source));
-    assert!(lowered(source).contains("const SIX: i32 = 6;"));
+    assert!(lowered(source).contains("const SIX: i64 = 6;"));
 }
 
 /// **What the name is worth is what was evaluated, not what folded**, which
@@ -194,7 +194,7 @@ fn a_for_over_a_range_is_evaluated() {
                   fn main() { println(f\"{SIX}\") }\n";
     assert!(findings(source).is_empty(), "{:#?}", findings(source));
     assert!(
-        lowered(source).contains("const SIX: i32 = 6;"),
+        lowered(source).contains("const SIX: i64 = 6;"),
         "{}",
         lowered(source)
     );
@@ -215,7 +215,7 @@ fn an_inclusive_range_counts_one_further() {
                   fn main() { println(f\"{TEN}\") }\n";
     assert!(findings(source).is_empty(), "{:#?}", findings(source));
     assert!(
-        lowered(source).contains("const TEN: i32 = 10;"),
+        lowered(source).contains("const TEN: i64 = 10;"),
         "{}",
         lowered(source)
     );
@@ -240,7 +240,7 @@ fn a_while_is_evaluated_and_nothing_counts_its_turns() {
                   fn main() { println(f\"{STEPS}\") }\n";
     assert!(findings(source).is_empty(), "{:#?}", findings(source));
     assert!(
-        lowered(source).contains("const STEPS: i32 = 6;"),
+        lowered(source).contains("const STEPS: i64 = 6;"),
         "{}",
         lowered(source)
     );
@@ -266,7 +266,7 @@ fn break_and_continue_are_both_read() {
                   fn main() { println(f\"{FOUND}\") }\n";
     assert!(findings(source).is_empty(), "{:#?}", findings(source));
     assert!(
-        lowered(source).contains("const FOUND: i32 = 12;"),
+        lowered(source).contains("const FOUND: i64 = 12;"),
         "{}",
         lowered(source)
     );
@@ -288,7 +288,7 @@ fn a_return_inside_a_loop_leaves_the_function() {
                   fn main() { println(f\"{ROOT}\") }\n";
     assert!(findings(source).is_empty(), "{:#?}", findings(source));
     assert!(
-        lowered(source).contains("const ROOT: i32 = 8;"),
+        lowered(source).contains("const ROOT: i64 = 8;"),
         "{}",
         lowered(source)
     );

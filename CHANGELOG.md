@@ -4,6 +4,28 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.514] — 2026-10-05
+
+**An integer `comptime` is an open number, typed at each use** (ADR-287 D21,
+#467). `comptime FIB_10 = fib(10)` lowered to `const FIB_10: i32 = 55;`, so
+`let y: i64 = FIB_10` was refused by `rustc`, about a file nobody wrote, and
+`comptime N = 4 * 1024` handed to an `i64` parameter the same.
+
+Now, for an integer `comptime` with no written type:
+- Each use that asks for a type takes the value in it: `take_i32(A)` and
+  `take_i64(A)` in one function both compile.
+- A use that cannot hold the value is `NK1116` at the use, with the
+  `comptime` that computed it shown beside it.
+- Where no use asks, the `const` has the expression's type: a call's result
+  type, so `big(1)` and `big(3)` are both `i64`. Literals alone still take the
+  first type that holds them.
+- A written type still pins it everywhere.
+
+Seven `build_time` tests expected the old, value-picked `i32` and now expect
+the call's `i64`. Every bench and example lowers byte for byte as before.
+Typed arithmetic at build time (step 5) is left to ADR-321, which compiles
+build-time code rather than interpreting it.
+
 ## [0.0.513] — 2026-10-05
 
 **Build-time code is compiled and run, not interpreted** (ADR-321). The
