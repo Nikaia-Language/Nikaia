@@ -169,6 +169,12 @@ pub struct Build {
     /// `--optimization=remove-overflow-checks:on`
     /// ([ADR-306](../../docs/specification/adr/adr-306.md) D6).
     pub overflow: crate::bounds::OverflowChecks,
+    /// **Code run while the program is built counts its steps**
+    /// ([ADR-321](../../docs/specification/adr/adr-321.md) D7): every function
+    /// it enters and every turn of a loop, against the budget
+    /// `nikaia_std::build_time` holds. Set for a `comptime`'s program and
+    /// nothing else.
+    pub counts_steps: bool,
 }
 
 impl Build {
@@ -179,6 +185,7 @@ impl Build {
             reentrancy_check: ReentrancyCheck::parse(reentrancy_check)?,
             bounds: crate::bounds::BoundsChecks::default(),
             overflow: crate::bounds::OverflowChecks::default(),
+            counts_steps: false,
         })
     }
 
@@ -4867,7 +4874,15 @@ impl<'p> Emitter<'p> {
         };
 
         // A published parameter taken as it goes in (ADR-282 D23), first.
-        let first = std::mem::take(&mut *self.either_prelude.borrow_mut());
+        let mut first = std::mem::take(&mut *self.either_prelude.borrow_mut());
+        // **A call is a step of a build-time run**, and the function is on its
+        // path while it runs (ADR-321 D7).
+        if self.build.counts_steps {
+            first.insert(
+                0,
+                format!("let __nikaia_frame = nikaia_std::build_time::enter({key:?});"),
+            );
+        }
         if !throws {
             // The function's own settle point stands around the body, so the
             // body is not settled a second time as a block (ADR-297 D2).
@@ -6141,6 +6156,19 @@ impl<'p> Emitter<'p> {
         Ok(())
     }
 
+    /// **A turn of a loop is a step of a build-time run** (ADR-321 D7): the
+    /// count, in front of whatever else a loop's body opens with.
+    fn a_counted_turn(&self, opening: Option<String>) -> Option<String> {
+        if !self.build.counts_steps {
+            return opening;
+        }
+        let step = "nikaia_std::build_time::step();".to_string();
+        Some(match opening {
+            Some(opening) => format!("{step} {opening}"),
+            None => step,
+        })
+    }
+
     fn block(
         &self,
         out: &mut Out,
@@ -7147,7 +7175,14 @@ impl<'p> Emitter<'p> {
                         out.push(" ");
                     }
                 }
-                self.block(out, body, depth, flow.inside_a_loop(), Tail::Statement)?;
+                self.block_opening_with(
+                    out,
+                    body,
+                    depth,
+                    flow.inside_a_loop(),
+                    Tail::Statement,
+                    self.a_counted_turn(None).as_deref(),
+                )?;
             }
 
             Stmt::For {
@@ -7224,7 +7259,7 @@ impl<'p> Emitter<'p> {
                         depth + 1,
                         flow.inside_a_loop(),
                         Tail::Statement,
-                        unwrap.as_deref(),
+                        self.a_counted_turn(unwrap).as_deref(),
                     )?;
                     out.push("\n");
                     out.push(&pad);
@@ -7342,7 +7377,7 @@ impl<'p> Emitter<'p> {
                     depth,
                     flow.inside_a_loop(),
                     Tail::Statement,
-                    opening.as_deref(),
+                    self.a_counted_turn(opening).as_deref(),
                 )?;
             }
             // A `return` that ends a *function body* is that function's

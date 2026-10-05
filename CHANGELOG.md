@@ -4,6 +4,30 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.519] — 2026-10-05
+
+**A build-time run is bounded: steps, call depth and memory** (ADR-321 D7, D10,
+D12; #468, second stage).
+
+- **Steps.** A `comptime`'s program counts every call and every turn of a loop
+  (`nikaia_std::build_time`). Past ten billion steps the build is refused with
+  `NK1152`, *`F` took more than … steps*, naming the path it was in. A loop
+  that never ends and `fib(50)` are refused rather than hanging the build.
+- **Call depth.** A recursion past 10 000 calls is `NK1152` too, named as that.
+- **Memory.** The library build-time code links against holds the allocator
+  every run uses and counts the bytes live at once; past 4 GiB the run stops
+  with `NK1152`.
+- **Progress.** A run still going after five seconds says which `comptime` it
+  is, every ten seconds after.
+- **A run that ends without a word** says how it ended, rather than an empty
+  message.
+
+The allocator is in the library and not in each run's program, because a
+program linked against `std` dynamically uses its library's allocator. How a
+`comptime` raises a bound (D11) is not decided; this compiler's tests ask a
+workshop for smaller ones. Every bench and example lowers byte for byte as
+before.
+
 ## [0.0.518] — 2026-10-05
 
 **A `comptime` that calls a function is compiled and run** (ADR-321 D1, #468,

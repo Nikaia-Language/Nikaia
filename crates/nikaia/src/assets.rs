@@ -153,6 +153,15 @@ impl Reads {
         }
     }
 
+    /// The same, with other bounds on what a `comptime`'s run may spend
+    /// ([ADR-321](../../../docs/specification/adr/adr-321.md) D7, D10).
+    pub fn bounded(self, bounds: crate::comptime_run::Bounds) -> Reads {
+        Reads {
+            workshop: self.workshop.bounded(bounds),
+            ..self
+        }
+    }
+
     /// Where a parser is compiled, for the evaluator that runs one.
     pub fn workshop(&self) -> &crate::grammar_run::Workshop {
         &self.workshop

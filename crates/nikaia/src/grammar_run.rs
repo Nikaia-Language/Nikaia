@@ -88,6 +88,8 @@ pub struct Workshop {
     /// ([ADR-321](../../../docs/specification/adr/adr-321.md) D3), built the
     /// first time a `comptime` needs it and kept for the rest of the build.
     bundle: std::sync::OnceLock<Result<crate::comptime_run::Bundle, String>>,
+    /// What a `comptime`'s run may spend (ADR-321 D7, D10).
+    bounds: crate::comptime_run::Bounds,
 }
 
 impl Workshop {
@@ -107,13 +109,24 @@ impl Workshop {
             at: Some(at.into()),
             running: std::sync::Mutex::new(Vec::new()),
             bundle: std::sync::OnceLock::new(),
+            bounds: crate::comptime_run::Bounds::default(),
         }
+    }
+
+    /// The same, with other bounds on what a `comptime`'s run may spend.
+    pub fn bounded(self, bounds: crate::comptime_run::Bounds) -> Workshop {
+        Workshop { bounds, ..self }
+    }
+
+    /// What a `comptime`'s run may spend here.
+    pub fn bounds(&self) -> crate::comptime_run::Bounds {
+        self.bounds
     }
 
     /// **Compile and run a `comptime`'s program**
     /// ([ADR-321](../../../docs/specification/adr/adr-321.md) D1): what it
     /// printed, or why it did not (`crate::comptime_run`).
-    pub fn run_comptime(&self, program: &str) -> Result<String, Wall> {
+    pub fn run_comptime(&self, program: &str, name: &str) -> Result<String, Wall> {
         let Some(at) = &self.at else {
             return Err(Wall::NowhereToBuild);
         };
@@ -124,7 +137,7 @@ impl Workshop {
             .map_err(|detail| Wall::DidNotBuild {
                 detail: detail.clone(),
             })?;
-        crate::comptime_run::run(at, bundle, program)
+        crate::comptime_run::run(at, bundle, program, name)
     }
 
     /// Run `ask`'s rule over `ask`'s file, in a parser compiled from `parsed`.

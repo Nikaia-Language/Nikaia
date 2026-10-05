@@ -32,7 +32,7 @@ use crate::grammar_run::Wall;
 use crate::parser::Parsed;
 
 /// The name the sub-program hands the value back under.
-const VALUE_FN: &str = "__nikaia_comptime_value";
+pub(crate) const VALUE_FN: &str = "__nikaia_comptime_value";
 
 /// **The sub-program for one initialiser**, or nothing where this stage does
 /// not build one: a type with no written form, or an earlier `comptime` whose
@@ -200,18 +200,38 @@ fn written_type(ty: &Ty, parsed: &Parsed) -> Option<ast::Type> {
 /// checker turns the byte back into a place in the file it is checking. A row
 /// is the generated line, [`STOPPED_AT`], and the byte the line's outermost
 /// node starts at.
-pub(crate) fn with_driver(lowered: &crate::emit::Lowered, dump: &str) -> Option<String> {
+pub(crate) fn with_driver(
+    lowered: &crate::emit::Lowered,
+    dump: &str,
+    bounds: Bounds,
+) -> Option<String> {
     let rust = &lowered.rust;
     let start = rust.find("\nfn main() {\n")?;
     let end = start + 1 + rust[start + 1..].find("\n}\n")? + 3;
+    // **The value is computed on a thread of its own**, with a stack that
+    // holds `build_time::DEEPEST` calls, and against the budget (D7).
     let main = format!(
         "\nfn main() {{\n\
          \x20   nikaia_std::abort::report_in_nikaia_terms(__NIKAIA_SITES);\n\
-         \x20   let value = {VALUE_FN}();\n\
-         \x20   let mut out = String::new();\n\
+         \x20   nikaia_bundle::LIVE.bound({memory});\n\
+         \x20   let computed = std::thread::Builder::new()\n\
+         \x20       .stack_size(nikaia_std::build_time::STACK)\n\
+         \x20       .spawn(|| {{\n\
+         \x20           nikaia_std::build_time::start({budget});\n\
+         \x20           let value = {VALUE_FN}();\n\
+         \x20           let mut out = String::new();\n\
          {dump}\
-         \x20   println!(\"{{out}}\");\n\
-         }}\n"
+         \x20           out\n\
+         \x20       }})\n\
+         \x20       .expect(\"the build-time thread\")\n\
+         \x20       .join();\n\
+         \x20   match computed {{\n\
+         \x20       Ok(out) => println!(\"{{out}}\"),\n\
+         \x20       Err(_) => std::process::exit(101),\n\
+         \x20   }}\n\
+         }}\n",
+        budget = bounds.steps,
+        memory = bounds.bytes
     );
     let mut starts = vec![0usize];
     starts.extend(
@@ -241,12 +261,32 @@ pub(crate) fn with_driver(lowered: &crate::emit::Lowered, dump: &str) -> Option<
     // **Nothing goes in front of the program**: the table maps its lines, and
     // one line more above them would name the wrong one.
     Some(format!(
-        "{}{main}{}{table}{}{}\nextern crate nikaia_bundle as _;\n",
+        "{}{main}{}{table}{}{}\nextern crate nikaia_bundle;\n",
         &rust[..start],
         &rest[..empty],
         &rest[after..],
         crate::grammar_run::DUMP_HELPERS
     ))
+}
+
+/// **What a build-time run may spend** ([ADR-321](../../../docs/specification/adr/adr-321.md)
+/// D7, D10): counted steps and bytes live at once. How a `comptime` raises
+/// either is not decided (D11); a workshop carries them, so that this
+/// compiler's own tests can ask for less.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Bounds {
+    pub steps: u64,
+    pub bytes: u64,
+}
+
+impl Default for Bounds {
+    /// Ten billion steps (D7) and 4 GiB (D10).
+    fn default() -> Bounds {
+        Bounds {
+            steps: 10_000_000_000,
+            bytes: 4 << 30,
+        }
+    }
 }
 
 /// What a stop's row names instead of a file: the byte follows it.
@@ -270,6 +310,45 @@ pub(crate) struct Bundle {
     stamp: String,
 }
 
+/// **The bundle's one file**: `std`, and the allocator every build-time run
+/// uses ([ADR-321](../../../docs/specification/adr/adr-321.md) D10). Here and
+/// not in each run's program, because a program linked against `std`
+/// dynamically uses the allocator of the library it links; `unsafe` because an
+/// allocator is, and generated because `std` has none (ADR-218).
+const BUNDLE: &str = "// GENERATED (ADR-321 D3, D10).\n\
+pub extern crate nikaia_std;\n\
+\n\
+/// What every run has live, against the bound its program sets.\n\
+pub static LIVE: nikaia_std::build_time::Counted = nikaia_std::build_time::Counted::new();\n\
+\n\
+struct Heap;\n\
+\n\
+// SAFETY: every request is the system allocator's, unchanged; this only counts.\n\
+unsafe impl std::alloc::GlobalAlloc for Heap {\n\
+    unsafe fn alloc(&self, layout: std::alloc::Layout) -> *mut u8 {\n\
+        LIVE.take(layout.size());\n\
+        unsafe { std::alloc::GlobalAlloc::alloc(&std::alloc::System, layout) }\n\
+    }\n\
+    unsafe fn alloc_zeroed(&self, layout: std::alloc::Layout) -> *mut u8 {\n\
+        LIVE.take(layout.size());\n\
+        unsafe { std::alloc::GlobalAlloc::alloc_zeroed(&std::alloc::System, layout) }\n\
+    }\n\
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: std::alloc::Layout) {\n\
+        LIVE.give(layout.size());\n\
+        unsafe { std::alloc::GlobalAlloc::dealloc(&std::alloc::System, ptr, layout) }\n\
+    }\n\
+    unsafe fn realloc(&self, ptr: *mut u8, layout: std::alloc::Layout, size: usize) -> *mut u8 {\n\
+        match size >= layout.size() {\n\
+            true => LIVE.take(size - layout.size()),\n\
+            false => LIVE.give(layout.size() - size),\n\
+        }\n\
+        unsafe { std::alloc::GlobalAlloc::realloc(&std::alloc::System, ptr, layout, size) }\n\
+    }\n\
+}\n\
+\n\
+#[global_allocator]\n\
+static HEAP: Heap = Heap;\n";
+
 /// Build the bundle under `at`, or say why it could not be built.
 pub(crate) fn bundle(at: &Path) -> Result<Bundle, String> {
     let dir = at.join("bundle");
@@ -284,10 +363,7 @@ pub(crate) fn bundle(at: &Path) -> Result<Bundle, String> {
         manifest.push_str(&format!("{name} = {value}\n"));
     }
     write_if_changed(&dir.join("Cargo.toml"), &manifest)?;
-    write_if_changed(
-        &dir.join("src").join("lib.rs"),
-        "// GENERATED (ADR-321 D3).\npub extern crate nikaia_std;\n",
-    )?;
+    write_if_changed(&dir.join("src").join("lib.rs"), BUNDLE)?;
     let built = Command::new(cargo())
         .args(["rustc", "--quiet", "--lib", "--crate-type", "dylib"])
         .arg("--message-format=json")
@@ -359,7 +435,7 @@ pub(crate) fn bundle(at: &Path) -> Result<Bundle, String> {
 /// **Compile and run one build-time program**, or hand back what it said when
 /// it ran before: its standard output, or `Wall::Refused` with what it wrote
 /// where it stopped. Keyed on the program, the toolchain and the bundle (D4).
-pub(crate) fn run(at: &Path, bundle: &Bundle, program: &str) -> Result<String, Wall> {
+pub(crate) fn run(at: &Path, bundle: &Bundle, program: &str, name: &str) -> Result<String, Wall> {
     let key =
         crate::assets::digest(format!("{program}\n{}\n{}", toolchain(), bundle.stamp).as_bytes());
     let dir = at.join("comptime").join(&key);
@@ -417,27 +493,80 @@ pub(crate) fn run(at: &Path, bundle: &Bundle, program: &str) -> Result<String, W
     if let Some(held) = std::env::var_os(LIBRARY_PATH) {
         libraries.extend(std::env::split_paths(&held));
     }
-    let ran = Command::new(&binary)
+    let child = Command::new(&binary)
         .env("RUST_BACKTRACE", "0")
         .env(
             LIBRARY_PATH,
             std::env::join_paths(libraries).map_err(|e| did_not(e.to_string()))?,
         )
-        .output()
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
         .map_err(|e| did_not(format!("running {}: {e}", binary.display())))?;
+    let ran =
+        waited(child, name).map_err(|e| did_not(format!("running {}: {e}", binary.display())))?;
     if ran.status.success() {
         let answer = String::from_utf8_lossy(&ran.stdout).trim().to_string();
         write_if_changed(&answered, &answer).map_err(did_not)?;
         return Ok(answer);
     }
-    let said = String::from_utf8_lossy(&ran.stderr).trim().to_string();
+    let mut said = String::from_utf8_lossy(&ran.stderr).trim().to_string();
+    // **A run that ended without a word** - killed by the system, most often
+    // for its memory - says how it ended instead.
+    if said.is_empty() {
+        said = format!("it ended without saying why ({})", ran.status);
+    }
     // **A stop the program reported is an answer**, and kept as one: the same
     // code stops the same way. A run that died without a word is not, and is
     // tried again next time.
-    if said.contains("the program stopped") {
+    if said.contains("the program stopped") || said.contains("nikaia-build-time:") {
         write_if_changed(&stopped, &said).map_err(did_not)?;
     }
     Err(Wall::Refused { detail: said })
+}
+
+/// **The run, waited for, and named while it takes long**
+/// ([ADR-321](../../../docs/specification/adr/adr-321.md) D12): after a few
+/// seconds the build says which `comptime` is still running and for how long.
+/// A message, never a bound.
+fn waited(mut child: std::process::Child, name: &str) -> std::io::Result<std::process::Output> {
+    use std::io::Read;
+    let mut stdout = child.stdout.take();
+    let mut stderr = child.stderr.take();
+    let out = std::thread::spawn(move || {
+        let mut held = Vec::new();
+        if let Some(pipe) = stdout.as_mut() {
+            let _ = pipe.read_to_end(&mut held);
+        }
+        held
+    });
+    let err = std::thread::spawn(move || {
+        let mut held = Vec::new();
+        if let Some(pipe) = stderr.as_mut() {
+            let _ = pipe.read_to_end(&mut held);
+        }
+        held
+    });
+    let began = std::time::Instant::now();
+    let mut next = std::time::Duration::from_secs(5);
+    let status = loop {
+        if let Some(status) = child.try_wait()? {
+            break status;
+        }
+        if began.elapsed() >= next {
+            eprintln!(
+                "note: `{name}` is still being computed while the program is built ({} s)",
+                began.elapsed().as_secs()
+            );
+            next += std::time::Duration::from_secs(10);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    };
+    Ok(std::process::Output {
+        status,
+        stdout: out.join().unwrap_or_default(),
+        stderr: err.join().unwrap_or_default(),
+    })
 }
 
 /// The variable the loader reads for where libraries are.

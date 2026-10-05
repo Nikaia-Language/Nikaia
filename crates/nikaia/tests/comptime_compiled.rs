@@ -180,7 +180,137 @@ fn an_unchanged_comptime_is_answered_from_what_was_kept() {
         out
     };
     let before = runs(&kept);
-    assert_eq!(before.len(), 1, "{before:?}");
+    // Earlier bundles' runs of the same code stay beside it, under keys of
+    // their own.
+    assert!(!before.is_empty(), "the run was kept");
     assert!(lowered(source).contains("const T: i64 = 8642;"));
     assert_eq!(runs(&kept), before);
+}
+
+// --- ADR-321 D7, D10: what a build-time run may spend ------------------------
+
+/// Findings under smaller bounds than a build's, so that a run past them ends
+/// in a moment.
+fn findings_bounded(source: &str, steps: u64, bytes: u64) -> Vec<Finding> {
+    let parsed = parse_to_ast(source).expect("the source parses");
+    let own = Ledger::infer(&parsed);
+    let library = Ledger::parse(STD).expect("std's shipped ledger parses");
+    let reads = reads().bounded(nikaia::comptime_run::Bounds { steps, bytes });
+    check::check_against(
+        &parsed,
+        &[],
+        &own,
+        &library,
+        &BTreeSet::new(),
+        &check::Newly::new(),
+        &reads,
+    )
+    .findings
+}
+
+fn the_one(found: Vec<Finding>) -> Finding {
+    let mut stopped: Vec<Finding> = found.into_iter().filter(|f| f.code == "NK1152").collect();
+    assert_eq!(stopped.len(), 1, "{stopped:#?}");
+    stopped.remove(0)
+}
+
+/// **A loop that does not end is refused, not waited for** (D7), naming the
+/// `comptime` and the path it was in.
+#[test]
+fn a_loop_that_does_not_end_is_stopped_by_the_budget() {
+    let source = "fn spin() -> i64 {\n\
+                  \x20   let mut n = 0\n\
+                  \x20   while true {\n\
+                  \x20       n += 1\n\
+                  \x20   }\n\
+                  \x20   return n\n\
+                  }\n\
+                  \n\
+                  comptime SPUN = spin()\n\
+                  \n\
+                  fn main() {\n\
+                  \x20   println(f\"{SPUN}\")\n\
+                  }\n";
+    let stopped = the_one(findings_bounded(source, 1_000_000, 4 << 30));
+    assert_eq!(
+        stopped.message,
+        "`SPUN` took more than 1000000 steps while the program was built."
+    );
+    assert!(
+        stopped
+            .notes
+            .iter()
+            .any(|n| n == "It was in `SPUN` > `spin`."),
+        "{:#?}",
+        stopped.notes
+    );
+}
+
+/// **`fib(50)` is refused rather than hanging the build; `fib(20)` passes**
+/// (D7): each call is a step.
+#[test]
+fn a_recursion_past_the_budget_is_refused_and_one_inside_it_passes() {
+    let fib = "fn fib(n: i64) -> i64 {\n\
+               \x20   if n < 2 {\n\
+               \x20       return n\n\
+               \x20   }\n\
+               \x20   return fib(n - 1) + fib(n - 2)\n\
+               }\n\
+               \n";
+    let within =
+        format!("{fib}comptime F = fib(20)\n\nfn main() {{\n    println(f\"{{F}}\")\n}}\n");
+    assert!(
+        findings_bounded(&within, 1_000_000, 4 << 30).is_empty(),
+        "fib(20) takes some 22 000 steps"
+    );
+    let past = format!("{fib}comptime F = fib(50)\n\nfn main() {{\n    println(f\"{{F}}\")\n}}\n");
+    let stopped = the_one(findings_bounded(&past, 1_000_000, 4 << 30));
+    assert_eq!(
+        stopped.message,
+        "`F` took more than 1000000 steps while the program was built."
+    );
+}
+
+/// **A recursion with no base case meets the call depth** (D7) before the
+/// budget, and is named as that.
+#[test]
+fn a_recursion_without_a_base_case_meets_the_call_depth() {
+    let source = "fn down(n: i64) -> i64 {\n\
+                  \x20   return down(n + 1)\n\
+                  }\n\
+                  \n\
+                  comptime D = down(0)\n\
+                  \n\
+                  fn main() {\n\
+                  \x20   println(f\"{D}\")\n\
+                  }\n";
+    let stopped = the_one(findings(source));
+    assert_eq!(
+        stopped.message,
+        "`D` went more than 10000 calls deep while the program was built."
+    );
+}
+
+/// **A list that grows without end is stopped by the memory bound** (D10),
+/// counted as the run asks for it.
+#[test]
+fn a_list_that_grows_without_end_is_stopped_by_the_memory_bound() {
+    let source = "fn grow() -> i64 {\n\
+                  \x20   let mut xs: Vec[i64] = []\n\
+                  \x20   while true {\n\
+                  \x20       xs.push(1)\n\
+                  \x20   }\n\
+                  \x20   return xs.len()\n\
+                  }\n\
+                  \n\
+                  comptime G = grow()\n\
+                  \n\
+                  fn main() {\n\
+                  \x20   println(f\"{G}\")\n\
+                  }\n";
+    let stopped = the_one(findings_bounded(source, 10_000_000_000, 100_000_000));
+    assert_eq!(
+        stopped.message,
+        "`G` held more than 100000000 bytes at once while the program was built."
+    );
 }

@@ -18412,10 +18412,14 @@ impl<'a> Checker<'a> {
             .unwrap_or_default();
         let known = |name: &str| outermost.get(name).cloned();
         let sub = crate::comptime_run::sub_program(self.parsed, bound, value, found, &known)?;
-        let lowered = crate::emit::emit_program(&sub, crate::emit::Build::default()).ok()?;
+        let counted = crate::emit::Build {
+            counts_steps: true,
+            ..Default::default()
+        };
+        let lowered = crate::emit::emit_program(&sub, counted).ok()?;
         let dump = crate::grammar_run::dumper(&sub, found).ok()?;
-        let program = crate::comptime_run::with_driver(&lowered, &dump)?;
-        match workshop.run_comptime(&program) {
+        let program = crate::comptime_run::with_driver(&lowered, &dump, workshop.bounds())?;
+        match workshop.run_comptime(&program, bound) {
             Ok(text) => match crate::grammar_run::decode(&text) {
                 Ok(computed) => Some((Some(computed), false)),
                 Err(_) => None,
@@ -18433,6 +18437,12 @@ impl<'a> Checker<'a> {
     /// stops the program the same way. In its own words, at the place it
     /// stopped where the run named one (`comptime_run::STOPPED_AT`).
     fn a_build_time_run_that_stopped(&mut self, bound: &str, said: &str, span: &Span) {
+        if let Some(over) = said
+            .lines()
+            .find_map(|line| line.strip_prefix("nikaia-build-time: "))
+        {
+            return self.a_build_time_run_over_its_bound(bound, over, span);
+        }
         let line = said
             .lines()
             .find(|line| line.contains("the program stopped"))
@@ -18476,6 +18486,58 @@ impl<'a> Checker<'a> {
                     .to_string(),
             ),
             labels,
+        });
+    }
+
+    /// **A build-time run past its budget or its call depth**
+    /// ([ADR-321](../../docs/specification/adr/adr-321.md) D7): the bound, the
+    /// `comptime`, and the path of calls it was in when it stopped.
+    fn a_build_time_run_over_its_bound(&mut self, bound: &str, over: &str, span: &Span) {
+        let (what, path) = over.split_once('|').unwrap_or((over, ""));
+        let (what, path) = (what.trim(), path.trim());
+        let (kind, limit) = what.split_once(' ').unwrap_or((what, ""));
+        let message = match kind {
+            "memory" => format!(
+                "`{bound}` held more than {limit} bytes at once while the program was built."
+            ),
+            "depth" => {
+                format!("`{bound}` went more than {limit} calls deep while the program was built.")
+            }
+            _ => format!("`{bound}` took more than {limit} steps while the program was built."),
+        };
+        let mut notes = Vec::new();
+        if !path.is_empty() {
+            let shown: Vec<String> = path
+                .split(" > ")
+                .map(|step| match step {
+                    "…" => step.to_string(),
+                    // The value function is the `comptime` itself.
+                    crate::comptime_run::VALUE_FN => format!("`{bound}`"),
+                    _ => format!("`{step}`"),
+                })
+                .collect();
+            notes.push(format!("It was in {}.", shown.join(" > ")));
+        }
+        notes.push(match kind {
+            "memory" => {
+                "What it holds is counted as it asks for it, the same on every machine.".to_string()
+            }
+            _ => "Each turn of a loop and each call is a step, and the count is the same on \
+                  every machine."
+                .to_string(),
+        });
+        self.checked.findings.push(Finding {
+            severity: Severity::Error,
+            span: *span,
+            code: "NK1152",
+            message,
+            notes,
+            help: Some(
+                "Look for a loop or a recursion that does not end, or compute the value while \
+                 the program runs, with `let` instead of `comptime`."
+                    .to_string(),
+            ),
+            labels: Vec::new(),
         });
     }
 
