@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part III: Tooling, Ecosystem & Interoperability**
-**Version:** 0.0.473 (Draft)
+**Version:** 0.0.474 (Draft)
 **Date:** 2026-10-05
 
 ---
@@ -1076,9 +1076,22 @@ Every function below may fail for environmental reasons, so every one of them `t
 // Subject: the path, and the root it may not leave ; Config: options
 pub fn read(path: Path, root: Root) -> Bytes throws                  // whole file, as bytes
 pub fn read_to_string(path: Path, root: Root) -> String throws       // whole file, UTF-8 validated
-pub fn walk(path: Path, root: Root) -> Vec[String] throws           // every file under a directory
+pub fn walk(path: Path, root: Root) -> Vec[Path] throws             // every file under a directory
 pub fn write(path: Path, root: Root, data: ref Array[u8]; append: bool = false, create: bool = true) throws
 ```
+
+**A path is an `fs::Path`** ([ADR-319](adr/adr-319.md)): a file name in the platform's own
+encoding — the bytes as they are on Unix, WTF-8 on Windows, UTF-8 where names are Unicode. Text
+stands wherever a `Path` is asked, as a view without a copy, so a literal or a `String` is a path.
+A `Path` is made from text, by the operating system (`walk`, `read_dir`, a program's arguments,
+the environment) or by the operations on one: `==` against a path or text, `starts_with`,
+`ends_with`, `file_name`, `extension`, `with_extension`, `parent` and `join`, each handing back a
+`Path`. There is no constructor from arbitrary bytes, so no call fails for a name's encoding. An
+`f"…"` builds a `Path` where its use asks for one (Part I 2.5). `p.to_text()` gives the
+`String`; it `throws io::IoError::NotText` for a path whose source is the operating system, on
+every target, and never for one made from text. `p.display()` gives text for showing, with `�`
+for what is not text, and never fails. A failure about a name carries it as a `Path`, and
+`Root::Dir` holds one.
 
 **Every path names its root.** `root` is an `fs::Root`. `Dir(store)` resolves the name under
 that directory and throws `io::IoError::Outside` where it would leave it; `Outside` is a case of
@@ -1099,8 +1112,8 @@ names relative to it with `/` between the parts, sorted, so two runs over one tr
 ([ADR-290](adr/adr-290.md) D14). Directories are not listed, and each is visited once, so a link
 back up the tree ends the walk. Under `Dir(store)` the root holds for every name the walk finds:
 an entry that leads out of it, a symlink pointing away, is left out rather than failing the walk.
-It throws where the directory itself cannot be read, and `NotText` where a name under it is not
-UTF-8. A name it hands back opens under the same root: `fs::read_to_string(ref name, root)`
+It throws where the directory itself cannot be read; a name that is not text is handed back
+like any other. A name it hands back opens under the same root: `fs::read_to_string(ref name, root)`
 after `fs::walk(".", root)`.
 
 **The reactor.** `read`, `read_to_string` and `write` go through the runtime's reactor. Where the

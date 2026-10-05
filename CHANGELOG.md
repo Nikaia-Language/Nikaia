@@ -4,6 +4,18 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.474] — 2026-10-05
+
+**A file name is `fs::Path`, the platform's own bytes** (ADR-319). Part I 7.1
+and Part III 17.1 wrote `Path` and nothing declared it (`NK1135`); `std` took
+names as text, so `fs::walk` stopped with `NotText` at a name that is not UTF-8
+and such a file could not be reached. A `Path` holds the bytes as Unix has them,
+WTF-8 on Windows and UTF-8 where names are Unicode. Text stands wherever one is
+asked, an `f"…"` builds one where its use asks, `to_text()` fails only for a name
+the operating system handed over, on every target, and `display()` shows `�`.
+Part I 2.2 now says a `String` is always valid UTF-8. Decided and specified; not
+built.
+
 ## [0.0.473] — 2026-10-05
 
 **A call to an expression function is its expression** (ADR-314 D3, #421, in

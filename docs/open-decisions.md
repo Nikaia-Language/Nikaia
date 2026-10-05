@@ -42,23 +42,6 @@ it into a function.
 a second spelling for one thing. **Costs:** (1) wrong is two examples written
 again; (2) wrong is a spelling kept for one use.
 
-### What `Path` is
-
-**What is blocked.** Part I 7.1's `enum ConfigError { NotFound(Path), … }`
-and every signature of Part III 17.1's `std::fs` write `Path`, and nothing
-declares it: `std` publishes no `Path`, and the compiler refuses the example
-(`NK1135`). [ADR-096](specification/adr/adr-096.md) §4 left it to the page.
-
-**Why it is the owner's.** It is a type in `std`'s surface, or it is not.
-
-**The options.** (1) `std::fs::Path` is a type, a checked path; (2) a path is a
-`String`, and the pages write `String`.
-
-**What this file recommends: (2) for now.** `fs::map(path, root)` already
-takes the text and a `Root` that bounds it; a `Path` type is worth its name
-the day it checks something a `String` cannot. **Costs:** (1) wrong is a type
-nobody needs; (2) wrong is every signature written again later.
-
 ### Whether `fs::exists` takes a root
 
 **What is blocked.** Part I 7.1 writes `if !fs::exists(path) { … }`, one

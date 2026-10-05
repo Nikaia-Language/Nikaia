@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part I: The Language Core**
-**Version:** 0.0.473 (Draft)
+**Version:** 0.0.474 (Draft)
 **Date:** 2026-10-05
 
 ---
@@ -237,7 +237,9 @@ Nikaia provides basic types to represent simple values.
 * **Booleans:** logic values.
     * `bool`: `true` or `false`.
 * **Text:**
-    * `String`: text. Whether a value of it is a view into text that is
+    * `String`: text, and always valid UTF-8: bytes that are not are refused
+      where they enter the program, with `NotText`. A file name need not be
+      text, and is an `fs::Path` (Part III 17.1). Whether a value of it is a view into text that is
       already there, or text of its own, is the compiler's decision per use
       (6.6). A literal is a view of the program's own text; where the use
       keeps it as a `String` it is constructed there, and where the use only
@@ -592,9 +594,14 @@ anything else is refused (`NK1184`), naming the set; a literal backslash is
 written `\\`. A character above `\x7F` is `\u{…}`. The set is the backend's,
 and a literal is written into the generated file as it stands.
 
-**The type follows the syntax, not the contents.** `"…"` is a view of static
-text and `f"…"` builds a `String`, whether or not it has a hole in it. Adding a
-brace to a piece of text cannot change its type.
+**The type follows the syntax and the use, never the contents.** `"…"` is a
+view of static text and `f"…"` builds a `String`, whether or not it has a hole
+in it. Adding a brace to a piece of text cannot change its type. Where the use
+asks for an `fs::Path`, an `f"…"` builds one, and its holes may be a path, text
+or a number (Part III 17.1); a `let` without a type takes it from the binding's
+first use. A path in a hole of an `f"…"` that is text is refused: the text is
+written `p.to_text()` or `p.display()`. Handed to `print` or `println`, a path
+in a hole is written as its bytes are.
 
 **A template's holes need no `f`.** `dsl html { <p>{name}</p> } eod` (Part II)
 marks the construct as a place where code appears.
