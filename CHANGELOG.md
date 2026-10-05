@@ -4,6 +4,16 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.492] — 2026-10-05
+
+**What the prover's walk keeps across functions is Nikaia** (ADR-294, #436
+step 4). `tools/prover_state.nika`'s `ProverState` holds the preconditions
+and postconditions found so far, the calls between functions (with
+`reaches`), the postconditions an exit broke, and which pass the walk is in;
+`prove.rs`'s `Prover` keeps the program, the ledgers, its findings and the
+solver's copy of the terms. Every bench and example lowers byte for byte as
+before.
+
 ## [0.0.491] — 2026-10-05
 
 **The claims the prover carries between functions are Nikaia** (ADR-294,

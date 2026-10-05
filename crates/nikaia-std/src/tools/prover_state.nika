@@ -1,0 +1,76 @@
+// crates/nikaia-std/src/tools/prover_state.nika
+//
+// **What the prover's walk keeps from one function to the next** (ADR-269
+// D15-D18), moved from the compiler's `prove` (ADR-294, #436 step 4): the
+// preconditions and postconditions it has found, the calls between
+// functions, and which pass it is in.
+
+use std::collections
+
+/// What the walk keeps across functions and passes.
+pub struct ProverState {
+    /// Another package's contracts as terms, read once per function.
+    pub foreign: collections::BTreeMap[String, Foreign?],
+    pub preconditions: collections::BTreeMap[String, Precondition],
+    /// **The preconditions of the walk before**, which the first pass reads
+    /// at a call to carry a callee's precondition back (ADR-269 D15): the
+    /// pass repeats until they stop changing.
+    pub known: collections::BTreeMap[String, Precondition],
+    /// Which function calls which, by name: a call inside a cycle is not
+    /// carried back, so that recursion cannot grow a precondition forever.
+    pub edges: collections::BTreeSet[(String, String)],
+    /// Pass 1's postconditions, before any exit is asked (ADR-269 D17).
+    pub candidates: collections::BTreeMap[String, Vec[PostClaim]],
+    /// The postconditions standing in this walk: callers read them.
+    pub postconditions: collections::BTreeMap[String, Vec[PostClaim]],
+    /// The postconditions an exit of this walk did not show, by function and
+    /// place in its list.
+    pub broken: collections::BTreeSet[(String, i64)],
+    /// The `assert`s that stand directly before a `return name`, by the
+    /// statement's start: the claims a postcondition is made from.
+    pub before_return: collections::BTreeMap[i64, String],
+    /// Pass 1 records preconditions and says nothing.
+    pub collecting: bool,
+    pub in_test: bool,
+}
+
+impl ProverState {
+    /// Before the first pass.
+    pub fn fresh() -> ProverState {
+        return ProverState {
+            foreign: collections::BTreeMap(),
+            preconditions: collections::BTreeMap(),
+            known: collections::BTreeMap(),
+            edges: collections::BTreeSet(),
+            candidates: collections::BTreeMap(),
+            postconditions: collections::BTreeMap(),
+            broken: collections::BTreeSet(),
+            before_return: collections::BTreeMap(),
+            collecting: true,
+            in_test: false,
+        }
+    }
+
+    /// Whether `from` calls `to`, directly or through others, in what the
+    /// walks so far have seen.
+    pub fn reaches(ref self, from: ref String, to: ref String) -> bool {
+        let mut seen: collections::BTreeSet[String] = collections::BTreeSet()
+        let mut next: Vec[String] = [from.clone()]
+        while !next.is_empty() {
+            let f = next.pop() ?? return false
+            if f == to {
+                return true
+            }
+            if seen.contains(f) {
+                continue
+            }
+            seen.insert(f.clone())
+            for (caller, callee) in self.edges {
+                if caller == f {
+                    next.push(callee.clone())
+                }
+            }
+        }
+        return false
+    }
+}

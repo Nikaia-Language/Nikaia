@@ -84,18 +84,9 @@ pub fn prove(
         parsed,
         own,
         library,
-        foreign: BTreeMap::new(),
         claims,
-        preconditions: BTreeMap::new(),
-        known: BTreeMap::new(),
-        edges: BTreeSet::new(),
-        candidates: BTreeMap::new(),
-        postconditions: BTreeMap::new(),
-        broken: BTreeSet::new(),
-        before_return: BTreeMap::new(),
-        collecting: true,
+        state: ProverState::fresh(),
         out: Proved::default(),
-        in_test: false,
         arena: Terms::default(),
     };
     // Pass 1: which parameter claims are preconditions (D5) - a function's
@@ -107,35 +98,35 @@ pub fn prove(
     let bound = parsed.program.items.len() + 2;
     let mut preconditions = BTreeMap::new();
     for _ in 0..bound {
-        prover.known = preconditions;
-        prover.preconditions = BTreeMap::new();
-        prover.candidates = BTreeMap::new();
+        prover.state.known = preconditions;
+        prover.state.preconditions = BTreeMap::new();
+        prover.state.candidates = BTreeMap::new();
         prover.every_body();
-        preconditions = std::mem::take(&mut prover.preconditions);
-        if same_preconditions(&prover.arena, &preconditions, &prover.known) {
+        preconditions = std::mem::take(&mut prover.state.preconditions);
+        if same_preconditions(&prover.arena, &preconditions, &prover.state.known) {
             break;
         }
     }
-    prover.known = BTreeMap::new();
-    prover.collecting = false;
-    prover.preconditions = preconditions;
+    prover.state.known = BTreeMap::new();
+    prover.state.collecting = false;
+    prover.state.preconditions = preconditions;
     // **Pass 2, until nothing changes: every claim and every call**, with
     // the postconditions still standing (ADR-269 D17). Each one starts as a
     // candidate and is struck where an exit does not show it; a proof at one
     // exit may lean on another function's postcondition, so the walk repeats
     // until no candidate falls. The last walk is the answer: it ran with
     // exactly the postconditions that hold.
-    prover.postconditions = std::mem::take(&mut prover.candidates);
+    prover.state.postconditions = std::mem::take(&mut prover.state.candidates);
     loop {
         prover.out = Proved::default();
-        prover.broken.clear();
+        prover.state.broken.clear();
         prover.every_body();
-        if prover.broken.is_empty() {
+        if prover.state.broken.is_empty() {
             break;
         }
-        for (function, index) in std::mem::take(&mut prover.broken).into_iter().rev() {
-            if let Some(posts) = prover.postconditions.get_mut(&function) {
-                posts.remove(index);
+        for (function, index) in std::mem::take(&mut prover.state.broken).into_iter().rev() {
+            if let Some(posts) = prover.state.postconditions.get_mut(&function) {
+                posts.remove(index as usize);
             }
         }
     }
@@ -144,6 +135,7 @@ pub fn prove(
     // D20), whatever its calls do: a caller the compiler doesn't see - a
     // function value, another package, the language below - reaches it.
     let entries: BTreeMap<String, Vec<Check>> = prover
+        .state
         .preconditions
         .iter()
         .map(|(function, pre)| {
@@ -175,7 +167,7 @@ pub fn prove(
     // **What the ledger publishes** (ADR-269 D18): every precondition and
     // every postcondition still standing, and the `assert` each came from.
     let mut published: BTreeMap<String, Published> = BTreeMap::new();
-    for (function, pre) in &prover.preconditions {
+    for (function, pre) in &prover.state.preconditions {
         let entry = published
             .entry(function.clone())
             .or_insert_with(Published::nothing);
@@ -184,7 +176,7 @@ pub fn prove(
             entry.from.push(format!("assert({})", claim.written));
         }
     }
-    for (function, posts) in &prover.postconditions {
+    for (function, posts) in &prover.state.postconditions {
         if posts.is_empty() {
             continue;
         }
@@ -196,7 +188,7 @@ pub fn prove(
         }
     }
     for (function, entry) in published.iter_mut() {
-        if let Some(posts) = prover.postconditions.get(function) {
+        if let Some(posts) = prover.state.postconditions.get(function) {
             entry
                 .from
                 .extend(posts.iter().map(|p| format!("assert({})", p.written)));
@@ -242,6 +234,7 @@ pub fn prove(
 // **The claims carried between functions** are `tools/prover_claims.nika`
 // (ADR-294, #436).
 use nikaia_std::tools::prover_claims::{CarriedFrom, Foreign, PostClaim, PreClaim, Precondition};
+use nikaia_std::tools::prover_state::ProverState;
 
 struct Prover<'a> {
     parsed: &'a Parsed,
@@ -249,31 +242,11 @@ struct Prover<'a> {
     /// `requires` and `ensures` (ADR-269 D18).
     own: &'a Ledger,
     library: &'a Ledger,
-    /// Another package's contracts as terms, read once per function.
-    foreign: BTreeMap<String, Option<Foreign>>,
     claims: &'a BTreeSet<(usize, String)>,
-    preconditions: BTreeMap<String, Precondition>,
-    /// **The preconditions of the walk before**, which the first pass reads
-    /// at a call to carry a callee's precondition back (ADR-269 D15): the
-    /// pass repeats until they stop changing.
-    known: BTreeMap<String, Precondition>,
-    /// Which function calls which, by name: a call inside a cycle is not
-    /// carried back, so that recursion cannot grow a precondition forever.
-    edges: BTreeSet<(String, String)>,
-    /// Pass 1's postconditions, before any exit is asked (ADR-269 D17).
-    candidates: BTreeMap<String, Vec<PostClaim>>,
-    /// The postconditions standing in this walk: callers read them.
-    postconditions: BTreeMap<String, Vec<PostClaim>>,
-    /// The postconditions an exit of this walk did not show, by function and
-    /// place in its list.
-    broken: BTreeSet<(String, usize)>,
-    /// The `assert`s that stand directly before a `return name`, by the
-    /// statement's start: the claims a postcondition is made from.
-    before_return: BTreeMap<usize, String>,
-    /// Pass 1 records preconditions and says nothing.
-    collecting: bool,
+    /// What the walk keeps across functions and passes
+    /// (`tools/prover_state.nika`).
+    state: ProverState,
     out: Proved,
-    in_test: bool,
     /// Every term the walk builds, facts and claims alike (ADR-270 D2).
     arena: Terms,
 }
@@ -317,7 +290,7 @@ impl<'a> Prover<'a> {
                     }
                 }
                 Item::Test { body, .. } | Item::Bench { body, .. } => {
-                    self.in_test = true;
+                    self.state.in_test = true;
                     let at = Where {
                         function: None,
                         params: BTreeSet::new(),
@@ -328,7 +301,7 @@ impl<'a> Prover<'a> {
                         throws: true,
                     };
                     self.block(body, &mut Scope::unknown(), &at);
-                    self.in_test = false;
+                    self.state.in_test = false;
                 }
                 _ => {}
             }
@@ -411,17 +384,17 @@ impl<'a> Prover<'a> {
             lambda: false,
             throws: *can_throw,
         };
-        self.in_test = was_a_test;
+        self.state.in_test = was_a_test;
         let leaves = self.block(body, &mut scope, &at);
-        self.in_test = false;
+        self.state.in_test = false;
         // A body that can end without a `return` has an exit no candidate was
         // shown at.
         if !leaves
-            && !self.collecting
+            && !self.state.collecting
             && let Some(own) = own
         {
-            for index in 0..self.postconditions.get(&own).map_or(0, Vec::len) {
-                self.broken.insert((own.clone(), index));
+            for index in 0..self.state.postconditions.get(&own).map_or(0, Vec::len) {
+                self.state.broken.insert((own.clone(), index as i64));
             }
         }
     }
@@ -429,12 +402,13 @@ impl<'a> Prover<'a> {
     /// Walk a block; whether it always leaves.
     fn block(&mut self, block: &Block, scope: &mut Scope, at: &Where) -> bool {
         for (index, stmt) in block.stmts.iter().enumerate() {
-            if self.collecting
+            if self.state.collecting
                 && let Some(next) = block.stmts.get(index + 1)
                 && let Stmt::Return(Some(Expr::Variable(name))) = &next.node
             {
-                self.before_return
-                    .insert(stmt.span.at(), self.parsed.text(*name).to_string());
+                self.state
+                    .before_return
+                    .insert(stmt.span.at() as i64, self.parsed.text(*name).to_string());
             }
             if self.stmt(stmt, scope, at) {
                 return true;
@@ -794,21 +768,22 @@ impl<'a> Prover<'a> {
         at: &Where,
     ) {
         let key = (span.at(), crate::check::argument_shape(cond));
-        if self.in_test {
+        if self.state.in_test {
             self.out.held.insert(key, Held::ByTheTest);
             return;
         }
         let claim = claim(&mut self.arena, self.parsed, cond, scope);
         // A claim about the value the next statement returns is a candidate
         // postcondition (ADR-269 D17).
-        if self.collecting
+        if self.state.collecting
             && at.free
             && !at.lambda
             && let (Some(claim), Some(function)) = (claim, at.function.clone())
-            && let Some(returned) = self.before_return.get(&span.at()).cloned()
+            && let Some(returned) = self.state.before_return.get(&(span.at() as i64)).cloned()
             && let Some(term) = self.postcondition_at(claim, &returned, scope, at)
         {
-            self.candidates
+            self.state
+                .candidates
                 .entry(function)
                 .or_default()
                 .push(PostClaim {
@@ -849,7 +824,7 @@ impl<'a> Prover<'a> {
             (claim, at.no_precondition, at.function.clone(), &refuted)
             && let Some(term) = self.precondition_at(claim, scope, at)
         {
-            if self.collecting {
+            if self.state.collecting {
                 let as_written = only_params && at.top;
                 let pre = PreClaim {
                     term,
@@ -859,7 +834,8 @@ impl<'a> Prover<'a> {
                     origin: None,
                     site: None,
                 };
-                self.preconditions
+                self.state
+                    .preconditions
                     .entry(function.clone())
                     .or_insert_with(Precondition::none)
                     .claims
@@ -880,7 +856,7 @@ impl<'a> Prover<'a> {
         // claim that is refused rather than checked.
         if let Some(first) = tainted.first() {
             self.out.held.insert(key, Held::Refused);
-            if self.collecting {
+            if self.state.collecting {
                 return;
             }
             let written = crate::check::written(self.parsed, cond);
@@ -908,7 +884,7 @@ impl<'a> Prover<'a> {
         // **Neither proved nor refused: checked where it is reached** (D4) -
         // and where what is known before it rules the claim out, the author
         // is told, with values (ADR-269 D8).
-        if let Some(values) = refuted.as_ref().filter(|_| !self.collecting) {
+        if let Some(values) = refuted.as_ref().filter(|_| !self.state.collecting) {
             let written = crate::check::written(self.parsed, cond);
             self.out.findings.push(Finding {
                 severity: Severity::Error,
@@ -933,7 +909,7 @@ impl<'a> Prover<'a> {
             (Some(claim), None) if !tainted_claim => self.breaks_when(scope, claim),
             _ => None,
         };
-        if let Some(values) = sometimes.as_ref().filter(|_| !self.collecting) {
+        if let Some(values) = sometimes.as_ref().filter(|_| !self.state.collecting) {
             let written = crate::check::written(self.parsed, cond);
             self.out.findings.push(Finding {
                 severity: Severity::Error,
@@ -1014,13 +990,13 @@ impl<'a> Prover<'a> {
                 continue;
             }
             if let Some(caller) = &at.function {
-                self.edges.insert((caller.clone(), callee.clone()));
+                self.state.edges.insert((caller.clone(), callee.clone()));
             }
             // The first pass reads the walk before's preconditions: its own
             // are still being found.
-            let pre = match self.collecting {
-                true => self.known.get(&callee).cloned(),
-                false => self.preconditions.get(&callee).cloned(),
+            let pre = match self.state.collecting {
+                true => self.state.known.get(&callee).cloned(),
+                false => self.state.preconditions.get(&callee).cloned(),
             };
             if let Some(pre) = pre {
                 let Some(Item::Fn { args: params, .. }) = self.function_named(&callee) else {
@@ -1141,7 +1117,7 @@ impl<'a> Prover<'a> {
                 callee: callee.to_string(),
                 place: index as i64,
             };
-            if self.collecting {
+            if self.state.collecting {
                 self.carry_back(goal, pre, callee, site, scope, at);
                 continue;
             }
@@ -1149,6 +1125,7 @@ impl<'a> Prover<'a> {
             // its callers prove it, so the call needs no check of its own.
             if let Some(function) = &at.function
                 && self
+                    .state
                     .preconditions
                     .get(function)
                     .is_some_and(|p| p.claims.iter().any(|c| c.carried_from(&site)))
@@ -1300,7 +1277,7 @@ impl<'a> Prover<'a> {
         else {
             return;
         };
-        if self.in_test || self.reaches(callee, &function) {
+        if self.state.in_test || self.state.reaches(callee, &function) {
             return;
         }
         if self.refutes(&scope.facts, goal).is_some() {
@@ -1317,33 +1294,12 @@ impl<'a> Prover<'a> {
             origin: Some(pre.origin.clone().unwrap_or_else(|| callee.to_string())),
             site: Some(site),
         };
-        self.preconditions
+        self.state
+            .preconditions
             .entry(function)
             .or_insert_with(Precondition::none)
             .claims
             .push(carried);
-    }
-
-    /// Whether `from` calls `to`, directly or through others, in what the
-    /// walks so far have seen.
-    fn reaches(&self, from: &str, to: &str) -> bool {
-        let mut seen = BTreeSet::new();
-        let mut next = vec![from.to_string()];
-        while let Some(f) = next.pop() {
-            if f == to {
-                return true;
-            }
-            if !seen.insert(f.clone()) {
-                continue;
-            }
-            next.extend(
-                self.edges
-                    .iter()
-                    .filter(|(caller, _)| *caller == f)
-                    .map(|(_, callee)| callee.clone()),
-            );
-        }
-        false
     }
 
     /// Whether the facts prove the goal: one query to the reference solver
@@ -1381,13 +1337,13 @@ impl<'a> Prover<'a> {
     /// (ADR-269 D17). A parameter bound again before the exit reads something
     /// else than at the entry, and that is a fall too.
     fn exit(&mut self, value: &Expr, scope: &Scope, at: &Where) {
-        if self.collecting || at.lambda || !at.free {
+        if self.state.collecting || at.lambda || !at.free {
             return;
         }
         let Some(function) = at.function.clone() else {
             return;
         };
-        let Some(posts) = self.postconditions.get(&function).cloned() else {
+        let Some(posts) = self.state.postconditions.get(&function).cloned() else {
             return;
         };
         let returned = lin(&mut self.arena, self.parsed, value, scope);
@@ -1410,7 +1366,7 @@ impl<'a> Prover<'a> {
                     self.proves(&scope.facts, goal).is_ok()
                 });
             if !shown {
-                self.broken.insert((function.clone(), index));
+                self.state.broken.insert((function.clone(), index as i64));
             }
         }
     }
@@ -1427,7 +1383,7 @@ impl<'a> Prover<'a> {
         scope: &Scope,
     ) -> Vec<i64> {
         let (posts, params): (Vec<PostClaim>, Vec<String>) =
-            match self.postconditions.get(callee).cloned() {
+            match self.state.postconditions.get(callee).cloned() {
                 Some(posts) => {
                     let Some(Item::Fn { args: params, .. }) = self.function_named(callee) else {
                         return Vec::new();
@@ -1493,7 +1449,7 @@ impl<'a> Prover<'a> {
     /// ledger has no such function; a condition that does not read back is
     /// left out, which only ever proves less.
     fn foreign_contract(&mut self, key: &str) -> Option<Foreign> {
-        if let Some(known) = self.foreign.get(key) {
+        if let Some(known) = self.state.foreign.get(key) {
             return known.clone();
         }
         let contract = self.own.functions.get(key)?.clone();
@@ -1563,7 +1519,9 @@ impl<'a> Prover<'a> {
             requires,
             ensures,
         };
-        self.foreign.insert(key.to_string(), Some(foreign.clone()));
+        self.state
+            .foreign
+            .insert(key.to_string(), Some(foreign.clone()));
         Some(foreign)
     }
 

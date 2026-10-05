@@ -10676,6 +10676,39 @@ fn ties(read: &collections::BTreeSet<String>, names: &collections::BTreeSet<Stri
 }
 
 
+// --- prover_state.nika ---
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProverState {
+    pub foreign: collections::BTreeMap<String, Option<Foreign>>,
+    pub preconditions: collections::BTreeMap<String, Precondition>,
+    pub known: collections::BTreeMap<String, Precondition>,
+    pub edges: collections::BTreeSet<(String, String)>,
+    pub candidates: collections::BTreeMap<String, Vec<PostClaim>>,
+    pub postconditions: collections::BTreeMap<String, Vec<PostClaim>>,
+    pub broken: collections::BTreeSet<(String, i64)>,
+    pub before_return: collections::BTreeMap<i64, String>,
+    pub collecting: bool,
+    pub in_test: bool,
+}
+
+impl ProverState {
+    pub fn fresh() -> ProverState { ProverState { foreign: collections::BTreeMap::new(), preconditions: collections::BTreeMap::new(), known: collections::BTreeMap::new(), edges: collections::BTreeSet::new(), candidates: collections::BTreeMap::new(), postconditions: collections::BTreeMap::new(), broken: collections::BTreeSet::new(), before_return: collections::BTreeMap::new(), collecting: true, in_test: false } }
+    pub fn reaches(&self, from: &str, to: &str) -> bool {
+        let mut seen: collections::BTreeSet<String> = collections::BTreeSet::new();
+        let mut next: Vec<String> = vec![from.to_owned()];
+        while !next.is_empty() {
+            let f = match next.pop() { Some(__nikaia_value) => __nikaia_value, None => return false };
+            if f == to { return true; }
+            if seen.contains(&f) { continue; }
+            seen.insert(f.to_owned());
+            for (caller, callee) in self.edges.iter() { if *caller == f { next.push(callee.to_owned()); } }
+        }
+        false
+    }
+}
+
+
 // --- render.nika ---
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -19386,6 +19419,10 @@ pub mod prover_results {
 pub mod prover_scope {
     #[allow(unused_imports)]
     pub use super::{ProverScope, length_of, result_name, precondition_terms};
+}
+pub mod prover_state {
+    #[allow(unused_imports)]
+    pub use super::{ProverState};
 }
 pub mod render {
     #[allow(unused_imports)]
