@@ -4,6 +4,19 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.505] — 2026-10-05
+
+**The prover's passes are Nikaia** (ADR-294, #436 step 4).
+`tools/prover_passes.nika` repeats the walk until the preconditions, then the
+postconditions, stop changing (ADR-269 D15, D17), strikes the postconditions
+an exit did not show, and makes the checked entries (D20), what the ledger
+publishes (D18), how many calls carry each precondition's check, and how a
+claim no walk reached is held. `prove.rs` builds the walk, hands in the
+compiler's callbacks and turns the answer into the compiler's types: 300
+lines. Three shapes `rustc` refused on the way are worked around there and
+open in #465. Every bench and example lowers byte for byte as before, and
+so do their `--bounds` reports.
+
 ## [0.0.504] — 2026-10-05
 
 **A recursive method hands its function value on whole** (#464). #463's rule

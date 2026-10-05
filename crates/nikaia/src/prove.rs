@@ -91,243 +91,51 @@ pub fn prove(
             .collect(),
     };
     let copy = std::cell::RefCell::new(SolverCopy::default());
-    // Pass 1: which parameter claims are preconditions (D5) - a function's
-    // own `assert`s, and what its calls ask that it cannot show (D15). The
-    // second depends on the callees' preconditions, so the pass repeats with
-    // the last one's until nothing changes. A call inside a cycle is never
-    // carried back, so every chain of carrying is at most as long as the
-    // functions are many.
-    let bound = parsed.program.items.len() + 2;
-    let mut preconditions = BTreeMap::new();
-    for _ in 0..bound {
-        walk.state.known = preconditions;
-        walk.state.preconditions = BTreeMap::new();
-        walk.state.candidates = BTreeMap::new();
-        every_body(&mut walk, &copy, parsed, own, library);
-        preconditions = std::mem::take(&mut walk.state.preconditions);
-        if same_preconditions(&walk.arena, &preconditions, &walk.state.known) {
-            break;
-        }
-    }
-    walk.state.known = BTreeMap::new();
-    walk.state.collecting = false;
-    walk.state.preconditions = preconditions;
-    // **Pass 2, until nothing changes: every claim and every call**, with
-    // the postconditions still standing (ADR-269 D17). Each one starts as a
-    // candidate and is struck where an exit does not show it; a proof at one
-    // exit may lean on another function's postcondition, so the walk repeats
-    // until no candidate falls. The last walk is the answer: it ran with
-    // exactly the postconditions that hold.
-    walk.state.postconditions = std::mem::take(&mut walk.state.candidates);
-    loop {
-        walk.held.clear();
-        walk.reaches.clear();
-        walk.findings.clear();
-        walk.state.broken.clear();
-        every_body(&mut walk, &copy, parsed, own, library);
-        if walk.state.broken.is_empty() {
-            break;
-        }
-        for (function, index) in std::mem::take(&mut walk.state.broken).into_iter().rev() {
-            if let Some(posts) = walk.state.postconditions.get_mut(&function) {
-                posts.remove(index as usize);
-            }
-        }
-    }
-
-    // **Every function with a precondition has a checked entry** (ADR-269
-    // D20), whatever its calls do: a caller the compiler doesn't see - a
-    // function value, another package, the language below - reaches it.
-    let mut out = Proved {
-        findings: walk
-            .findings
-            .drain(..)
-            .map(crate::traits::from_nikaia)
-            .collect(),
-        held: std::mem::take(&mut walk.held)
-            .into_iter()
-            .map(|((at, shape), held)| ((at as usize, shape), held))
-            .collect(),
-        reaches: std::mem::take(&mut walk.reaches),
-        ..Proved::default()
-    };
-    let entries: BTreeMap<String, Vec<Check>> = walk
-        .state
-        .preconditions
-        .iter()
-        .map(|(function, pre)| {
-            let checks = pre
-                .claims
-                .iter()
-                .map(|claim| {
-                    let mut read = BTreeSet::new();
-                    walk.arena.variables(claim.term, &mut read);
-                    let operands = read
-                        .into_iter()
-                        .map(|name| {
-                            let value = rust_of_name(&name);
-                            (name, value)
-                        })
-                        .collect();
-                    Check {
-                        rust: rust_of(&walk.arena, claim.term),
-                        written: claim.failure(function),
-                        message: claim.message.clone(),
-                        operands,
-                    }
-                })
-                .collect();
-            (function.clone(), checks)
-        })
-        .collect();
-    out.entries = entries;
-    // **What the ledger publishes** (ADR-269 D18): every precondition and
-    // every postcondition still standing, and the `assert` each came from.
-    let mut published: BTreeMap<String, Published> = BTreeMap::new();
-    for (function, pre) in &walk.state.preconditions {
-        let entry = published
-            .entry(function.clone())
-            .or_insert_with(Published::nothing);
-        for claim in &pre.claims {
-            entry.requires.push(ledger_text(&walk.arena, claim.term));
-            entry.from.push(format!("assert({})", claim.written));
-        }
-    }
-    for (function, posts) in &walk.state.postconditions {
-        if posts.is_empty() {
-            continue;
-        }
-        let entry = published
-            .entry(function.clone())
-            .or_insert_with(Published::nothing);
-        for post in posts {
-            entry.ensures.push(ledger_text(&walk.arena, post.term));
-        }
-    }
-    for (function, entry) in published.iter_mut() {
-        if let Some(posts) = walk.state.postconditions.get(function) {
-            entry
-                .from
-                .extend(posts.iter().map(|p| format!("assert({})", p.written)));
-        }
-    }
-    out.published = published;
-    let mut checked: BTreeMap<String, i64> = BTreeMap::new();
-    for ((callee, _), reach) in &out.reaches {
-        if matches!(reach, Reach::Checked(_)) {
-            *checked.entry(callee.clone()).or_insert(0) += 1;
-        }
-    }
-    for held in out.held.values_mut() {
-        if let Held::Precondition(function, calls) = held {
-            *calls = checked.get(function).copied().unwrap_or(0);
-        }
-    }
-
-    // An `assert` this walk did not reach is checked where it stands.
-    let tests: Vec<std::ops::Range<usize>> = parsed
-        .program
-        .items
-        .iter()
-        .filter(|item| matches!(item.node, Item::Test { .. } | Item::Bench { .. }))
-        .map(|item| item.span.bytes())
-        .collect();
-    for key in claims {
-        if out.held.contains_key(key) {
-            continue;
-        }
-        if tests.iter().any(|range| range.contains(&key.0)) {
-            out.held.insert(key.clone(), Held::ByTheTest);
-            continue;
-        }
-        out.held.insert(
-            key.clone(),
-            Held::AtRunTime("it stands somewhere the prover doesn't look yet".to_string()),
-        );
-    }
-    out
-}
-
-// **The walk itself** is `tools/prover_walk.nika` (ADR-294, #436): every
-// body, with what only the compiler can answer handed in.
-use nikaia_std::tools::prover_claims::Precondition;
-use nikaia_std::tools::prover_solver::SolverAnswer;
-use nikaia_std::tools::prover_state::ProverState;
-use nikaia_std::tools::prover_walk::{self, ProverWalk};
-
-/// **One walk over every body**: the solver through `copy`, the language
-/// below's spelling of a name, the holes of a literal, a package's alias, an
-/// expression as written and as the checker keys it, and another package's
-/// condition read back.
-fn every_body(
-    walk: &mut ProverWalk,
-    copy: &std::cell::RefCell<SolverCopy>,
-    parsed: &Parsed,
-    own: &Ledger,
-    library: &Ledger,
-) {
-    prover_walk::prover_bodies(
-        walk,
+    // **The passes, and what they make** (`tools/prover_passes.nika`): the
+    // walk repeated until the preconditions, then the postconditions, stop
+    // changing (ADR-269 D15, D17); the checked entries (D20), what the ledger
+    // publishes (D18), and how a claim no walk reached is held.
+    let answers = prover_passes::prover_passes(
+        &mut walk,
         &parsed.program,
         &parsed.interner,
         own,
         library,
-        &|arena, facts, goal| answer_of(copy, arena, facts, goal),
-        &|arena, facts, goal| model_of(copy, arena, facts, goal),
+        &|arena, facts, goal| answer_of(&copy, arena, facts, goal),
+        &|arena, facts, goal| model_of(&copy, arena, facts, goal),
         &|name| crate::emit::escaped(name).into_owned(),
         &|e| crate::emit::literal_expressions(parsed, e),
         &|name| parsed.unaliased(name),
         &|e| crate::check::written(parsed, e),
         &|e| crate::check::argument_shape(e),
         &|text, names| condition_nodes(text, names),
-    )
+    );
+    Proved {
+        findings: walk
+            .findings
+            .into_iter()
+            .map(crate::traits::from_nikaia)
+            .collect(),
+        held: walk
+            .held
+            .into_iter()
+            .map(|((at, shape), held)| ((at as usize, shape), held))
+            .collect(),
+        entries: answers.entries,
+        reaches: walk.reaches,
+        published: answers.published,
+    }
 }
 
-/// Whether two walks found the same preconditions, claim by claim.
-fn same_preconditions(
-    arena: &TermArena,
-    a: &BTreeMap<String, Precondition>,
-    b: &BTreeMap<String, Precondition>,
-) -> bool {
-    let texts = |m: &BTreeMap<String, Precondition>| -> Vec<(String, Vec<String>)> {
-        m.iter()
-            .map(|(f, p)| {
-                let claims = p.claims.iter().map(|c| term_text(arena, c.term)).collect();
-                (f.clone(), claims)
-            })
-            .collect()
-    };
-    texts(a) == texts(b)
-}
-
-// **How a term and a value are written** (ADR-269 D7, D18) is
-// `tools/prove_text.nika` (ADR-294, #436): these hand it the arena one node
-// at a time and the emitter's escaping of a name.
-
-fn rust_of(arena: &TermArena, id: i64) -> String {
-    prove_text::rust_of(id, &|at| arena.at(at), &|name| {
-        crate::emit::escaped(name).into_owned()
-    })
-}
-
-fn rust_of_name(name: &str) -> String {
-    prove_text::rust_of_name(name, &|name| crate::emit::escaped(name).into_owned())
-}
-
-/// A term as a reader writes it, with `→` for the implication a branch makes
-/// of a precondition.
-fn term_text(arena: &TermArena, id: i64) -> String {
-    prove_text::term_text(id, &|at| arena.at(at))
-}
-
-/// A term in the language's own syntax, as the ledger writes it and reads it
-/// back ([ADR-251](../../docs/specification/adr/adr-251.md) D4).
-fn ledger_text(arena: &TermArena, id: i64) -> String {
-    prove_text::term_ledger_text(id, &|at| arena.at(at))
-}
+// **The walk and its passes** are `tools/prover_walk.nika` and
+// `tools/prover_passes.nika` (ADR-294, #436): this file hands them what only
+// the compiler can answer.
+use nikaia_std::tools::prover_passes;
+use nikaia_std::tools::prover_solver::SolverAnswer;
+use nikaia_std::tools::prover_state::ProverState;
+use nikaia_std::tools::prover_walk::ProverWalk;
 
 use nikaia_std::tools::prove_terms;
-use nikaia_std::tools::prove_text;
 
 // --- A program's numbers as terms -----------------------------------------
 
