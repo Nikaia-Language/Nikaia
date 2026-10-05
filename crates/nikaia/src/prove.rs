@@ -32,7 +32,7 @@ use nikaia_logic::{Arena, Query, TermId, verify_model};
 use nikaia_std::tools::prover_arena::TermArena;
 use nikaia_std::tools::solver_terms::SolverTerm;
 
-use crate::ast::{Block, Expr, Item, Span, Spanned, Stmt};
+use crate::ast::{Expr, Item, Stmt};
 use crate::check::Finding;
 use crate::contracts::Ledger;
 use crate::parser::Parsed;
@@ -79,15 +79,18 @@ pub fn prove(
     library: &Ledger,
     claims: &BTreeSet<(usize, String)>,
 ) -> Proved {
-    let mut prover = Prover {
-        parsed,
-        own,
-        library,
-        claims,
+    let mut walk = ProverWalk {
         state: ProverState::fresh(),
-        out: Proved::default(),
-        arena: Terms::default(),
+        arena: TermArena::empty(),
+        held: BTreeMap::new(),
+        reaches: BTreeMap::new(),
+        findings: Vec::new(),
+        claims: claims
+            .iter()
+            .map(|(at, shape)| (*at as i64, shape.clone()))
+            .collect(),
     };
+    let copy = std::cell::RefCell::new(SolverCopy::default());
     // Pass 1: which parameter claims are preconditions (D5) - a function's
     // own `assert`s, and what its calls ask that it cannot show (D15). The
     // second depends on the callees' preconditions, so the pass repeats with
@@ -97,34 +100,36 @@ pub fn prove(
     let bound = parsed.program.items.len() + 2;
     let mut preconditions = BTreeMap::new();
     for _ in 0..bound {
-        prover.state.known = preconditions;
-        prover.state.preconditions = BTreeMap::new();
-        prover.state.candidates = BTreeMap::new();
-        prover.every_body();
-        preconditions = std::mem::take(&mut prover.state.preconditions);
-        if same_preconditions(&prover.arena, &preconditions, &prover.state.known) {
+        walk.state.known = preconditions;
+        walk.state.preconditions = BTreeMap::new();
+        walk.state.candidates = BTreeMap::new();
+        every_body(&mut walk, &copy, parsed, own, library);
+        preconditions = std::mem::take(&mut walk.state.preconditions);
+        if same_preconditions(&walk.arena, &preconditions, &walk.state.known) {
             break;
         }
     }
-    prover.state.known = BTreeMap::new();
-    prover.state.collecting = false;
-    prover.state.preconditions = preconditions;
+    walk.state.known = BTreeMap::new();
+    walk.state.collecting = false;
+    walk.state.preconditions = preconditions;
     // **Pass 2, until nothing changes: every claim and every call**, with
     // the postconditions still standing (ADR-269 D17). Each one starts as a
     // candidate and is struck where an exit does not show it; a proof at one
     // exit may lean on another function's postcondition, so the walk repeats
     // until no candidate falls. The last walk is the answer: it ran with
     // exactly the postconditions that hold.
-    prover.state.postconditions = std::mem::take(&mut prover.state.candidates);
+    walk.state.postconditions = std::mem::take(&mut walk.state.candidates);
     loop {
-        prover.out = Proved::default();
-        prover.state.broken.clear();
-        prover.every_body();
-        if prover.state.broken.is_empty() {
+        walk.held.clear();
+        walk.reaches.clear();
+        walk.findings.clear();
+        walk.state.broken.clear();
+        every_body(&mut walk, &copy, parsed, own, library);
+        if walk.state.broken.is_empty() {
             break;
         }
-        for (function, index) in std::mem::take(&mut prover.state.broken).into_iter().rev() {
-            if let Some(posts) = prover.state.postconditions.get_mut(&function) {
+        for (function, index) in std::mem::take(&mut walk.state.broken).into_iter().rev() {
+            if let Some(posts) = walk.state.postconditions.get_mut(&function) {
                 posts.remove(index as usize);
             }
         }
@@ -133,7 +138,20 @@ pub fn prove(
     // **Every function with a precondition has a checked entry** (ADR-269
     // D20), whatever its calls do: a caller the compiler doesn't see - a
     // function value, another package, the language below - reaches it.
-    let entries: BTreeMap<String, Vec<Check>> = prover
+    let mut out = Proved {
+        findings: walk
+            .findings
+            .drain(..)
+            .map(crate::traits::from_nikaia)
+            .collect(),
+        held: std::mem::take(&mut walk.held)
+            .into_iter()
+            .map(|((at, shape), held)| ((at as usize, shape), held))
+            .collect(),
+        reaches: std::mem::take(&mut walk.reaches),
+        ..Proved::default()
+    };
+    let entries: BTreeMap<String, Vec<Check>> = walk
         .state
         .preconditions
         .iter()
@@ -143,7 +161,7 @@ pub fn prove(
                 .iter()
                 .map(|claim| {
                     let mut read = BTreeSet::new();
-                    prover.arena.variables(claim.term, &mut read);
+                    walk.arena.variables(claim.term, &mut read);
                     let operands = read
                         .into_iter()
                         .map(|name| {
@@ -152,7 +170,7 @@ pub fn prove(
                         })
                         .collect();
                     Check {
-                        rust: rust_of(&prover.arena, claim.term),
+                        rust: rust_of(&walk.arena, claim.term),
                         written: claim.failure(function),
                         message: claim.message.clone(),
                         operands,
@@ -162,20 +180,20 @@ pub fn prove(
             (function.clone(), checks)
         })
         .collect();
-    prover.out.entries = entries;
+    out.entries = entries;
     // **What the ledger publishes** (ADR-269 D18): every precondition and
     // every postcondition still standing, and the `assert` each came from.
     let mut published: BTreeMap<String, Published> = BTreeMap::new();
-    for (function, pre) in &prover.state.preconditions {
+    for (function, pre) in &walk.state.preconditions {
         let entry = published
             .entry(function.clone())
             .or_insert_with(Published::nothing);
         for claim in &pre.claims {
-            entry.requires.push(ledger_text(&prover.arena, claim.term));
+            entry.requires.push(ledger_text(&walk.arena, claim.term));
             entry.from.push(format!("assert({})", claim.written));
         }
     }
-    for (function, posts) in &prover.state.postconditions {
+    for (function, posts) in &walk.state.postconditions {
         if posts.is_empty() {
             continue;
         }
@@ -183,24 +201,24 @@ pub fn prove(
             .entry(function.clone())
             .or_insert_with(Published::nothing);
         for post in posts {
-            entry.ensures.push(ledger_text(&prover.arena, post.term));
+            entry.ensures.push(ledger_text(&walk.arena, post.term));
         }
     }
     for (function, entry) in published.iter_mut() {
-        if let Some(posts) = prover.state.postconditions.get(function) {
+        if let Some(posts) = walk.state.postconditions.get(function) {
             entry
                 .from
                 .extend(posts.iter().map(|p| format!("assert({})", p.written)));
         }
     }
-    prover.out.published = published;
+    out.published = published;
     let mut checked: BTreeMap<String, i64> = BTreeMap::new();
-    for ((callee, _), reach) in &prover.out.reaches {
+    for ((callee, _), reach) in &out.reaches {
         if matches!(reach, Reach::Checked(_)) {
             *checked.entry(callee.clone()).or_insert(0) += 1;
         }
     }
-    for held in prover.out.held.values_mut() {
+    for held in out.held.values_mut() {
         if let Held::Precondition(function, calls) = held {
             *calls = checked.get(function).copied().unwrap_or(0);
         }
@@ -215,881 +233,59 @@ pub fn prove(
         .map(|item| item.span.bytes())
         .collect();
     for key in claims {
-        if prover.out.held.contains_key(key) {
+        if out.held.contains_key(key) {
             continue;
         }
         if tests.iter().any(|range| range.contains(&key.0)) {
-            prover.out.held.insert(key.clone(), Held::ByTheTest);
+            out.held.insert(key.clone(), Held::ByTheTest);
             continue;
         }
-        prover.out.held.insert(
+        out.held.insert(
             key.clone(),
             Held::AtRunTime("it stands somewhere the prover doesn't look yet".to_string()),
         );
     }
-    prover.out
+    out
 }
 
-// **The claims carried between functions** are `tools/prover_claims.nika`
-// (ADR-294, #436).
-use nikaia_std::tools::prover_calls::{self, FreeFunction};
-use nikaia_std::tools::prover_claims::{self, Foreign, PostClaim, PreClaim, Precondition};
+// **The walk itself** is `tools/prover_walk.nika` (ADR-294, #436): every
+// body, with what only the compiler can answer handed in.
+use nikaia_std::tools::prover_claims::Precondition;
 use nikaia_std::tools::prover_solver::SolverAnswer;
-use nikaia_std::tools::prover_state::{self, ProverState};
+use nikaia_std::tools::prover_state::ProverState;
+use nikaia_std::tools::prover_walk::{self, ProverWalk};
 
-struct Prover<'a> {
-    parsed: &'a Parsed,
-    /// The program's ledger: another package's functions, with their
-    /// `requires` and `ensures` (ADR-269 D18).
-    own: &'a Ledger,
-    library: &'a Ledger,
-    claims: &'a BTreeSet<(usize, String)>,
-    /// What the walk keeps across functions and passes
-    /// (`tools/prover_state.nika`).
-    state: ProverState,
-    out: Proved,
-    /// Every term the walk builds, facts and claims alike (ADR-270 D2).
-    arena: Terms,
-}
-
-/// What a body may know at one point (`tools/prover_scope.nika`, #436).
-use nikaia_std::tools::prover_scope::{ProverScope as Scope, length_of};
-
-/// Where a function body is (`prover_state.nika`).
-use nikaia_std::tools::prover_state::ProverWhere as Where;
-
-impl<'a> Prover<'a> {
-    fn every_body(&mut self) {
-        let parsed = self.parsed;
-        for item in &parsed.program.items {
-            match &item.node {
-                Item::Fn { .. } => self.function(item, None),
-                Item::Impl {
-                    methods,
-                    target,
-                    trait_name,
-                } => {
-                    let owner = self.parsed.text(target.name).to_string();
-                    for method in methods {
-                        self.function(method, Some((&owner, trait_name.is_some())));
-                    }
-                }
-                Item::Test { body, .. } | Item::Bench { body, .. } => {
-                    self.state.in_test = true;
-                    let at = Where {
-                        function: None,
-                        params: BTreeSet::new(),
-                        no_precondition: Some("a test has no callers".to_string()),
-                        top: true,
-                        free: false,
-                        lambda: false,
-                        throws_out: true,
-                    };
-                    self.block(body, &mut Scope::unknown(), &at);
-                    self.state.in_test = false;
-                }
-                _ => {}
-            }
-        }
-    }
-
-    /// One function, or a method of `owner` - in a trait's implementation
-    /// where the flag says so.
-    fn function(&mut self, item: &Spanned<Item>, owner: Option<(&str, bool)>) {
-        let Item::Fn {
-            name,
-            receiver,
-            args,
-            body,
-            is_public,
-            can_throw,
-            ..
-        } = &item.node
-        else {
-            return;
-        };
-        // The ledger's key: `f`, or `Type::m` for a method.
-        let own = name.map(|n| {
-            let name = self.parsed.text(n);
-            match owner {
-                Some((target, _)) => format!("{target}::{name}"),
-                None => name.to_string(),
-            }
-        });
-        // A `test` block `nikaia test` has already turned into a function is
-        // still a test (D11).
-        let was_a_test = own
-            .as_deref()
-            .is_some_and(crate::modules::is_a_test_function);
-        let mut scope = Scope::at_the_entry();
-        let mut params = BTreeSet::new();
-        if receiver.is_some() {
-            scope.locals.insert("self".to_string());
-        }
-        for arg in args {
-            let arg_name = self.parsed.text(arg.name).to_string();
-            scope.locals.insert(arg_name.clone());
-            let ty = self.parsed.text(arg.ty.name);
-            if !arg.mutable && arg.ty.generics.is_empty() && is_whole_number(ty) {
-                scope.ints.insert(arg_name.clone());
-                scope.loose.insert(arg_name.clone());
-                params.insert(arg_name.clone());
-                let at_entry = self.arena.var(&arg_name);
-                scope.entry.insert(arg_name.clone(), at_entry);
-                if ty.starts_with('u') {
-                    scope.not_negative(&mut self.arena.held, &arg_name);
-                }
-            }
-            if !arg.mutable && has_a_length(ty) {
-                scope.has_length(&mut self.arena.held, &arg_name, None);
-                params.insert(arg_name.clone());
-                let length = length_of(&arg_name);
-                let at_entry = self.arena.var(&length);
-                scope.entry.insert(length, at_entry);
-            }
-        }
-        let _ = (receiver, is_public);
-        let no_precondition = if owner.is_some_and(|(_, of_a_trait)| of_a_trait) {
-            Some(
-                "A method of a trait's implementation can't have a precondition: a call \
-                 through the trait doesn't know it, and there is no second entry to check it."
-                    .to_string(),
-            )
-        } else if own.as_deref() == Some("main") {
-            Some("`main` has no callers.".to_string())
-        } else {
-            None
-        };
-        let free = owner.is_none() && !was_a_test;
-        let at = Where {
-            function: own.clone(),
-            params,
-            no_precondition,
-            top: true,
-            free,
-            lambda: false,
-            throws_out: *can_throw,
-        };
-        self.state.in_test = was_a_test;
-        let leaves = self.block(body, &mut scope, &at);
-        self.state.in_test = false;
-        // A body that can end without a `return` has an exit no candidate was
-        // shown at.
-        if !leaves
-            && !self.state.collecting
-            && let Some(own) = own
-        {
-            for index in 0..self.state.postconditions.get(&own).map_or(0, Vec::len) {
-                self.state.broken.insert((own.clone(), index as i64));
-            }
-        }
-    }
-
-    /// Walk a block; whether it always leaves.
-    fn block(&mut self, block: &Block, scope: &mut Scope, at: &Where) -> bool {
-        for (index, stmt) in block.stmts.iter().enumerate() {
-            if self.state.collecting
-                && let Some(next) = block.stmts.get(index + 1)
-                && let Stmt::Return(Some(Expr::Variable(name))) = &next.node
-            {
-                self.state
-                    .before_return
-                    .insert(stmt.span.at() as i64, self.parsed.text(*name).to_string());
-            }
-            if self.stmt(stmt, scope, at) {
-                return true;
-            }
-            // A statement that may leave for some states and not for others
-            // narrows what goes on past it, and only an `if` the prover reads
-            // says how (`expr_stmt`).
-            if !matches!(stmt.node, Stmt::Expr(Expr::If { .. }))
-                && leaves_stmt(self.parsed, &stmt.node, &|e| self.throwing(e, at), true)
-            {
-                scope.exact = false;
-            }
-        }
-        false
-    }
-
-    /// Walk one statement; whether control never goes past it.
-    fn stmt(&mut self, stmt: &Spanned<Stmt>, scope: &mut Scope, at: &Where) -> bool {
-        let span = stmt.span;
-        let nested = at.inside(false);
-        match &stmt.node {
-            Stmt::Let {
-                names,
-                mutable,
-                ty,
-                value,
-            } => {
-                self.expr(value, span, scope, &nested);
-                let tainted = self.tainted(value, scope);
-                let value_lin = lin(&mut self.arena, self.parsed, value, scope);
-                let value_at_entry = value_lin.and_then(|v| self.at_entry(v, scope));
-                // **A call's postconditions are facts about its result**
-                // (ADR-269 D17): `let r = f(x)` knows what `f` ensures.
-                let called = match (names.as_slice(), value) {
-                    ([only], Expr::Call { func, args, .. }) if !mutable => {
-                        let callee = match &**func {
-                            Expr::Variable(callee)
-                                if !scope.locals.contains(self.parsed.text(*callee)) =>
-                            {
-                                Some(self.parsed.text(*callee).to_string())
-                            }
-                            Expr::Path(_) => qualified(self.parsed, func),
-                            _ => None,
-                        };
-                        callee.map(|callee| {
-                            let bound = self.parsed.text(*only).to_string();
-                            let facts = self.postconditions_of(&callee, args, &bound, scope);
-                            (self.returns_whole(&callee), facts)
-                        })
-                    }
-                    _ => None,
-                };
-                for name in names {
-                    let name = self.parsed.text(*name).to_string();
-                    scope.rebind(&self.arena.held, &name);
-                    if tainted {
-                        scope.tainted.insert(name.clone());
-                        scope.loose.insert(name.clone());
-                    }
-                }
-                if let [only] = names.as_slice()
-                    && !mutable
-                {
-                    let name = self.parsed.text(*only).to_string();
-                    let typed_whole = ty.as_ref().is_some_and(|t| {
-                        t.generics.is_empty() && is_whole_number(self.parsed.text(t.name))
-                    });
-                    if let Some(value_lin) = value_lin {
-                        scope.ints.insert(name.clone());
-                        // **A value that reads the name it shadows** -
-                        // `let x = x + 1` - is about the old binding, which a
-                        // fact names the same way: `x = x + 1` would be a
-                        // contradiction, and from it everything follows. The
-                        // name is a whole number; nothing more is known.
-                        if !self.arena.mentions(value_lin, &name) {
-                            let named = self.arena.var(&name);
-                            scope.facts.push(self.arena.eq(named, value_lin));
-                        } else {
-                            scope.loose.insert(name.clone());
-                        }
-                        // At the entry the value is what it read there, so
-                        // a shadowing `let` is no trouble here.
-                        if let Some(at_entry) = value_at_entry {
-                            scope.entry.insert(name.clone(), at_entry);
-                        }
-                    } else if typed_whole || called.as_ref().is_some_and(|(whole, _)| *whole) {
-                        scope.ints.insert(name.clone());
-                        scope.loose.insert(name.clone());
-                    }
-                    if let Some((true, facts)) = &called {
-                        scope.facts.extend(facts.iter().copied());
-                    }
-                    if let Some(t) = ty
-                        && self.parsed.text(t.name).starts_with('u')
-                        && scope.ints.contains(&name)
-                    {
-                        scope.not_negative(&mut self.arena.held, &name);
-                    }
-                    match value {
-                        Expr::ListLit { items, .. } => {
-                            scope.has_length(
-                                &mut self.arena.held,
-                                &name,
-                                i64::try_from(items.len()).ok(),
-                            );
-                        }
-                        Expr::LitStr { .. } => scope.has_length(&mut self.arena.held, &name, None),
-                        _ if ty
-                            .as_ref()
-                            .is_some_and(|t| has_a_length(self.parsed.text(t.name))) =>
-                        {
-                            scope.has_length(&mut self.arena.held, &name, None)
-                        }
-                        _ => {}
-                    }
-                }
-                false
-            }
-            Stmt::Comptime { name, value, .. } => {
-                self.expr(value, span, scope, &nested);
-                scope.rebind(&self.arena.held, self.parsed.text(*name));
-                false
-            }
-            Stmt::Assign { target, value, .. } => {
-                self.expr(target, span, scope, &nested);
-                self.expr(value, span, scope, &nested);
-                if let Expr::Variable(name) = target {
-                    let name = self.parsed.text(*name).to_string();
-                    let tainted = self.tainted(value, scope);
-                    scope.rebind(&self.arena.held, &name);
-                    if tainted {
-                        scope.tainted.insert(name);
-                    }
-                }
-                false
-            }
-            Stmt::For {
-                bindings,
-                iter,
-                body,
-            } => {
-                self.expr(iter, span, scope, &nested);
-                let tainted = self.tainted(iter, scope);
-                let mut inner = scope.clone();
-                for binding in bindings {
-                    let name = self.parsed.text(*binding).to_string();
-                    inner.rebind(&self.arena.held, &name);
-                    if tainted {
-                        inner.tainted.insert(name);
-                    }
-                }
-                if let (
-                    [only],
-                    Expr::Range {
-                        start,
-                        end,
-                        inclusive,
-                    },
-                ) = (bindings.as_slice(), iter)
-                    && let (Some(low), Some(high)) = (
-                        lin(&mut self.arena, self.parsed, start, scope),
-                        lin(&mut self.arena, self.parsed, end, scope),
-                    )
-                {
-                    let name = self.parsed.text(*only).to_string();
-                    inner.ints.insert(name.clone());
-                    // low <= n, and n <= high (inclusive) or n < high - unless
-                    // a bound reads the name it shadows, as `let` above.
-                    if !self.arena.mentions(low, &name) && !self.arena.mentions(high, &name) {
-                        let n = self.arena.var(&name);
-                        inner.facts.push(self.arena.le(low, n));
-                        inner.facts.push(if *inclusive {
-                            self.arena.le(n, high)
-                        } else {
-                            self.arena.lt(n, high)
-                        });
-                    } else {
-                        inner.loose.insert(name.clone());
-                    }
-                    // **Every value of the range reaches the body** only where
-                    // no turn can end the loop early: after a `break` the
-                    // values left are never reached.
-                    if leaves_block(self.parsed, body, &|e| self.throwing(e, at), false) {
-                        inner.loose.insert(name);
-                    }
-                } else {
-                    for binding in bindings {
-                        inner.loose.insert(self.parsed.text(*binding).to_string());
-                    }
-                }
-                // A claim in a loop, or after one, is not carried back to
-                // the entry (ADR-269 D16): that needs an invariant.
-                inner.path = None;
-                self.block(body, &mut inner, &nested);
-                scope.path = None;
-                if leaves_block(self.parsed, body, &|e| self.throwing(e, at), false) {
-                    scope.exact = false;
-                }
-                false
-            }
-            Stmt::While { cond, body } => {
-                self.expr(cond, span, scope, &nested);
-                let mut inner = scope.clone();
-                inner.path = None;
-                // Which turns there are depends on what the loop changes.
-                inner.exact = false;
-                scope.path = None;
-                if let Some(holds) = claim(&mut self.arena, self.parsed, cond, &inner) {
-                    inner.facts.push(holds);
-                }
-                self.block(body, &mut inner, &nested);
-                if leaves_block(self.parsed, body, &|e| self.throwing(e, at), false) {
-                    scope.exact = false;
-                }
-                false
-            }
-            Stmt::Return(value) => {
-                if let Some(value) = value {
-                    self.expr(value, span, scope, &nested);
-                    self.exit(value, scope, at);
-                }
-                true
-            }
-            Stmt::Break | Stmt::Continue => true,
-            Stmt::Expr(expr) => self.expr_stmt(expr, span, scope, at),
-        }
-    }
-
-    /// An expression standing as a statement: an `assert`, an `if` whose
-    /// branches teach the rest of the block something, or anything else.
-    fn expr_stmt(&mut self, expr: &Expr, span: Span, scope: &mut Scope, at: &Where) -> bool {
-        let nested = at.inside(false);
-        match expr {
-            Expr::Call { func, args, config }
-                if matches!(&**func, Expr::Variable(_))
-                    && args.len() == 1
-                    && self
-                        .claims
-                        .contains(&(span.at(), crate::check::argument_shape(&args[0]))) =>
-            {
-                self.expr(&args[0], span, scope, &nested);
-                // The `message:` a failure says, where it is text as written:
-                // a precondition checked elsewhere says it too.
-                let message = config.iter().find_map(|c| match &c.value {
-                    Expr::LitStr { text, .. } if self.parsed.text(c.name) == "message" => {
-                        Some(text.clone())
-                    }
-                    _ => None,
-                });
-                self.an_assert(&args[0], message, span, scope, at);
-                false
-            }
-            Expr::If {
-                cond,
-                then_branch,
-                else_branch,
-            } => {
-                self.expr(cond, span, scope, &nested);
-                let holds = claim(&mut self.arena, self.parsed, cond, scope);
-                let fails = holds.map(|h| self.arena.not(h));
-                let mut then_scope = scope.clone();
-                if let Some(holds) = &holds {
-                    then_scope.facts.push(*holds);
-                }
-                // A branch on a condition the prover cannot read is reached
-                // by some states and not others, and no fact says which.
-                then_scope.exact &= holds.is_some();
-                let cond_leaves = leaves_expr(self.parsed, cond, &|e| self.throwing(e, at), true);
-                self.on_the_path(&mut then_scope, holds);
-                let then_leaves = self.block(then_branch, &mut then_scope, &nested);
-                let else_leaves = match else_branch {
-                    Some(block) => {
-                        let mut else_scope = scope.clone();
-                        if let Some(fails) = &fails {
-                            else_scope.facts.push(*fails);
-                        }
-                        else_scope.exact &= fails.is_some();
-                        self.on_the_path(&mut else_scope, fails);
-                        self.block(block, &mut else_scope, &nested)
-                    }
-                    None => false,
-                };
-                // **What a branch that always leaves rules out** holds after
-                // it: `return 250 if speed > 250` leaves `speed <= 250`.
-                match (then_leaves, else_leaves) {
-                    (true, true) => return true,
-                    (true, false) => {
-                        if let Some(fails) = fails {
-                            scope.facts.push(fails);
-                        }
-                        self.on_the_path(scope, fails);
-                        scope.exact &= fails.is_some()
-                            && !else_branch.as_ref().is_some_and(|b| {
-                                leaves_block(self.parsed, b, &|e| self.throwing(e, at), true)
-                            });
-                    }
-                    (false, true) => {
-                        if let Some(holds) = holds {
-                            scope.facts.push(holds);
-                        }
-                        self.on_the_path(scope, holds);
-                        scope.exact &= holds.is_some()
-                            && !leaves_block(
-                                self.parsed,
-                                then_branch,
-                                &|e| self.throwing(e, at),
-                                true,
-                            );
-                    }
-                    (false, false) => {
-                        if leaves_block(self.parsed, then_branch, &|e| self.throwing(e, at), true)
-                            || else_branch.as_ref().is_some_and(|b| {
-                                leaves_block(self.parsed, b, &|e| self.throwing(e, at), true)
-                            })
-                        {
-                            scope.exact = false;
-                        }
-                    }
-                }
-                if cond_leaves {
-                    scope.exact = false;
-                }
-                false
-            }
-            Expr::Throw(value) => {
-                self.expr(value, span, scope, &nested);
-                true
-            }
-            Expr::Return(value) => {
-                if let Some(value) = &**value {
-                    self.expr(value, span, scope, &nested);
-                    self.exit(value, scope, at);
-                }
-                true
-            }
-            Expr::Break | Expr::Continue => true,
-            other => {
-                self.expr(other, span, scope, &nested);
-                false
-            }
-        }
-    }
-
-    /// **One `assert`** (ADR-269 D4-D8, D11, D15, D17;
-    /// `ProverState::an_assert`): how it is held, and what it was found to
-    /// say.
-    fn an_assert(
-        &mut self,
-        cond: &Expr,
-        message: Option<String>,
-        span: Span,
-        scope: &mut Scope,
-        at: &Where,
-    ) {
-        let key = (span.at(), crate::check::argument_shape(cond));
-        let written = crate::check::written(self.parsed, cond);
-        let names = names_in(self.parsed, cond);
-        let Terms { held, copy } = &mut self.arena;
-        let outcome = self.state.an_assert(
-            held,
-            &self.parsed.interner,
-            cond,
-            written,
-            &names,
-            message,
-            span,
-            scope,
-            at,
-            |arena, facts, goal| answer_of(copy, arena, facts, goal),
-            |arena, facts, goal| model_of(copy, arena, facts, goal),
-        );
-        self.out.held.insert(key, outcome.held);
-        self.out
-            .findings
-            .extend(outcome.findings.into_iter().map(crate::traits::from_nikaia));
-    }
-
-    /// Walk an expression for what it calls: a call to a function with a
-    /// precondition proves it here (D5), a function with one is not handed on
-    /// as a value, and a nested block is walked with what it may know.
-    fn expr(&mut self, expr: &Expr, span: Span, scope: &Scope, at: &Where) {
-        let parsed = self.parsed;
-        let mut calls: Vec<(String, Vec<Expr>)> = Vec::new();
-        let mut values: Vec<String> = Vec::new();
-        let mut callees: BTreeSet<*const Expr> = BTreeSet::new();
-        crate::contracts::sync::visit_expr(parsed, expr, &mut |e| match e {
-            Expr::Call { func, args, .. } => match &**func {
-                Expr::Variable(name) => {
-                    callees.insert(&**func as *const Expr);
-                    calls.push((parsed.text(*name).to_string(), args.clone()));
-                }
-                Expr::Path(_) => {
-                    if let Some(qualified) = qualified(parsed, func) {
-                        calls.push((qualified, args.clone()));
-                    }
-                }
-                _ => {}
-            },
-            Expr::Variable(name) if !callees.contains(&(e as *const Expr)) => {
-                values.push(parsed.text(*name).to_string());
-            }
-            _ => {}
-        });
-        for (callee, args) in calls {
-            if scope.locals.contains(&callee) {
-                continue;
-            }
-            if let Some(caller) = &at.function {
-                self.state.edges.insert((caller.clone(), callee.clone()));
-            }
-            // The first pass reads the walk before's preconditions: its own
-            // are still being found.
-            let pre = match self.state.collecting {
-                true => self.state.known.get(&callee).cloned(),
-                false => self.state.preconditions.get(&callee).cloned(),
-            };
-            if let Some(pre) = pre {
-                let Some(function) = self.function_named(&callee) else {
-                    continue;
-                };
-                let params = function.params;
-                self.a_call(&callee, &params, &pre.claims, &args, span, scope, at);
-            } else if let Some(foreign) = self.foreign_contract(&callee)
-                && !foreign.requires.is_empty()
-            {
-                self.a_call(
-                    &callee,
-                    &foreign.params,
-                    &foreign.requires,
-                    &args,
-                    span,
-                    scope,
-                    at,
-                );
-            }
-        }
-        // Nested blocks: their own bindings are not visible here, so they
-        // start blind (the soundness note at the top).
-        // A lambda's body is the exception: its own names are its parameters,
-        // and what holds of the bindings around it holds inside it, because a
-        // binding the prover reads never changes.
-        let mut lambdas: BTreeMap<*const Block, Vec<String>> = BTreeMap::new();
-        crate::contracts::sync::visit_expr(parsed, expr, &mut |e| {
-            if let Expr::Closure {
-                params,
-                mutable,
-                body,
-            } = e
-            {
-                let names = params
-                    .iter()
-                    .chain(mutable)
-                    .map(|p| parsed.text(*p).to_string())
-                    .collect();
-                lambdas.insert(body as *const Block, names);
-            }
-        });
-        let mut blocks: Vec<&Block> = Vec::new();
-        crate::contracts::sync::visit_expr_blocks(expr, &mut |b| blocks.push(b));
-        for block in blocks {
-            let lambda = at.lambda || lambdas.contains_key(&(block as *const Block));
-            let mut inner = match lambdas.get(&(block as *const Block)) {
-                Some(params) => {
-                    let mut inner = scope.clone();
-                    for param in params {
-                        inner.rebind(&self.arena.held, param);
-                        inner.loose.insert(param.clone());
-                    }
-                    inner.path = None;
-                    // Called as often as the callee likes, or never.
-                    inner.exact = false;
-                    inner
-                }
-                None => scope.blind(),
-            };
-            self.block(block, &mut inner, &at.inside(lambda));
-        }
-    }
-
-    /// **A call to a function with a precondition** (ADR-269 D5, D8, D15,
-    /// D20; `ProverState::precondition_call`): its findings, and how the
-    /// call reaches the callee.
-    #[allow(clippy::too_many_arguments)]
-    fn a_call(
-        &mut self,
-        callee: &str,
-        params: &[String],
-        claims: &[PreClaim],
-        args: &[Expr],
-        span: Span,
-        scope: &Scope,
-        at: &Where,
-    ) {
-        let Terms { held, copy } = &mut self.arena;
-        let outcome = self.state.precondition_call(
-            held,
-            &self.parsed.interner,
-            callee,
-            params,
-            claims,
-            args,
-            span,
-            scope,
-            at,
-            |arena, facts, goal| answer_of(copy, arena, facts, goal),
-            |arena, facts, goal| model_of(copy, arena, facts, goal),
-            |name| crate::emit::escaped(name).into_owned(),
-        );
-        self.out
-            .findings
-            .extend(outcome.findings.into_iter().map(crate::traits::from_nikaia));
-        let key = call_key(self.parsed, callee, args);
-        let joined = match self.out.reaches.remove(&key) {
-            Some(before) => joined_reach(before, outcome.reach),
-            None => outcome.reach,
-        };
-        self.out.reaches.insert(key, joined);
-    }
-
-    /// `term` at the function's entry (`ProverScope::at_entry`).
-    fn at_entry(&mut self, term: i64, scope: &Scope) -> Option<i64> {
-        scope.at_entry(&mut self.arena.held, term)
-    }
-
-    /// **An exit of a free function** (`ProverState::exit`).
-    fn exit(&mut self, value: &Expr, scope: &Scope, at: &Where) {
-        let Terms { held, copy } = &mut self.arena;
-        self.state.exit(
-            held,
-            value,
-            &self.parsed.interner,
-            scope,
-            at.function.as_deref(),
-            !at.lambda && at.free,
-            &at.params,
-            |arena, facts, goal| answer_of(copy, arena, facts, goal),
-        )
-    }
-
-    /// What a call's postconditions say of the name its result is bound to
-    /// (`prover_state::postconditions_for`), from the callee's own
-    /// postconditions or another package's ledger.
-    fn postconditions_of(
-        &mut self,
-        callee: &str,
-        args: &[Expr],
-        bound: &str,
-        scope: &Scope,
-    ) -> Vec<i64> {
-        let (posts, params): (Vec<PostClaim>, Vec<String>) =
-            match self.state.postconditions.get(callee).cloned() {
-                Some(posts) => {
-                    let Some(function) = self.function_named(callee) else {
-                        return Vec::new();
-                    };
-                    (posts, function.params)
-                }
-                None => match self.foreign_contract(callee) {
-                    Some(foreign) => (foreign.ensures, foreign.params),
-                    None => return Vec::new(),
-                },
-            };
-        prover_state::postconditions_for(
-            &mut self.arena.held,
-            &posts,
-            &params,
-            args,
-            bound,
-            scope,
-            &self.parsed.interner,
-        )
-    }
-
-    /// Whether a free function hands back a whole number.
-    fn returns_whole(&mut self, callee: &str) -> bool {
-        match self.function_named(callee) {
-            Some(function) => function.whole_result,
-            None => self
-                .foreign_contract(callee)
-                .is_some_and(|foreign| foreign.whole_result),
-        }
-    }
-
-    /// **Another package's contract, read back into terms** (ADR-269 D18):
-    /// each `requires` and `ensures` the ledger states, parsed as the
-    /// language's own syntax over the parameters' names. `None` where the
-    /// ledger has no such function; a condition that does not read back is
-    /// left out, which only ever proves less.
-    fn foreign_contract(&mut self, key: &str) -> Option<Foreign> {
-        if let Some(known) = self.state.foreign.get(key) {
-            return known.clone();
-        }
-        let contract = self.own.functions.get(key)?.clone();
-        let shape = prover_claims::foreign_shape(&contract);
-        let mut read_back = |texts: &[String]| -> Vec<i64> {
-            texts
-                .iter()
-                .map(|text| condition(&mut self.arena, text, &shape.names).unwrap_or(-1))
-                .collect()
-        };
-        let requires = read_back(&contract.requires);
-        let ensures = read_back(&contract.ensures);
-        let foreign = prover_claims::foreign_from(&contract, shape, &requires, &ensures);
-        self.state
-            .foreign
-            .insert(key.to_string(), Some(foreign.clone()));
-        Some(foreign)
-    }
-
-    /// A condition joins the path (`ProverScope::on_the_path`).
-    fn on_the_path(&mut self, scope: &mut Scope, condition: Option<i64>) {
-        scope.on_the_path(&mut self.arena.held, condition)
-    }
-
-    /// Whether a call may throw out of the function `at` is
-    /// (`prover_calls::may_throw`).
-    fn throwing(&self, call: &Expr, at: &Where) -> bool {
-        prover_calls::may_throw(
-            call,
-            at.throws_out,
-            &self.parsed.program,
-            &self.parsed.interner,
-            self.own,
-            self.library,
-            &|name| self.parsed.unaliased(name),
-        )
-    }
-
-    /// The free function of this program named `name`
-    /// (`prover_calls::free_function`).
-    fn function_named(&self, name: &str) -> Option<FreeFunction> {
-        prover_calls::free_function(&self.parsed.program, &self.parsed.interner, name)
-    }
-
-    /// Whether a value came from outside the program (ADR-010 D2,
-    /// `prover_calls::from_outside`).
-    fn tainted(&self, expr: &Expr, scope: &Scope) -> bool {
-        let parsed = self.parsed;
-        prover_calls::from_outside(expr, &scope.tainted, &parsed.interner, self.library, &|e| {
-            crate::emit::literal_expressions(parsed, e)
-        })
-    }
-}
-
-/// **Whether a statement may leave the block it stands in** for some states:
-/// a `return`, a `break`, a `throw`, a `?`, a `continue` where `with_continue`
-/// says it counts, and a call `throwing` says may throw. Inside nested
-/// blocks too, lambdas included: it only ever costs a warning. The walk is
-/// `tools/leaves.nika` (ADR-294, #436); this hands it the holes a literal
-/// holds, which only the compiler can parse.
-fn leaves_stmt(
+/// **One walk over every body**: the solver through `copy`, the language
+/// below's spelling of a name, the holes of a literal, a package's alias, an
+/// expression as written and as the checker keys it, and another package's
+/// condition read back.
+fn every_body(
+    walk: &mut ProverWalk,
+    copy: &std::cell::RefCell<SolverCopy>,
     parsed: &Parsed,
-    stmt: &Stmt,
-    throwing: &dyn Fn(&Expr) -> bool,
-    with_continue: bool,
-) -> bool {
-    nikaia_std::tools::leaves::leaves_stmt(
-        stmt,
-        &|e| throwing(e),
+    own: &Ledger,
+    library: &Ledger,
+) {
+    prover_walk::prover_bodies(
+        walk,
+        &parsed.program,
+        &parsed.interner,
+        own,
+        library,
+        &|arena, facts, goal| answer_of(copy, arena, facts, goal),
+        &|arena, facts, goal| model_of(copy, arena, facts, goal),
+        &|name| crate::emit::escaped(name).into_owned(),
         &|e| crate::emit::literal_expressions(parsed, e),
-        with_continue,
-    )
-}
-
-fn leaves_block(
-    parsed: &Parsed,
-    block: &Block,
-    throwing: &dyn Fn(&Expr) -> bool,
-    with_continue: bool,
-) -> bool {
-    nikaia_std::tools::leaves::leaves_block(
-        block,
-        &|e| throwing(e),
-        &|e| crate::emit::literal_expressions(parsed, e),
-        with_continue,
-    )
-}
-
-fn leaves_expr(
-    parsed: &Parsed,
-    expr: &Expr,
-    throwing: &dyn Fn(&Expr) -> bool,
-    with_continue: bool,
-) -> bool {
-    nikaia_std::tools::leaves::leaves_expr(
-        expr,
-        &|e| throwing(e),
-        &|e| crate::emit::literal_expressions(parsed, e),
-        with_continue,
+        &|name| parsed.unaliased(name),
+        &|e| crate::check::written(parsed, e),
+        &|e| crate::check::argument_shape(e),
+        &|text, names| condition_nodes(text, names),
     )
 }
 
 /// Whether two walks found the same preconditions, claim by claim.
 fn same_preconditions(
-    arena: &Terms,
+    arena: &TermArena,
     a: &BTreeMap<String, Precondition>,
     b: &BTreeMap<String, Precondition>,
 ) -> bool {
@@ -1108,8 +304,8 @@ fn same_preconditions(
 // `tools/prove_text.nika` (ADR-294, #436): these hand it the arena one node
 // at a time and the emitter's escaping of a name.
 
-fn rust_of(arena: &Terms, id: i64) -> String {
-    prove_text::rust_of(id, &|at| arena.held.at(at), &|name| {
+fn rust_of(arena: &TermArena, id: i64) -> String {
+    prove_text::rust_of(id, &|at| arena.at(at), &|name| {
         crate::emit::escaped(name).into_owned()
     })
 }
@@ -1120,29 +316,18 @@ fn rust_of_name(name: &str) -> String {
 
 /// A term as a reader writes it, with `→` for the implication a branch makes
 /// of a precondition.
-fn term_text(arena: &Terms, id: i64) -> String {
-    prove_text::term_text(id, &|at| arena.held.at(at))
+fn term_text(arena: &TermArena, id: i64) -> String {
+    prove_text::term_text(id, &|at| arena.at(at))
 }
 
 /// A term in the language's own syntax, as the ledger writes it and reads it
 /// back ([ADR-251](../../docs/specification/adr/adr-251.md) D4).
-fn ledger_text(arena: &Terms, id: i64) -> String {
-    prove_text::term_ledger_text(id, &|at| arena.held.at(at))
+fn ledger_text(arena: &TermArena, id: i64) -> String {
+    prove_text::term_ledger_text(id, &|at| arena.at(at))
 }
 
 use nikaia_std::tools::prove_terms;
-use nikaia_std::tools::prove_text::{self, has_a_length};
-
-fn is_whole_number(ty: &str) -> bool {
-    nikaia_std::tools::bounds_shape::is_whole_number(ty)
-}
-
-/// Every name a claim reads.
-fn names_in(parsed: &Parsed, expr: &Expr) -> BTreeSet<String> {
-    nikaia_std::tools::claim_names::claim_names_in(expr, &parsed.interner, &|e| {
-        crate::emit::literal_expressions(parsed, e)
-    })
-}
+use nikaia_std::tools::prove_text;
 
 // --- A program's numbers as terms -----------------------------------------
 
@@ -1169,7 +354,7 @@ fn implies(from: &[String], to: &[String], names: &BTreeSet<String>) -> bool {
     if to.iter().all(|c| from.contains(c)) {
         return true;
     }
-    let mut arena = Terms::default();
+    let mut arena = TermArena::empty();
     let Some(facts) = from
         .iter()
         .map(|c| condition(&mut arena, c, names))
@@ -1185,14 +370,15 @@ fn implies(from: &[String], to: &[String], names: &BTreeSet<String>) -> bool {
         return false;
     };
     let goal = arena.and(goals);
-    arena.query(&facts, goal, crate::proofs::ask) == crate::proofs::Asked::Proved
+    let copy = std::cell::RefCell::new(SolverCopy::default());
+    asked_of(&copy, &arena, &facts, goal, crate::proofs::ask) == crate::proofs::Asked::Proved
 }
 
 /// **A condition the ledger states, read back** (ADR-269 D18): the text is
 /// the language's own syntax, so the compiler's parser reads it, inside an
 /// `assert` of a function nobody calls, and the prover's own reading turns it
 /// into a term. Only `names` are variables of it.
-fn condition(arena: &mut Terms, text: &str, names: &BTreeSet<String>) -> Option<i64> {
+fn condition(arena: &mut TermArena, text: &str, names: &BTreeSet<String>) -> Option<i64> {
     let source = format!("fn __condition() {{\n    assert({text})\n}}\n");
     let parsed = crate::parser::parse_to_ast(&source).ok()?;
     let Item::Fn { body, .. } = &parsed.program.items.first()?.node else {
@@ -1201,63 +387,26 @@ fn condition(arena: &mut Terms, text: &str, names: &BTreeSet<String>) -> Option<
     let Stmt::Expr(Expr::Call { args, .. }) = &body.stmts.first()?.node else {
         return None;
     };
-    claim_with(arena, &parsed, args.first()?, &|name| names.contains(name))
-}
-
-/// A path callee as the ledger keys it: `mathx::percent`, unaliased.
-fn qualified(parsed: &Parsed, func: &Expr) -> Option<String> {
-    let Expr::Path(segments) = func else {
-        return None;
-    };
-    Some(
-        parsed.unaliased(
-            &segments
-                .iter()
-                .map(|s| parsed.text(*s))
-                .collect::<Vec<_>>()
-                .join("::"),
-        ),
+    prove_terms::claim_term(
+        args.first()?,
+        &parsed.interner,
+        &|name| names.contains(name),
+        &mut arena.nodes,
     )
 }
 
-/// A whole-number expression, where it is one this prover reads (ADR-269 D9).
-fn lin(arena: &mut Terms, parsed: &Parsed, expr: &Expr, scope: &Scope) -> Option<i64> {
-    lin_with(arena, parsed, expr, &|name| scope.ints.contains(name))
-}
-
-/// `expr` as a linear term over the names `var` admits
-/// (`tools/prove_terms.nika`, ADR-294, #436), its nodes put into `arena`.
-fn lin_with(
-    arena: &mut Terms,
-    parsed: &Parsed,
-    expr: &Expr,
-    var: &dyn Fn(&str) -> bool,
-) -> Option<i64> {
-    arena.built(|nodes| prove_terms::lin_term(expr, &parsed.interner, &|name| var(name), nodes))
-}
-
-/// The claim `expr` as a term, where it is one this prover reads.
-fn claim(arena: &mut Terms, parsed: &Parsed, expr: &Expr, scope: &Scope) -> Option<i64> {
-    claim_with(arena, parsed, expr, &|name| scope.ints.contains(name))
-}
-
-fn claim_with(
-    arena: &mut Terms,
-    parsed: &Parsed,
-    expr: &Expr,
-    var: &dyn Fn(&str) -> bool,
-) -> Option<i64> {
-    arena.built(|nodes| prove_terms::claim_term(expr, &parsed.interner, &|name| var(name), nodes))
-}
-
-/// **The walk's terms, held in Nikaia** (`tools/prover_arena.nika`, #436):
-/// every term is built and read there. The solver reads `nikaia-logic`'s
-/// arena, a copy made node for node when a question is asked, so that a
-/// term's place is the same in both.
-#[derive(Debug, Clone)]
-struct Terms {
-    held: TermArena,
-    copy: std::cell::RefCell<SolverCopy>,
+/// A condition read back on its own, for the walk to adopt
+/// (`TermArena::adopt`): its nodes, the root last; none where it does not
+/// read back.
+fn condition_nodes(text: &str, names: &BTreeSet<String>) -> Vec<SolverTerm> {
+    let mut arena = TermArena::empty();
+    match condition(&mut arena, text, names) {
+        Some(root) => {
+            debug_assert_eq!(root as usize + 1, arena.nodes.len());
+            arena.nodes
+        }
+        None => Vec::new(),
+    }
 }
 
 /// `nikaia-logic`'s copy of the terms, as far as it has been made.
@@ -1266,59 +415,6 @@ struct SolverCopy {
     logic: Arena,
     /// The copy's `TermId` of each node of `held`, by place.
     ids: Vec<TermId>,
-}
-
-impl Default for Terms {
-    fn default() -> Terms {
-        Terms {
-            held: TermArena::empty(),
-            copy: Default::default(),
-        }
-    }
-}
-
-impl Terms {
-    /// The solver's question whether `facts` imply `goal`, handed to `ask`.
-    fn query<R>(&self, facts: &[i64], goal: i64, ask: impl FnOnce(&Query) -> R) -> R {
-        asked_of(&self.copy, &self.held, facts, goal, ask)
-    }
-
-    fn var(&mut self, name: &str) -> i64 {
-        self.held.var(name)
-    }
-
-    fn le(&mut self, a: i64, b: i64) -> i64 {
-        self.held.le(a, b)
-    }
-
-    fn lt(&mut self, a: i64, b: i64) -> i64 {
-        self.held.lt(a, b)
-    }
-
-    fn eq(&mut self, a: i64, b: i64) -> i64 {
-        self.held.equal(a, b)
-    }
-
-    fn and(&mut self, parts: Vec<i64>) -> i64 {
-        self.held.and(parts)
-    }
-
-    fn not(&mut self, a: i64) -> i64 {
-        self.held.not(a)
-    }
-
-    fn mentions(&self, id: i64, name: &str) -> bool {
-        self.held.mentions(id, name)
-    }
-
-    fn variables(&self, id: i64, names: &mut BTreeSet<String>) {
-        self.held.variables(id, names)
-    }
-
-    /// A term `prove_terms` builds, its nodes appended to `held`.
-    fn built(&mut self, build: impl FnOnce(&mut Vec<SolverTerm>) -> Option<i64>) -> Option<i64> {
-        build(&mut self.held.nodes)
-    }
 }
 
 /// The solver's question whether `facts` imply `goal`, handed to `ask`,

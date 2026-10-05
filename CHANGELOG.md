@@ -4,6 +4,22 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.503] — 2026-10-05
+
+**The prover's walk is Nikaia** (ADR-294, #436 step 4).
+`tools/prover_walk.nika` walks every function, test and bench: what each
+binding makes known, the branches and loops, every call by name - an edge of
+the call graph, and where the callee has a precondition, what the call shows
+of it - each `assert`, each exit, and another package's contract, read back
+once per function. The compiler hands in only what it alone can answer: the
+solver, a name as the language below spells it, the holes of a literal, a
+package's alias, an expression as written and as the checker keys it, and a
+condition parsed by its own parser (`TermArena::adopt` takes its nodes).
+`prove.rs` keeps the passes that repeat the walk until its answers stop
+changing, the checked entries and what the ledger publishes: 493 lines, from
+2,271. Every bench and example lowers byte for byte as before, and so do
+their `--bounds` reports.
+
 ## [0.0.502] — 2026-10-05
 
 **An `assert` is held in Nikaia** (ADR-294, #436 step 4).

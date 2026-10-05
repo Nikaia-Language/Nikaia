@@ -1,0 +1,943 @@
+// crates/nikaia-std/src/tools/prover_walk.nika
+//
+// **The prover's walk over a program's bodies** (ADR-269), moved from the
+// compiler's `prove` (ADR-294, #436 step 4): every function, statement and
+// expression, what each binding makes known, where an `assert` stands and
+// what each call to a function with a precondition asks. The passes around
+// it, which repeat the walk until its answers stop changing, are the
+// compiler's.
+//
+// **What only the compiler can do is handed in** as callbacks: the solver
+// (`ask`, `model`), the language below's spelling of a name (`escape`), the
+// holes of a literal (`holes_of`), a package's alias (`unaliased`), an
+// expression as written (`written_of`) and as the checker keys it
+// (`shape_of`), and another package's condition read back with the
+// compiler's parser (`condition`, its nodes, the root last).
+
+use std::collections
+
+/// The walk's answers, and what it keeps from one function to the next.
+pub struct ProverWalk {
+    pub state: ProverState,
+    pub arena: TermArena,
+    /// How each `assert` the walk reached is held, by statement and shape.
+    pub held: collections::BTreeMap[(i64, String), ClaimHeld],
+    /// How each call to a function with a precondition reaches it, by callee
+    /// and arguments as written (ADR-269 D20).
+    pub reaches: collections::BTreeMap[(String, String), CallReach],
+    pub findings: Vec[Finding],
+    /// The checker's `assert`s, by statement and argument shape: a call is an
+    /// `assert` exactly where the checker recognised the prelude's.
+    pub claims: collections::BTreeSet[(i64, String)],
+}
+
+/// **Every body of the program, walked once**: each function and method,
+/// and each test and bench, which have no callers.
+pub fn prover_bodies(mut walk: ProverWalk, program: ref Program, words: ref winnow_grammar::InternerContext, own: ref Ledger, library: ref Ledger, ask: fn(ref TermArena, ref Vec[i64], i64) -> SolverAnswer sync, model: fn(ref TermArena, ref Vec[i64], i64) -> collections::BTreeMap[String, i64]? sync, escape: fn(ref String) -> String sync, holes_of: fn(ref Expr) -> Vec[Expr] sync, unaliased: fn(ref String) -> String sync, written_of: fn(ref Expr) -> String sync, shape_of: fn(ref Expr) -> String sync, condition: fn(ref String, ref collections::BTreeSet[String]) -> Vec[SolverTerm] sync) {
+    for item in program.items {
+        match item.node {
+            Item::Fn { .. } => prover_function(walk, item, null, false, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition),
+            Item::Impl { methods, target, trait_name } => {
+                let owner = words.resolve(target.name).clone()
+                for method in methods {
+                    prover_function(walk, method, owner.clone(), trait_name != null, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition)
+                }
+            },
+            Item::Test { body, .. } => prover_test(walk, body, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition),
+            Item::Bench { body, .. } => prover_test(walk, body, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition),
+            else => {},
+        }
+    }
+}
+
+/// A test's or a bench's body: every claim in it is the test's verdict (D11).
+fn prover_test(mut walk: ProverWalk, body: ref Block, program: ref Program, words: ref winnow_grammar::InternerContext, own: ref Ledger, library: ref Ledger, ask: fn(ref TermArena, ref Vec[i64], i64) -> SolverAnswer sync, model: fn(ref TermArena, ref Vec[i64], i64) -> collections::BTreeMap[String, i64]? sync, escape: fn(ref String) -> String sync, holes_of: fn(ref Expr) -> Vec[Expr] sync, unaliased: fn(ref String) -> String sync, written_of: fn(ref Expr) -> String sync, shape_of: fn(ref Expr) -> String sync, condition: fn(ref String, ref collections::BTreeSet[String]) -> Vec[SolverTerm] sync) {
+    walk.state.in_test = true
+    let at = ProverWhere { function: null, params: collections::BTreeSet(), no_precondition: "a test has no callers", top: true, free: false, lambda: false, throws_out: true }
+    let mut scope = ProverScope::unknown()
+    prover_block(walk, body, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition)
+    walk.state.in_test = false
+}
+
+/// One function, or a method of `owner` - in a trait's implementation where
+/// `of_a_trait` says so.
+fn prover_function(mut walk: ProverWalk, item: ref Spanned[Item], owner: String?, of_a_trait: bool, program: ref Program, words: ref winnow_grammar::InternerContext, own: ref Ledger, library: ref Ledger, ask: fn(ref TermArena, ref Vec[i64], i64) -> SolverAnswer sync, model: fn(ref TermArena, ref Vec[i64], i64) -> collections::BTreeMap[String, i64]? sync, escape: fn(ref String) -> String sync, holes_of: fn(ref Expr) -> Vec[Expr] sync, unaliased: fn(ref String) -> String sync, written_of: fn(ref Expr) -> String sync, shape_of: fn(ref Expr) -> String sync, condition: fn(ref String, ref collections::BTreeSet[String]) -> Vec[SolverTerm] sync) {
+    match item.node {
+        Item::Fn { name, receiver, args, body, can_throw, .. } => {
+            let has_owner = owner != null
+            // The ledger's key: `f`, or `Type::m` for a method.
+            let mut key: String? = null
+            let plain = prover_symbol_text(name, words)
+            if plain != null {
+                let n = plain ?? ""
+                if has_owner {
+                    key = f"{owner ?? ""}::{n}"
+                } else {
+                    key = n
+                }
+            }
+            // A `test` block `nikaia test` has already turned into a function
+            // is still a test (D11).
+            let was_a_test = key != null && prover_a_test_function(key)
+            let mut scope = ProverScope::at_the_entry()
+            let mut params: collections::BTreeSet[String] = collections::BTreeSet()
+            if receiver != null {
+                scope.locals.insert("self")
+            }
+            for arg in args {
+                let arg_name = words.resolve(arg.name).clone()
+                scope.locals.insert(arg_name.clone())
+                let ty = words.resolve(arg.ty.name)
+                if !arg.mutable && arg.ty.generics.is_empty() && is_whole_number(ty) {
+                    scope.ints.insert(arg_name.clone())
+                    scope.loose.insert(arg_name.clone())
+                    params.insert(arg_name.clone())
+                    let at_entry = walk.arena.var(arg_name)
+                    scope.entry.insert(arg_name.clone(), at_entry)
+                    if ty.starts_with("u") {
+                        scope.not_negative(walk.arena, arg_name)
+                    }
+                }
+                if !arg.mutable && has_a_length(ty) {
+                    scope.has_length(walk.arena, arg_name, null)
+                    params.insert(arg_name.clone())
+                    let length = length_of(arg_name)
+                    let at_entry = walk.arena.var(length)
+                    scope.entry.insert(length, at_entry)
+                }
+            }
+            let mut no_precondition: String? = null
+            if of_a_trait {
+                no_precondition = "A method of a trait's implementation can't have a precondition: a call through the trait doesn't know it, and there is no second entry to check it."
+            } else if prover_named_main(key) {
+                no_precondition = "`main` has no callers."
+            }
+            let free = !has_owner && !was_a_test
+            let at = ProverWhere { function: claim_text_of(key), params: params, no_precondition: no_precondition, top: true, free: free, lambda: false, throws_out: can_throw }
+            walk.state.in_test = was_a_test
+            let leaves = prover_block(walk, body, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition)
+            walk.state.in_test = false
+            // A body that can end without a `return` has an exit no candidate
+            // was shown at.
+            if !leaves && !walk.state.collecting && key != null {
+                let function = key ?? ""
+                let posts = standing_posts(walk.state.postconditions, function) ?? []
+                for index in 0..<posts.len() {
+                    walk.state.broken.insert((function.clone(), index))
+                }
+            }
+        },
+        else => {},
+    }
+}
+
+/// A block; whether it always leaves.
+fn prover_block(mut walk: ProverWalk, block: ref Block, mut scope: ProverScope, at: ref ProverWhere, program: ref Program, words: ref winnow_grammar::InternerContext, own: ref Ledger, library: ref Ledger, ask: fn(ref TermArena, ref Vec[i64], i64) -> SolverAnswer sync, model: fn(ref TermArena, ref Vec[i64], i64) -> collections::BTreeMap[String, i64]? sync, escape: fn(ref String) -> String sync, holes_of: fn(ref Expr) -> Vec[Expr] sync, unaliased: fn(ref String) -> String sync, written_of: fn(ref Expr) -> String sync, shape_of: fn(ref Expr) -> String sync, condition: fn(ref String, ref collections::BTreeSet[String]) -> Vec[SolverTerm] sync) -> bool {
+    for index in 0..<block.stmts.len() {
+        let stmt = block.stmts[index]
+        if walk.state.collecting && index + 1 < block.stmts.len() {
+            let returned = prover_returned_name(block.stmts[index + 1].node, words)
+            if returned != null {
+                walk.state.before_return.insert(stmt.span.start as i64, returned ?? "")
+            }
+        }
+        if prover_stmt(walk, stmt, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition) {
+            return true
+        }
+        // A statement that may leave for some states and not for others
+        // narrows what goes on past it, and only an `if` the prover reads says
+        // how (`prover_expr_stmt`).
+        if !prover_an_if(stmt.node) && leaves_stmt(stmt.node, fn(e) { prover_throws(e, at, program, words, own, library, unaliased) }, holes_of, true) {
+            scope.exact = false
+        }
+    }
+    return false
+}
+
+/// One statement; whether control never goes past it.
+fn prover_stmt(mut walk: ProverWalk, stmt: ref Spanned[Stmt], mut scope: ProverScope, at: ref ProverWhere, program: ref Program, words: ref winnow_grammar::InternerContext, own: ref Ledger, library: ref Ledger, ask: fn(ref TermArena, ref Vec[i64], i64) -> SolverAnswer sync, model: fn(ref TermArena, ref Vec[i64], i64) -> collections::BTreeMap[String, i64]? sync, escape: fn(ref String) -> String sync, holes_of: fn(ref Expr) -> Vec[Expr] sync, unaliased: fn(ref String) -> String sync, written_of: fn(ref Expr) -> String sync, shape_of: fn(ref Expr) -> String sync, condition: fn(ref String, ref collections::BTreeSet[String]) -> Vec[SolverTerm] sync) -> bool {
+    let span = stmt.span
+    let nested = at.inside(false)
+    return match stmt.node {
+        Stmt::Let { names, mutable, ty, value } => {
+            prover_let(walk, names, mutable, ty, value, span, scope, nested, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition)
+            false
+        },
+        Stmt::Comptime { name, value, .. } => {
+            prover_expr(walk, value, span, scope, nested, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition)
+            scope.rebind(walk.arena, words.resolve(name))
+            false
+        },
+        Stmt::Assign { target, value, .. } => {
+            prover_expr(walk, target, span, scope, nested, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition)
+            prover_expr(walk, value, span, scope, nested, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition)
+            match target {
+                Expr::Variable(name) => {
+                    let n = words.resolve(name).clone()
+                    let tainted = from_outside(value, scope.tainted, words, library, holes_of)
+                    scope.rebind(walk.arena, n)
+                    if tainted {
+                        scope.tainted.insert(n)
+                    }
+                },
+                else => {},
+            }
+            false
+        },
+        Stmt::For { bindings, iter, body } => {
+            prover_for(walk, bindings, iter, body, span, scope, at, nested, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition)
+            false
+        },
+        Stmt::While { cond, body } => {
+            prover_expr(walk, cond, span, scope, nested, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition)
+            let mut inner = scope.clone()
+            inner.path = null
+            // Which turns there are depends on what the loop changes.
+            inner.exact = false
+            scope.path = null
+            let holds = claim_term(cond, words, fn(name) { inner.ints.contains(name) }, walk.arena.nodes)
+            if holds != null {
+                inner.facts.push(holds ?? 0)
+            }
+            prover_block(walk, body, inner, nested, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition)
+            if leaves_block(body, fn(e) { prover_throws(e, at, program, words, own, library, unaliased) }, holes_of, false) {
+                scope.exact = false
+            }
+            false
+        },
+        Stmt::Return(value) => {
+            prover_return(walk, value, span, scope, at, nested, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition)
+            true
+        },
+        Stmt::Break => true,
+        Stmt::Continue => true,
+        Stmt::Expr(expr) => prover_expr_stmt(walk, expr, span, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition),
+    }
+}
+
+/// A `let`: what its value makes known of the names it binds.
+fn prover_let(mut walk: ProverWalk, names: ref Vec[winnow_grammar::Symbol], mutable: bool, ty: ref Type?, value: ref Expr, span: Span, mut scope: ProverScope, nested: ref ProverWhere, program: ref Program, words: ref winnow_grammar::InternerContext, own: ref Ledger, library: ref Ledger, ask: fn(ref TermArena, ref Vec[i64], i64) -> SolverAnswer sync, model: fn(ref TermArena, ref Vec[i64], i64) -> collections::BTreeMap[String, i64]? sync, escape: fn(ref String) -> String sync, holes_of: fn(ref Expr) -> Vec[Expr] sync, unaliased: fn(ref String) -> String sync, written_of: fn(ref Expr) -> String sync, shape_of: fn(ref Expr) -> String sync, condition: fn(ref String, ref collections::BTreeSet[String]) -> Vec[SolverTerm] sync) {
+    prover_expr(walk, value, span, scope, nested, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition)
+    let tainted = from_outside(value, scope.tainted, words, library, holes_of)
+    let value_lin = lin_term(value, words, fn(name) { scope.ints.contains(name) }, walk.arena.nodes)
+    let mut value_at_entry: i64? = null
+    if value_lin != null {
+        value_at_entry = scope.at_entry(walk.arena, value_lin ?? 0)
+    }
+    // **A call's postconditions are facts about its result** (D17): `let r =
+    // f(x)` knows what `f` ensures.
+    let mut called = false
+    let mut called_whole = false
+    let mut called_facts: Vec[i64] = []
+    if names.len() == 1 && !mutable {
+        match value {
+            Expr::Call { func, args, .. } => {
+                let callee = prover_bound_callee(func, scope, words, unaliased)
+                if callee != null {
+                    let c = callee ?? ""
+                    let bound = words.resolve(names[0]).clone()
+                    called_facts = prover_postconditions_of(walk, c, args, bound, scope, program, words, own, condition)
+                    called_whole = prover_returns_whole(walk, c, program, words, own, condition)
+                    called = true
+                }
+            },
+            else => {},
+        }
+    }
+    for name in names {
+        let n = words.resolve(name).clone()
+        scope.rebind(walk.arena, n)
+        if tainted {
+            scope.tainted.insert(n.clone())
+            scope.loose.insert(n.clone())
+        }
+    }
+    if names.len() != 1 || mutable {
+        return
+    }
+    let name = words.resolve(names[0]).clone()
+    if value_lin != null {
+        let v = value_lin ?? 0
+        scope.ints.insert(name.clone())
+        // **A value that reads the name it shadows** - `let x = x + 1` - is
+        // about the old binding, which a fact names the same way: `x = x + 1`
+        // would be a contradiction, and from it everything follows. The name
+        // is a whole number; nothing more is known.
+        if !walk.arena.mentions(v, name) {
+            let named = walk.arena.var(name)
+            let fact = walk.arena.equal(named, v)
+            scope.facts.push(fact)
+        } else {
+            scope.loose.insert(name.clone())
+        }
+        // At the entry the value is what it read there, so a shadowing `let`
+        // is no trouble here.
+        if value_at_entry != null {
+            scope.entry.insert(name.clone(), value_at_entry ?? 0)
+        }
+    } else if prover_typed(ty, words, 0) || (called && called_whole) {
+        scope.ints.insert(name.clone())
+        scope.loose.insert(name.clone())
+    }
+    if called && called_whole {
+        for fact in called_facts {
+            scope.facts.push(fact)
+        }
+    }
+    if prover_typed(ty, words, 1) && scope.ints.contains(name) {
+        scope.not_negative(walk.arena, name)
+    }
+    match value {
+        Expr::ListLit { items, .. } => {
+            let known: i64? = items.len()
+            scope.has_length(walk.arena, name, known)
+        },
+        Expr::LitStr { .. } => scope.has_length(walk.arena, name, null),
+        else => {
+            if prover_typed(ty, words, 2) {
+                scope.has_length(walk.arena, name, null)
+            }
+        },
+    }
+}
+
+/// A `for`: a range's binding is bounded by its ends, every other binding is
+/// a name nothing pins.
+fn prover_for(mut walk: ProverWalk, bindings: ref Vec[winnow_grammar::Symbol], iter: ref Expr, body: ref Block, span: Span, mut scope: ProverScope, at: ref ProverWhere, nested: ref ProverWhere, program: ref Program, words: ref winnow_grammar::InternerContext, own: ref Ledger, library: ref Ledger, ask: fn(ref TermArena, ref Vec[i64], i64) -> SolverAnswer sync, model: fn(ref TermArena, ref Vec[i64], i64) -> collections::BTreeMap[String, i64]? sync, escape: fn(ref String) -> String sync, holes_of: fn(ref Expr) -> Vec[Expr] sync, unaliased: fn(ref String) -> String sync, written_of: fn(ref Expr) -> String sync, shape_of: fn(ref Expr) -> String sync, condition: fn(ref String, ref collections::BTreeSet[String]) -> Vec[SolverTerm] sync) {
+    prover_expr(walk, iter, span, scope, nested, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition)
+    let tainted = from_outside(iter, scope.tainted, words, library, holes_of)
+    let mut inner = scope.clone()
+    for binding in bindings {
+        let n = words.resolve(binding).clone()
+        inner.rebind(walk.arena, n)
+        if tainted {
+            inner.tainted.insert(n)
+        }
+    }
+    let mut ranged = false
+    if bindings.len() == 1 {
+        match iter {
+            Expr::Range { start, end, inclusive } => {
+                let low = lin_term(start, words, fn(name) { scope.ints.contains(name) }, walk.arena.nodes)
+                let high = lin_term(end, words, fn(name) { scope.ints.contains(name) }, walk.arena.nodes)
+                if low != null && high != null {
+                    ranged = true
+                    let name = words.resolve(bindings[0]).clone()
+                    inner.ints.insert(name.clone())
+                    let lo = low ?? 0
+                    let hi = high ?? 0
+                    // low <= n, and n <= high (inclusive) or n < high - unless
+                    // a bound reads the name it shadows, as `let` above.
+                    if !walk.arena.mentions(lo, name) && !walk.arena.mentions(hi, name) {
+                        let n = walk.arena.var(name)
+                        let above = walk.arena.le(lo, n)
+                        inner.facts.push(above)
+                        if inclusive {
+                            let below = walk.arena.le(n, hi)
+                            inner.facts.push(below)
+                        } else {
+                            let below = walk.arena.lt(n, hi)
+                            inner.facts.push(below)
+                        }
+                    } else {
+                        inner.loose.insert(name.clone())
+                    }
+                    // **Every value of the range reaches the body** only where
+                    // no turn can end the loop early: after a `break` the
+                    // values left are never reached.
+                    if leaves_block(body, fn(e) { prover_throws(e, at, program, words, own, library, unaliased) }, holes_of, false) {
+                        inner.loose.insert(name)
+                    }
+                }
+            },
+            else => {},
+        }
+    }
+    if !ranged {
+        for binding in bindings {
+            inner.loose.insert(words.resolve(binding).clone())
+        }
+    }
+    // A claim in a loop, or after one, is not carried back to the entry
+    // (D16): that needs an invariant.
+    inner.path = null
+    prover_block(walk, body, inner, nested, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition)
+    scope.path = null
+    if leaves_block(body, fn(e) { prover_throws(e, at, program, words, own, library, unaliased) }, holes_of, false) {
+        scope.exact = false
+    }
+}
+
+/// A `return`: an exit of the function, where its postconditions are asked.
+fn prover_return(mut walk: ProverWalk, value: ref Expr?, span: Span, scope: ref ProverScope, at: ref ProverWhere, nested: ref ProverWhere, program: ref Program, words: ref winnow_grammar::InternerContext, own: ref Ledger, library: ref Ledger, ask: fn(ref TermArena, ref Vec[i64], i64) -> SolverAnswer sync, model: fn(ref TermArena, ref Vec[i64], i64) -> collections::BTreeMap[String, i64]? sync, escape: fn(ref String) -> String sync, holes_of: fn(ref Expr) -> Vec[Expr] sync, unaliased: fn(ref String) -> String sync, written_of: fn(ref Expr) -> String sync, shape_of: fn(ref Expr) -> String sync, condition: fn(ref String, ref collections::BTreeSet[String]) -> Vec[SolverTerm] sync) {
+    let returned = value ?? return
+    prover_expr(walk, returned, span, scope, nested, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition)
+    walk.state.exit(walk.arena, returned, words, scope, at.function, !at.lambda && at.free, at.params, ask)
+}
+
+/// An expression standing as a statement: an `assert`, an `if` whose
+/// branches teach the rest of the block something, or anything else.
+fn prover_expr_stmt(mut walk: ProverWalk, expr: ref Expr, span: Span, mut scope: ProverScope, at: ref ProverWhere, program: ref Program, words: ref winnow_grammar::InternerContext, own: ref Ledger, library: ref Ledger, ask: fn(ref TermArena, ref Vec[i64], i64) -> SolverAnswer sync, model: fn(ref TermArena, ref Vec[i64], i64) -> collections::BTreeMap[String, i64]? sync, escape: fn(ref String) -> String sync, holes_of: fn(ref Expr) -> Vec[Expr] sync, unaliased: fn(ref String) -> String sync, written_of: fn(ref Expr) -> String sync, shape_of: fn(ref Expr) -> String sync, condition: fn(ref String, ref collections::BTreeSet[String]) -> Vec[SolverTerm] sync) -> bool {
+    let nested = at.inside(false)
+    match expr {
+        Expr::Call { func, args, config } => {
+            if prover_an_assert_call(func, args, span, walk.claims, shape_of) {
+                let cond = args[0]
+                prover_expr(walk, cond, span, scope, nested, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition)
+                // The `message:` a failure says, where it is text as written:
+                // a precondition checked elsewhere says it too.
+                let message = prover_message(config, words)
+                let names = claim_names_in(cond, words, holes_of)
+                let outcome = walk.state.an_assert(walk.arena, words, cond, written_of(cond), names, message, span, scope, at, ask, model)
+                walk.held.insert((span.start as i64, shape_of(cond)), outcome.held)
+                for found in outcome.findings {
+                    walk.findings.push(found.clone())
+                }
+                return false
+            }
+        },
+        Expr::If { cond, then_branch, else_branch } => {
+            return prover_if(walk, cond, then_branch, else_branch, span, scope, at, nested, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition)
+        },
+        Expr::Throw(value) => {
+            prover_expr(walk, value, span, scope, nested, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition)
+            return true
+        },
+        Expr::Return(value) => {
+            prover_return(walk, value, span, scope, at, nested, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition)
+            return true
+        },
+        Expr::Break => return true,
+        Expr::Continue => return true,
+        else => {},
+    }
+    prover_expr(walk, expr, span, scope, nested, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition)
+    return false
+}
+
+/// An `if` as a statement: each branch knows its condition, and what a
+/// branch that always leaves rules out holds after it.
+fn prover_if(mut walk: ProverWalk, cond: ref Expr, then_branch: ref Block, else_branch: ref Block?, span: Span, mut scope: ProverScope, at: ref ProverWhere, nested: ref ProverWhere, program: ref Program, words: ref winnow_grammar::InternerContext, own: ref Ledger, library: ref Ledger, ask: fn(ref TermArena, ref Vec[i64], i64) -> SolverAnswer sync, model: fn(ref TermArena, ref Vec[i64], i64) -> collections::BTreeMap[String, i64]? sync, escape: fn(ref String) -> String sync, holes_of: fn(ref Expr) -> Vec[Expr] sync, unaliased: fn(ref String) -> String sync, written_of: fn(ref Expr) -> String sync, shape_of: fn(ref Expr) -> String sync, condition: fn(ref String, ref collections::BTreeSet[String]) -> Vec[SolverTerm] sync) -> bool {
+    prover_expr(walk, cond, span, scope, nested, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition)
+    let holds = claim_term(cond, words, fn(name) { scope.ints.contains(name) }, walk.arena.nodes)
+    let mut fails: i64? = null
+    if holds != null {
+        fails = walk.arena.not(holds ?? 0)
+    }
+    let mut then_scope = scope.clone()
+    if holds != null {
+        then_scope.facts.push(holds ?? 0)
+    }
+    // A branch on a condition the prover cannot read is reached by some
+    // states and not others, and no fact says which.
+    then_scope.exact = then_scope.exact && holds != null
+    let cond_leaves = leaves_expr(cond, fn(e) { prover_throws(e, at, program, words, own, library, unaliased) }, holes_of, true)
+    then_scope.on_the_path(walk.arena, holds)
+    let then_leaves = prover_block(walk, then_branch, then_scope, nested, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition)
+    let else_leaves = prover_else(walk, else_branch, scope, fails, nested, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition)
+    // **What a branch that always leaves rules out** holds after it: `return
+    // 250 if speed > 250` leaves `speed <= 250`.
+    if then_leaves && else_leaves {
+        return true
+    }
+    if then_leaves {
+        if fails != null {
+            scope.facts.push(fails ?? 0)
+        }
+        scope.on_the_path(walk.arena, fails)
+        scope.exact = scope.exact && fails != null && !prover_else_leaves(else_branch, at, program, words, own, library, holes_of, unaliased)
+    } else if else_leaves {
+        if holds != null {
+            scope.facts.push(holds ?? 0)
+        }
+        scope.on_the_path(walk.arena, holds)
+        scope.exact = scope.exact && holds != null && !leaves_block(then_branch, fn(e) { prover_throws(e, at, program, words, own, library, unaliased) }, holes_of, true)
+    } else if leaves_block(then_branch, fn(e) { prover_throws(e, at, program, words, own, library, unaliased) }, holes_of, true) || prover_else_leaves(else_branch, at, program, words, own, library, holes_of, unaliased) {
+        scope.exact = false
+    }
+    if cond_leaves {
+        scope.exact = false
+    }
+    return false
+}
+
+/// An `else` branch, walked knowing its condition failed; whether it always
+/// leaves. No branch never leaves.
+fn prover_else(mut walk: ProverWalk, else_branch: ref Block?, scope: ref ProverScope, fails: i64?, nested: ref ProverWhere, program: ref Program, words: ref winnow_grammar::InternerContext, own: ref Ledger, library: ref Ledger, ask: fn(ref TermArena, ref Vec[i64], i64) -> SolverAnswer sync, model: fn(ref TermArena, ref Vec[i64], i64) -> collections::BTreeMap[String, i64]? sync, escape: fn(ref String) -> String sync, holes_of: fn(ref Expr) -> Vec[Expr] sync, unaliased: fn(ref String) -> String sync, written_of: fn(ref Expr) -> String sync, shape_of: fn(ref Expr) -> String sync, condition: fn(ref String, ref collections::BTreeSet[String]) -> Vec[SolverTerm] sync) -> bool {
+    let block = else_branch ?? return false
+    let mut else_scope = scope.clone()
+    if fails != null {
+        else_scope.facts.push(fails ?? 0)
+    }
+    else_scope.exact = else_scope.exact && fails != null
+    else_scope.on_the_path(walk.arena, fails)
+    return prover_block(walk, block, else_scope, nested, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition)
+}
+
+/// Whether an `else` branch may leave the block it stands in.
+fn prover_else_leaves(else_branch: ref Block?, at: ref ProverWhere, program: ref Program, words: ref winnow_grammar::InternerContext, own: ref Ledger, library: ref Ledger, holes_of: fn(ref Expr) -> Vec[Expr] sync, unaliased: fn(ref String) -> String sync) -> bool {
+    let block = else_branch ?? return false
+    return leaves_block(block, fn(e) { prover_throws(e, at, program, words, own, library, unaliased) }, holes_of, true)
+}
+
+/// **An expression, for what it calls**: a call to a function with a
+/// precondition proves it here (D5), and a nested block is walked with what
+/// it may know - a lambda's body with the bindings around it, which a binding
+/// the prover reads never changes; any other blind (D3).
+fn prover_expr(mut walk: ProverWalk, expr: ref Expr, span: Span, scope: ref ProverScope, at: ref ProverWhere, program: ref Program, words: ref winnow_grammar::InternerContext, own: ref Ledger, library: ref Ledger, ask: fn(ref TermArena, ref Vec[i64], i64) -> SolverAnswer sync, model: fn(ref TermArena, ref Vec[i64], i64) -> collections::BTreeMap[String, i64]? sync, escape: fn(ref String) -> String sync, holes_of: fn(ref Expr) -> Vec[Expr] sync, unaliased: fn(ref String) -> String sync, written_of: fn(ref Expr) -> String sync, shape_of: fn(ref Expr) -> String sync, condition: fn(ref String, ref collections::BTreeSet[String]) -> Vec[SolverTerm] sync) {
+    prover_calls_in(walk, expr, span, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition)
+    prover_blocks_in(walk, expr, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition)
+}
+
+/// Every call inside `expr`, as `contracts::sync`'s walk reaches them: not
+/// into nested blocks, the holes of literals included.
+fn prover_calls_in(mut walk: ProverWalk, expr: ref Expr, span: Span, scope: ref ProverScope, at: ref ProverWhere, program: ref Program, words: ref winnow_grammar::InternerContext, own: ref Ledger, library: ref Ledger, ask: fn(ref TermArena, ref Vec[i64], i64) -> SolverAnswer sync, model: fn(ref TermArena, ref Vec[i64], i64) -> collections::BTreeMap[String, i64]? sync, escape: fn(ref String) -> String sync, holes_of: fn(ref Expr) -> Vec[Expr] sync, unaliased: fn(ref String) -> String sync, written_of: fn(ref Expr) -> String sync, shape_of: fn(ref Expr) -> String sync, condition: fn(ref String, ref collections::BTreeSet[String]) -> Vec[SolverTerm] sync) {
+    match expr {
+        Expr::Call { func, args, .. } => {
+            let callee = prover_called(func, words, unaliased)
+            if callee != null {
+                prover_a_call(walk, callee ?? "", args, span, scope, at, program, words, own, ask, model, escape, written_of, condition)
+            }
+        },
+        else => {},
+    }
+    for hole in holes_of(expr) {
+        prover_calls_in(walk, hole, span, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition)
+    }
+    match expr {
+        Expr::Call { func, args, config } => {
+            prover_calls_in(walk, func, span, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition)
+            for arg in args {
+                prover_calls_in(walk, arg, span, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition)
+            }
+            for c in config {
+                prover_calls_in(walk, c.value, span, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition)
+            }
+        },
+        Expr::MethodCall { receiver, args, config, .. } => {
+            prover_calls_in(walk, receiver, span, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition)
+            for arg in args {
+                prover_calls_in(walk, arg, span, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition)
+            }
+            for c in config {
+                prover_calls_in(walk, c.value, span, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition)
+            }
+        },
+        Expr::SafeMethod { receiver, args, config, .. } => {
+            prover_calls_in(walk, receiver, span, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition)
+            for arg in args {
+                prover_calls_in(walk, arg, span, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition)
+            }
+            for c in config {
+                prover_calls_in(walk, c.value, span, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition)
+            }
+        },
+        Expr::Binary { lhs, rhs, .. } => {
+            prover_calls_in(walk, lhs, span, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition)
+            prover_calls_in(walk, rhs, span, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition)
+        },
+        Expr::Unary { expr, .. } => prover_calls_in(walk, expr, span, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition),
+        Expr::Try(inner) => prover_calls_in(walk, inner, span, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition),
+        Expr::Throw(inner) => prover_calls_in(walk, inner, span, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition),
+        Expr::Cast { expr, .. } => prover_calls_in(walk, expr, span, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition),
+        Expr::Field { base, .. } => prover_calls_in(walk, base, span, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition),
+        Expr::SafeField { base, .. } => prover_calls_in(walk, base, span, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition),
+        Expr::Index { base, index } => {
+            prover_calls_in(walk, base, span, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition)
+            prover_calls_in(walk, index, span, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition)
+        },
+        Expr::Range { start, end, .. } => {
+            prover_calls_in(walk, start, span, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition)
+            prover_calls_in(walk, end, span, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition)
+        },
+        Expr::Tuple(parts) => {
+            for part in parts {
+                prover_calls_in(walk, part, span, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition)
+            }
+        },
+        Expr::Coalesce { value, fallback } => {
+            prover_calls_in(walk, value, span, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition)
+            prover_calls_in(walk, fallback, span, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition)
+        },
+        Expr::TryCatch { expr, .. } => prover_calls_in(walk, expr, span, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition),
+        Expr::If { cond, .. } => prover_calls_in(walk, cond, span, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition),
+        Expr::Match { value, arms } => {
+            prover_calls_in(walk, value, span, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition)
+            for arm in arms {
+                prover_calls_in_maybe(walk, arm.guard, span, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition)
+                prover_calls_in(walk, arm.body, span, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition)
+            }
+        },
+        Expr::StructLit { fields, .. } => {
+            for field in fields {
+                prover_calls_in_maybe(walk, field.value, span, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition)
+            }
+        },
+        Expr::ListLit { items, .. } => {
+            for item in items {
+                prover_calls_in(walk, item, span, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition)
+            }
+        },
+        Expr::With { base, fields, .. } => {
+            prover_calls_in(walk, base, span, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition)
+            for field in fields {
+                prover_calls_in_maybe(walk, field.value, span, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition)
+            }
+        },
+        Expr::Return(value) => prover_calls_in_maybe(walk, value, span, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition),
+        Expr::Select(arms) => {
+            for arm in arms {
+                prover_calls_in(walk, arm.value, span, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition)
+            }
+        },
+        else => {},
+    }
+}
+
+fn prover_calls_in_maybe(mut walk: ProverWalk, expr: ref Expr?, span: Span, scope: ref ProverScope, at: ref ProverWhere, program: ref Program, words: ref winnow_grammar::InternerContext, own: ref Ledger, library: ref Ledger, ask: fn(ref TermArena, ref Vec[i64], i64) -> SolverAnswer sync, model: fn(ref TermArena, ref Vec[i64], i64) -> collections::BTreeMap[String, i64]? sync, escape: fn(ref String) -> String sync, holes_of: fn(ref Expr) -> Vec[Expr] sync, unaliased: fn(ref String) -> String sync, written_of: fn(ref Expr) -> String sync, shape_of: fn(ref Expr) -> String sync, condition: fn(ref String, ref collections::BTreeSet[String]) -> Vec[SolverTerm] sync) {
+    let present = expr ?? return
+    prover_calls_in(walk, present, span, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition)
+}
+
+/// Every block `expr` holds, as `contracts::sync`'s walk reaches them: a
+/// lambda's body - which runs during the call it is given to - included.
+fn prover_blocks_in(mut walk: ProverWalk, expr: ref Expr, scope: ref ProverScope, at: ref ProverWhere, program: ref Program, words: ref winnow_grammar::InternerContext, own: ref Ledger, library: ref Ledger, ask: fn(ref TermArena, ref Vec[i64], i64) -> SolverAnswer sync, model: fn(ref TermArena, ref Vec[i64], i64) -> collections::BTreeMap[String, i64]? sync, escape: fn(ref String) -> String sync, holes_of: fn(ref Expr) -> Vec[Expr] sync, unaliased: fn(ref String) -> String sync, written_of: fn(ref Expr) -> String sync, shape_of: fn(ref Expr) -> String sync, condition: fn(ref String, ref collections::BTreeSet[String]) -> Vec[SolverTerm] sync) {
+    match expr {
+        Expr::Block(block) => prover_nested(walk, block, null, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition),
+        Expr::Unsafe(block) => prover_nested(walk, block, null, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition),
+        Expr::Overlap(block) => prover_nested(walk, block, null, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition),
+        Expr::Closure { params, mutable, body } => {
+            let mut names: Vec[String] = []
+            for p in params {
+                names.push(words.resolve(p).clone())
+            }
+            for p in mutable {
+                names.push(words.resolve(p).clone())
+            }
+            prover_nested(walk, body, names, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition)
+        },
+        Expr::Call { func, args, config } => {
+            prover_blocks_in(walk, func, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition)
+            for arg in args {
+                prover_blocks_in(walk, arg, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition)
+            }
+            for c in config {
+                prover_blocks_in(walk, c.value, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition)
+            }
+        },
+        Expr::MethodCall { receiver, args, config, .. } => {
+            prover_blocks_in(walk, receiver, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition)
+            for arg in args {
+                prover_blocks_in(walk, arg, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition)
+            }
+            for c in config {
+                prover_blocks_in(walk, c.value, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition)
+            }
+        },
+        Expr::SafeMethod { receiver, args, config, .. } => {
+            prover_blocks_in(walk, receiver, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition)
+            for arg in args {
+                prover_blocks_in(walk, arg, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition)
+            }
+            for c in config {
+                prover_blocks_in(walk, c.value, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition)
+            }
+        },
+        Expr::If { then_branch, else_branch, .. } => {
+            prover_nested(walk, then_branch, null, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition)
+            prover_nested_maybe(walk, else_branch, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition)
+        },
+        Expr::TryCatch { expr, handler } => {
+            prover_blocks_in(walk, expr, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition)
+            prover_nested(walk, handler, null, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition)
+        },
+        Expr::Match { arms, .. } => {
+            for arm in arms {
+                prover_blocks_in(walk, arm.body, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition)
+            }
+        },
+        Expr::Select(arms) => {
+            for arm in arms {
+                prover_nested(walk, arm.body, null, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition)
+            }
+        },
+        else => {},
+    }
+}
+
+fn prover_nested_maybe(mut walk: ProverWalk, block: ref Block?, scope: ref ProverScope, at: ref ProverWhere, program: ref Program, words: ref winnow_grammar::InternerContext, own: ref Ledger, library: ref Ledger, ask: fn(ref TermArena, ref Vec[i64], i64) -> SolverAnswer sync, model: fn(ref TermArena, ref Vec[i64], i64) -> collections::BTreeMap[String, i64]? sync, escape: fn(ref String) -> String sync, holes_of: fn(ref Expr) -> Vec[Expr] sync, unaliased: fn(ref String) -> String sync, written_of: fn(ref Expr) -> String sync, shape_of: fn(ref Expr) -> String sync, condition: fn(ref String, ref collections::BTreeSet[String]) -> Vec[SolverTerm] sync) {
+    let present = block ?? return
+    prover_nested(walk, present, null, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition)
+}
+
+/// A nested block: a lambda's body, `lambda` its parameters, knows what the
+/// bindings around it hold - called as often as the callee likes, or never;
+/// any other block's bindings this walk cannot see, so it starts blind.
+fn prover_nested(mut walk: ProverWalk, block: ref Block, lambda: Vec[String]?, scope: ref ProverScope, at: ref ProverWhere, program: ref Program, words: ref winnow_grammar::InternerContext, own: ref Ledger, library: ref Ledger, ask: fn(ref TermArena, ref Vec[i64], i64) -> SolverAnswer sync, model: fn(ref TermArena, ref Vec[i64], i64) -> collections::BTreeMap[String, i64]? sync, escape: fn(ref String) -> String sync, holes_of: fn(ref Expr) -> Vec[Expr] sync, unaliased: fn(ref String) -> String sync, written_of: fn(ref Expr) -> String sync, shape_of: fn(ref Expr) -> String sync, condition: fn(ref String, ref collections::BTreeSet[String]) -> Vec[SolverTerm] sync) {
+    let is_lambda = lambda != null
+    if is_lambda {
+        let mut inner = scope.clone()
+        for param in lambda ?? [] {
+            inner.rebind(walk.arena, param)
+            inner.loose.insert(param.clone())
+        }
+        inner.path = null
+        inner.exact = false
+        prover_block(walk, block, inner, at.inside(true), program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition)
+    } else {
+        let mut inner = scope.blind()
+        prover_block(walk, block, inner, at.inside(false), program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition)
+    }
+}
+
+/// **A call by name**: an edge of the call graph, and where the callee has a
+/// precondition - its own, as the walk before found it in the first pass, or
+/// another package's ledger's - what the call shows of it.
+fn prover_a_call(mut walk: ProverWalk, callee: ref String, args: ref Vec[Expr], span: Span, scope: ref ProverScope, at: ref ProverWhere, program: ref Program, words: ref winnow_grammar::InternerContext, own: ref Ledger, ask: fn(ref TermArena, ref Vec[i64], i64) -> SolverAnswer sync, model: fn(ref TermArena, ref Vec[i64], i64) -> collections::BTreeMap[String, i64]? sync, escape: fn(ref String) -> String sync, written_of: fn(ref Expr) -> String sync, condition: fn(ref String, ref collections::BTreeSet[String]) -> Vec[SolverTerm] sync) {
+    if scope.locals.contains(callee) {
+        return
+    }
+    let caller = carrying_function(at.function)
+    if caller != null {
+        walk.state.edges.insert((caller ?? "", callee.clone()))
+    }
+    // The first pass reads the walk before's preconditions: its own are still
+    // being found.
+    let pre = if walk.state.collecting { prover_precondition_in(walk.state.known, callee) } else { prover_precondition_in(walk.state.preconditions, callee) }
+    if pre != null {
+        let function = free_function(program, words, callee) ?? return
+        let found = pre ?? Precondition::none()
+        prover_record_call(walk, callee, function.params, found.claims, args, span, scope, at, words, ask, model, escape, written_of)
+        return
+    }
+    let foreign = prover_foreign_contract(walk, callee, own, condition) ?? return
+    if !foreign.requires.is_empty() {
+        prover_record_call(walk, callee, foreign.params, foreign.requires, args, span, scope, at, words, ask, model, escape, written_of)
+    }
+}
+
+/// What a call shows of its callee's precondition, recorded: its findings,
+/// and how it reaches the callee, joined with any call that reads the same.
+fn prover_record_call(mut walk: ProverWalk, callee: ref String, params: ref Vec[String], claims: ref Vec[PreClaim], args: ref Vec[Expr], span: Span, scope: ref ProverScope, at: ref ProverWhere, words: ref winnow_grammar::InternerContext, ask: fn(ref TermArena, ref Vec[i64], i64) -> SolverAnswer sync, model: fn(ref TermArena, ref Vec[i64], i64) -> collections::BTreeMap[String, i64]? sync, escape: fn(ref String) -> String sync, written_of: fn(ref Expr) -> String sync) {
+    let outcome = walk.state.precondition_call(walk.arena, words, callee, params, claims, args, span, scope, at, ask, model, escape)
+    for found in outcome.findings {
+        walk.findings.push(found.clone())
+    }
+    let mut written: String = ""
+    for arg in args {
+        if !written.is_empty() {
+            written.push_str(", ")
+        }
+        written.push_str(written_of(arg))
+    }
+    let key = (callee.clone(), written)
+    let before = walk.reaches.remove(key)
+    if before != null {
+        walk.reaches.insert(key, joined_reach(before ?? CallReach::Proved, outcome.reach))
+    } else {
+        walk.reaches.insert(key, outcome.reach)
+    }
+}
+
+/// **Another package's contract, read back into terms** (ADR-269 D18), once
+/// per function: each `requires` and `ensures` the ledger states, parsed as
+/// the language's own syntax over the parameters' names. Nothing where the
+/// ledger has no such function; a condition that does not read back is left
+/// out, which only ever proves less.
+fn prover_foreign_contract(mut walk: ProverWalk, key: ref String, own: ref Ledger, condition: fn(ref String, ref collections::BTreeSet[String]) -> Vec[SolverTerm] sync) -> Foreign? {
+    let cached = prover_cached_foreign(walk.state.foreign, key)
+    if cached != null {
+        return cached
+    }
+    let contract = own.functions[key] ?? return null
+    let shape = foreign_shape(contract)
+    let mut requires: Vec[i64] = []
+    for text in contract.requires {
+        requires.push(prover_condition_term(walk.arena, text, shape.names, condition))
+    }
+    let mut ensures: Vec[i64] = []
+    for text in contract.ensures {
+        ensures.push(prover_condition_term(walk.arena, text, shape.names, condition))
+    }
+    let foreign = foreign_from(contract, shape, requires, ensures)
+    walk.state.foreign.insert(key.clone(), foreign.clone())
+    return foreign
+}
+
+/// A condition read back into the arena: its term, or `-1` where it does not
+/// read back.
+fn prover_condition_term(mut arena: TermArena, text: ref String, names: ref collections::BTreeSet[String], condition: fn(ref String, ref collections::BTreeSet[String]) -> Vec[SolverTerm] sync) -> i64 {
+    let nodes = condition(text, names)
+    if nodes.is_empty() {
+        return -1
+    }
+    return arena.adopt(nodes)
+}
+
+/// What a call's postconditions say of the name its result is bound to: the
+/// callee's own, or another package's ledger's.
+fn prover_postconditions_of(mut walk: ProverWalk, callee: ref String, args: ref Vec[Expr], bound: ref String, scope: ref ProverScope, program: ref Program, words: ref winnow_grammar::InternerContext, own: ref Ledger, condition: fn(ref String, ref collections::BTreeSet[String]) -> Vec[SolverTerm] sync) -> Vec[i64] {
+    let posts = standing_posts(walk.state.postconditions, callee)
+    if posts != null {
+        let function = free_function(program, words, callee) ?? return []
+        return postconditions_for(walk.arena, posts ?? [], function.params, args, bound, scope, words)
+    }
+    let foreign = prover_foreign_contract(walk, callee, own, condition) ?? return []
+    return postconditions_for(walk.arena, foreign.ensures, foreign.params, args, bound, scope, words)
+}
+
+/// Whether a function hands back a whole number.
+fn prover_returns_whole(mut walk: ProverWalk, callee: ref String, program: ref Program, words: ref winnow_grammar::InternerContext, own: ref Ledger, condition: fn(ref String, ref collections::BTreeSet[String]) -> Vec[SolverTerm] sync) -> bool {
+    let function = free_function(program, words, callee)
+    if function != null {
+        let found = function ?? return false
+        return found.whole_result
+    }
+    let foreign = prover_foreign_contract(walk, callee, own, condition) ?? return false
+    return foreign.whole_result
+}
+
+/// Whether a call may throw out of the function `at` is.
+fn prover_throws(call: ref Expr, at: ref ProverWhere, program: ref Program, words: ref winnow_grammar::InternerContext, own: ref Ledger, library: ref Ledger, unaliased: fn(ref String) -> String sync) -> bool {
+    return may_throw(call, at.throws_out, program, words, own, library, unaliased)
+}
+
+/// The callee a call names, where it is a function by name: a bare name, or
+/// a path as the ledger keys it.
+fn prover_called(func: ref Expr, words: ref winnow_grammar::InternerContext, unaliased: fn(ref String) -> String sync) -> String? {
+    return match func {
+        Expr::Variable(name) => words.resolve(name).clone(),
+        Expr::Path(segments) => prover_qualified(segments, words, unaliased),
+        else => null,
+    }
+}
+
+/// The callee a `let`'s value calls, where no local shadows it.
+fn prover_bound_callee(func: ref Expr, scope: ref ProverScope, words: ref winnow_grammar::InternerContext, unaliased: fn(ref String) -> String sync) -> String? {
+    return match func {
+        Expr::Variable(name) => {
+            let text = words.resolve(name)
+            if scope.locals.contains(text) {
+                return null
+            }
+            text.clone()
+        },
+        Expr::Path(segments) => prover_qualified(segments, words, unaliased),
+        else => null,
+    }
+}
+
+/// A path callee as the ledger keys it: `mathx::percent`, unaliased.
+fn prover_qualified(segments: ref Vec[winnow_grammar::Symbol], words: ref winnow_grammar::InternerContext, unaliased: fn(ref String) -> String sync) -> String {
+    let mut joined: String = ""
+    for segment in segments {
+        if !joined.is_empty() {
+            joined.push_str("::")
+        }
+        joined.push_str(words.resolve(segment))
+    }
+    return unaliased(joined)
+}
+
+/// Whether a call is one of the checker's `assert`s.
+fn prover_an_assert_call(func: ref Expr, args: ref Vec[Expr], span: Span, claims: ref collections::BTreeSet[(i64, String)], shape_of: fn(ref Expr) -> String sync) -> bool {
+    let named = match func {
+        Expr::Variable(_) => true,
+        else => false,
+    }
+    if !named || args.len() != 1 {
+        return false
+    }
+    return claims.contains((span.start as i64, shape_of(args[0])))
+}
+
+/// The `message:` an `assert` gives, where it is text as written.
+fn prover_message(config: ref Vec[ConfigArg], words: ref winnow_grammar::InternerContext) -> String? {
+    for c in config {
+        if words.resolve(c.name) == "message" {
+            match c.value {
+                Expr::LitStr { text, .. } => return text.clone(),
+                else => {},
+            }
+        }
+    }
+    return null
+}
+
+/// The name a `return name` hands back.
+fn prover_returned_name(stmt: ref Stmt, words: ref winnow_grammar::InternerContext) -> String? {
+    return match stmt {
+        Stmt::Return(value) => prover_variable_named(value, words),
+        else => null,
+    }
+}
+
+fn prover_variable_named(value: ref Expr?, words: ref winnow_grammar::InternerContext) -> String? {
+    let present = value ?? return null
+    return match present {
+        Expr::Variable(name) => words.resolve(name).clone(),
+        else => null,
+    }
+}
+
+/// Whether a statement is an `if` standing as one.
+fn prover_an_if(stmt: ref Stmt) -> bool {
+    return match stmt {
+        Stmt::Expr(expr) => match expr {
+            Expr::If { .. } => true,
+            else => false,
+        },
+        else => false,
+    }
+}
+
+fn prover_symbol_text(symbol: ref winnow_grammar::Symbol?, words: ref winnow_grammar::InternerContext) -> String? {
+    let present = symbol ?? return null
+    return words.resolve(present).clone()
+}
+
+/// What a `let`'s written type says: `0` a whole number, `1` an unsigned
+/// one, `2` a list or text, which has a length.
+fn prover_typed(ty: ref Type?, words: ref winnow_grammar::InternerContext, asked: i64) -> bool {
+    let t = ty ?? return false
+    let name = words.resolve(t.name)
+    if asked == 0 {
+        return t.generics.is_empty() && is_whole_number(name)
+    }
+    if asked == 1 {
+        return name.starts_with("u")
+    }
+    return has_a_length(name)
+}
+
+/// A function's name as `nikaia test` makes it from a `test` block:
+/// `__nikaia_test_` and a number.
+fn prover_a_test_function(name: ref String?) -> bool {
+    let text = name ?? return false
+    let prefix = "__nikaia_test_"
+    if !text.starts_with(prefix) || text.len() == prefix.len() {
+        return false
+    }
+    let c: Vec[char] = text.chars().collect()
+    for k in 14..<c.len() {
+        if c[k] < '0' || c[k] > '9' {
+            return false
+        }
+    }
+    return true
+}
+
+fn prover_precondition_in(map: ref collections::BTreeMap[String, Precondition], callee: ref String) -> Precondition? {
+    let found = map[callee] ?? return null
+    return found.clone()
+}
+
+fn prover_cached_foreign(map: ref collections::BTreeMap[String, Foreign?], key: ref String) -> Foreign? {
+    let found = map[key] ?? return null
+    return found.clone()
+}
+
+fn prover_named_main(own: ref String?) -> bool {
+    let name = own ?? return false
+    return name == "main"
+}
