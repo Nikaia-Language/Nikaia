@@ -10,6 +10,15 @@
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct TermId(u32);
 
+impl TermId {
+    /// Its place in the arena, for a caller that names terms by number - a
+    /// module written in Nikaia, which reaches the arena one node at a time
+    /// (ADR-294, #435).
+    pub fn index(self) -> usize {
+        self.0 as usize
+    }
+}
+
 /// One term. Sorts are `Bool` and `Int` (unbounded integers); a variable is an
 /// `Int`. Each further theory adds its sorts and terms by a record of its own
 /// (ADR-270 D2).
@@ -51,6 +60,11 @@ impl Arena {
 
     pub fn len(&self) -> usize {
         self.terms.len()
+    }
+
+    /// The term at `index`, where there is one ([`TermId::index`]).
+    pub fn at(&self, index: usize) -> Option<&Term> {
+        self.terms.get(index)
     }
 
     pub fn is_empty(&self) -> bool {

@@ -37,6 +37,7 @@ use crate::check::value_node;
 use crate::parser::Parsed;
 use nikaia_std::tools::bounds_basic as nika;
 use nikaia_std::tools::bounds_body as body_of;
+use nikaia_std::tools::bounds_interval::{self as interval, Range, SolverTerm};
 use nikaia_std::tools::bounds_shape::{self as shaped, Around, BodyShape};
 
 /// What happens to an index check the walk proved (ADR-306 D14): `on` writes
@@ -344,117 +345,6 @@ struct Walk<'a> {
     at: usize,
 }
 
-/// **A closed interval of whole numbers**, either end open where nothing is
-/// known.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct Range {
-    lo: Option<i64>,
-    hi: Option<i64>,
-}
-
-impl Range {
-    fn exactly(n: i64) -> Range {
-        Range {
-            lo: Some(n),
-            hi: Some(n),
-        }
-    }
-
-    fn of_type(ty: &str) -> Option<Range> {
-        let (lo, hi): (i128, i128) = match ty {
-            "i8" => (i8::MIN.into(), i8::MAX.into()),
-            "i16" => (i16::MIN.into(), i16::MAX.into()),
-            "i32" => (i32::MIN.into(), i32::MAX.into()),
-            "i64" | "isize" => (i64::MIN.into(), i64::MAX.into()),
-            "u8" => (0, u8::MAX.into()),
-            "u16" => (0, u16::MAX.into()),
-            "u32" => (0, u32::MAX.into()),
-            "u64" | "usize" => (0, u64::MAX.into()),
-            _ => return None,
-        };
-        // A bound past what an `i64` holds is no bound the proof can state;
-        // the nearer one is stronger, so claiming it is never wrong.
-        Some(Range {
-            lo: Some(lo.max(i64::MIN.into()) as i64),
-            hi: Some(hi.min(i64::MAX.into()) as i64),
-        })
-    }
-
-    /// Whether every number this one admits is one `other` admits too:
-    /// `self` holds what `other` claims.
-    fn holds(&self, other: &Range) -> bool {
-        let lo = match (self.lo, other.lo) {
-            (_, None) => self.lo.is_none(),
-            (None, Some(_)) => true,
-            (Some(a), Some(b)) => a <= b,
-        };
-        let hi = match (self.hi, other.hi) {
-            (_, None) => self.hi.is_none(),
-            (None, Some(_)) => true,
-            (Some(a), Some(b)) => a >= b,
-        };
-        lo && hi
-    }
-
-    fn join(&self, other: &Range) -> Range {
-        Range {
-            lo: self.lo.zip(other.lo).map(|(a, b)| a.min(b)),
-            hi: self.hi.zip(other.hi).map(|(a, b)| a.max(b)),
-        }
-    }
-
-    fn meet(&self, other: &Range) -> Range {
-        Range {
-            lo: match (self.lo, other.lo) {
-                (Some(a), Some(b)) => Some(a.max(b)),
-                (a, b) => a.or(b),
-            },
-            hi: match (self.hi, other.hi) {
-                (Some(a), Some(b)) => Some(a.min(b)),
-                (a, b) => a.or(b),
-            },
-        }
-    }
-
-    fn is_bounded(&self) -> bool {
-        self.lo.is_some() || self.hi.is_some()
-    }
-
-    fn add(&self, other: &Range) -> Range {
-        Range {
-            lo: self.lo.zip(other.lo).and_then(|(a, b)| a.checked_add(b)),
-            hi: self.hi.zip(other.hi).and_then(|(a, b)| a.checked_add(b)),
-        }
-    }
-
-    fn neg(&self) -> Range {
-        Range {
-            lo: self.hi.and_then(i64::checked_neg),
-            hi: self.lo.and_then(i64::checked_neg),
-        }
-    }
-
-    fn mul(&self, other: &Range) -> Range {
-        let (Some(a), Some(b), Some(c), Some(d)) = (self.lo, self.hi, other.lo, other.hi) else {
-            return Range { lo: None, hi: None };
-        };
-        let products = [
-            a.checked_mul(c),
-            a.checked_mul(d),
-            b.checked_mul(c),
-            b.checked_mul(d),
-        ];
-        if products.iter().any(Option::is_none) {
-            return Range { lo: None, hi: None };
-        }
-        let products = products.map(|p| p.unwrap_or_default());
-        Range {
-            lo: products.iter().min().copied(),
-            hi: products.iter().max().copied(),
-        }
-    }
-}
-
 impl Walk<'_> {
     fn text(&self, sym: winnow_grammar::Symbol) -> &str {
         self.parsed.text(sym)
@@ -575,11 +465,10 @@ impl Walk<'_> {
         if let Some(n) = self.arena.constant(term) {
             return Range::exactly(n);
         }
-        let Some(form) = linear_form(&self.arena, term) else {
-            return Range { lo: None, hi: None };
-        };
-        let known = propagate(&self.arena, &facts.facts);
-        let candidate = evaluate(&form, &known);
+        let given: Vec<i64> = facts.facts.iter().map(|t| t.index() as i64).collect();
+        let arena = &self.arena;
+        let candidate =
+            interval::candidate(term.index() as i64, &given, &|at| solver_term(arena, at));
         let mut confirmed = Range { lo: None, hi: None };
         if let Some(hi) = candidate.hi {
             let k = self.arena.int(hi);
@@ -1909,147 +1798,29 @@ fn breaks(parsed: &Parsed, body: &Block) -> bool {
 
 // --- interval propagation (ADR-306) ---------------------------------------------
 
-/// A linear term as coefficients by variable and a constant.
-type Form = (BTreeMap<String, i128>, i128);
-
-/// What propagation knows of each variable: its least and greatest value.
-type Known = HashMap<String, (Option<i128>, Option<i128>)>;
-
-/// `term` as a sum of variables times constants plus a constant, where it is
-/// one.
-fn linear_form(arena: &Arena, term: TermId) -> Option<Form> {
+/// **One node of `arena`, by index, for `tools/bounds_interval.nika`**
+/// (ADR-294, #435): the propagation reads the terms where they are, one node
+/// at a time, with each child named by its index.
+fn solver_term(arena: &Arena, at: i64) -> SolverTerm {
     use nikaia_logic::Term;
-    Some(match arena.get(term) {
-        Term::Int(n) => (BTreeMap::new(), i128::from(*n)),
-        Term::Var(name) => (BTreeMap::from([(name.clone(), 1)]), 0),
-        Term::Add(a, b) | Term::Sub(a, b) => {
-            let sign = match arena.get(term) {
-                Term::Add(..) => 1,
-                _ => -1,
-            };
-            let (mut vars, k) = linear_form(arena, *a)?;
-            let (other, l) = linear_form(arena, *b)?;
-            for (name, c) in other {
-                *vars.entry(name).or_default() += sign * c;
-            }
-            (vars, k + sign * l)
-        }
-        Term::Neg(a) => negated(linear_form(arena, *a)?),
-        Term::Mul(a, b) => {
-            let (va, ka) = linear_form(arena, *a)?;
-            let (vb, kb) = linear_form(arena, *b)?;
-            match (va.is_empty(), vb.is_empty()) {
-                (true, _) => (vb.into_iter().map(|(n, c)| (n, c * ka)).collect(), ka * kb),
-                (_, true) => (va.into_iter().map(|(n, c)| (n, c * kb)).collect(), ka * kb),
-                _ => return None,
-            }
-        }
-        _ => return None,
-    })
-}
-
-fn negated((vars, k): Form) -> Form {
-    (vars.into_iter().map(|(n, c)| (n, -c)).collect(), -k)
-}
-
-/// The comparisons a fact asserts, each as `form <= 0`.
-fn atoms(arena: &Arena, fact: TermId, out: &mut Vec<Form>) {
-    use nikaia_logic::Term;
-    let diff = |a: TermId, b: TermId| -> Option<Form> {
-        let (mut va, ka) = linear_form(arena, a)?;
-        let (vb, kb) = linear_form(arena, b)?;
-        for (n, c) in vb {
-            *va.entry(n).or_default() -= c;
-        }
-        Some((va, ka - kb))
+    let id = |t: &TermId| t.index() as i64;
+    let Some(term) = usize::try_from(at).ok().and_then(|at| arena.at(at)) else {
+        return SolverTerm::Other;
     };
-    match arena.get(fact) {
-        Term::And(parts) => parts.iter().for_each(|p| atoms(arena, *p, out)),
-        Term::Le(a, b) => out.extend(diff(*a, *b)),
-        // Over whole numbers `a < b` is `a - b + 1 <= 0`.
-        Term::Lt(a, b) => out.extend(diff(*a, *b).map(|(v, k)| (v, k + 1))),
-        Term::Ge(a, b) => out.extend(diff(*a, *b).map(negated)),
-        Term::Gt(a, b) => out.extend(diff(*a, *b).map(negated).map(|(v, k)| (v, k + 1))),
-        Term::Eq(a, b) => {
-            if let Some(d) = diff(*a, *b) {
-                out.push(negated(d.clone()));
-                out.push(d);
-            }
-        }
-        _ => {}
-    }
-}
-
-/// **Bounds on each variable the facts imply**, by a few rounds of
-/// `c·x <= -k - (the least the other terms can be)`. Sound and not complete;
-/// the solver confirms each bound that is used.
-fn propagate(arena: &Arena, facts: &[TermId]) -> Known {
-    let mut all = Vec::new();
-    for fact in facts {
-        atoms(arena, *fact, &mut all);
-    }
-    let mut known = Known::new();
-    for _ in 0..4 {
-        let mut changed = false;
-        for (vars, k) in &all {
-            for (x, cx) in vars {
-                if *cx == 0 {
-                    continue;
-                }
-                let mut rest = Some(*k);
-                for (y, cy) in vars {
-                    if y == x {
-                        continue;
-                    }
-                    let (lo, hi) = known.get(y).copied().unwrap_or((None, None));
-                    let least = match *cy > 0 {
-                        true => lo.map(|l| cy * l),
-                        false => hi.map(|h| cy * h),
-                    };
-                    rest = rest.zip(least).and_then(|(r, l)| r.checked_add(l));
-                }
-                let Some(rest) = rest else { continue };
-                // cx·x <= -rest
-                let entry = known.entry(x.clone()).or_insert((None, None));
-                if *cx > 0 {
-                    let bound = (-rest).div_euclid(*cx);
-                    if entry.1.is_none_or(|h| bound < h) {
-                        entry.1 = Some(bound);
-                        changed = true;
-                    }
-                } else {
-                    // x >= rest / -cx, rounded up.
-                    let bound = -((-rest).div_euclid(-cx));
-                    if entry.0.is_none_or(|l| bound > l) {
-                        entry.0 = Some(bound);
-                        changed = true;
-                    }
-                }
-            }
-        }
-        if !changed {
-            break;
-        }
-    }
-    known
-}
-
-/// The interval a linear form takes over what is known of its variables.
-fn evaluate(form: &Form, known: &Known) -> Range {
-    let (vars, k) = form;
-    let (mut lo, mut hi) = (Some(*k), Some(*k));
-    for (x, c) in vars {
-        let (l, h) = known.get(x).copied().unwrap_or((None, None));
-        let (least, most) = match *c >= 0 {
-            true => (l.map(|l| c * l), h.map(|h| c * h)),
-            false => (h.map(|h| c * h), l.map(|l| c * l)),
-        };
-        lo = lo.zip(least).and_then(|(a, b)| a.checked_add(b));
-        hi = hi.zip(most).and_then(|(a, b)| a.checked_add(b));
-    }
-    Range {
-        lo: lo.and_then(|v| i64::try_from(v).ok()),
-        hi: hi.and_then(|v| i64::try_from(v).ok()),
+    match term {
+        Term::Int(n) => SolverTerm::Int(*n),
+        Term::Var(name) => SolverTerm::Var(name.clone()),
+        Term::Add(a, b) => SolverTerm::Add(id(a), id(b)),
+        Term::Sub(a, b) => SolverTerm::Sub(id(a), id(b)),
+        Term::Neg(a) => SolverTerm::Neg(id(a)),
+        Term::Mul(a, b) => SolverTerm::Mul(id(a), id(b)),
+        Term::Le(a, b) => SolverTerm::Le(id(a), id(b)),
+        Term::Lt(a, b) => SolverTerm::Lt(id(a), id(b)),
+        Term::Ge(a, b) => SolverTerm::Ge(id(a), id(b)),
+        Term::Gt(a, b) => SolverTerm::Gt(id(a), id(b)),
+        Term::Eq(a, b) => SolverTerm::Eq(id(a), id(b)),
+        Term::And(parts) => SolverTerm::And(parts.iter().map(id).collect()),
+        _ => SolverTerm::Other,
     }
 }
 

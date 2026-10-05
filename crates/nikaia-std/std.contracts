@@ -1740,6 +1740,13 @@ sync = true
 touches = []
 signature = "(self: ref collections::HashMap[?, ?]) -> i64"
 
+# Whether the map holds no pairs (#450).
+[fn."collections::HashMap::is_empty"]
+pub = true
+sync = true
+touches = []
+signature = "(self: ref collections::HashMap[?, ?]) -> bool"
+
 # A map with nothing in it. It is written `HashMap()`.
 [fn."collections::HashMap::new"]
 pub = true
@@ -1810,6 +1817,13 @@ sync = true
 touches = []
 signature = "(self: ref collections::HashSet[?]) -> i64"
 
+# Whether the set holds no values (#450).
+[fn."collections::HashSet::is_empty"]
+pub = true
+sync = true
+touches = []
+signature = "(self: ref collections::HashSet[?]) -> bool"
+
 # A set with nothing in it, kept in order. It is written `collections::BTreeSet()`.
 [fn."collections::BTreeSet::new"]
 pub = true
@@ -1849,6 +1863,13 @@ pub = true
 sync = true
 touches = []
 signature = "(self: ref collections::BTreeSet[?]) -> i64"
+
+# Whether the set holds no values (#450).
+[fn."collections::BTreeSet::is_empty"]
+pub = true
+sync = true
+touches = []
+signature = "(self: ref collections::BTreeSet[?]) -> bool"
 
 # A map with nothing in it, kept in the keys' order. It is written
 # `collections::BTreeMap()`.
@@ -1906,6 +1927,13 @@ pub = true
 sync = true
 touches = []
 signature = "(self: ref collections::BTreeMap[?, ?]) -> i64"
+
+# Whether the map holds no pairs (#450).
+[fn."collections::BTreeMap::is_empty"]
+pub = true
+sync = true
+touches = []
+signature = "(self: ref collections::BTreeMap[?, ?]) -> bool"
 
 # A copy of the map, owned by whoever asked for it (#125: without an entry a
 # `.clone()` of one resolved to nothing and read as a call that may pause).

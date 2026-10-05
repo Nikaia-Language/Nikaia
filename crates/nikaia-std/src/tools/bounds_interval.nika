@@ -1,0 +1,373 @@
+// crates/nikaia-std/src/tools/bounds_interval.nika
+//
+// **Intervals, and the bounds the facts imply** (ADR-306 D4, D7), moved from
+// the compiler's `bounds` (ADR-294, #125, #435 step 2): a closed interval of
+// whole numbers with either end open, and the interval propagation that
+// proposes a candidate bound for a linear term over the walk's facts.
+//
+// **A candidate, not a proof.** The walk confirms each end with the solver on
+// a certificate its checker accepts, so what is computed here only decides
+// which bounds are tried. That is why the arithmetic is checked `i64` and an
+// overflow is simply no bound: a candidate lost costs a proof, never a wrong
+// one.
+//
+// The facts are `nikaia-logic` terms, reached one node at a time through
+// `term_of`, which hands back a node with its children as indices: the terms
+// stay in the compiler's arena and nothing is copied.
+
+use std::collections
+
+/// **A closed interval of whole numbers**, either end open where nothing is
+/// known.
+pub struct Range {
+    pub lo: i64?,
+    pub hi: i64?,
+}
+
+/// One node of a term, with its children by index.
+pub enum SolverTerm {
+    Int(i64),
+    Var(String),
+    Add(i64, i64),
+    Sub(i64, i64),
+    Neg(i64),
+    Mul(i64, i64),
+    Le(i64, i64),
+    Lt(i64, i64),
+    Ge(i64, i64),
+    Gt(i64, i64),
+    Eq(i64, i64),
+    And(Vec[i64]),
+    /// What the propagation does not read: a disjunction, a negation, a
+    /// truth value.
+    Other,
+}
+
+/// A linear term: each variable's coefficient and a constant.
+struct Form {
+    vars: collections::BTreeMap[String, i64],
+    k: i64,
+}
+
+impl Range {
+    pub fn open() -> Range {
+        return Range { lo: null, hi: null }
+    }
+
+    pub fn exactly(n: i64) -> Range {
+        return Range { lo: n, hi: n }
+    }
+
+    /// The values a whole-number type holds, where `ty` is one.
+    pub fn of_type(ty: ref String) -> Range? {
+        return match ty {
+            "i8" => Range { lo: -128, hi: 127 },
+            "i16" => Range { lo: -32768, hi: 32767 },
+            "i32" => Range { lo: -2147483648, hi: 2147483647 },
+            "i64" => Range { lo: -9223372036854775808, hi: 9223372036854775807 },
+            "isize" => Range { lo: -9223372036854775808, hi: 9223372036854775807 },
+            "u8" => Range { lo: 0, hi: 255 },
+            "u16" => Range { lo: 0, hi: 65535 },
+            "u32" => Range { lo: 0, hi: 4294967295 },
+            // A bound past what an `i64` holds is no bound the proof can
+            // state; the nearer one is stronger, so claiming it is never
+            // wrong.
+            "u64" => Range { lo: 0, hi: 9223372036854775807 },
+            "usize" => Range { lo: 0, hi: 9223372036854775807 },
+            else => null,
+        }
+    }
+
+    /// Whether every number this one admits is one `other` admits too:
+    /// `self` holds what `other` claims.
+    pub fn holds(ref self, other: ref Range) -> bool {
+        let mut lo = self.lo == null
+        if other.lo != null {
+            lo = self.lo == null || (self.lo ?? 0) <= (other.lo ?? 0)
+        }
+        let mut hi = self.hi == null
+        if other.hi != null {
+            hi = self.hi == null || (self.hi ?? 0) >= (other.hi ?? 0)
+        }
+        return lo && hi
+    }
+
+    /// The least interval holding both.
+    pub fn join(ref self, other: ref Range) -> Range {
+        let mut out = Range::open()
+        if self.lo != null && other.lo != null {
+            out.lo = (self.lo ?? 0).min(other.lo ?? 0)
+        }
+        if self.hi != null && other.hi != null {
+            out.hi = (self.hi ?? 0).max(other.hi ?? 0)
+        }
+        return out
+    }
+
+    /// What both say.
+    pub fn meet(ref self, other: ref Range) -> Range {
+        let mut out = Range { lo: self.lo, hi: self.hi }
+        if other.lo != null {
+            out.lo = other.lo
+            if self.lo != null {
+                out.lo = (self.lo ?? 0).max(other.lo ?? 0)
+            }
+        }
+        if other.hi != null {
+            out.hi = other.hi
+            if self.hi != null {
+                out.hi = (self.hi ?? 0).min(other.hi ?? 0)
+            }
+        }
+        return out
+    }
+
+    pub fn is_bounded(ref self) -> bool {
+        return self.lo != null || self.hi != null
+    }
+
+    pub fn add(ref self, other: ref Range) -> Range {
+        let mut out = Range::open()
+        if self.lo != null && other.lo != null {
+            out.lo = (self.lo ?? 0).checked_add(other.lo ?? 0)
+        }
+        if self.hi != null && other.hi != null {
+            out.hi = (self.hi ?? 0).checked_add(other.hi ?? 0)
+        }
+        return out
+    }
+
+    pub fn neg(ref self) -> Range {
+        let mut out = Range::open()
+        if self.hi != null {
+            out.lo = (self.hi ?? 0).checked_neg()
+        }
+        if self.lo != null {
+            out.hi = (self.lo ?? 0).checked_neg()
+        }
+        return out
+    }
+
+    pub fn mul(ref self, other: ref Range) -> Range {
+        if self.lo == null || self.hi == null || other.lo == null || other.hi == null {
+            return Range::open()
+        }
+        let (a, b, c, d) = (self.lo ?? 0, self.hi ?? 0, other.lo ?? 0, other.hi ?? 0)
+        let ac = a.checked_mul(c) ?? return Range::open()
+        let ad = a.checked_mul(d) ?? return Range::open()
+        let bc = b.checked_mul(c) ?? return Range::open()
+        let bd = b.checked_mul(d) ?? return Range::open()
+        return Range { lo: ac.min(ad).min(bc.min(bd)), hi: ac.max(ad).max(bc.max(bd)) }
+    }
+}
+
+/// **A candidate interval for `term` over `facts`**: the term as a linear
+/// form, the bounds a few rounds of propagation give its variables, and the
+/// interval the form takes over them. Open where the term is not linear.
+pub fn candidate(term: i64, facts: ref Vec[i64], term_of: fn(i64) -> SolverTerm sync) -> Range {
+    let form = linear_form(term, term_of) ?? return Range::open()
+    let known = propagate(facts, term_of)
+    return evaluate(form, known)
+}
+
+/// `term` as a sum of variables times constants plus a constant, where it is
+/// one and fits.
+fn linear_form(term: i64, term_of: fn(i64) -> SolverTerm sync) -> Form? {
+    return match term_of(term) {
+        SolverTerm::Int(n) => Form { vars: collections::BTreeMap(), k: n },
+        SolverTerm::Var(name) => {
+            let mut vars: collections::BTreeMap[String, i64] = collections::BTreeMap()
+            vars.insert(name.clone(), 1)
+            Form { vars: vars, k: 0 }
+        },
+        SolverTerm::Add(a, b) => {
+            let left = linear_form(a, term_of) ?? return null
+            let right = linear_form(b, term_of) ?? return null
+            sum(left, right, 1)
+        },
+        SolverTerm::Sub(a, b) => {
+            let left = linear_form(a, term_of) ?? return null
+            let right = linear_form(b, term_of) ?? return null
+            sum(left, right, -1)
+        },
+        SolverTerm::Neg(a) => {
+            let inner = linear_form(a, term_of) ?? return null
+            scaled(inner, -1)
+        },
+        SolverTerm::Mul(a, b) => {
+            let left = linear_form(a, term_of) ?? return null
+            let right = linear_form(b, term_of) ?? return null
+            if left.vars.is_empty() {
+                return scaled(right, left.k)
+            }
+            if right.vars.is_empty() {
+                return scaled(left, right.k)
+            }
+            null
+        },
+        else => null,
+    }
+}
+
+/// `left + sign · right`, where it fits.
+fn sum(left: ref Form, right: ref Form, sign: i64) -> Form? {
+    let mut vars = left.vars.clone()
+    for (name, c) in right.vars {
+        let before = vars.get(name) ?? 0
+        let by = c.checked_mul(sign) ?? return null
+        let after = before.checked_add(by) ?? return null
+        vars.insert(name.clone(), after)
+    }
+    let by = right.k.checked_mul(sign) ?? return null
+    let k = left.k.checked_add(by) ?? return null
+    return Form { vars: vars, k: k }
+}
+
+/// `form · by`, where it fits.
+fn scaled(form: ref Form, by: i64) -> Form? {
+    let mut vars: collections::BTreeMap[String, i64] = collections::BTreeMap()
+    for (name, c) in form.vars {
+        let times = c.checked_mul(by) ?? return null
+        vars.insert(name.clone(), times)
+    }
+    let k = form.k.checked_mul(by) ?? return null
+    return Form { vars: vars, k: k }
+}
+
+/// `form + n`, where it fits.
+fn shifted(form: ref Form, n: i64) -> Form? {
+    let k = form.k.checked_add(n) ?? return null
+    return Form { vars: form.vars.clone(), k: k }
+}
+
+/// The comparisons a fact asserts, each as `form <= 0`.
+fn atoms(fact: i64, term_of: fn(i64) -> SolverTerm sync, mut out: Vec[Form]) {
+    match term_of(fact) {
+        SolverTerm::And(parts) => {
+            for part in parts {
+                atoms(part, term_of, out)
+            }
+        },
+        SolverTerm::Le(a, b) => {
+            let d = difference(a, b, term_of) ?? return
+            out.push(d)
+        },
+        // Over whole numbers `a < b` is `a - b + 1 <= 0`.
+        SolverTerm::Lt(a, b) => {
+            let d = difference(a, b, term_of) ?? return
+            let strict = shifted(d, 1) ?? return
+            out.push(strict)
+        },
+        SolverTerm::Ge(a, b) => {
+            let d = difference(a, b, term_of) ?? return
+            let turned = scaled(d, -1) ?? return
+            out.push(turned)
+        },
+        SolverTerm::Gt(a, b) => {
+            let d = difference(a, b, term_of) ?? return
+            let turned = scaled(d, -1) ?? return
+            let strict = shifted(turned, 1) ?? return
+            out.push(strict)
+        },
+        SolverTerm::Eq(a, b) => {
+            let d = difference(a, b, term_of) ?? return
+            let turned = scaled(d, -1) ?? return
+            out.push(turned)
+            out.push(d)
+        },
+        else => {},
+    }
+}
+
+/// `a - b` as a linear form.
+fn difference(a: i64, b: i64, term_of: fn(i64) -> SolverTerm sync) -> Form? {
+    let left = linear_form(a, term_of) ?? return null
+    let right = linear_form(b, term_of) ?? return null
+    return sum(left, right, -1)
+}
+
+/// **Bounds on each variable the facts imply**, by a few rounds of
+/// `c·x <= -k - (the least the other terms can be)`. Sound and not complete;
+/// the solver confirms each bound that is used.
+fn propagate(facts: ref Vec[i64], term_of: fn(i64) -> SolverTerm sync) -> collections::BTreeMap[String, Range] {
+    let mut all: Vec[Form] = []
+    for fact in facts {
+        atoms(fact, term_of, all)
+    }
+    let mut known: collections::BTreeMap[String, Range] = collections::BTreeMap()
+    for _ in 0..<4 {
+        let mut changed = false
+        for atom in all {
+            for (x, cx) in atom.vars {
+                if cx == 0 {
+                    continue
+                }
+                let rest = least_of_the_rest(atom, x, known) ?? continue
+                let before = known.get(x) ?? Range::open()
+                let mut entry = Range { lo: before.lo, hi: before.hi }
+                let negated = rest.checked_neg() ?? continue
+                if cx > 0 {
+                    // cx·x <= -rest
+                    let bound = negated.div_euclid(cx)
+                    if entry.hi == null || bound < (entry.hi ?? 0) {
+                        entry.hi = bound
+                        changed = true
+                    }
+                } else {
+                    // x >= rest / -cx, rounded up.
+                    let by = cx.checked_neg() ?? continue
+                    let down = negated.div_euclid(by)
+                    let bound = down.checked_neg() ?? continue
+                    if entry.lo == null || bound > (entry.lo ?? 0) {
+                        entry.lo = bound
+                        changed = true
+                    }
+                }
+                known.insert(x.clone(), entry)
+            }
+        }
+        if !changed {
+            break
+        }
+    }
+    return known
+}
+
+/// `k` plus the least every term but `x`'s can be, where each is bounded on
+/// the side that matters and it fits.
+fn least_of_the_rest(atom: ref Form, x: ref String, known: ref collections::BTreeMap[String, Range]) -> i64? {
+    let mut rest = atom.k
+    for (y, cy) in atom.vars {
+        if y == x {
+            continue
+        }
+        let bounds = known.get(y) ?? return null
+        let side = if cy > 0 { bounds.lo } else { bounds.hi }
+        let value = side ?? return null
+        let least = cy.checked_mul(value) ?? return null
+        rest = rest.checked_add(least) ?? return null
+    }
+    return rest
+}
+
+/// `sum + c · side`, open where either is or it does not fit.
+fn plus_times(sum: i64?, c: i64, side: i64?) -> i64? {
+    let start = sum ?? return null
+    let value = side ?? return null
+    let part = c.checked_mul(value) ?? return null
+    return start.checked_add(part)
+}
+
+/// The interval a linear form takes over what is known of its variables.
+fn evaluate(form: ref Form, known: ref collections::BTreeMap[String, Range]) -> Range {
+    let mut lo: i64? = form.k
+    let mut hi: i64? = form.k
+    for (x, c) in form.vars {
+        let bounds = known.get(x) ?? Range::open()
+        let least_side = if c >= 0 { bounds.lo } else { bounds.hi }
+        let most_side = if c >= 0 { bounds.hi } else { bounds.lo }
+        lo = plus_times(lo, c, least_side)
+        hi = plus_times(hi, c, most_side)
+    }
+    return Range { lo: lo, hi: hi }
+}

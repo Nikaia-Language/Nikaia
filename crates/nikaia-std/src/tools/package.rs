@@ -1225,6 +1225,293 @@ fn tally_expr(expr: &Expr, ask: &Ask, deferred: bool, words: &winnow_grammar::In
 }
 
 
+// --- bounds_interval.nika ---
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Range {
+    pub lo: Option<i64>,
+    pub hi: Option<i64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SolverTerm {
+    Int(i64),
+    Var(String),
+    Add(i64, i64),
+    Sub(i64, i64),
+    Neg(i64),
+    Mul(i64, i64),
+    Le(i64, i64),
+    Lt(i64, i64),
+    Ge(i64, i64),
+    Gt(i64, i64),
+    Eq(i64, i64),
+    And(Vec<i64>),
+    Other,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Form {
+    vars: collections::BTreeMap<String, i64>,
+    k: i64,
+}
+
+impl Range {
+    pub fn open() -> Range { Range { lo: None, hi: None } }
+    pub fn exactly(n: i64) -> Range { Range { lo: Some(n), hi: Some(n) } }
+    pub fn of_type(ty: &str) -> Option<Range> {
+        match ty {
+            "i8" => Some(Range { lo: Some(-128), hi: Some(127) }),
+            "i16" => Some(Range { lo: Some(-32768), hi: Some(32767) }),
+            "i32" => Some(Range { lo: Some(-2147483648), hi: Some(2147483647) }),
+            "i64" => Some(Range { lo: Some(-9223372036854775808i64), hi: Some(9223372036854775807i64) }),
+            "isize" => Some(Range { lo: Some(-9223372036854775808i64), hi: Some(9223372036854775807i64) }),
+            "u8" => Some(Range { lo: Some(0), hi: Some(255) }),
+            "u16" => Some(Range { lo: Some(0), hi: Some(65535) }),
+            "u32" => Some(Range { lo: Some(0), hi: Some(4294967295i64) }),
+            "u64" => Some(Range { lo: Some(0), hi: Some(9223372036854775807i64) }),
+            "usize" => Some(Range { lo: Some(0), hi: Some(9223372036854775807i64) }),
+            _ => None,
+        }
+    }
+    pub fn holds(&self, other: &Range) -> bool {
+        let mut lo = self.lo.is_none();
+        if other.lo.is_some() { lo = self.lo.is_none() || nikaia_std::index::or(self.lo, || 0) <= nikaia_std::index::or(other.lo, || 0); }
+        let mut hi = self.hi.is_none();
+        if other.hi.is_some() { hi = self.hi.is_none() || nikaia_std::index::or(self.hi, || 0) >= nikaia_std::index::or(other.hi, || 0); }
+        lo && hi
+    }
+    pub fn join(&self, other: &Range) -> Range {
+        let mut out = Range::open();
+        if self.lo.is_some() && other.lo.is_some() { out.lo = Some(nikaia_std::index::or(self.lo, || 0).min(nikaia_std::index::or(other.lo, || 0))); }
+        if self.hi.is_some() && other.hi.is_some() { out.hi = Some(nikaia_std::index::or(self.hi, || 0).max(nikaia_std::index::or(other.hi, || 0))); }
+        out
+    }
+    pub fn meet(&self, other: &Range) -> Range {
+        let mut out = Range { lo: self.lo, hi: self.hi };
+        if other.lo.is_some() {
+            out.lo = other.lo;
+            if self.lo.is_some() { out.lo = Some(nikaia_std::index::or(self.lo, || 0).max(nikaia_std::index::or(other.lo, || 0))); }
+        }
+        if other.hi.is_some() {
+            out.hi = other.hi;
+            if self.hi.is_some() { out.hi = Some(nikaia_std::index::or(self.hi, || 0).min(nikaia_std::index::or(other.hi, || 0))); }
+        }
+        out
+    }
+    pub fn is_bounded(&self) -> bool { self.lo.is_some() || self.hi.is_some() }
+    pub fn add(&self, other: &Range) -> Range {
+        let mut out = Range::open();
+        if self.lo.is_some() && other.lo.is_some() { out.lo = nikaia_std::index::or(self.lo, || 0).checked_add(nikaia_std::index::or(other.lo, || 0)); }
+        if self.hi.is_some() && other.hi.is_some() { out.hi = nikaia_std::index::or(self.hi, || 0).checked_add(nikaia_std::index::or(other.hi, || 0)); }
+        out
+    }
+    pub fn neg(&self) -> Range {
+        let mut out = Range::open();
+        if self.hi.is_some() { out.lo = nikaia_std::index::or(self.hi, || 0).checked_neg(); }
+        if self.lo.is_some() { out.hi = nikaia_std::index::or(self.lo, || 0).checked_neg(); }
+        out
+    }
+    pub fn mul(&self, other: &Range) -> Range {
+        if self.lo.is_none() || self.hi.is_none() || other.lo.is_none() || other.hi.is_none() { return Range::open(); }
+        let (a, b, c, d) = (nikaia_std::index::or(self.lo, || 0), nikaia_std::index::or(self.hi, || 0), nikaia_std::index::or(other.lo, || 0), nikaia_std::index::or(other.hi, || 0));
+        let ac = match a.checked_mul(c) { Some(__nikaia_value) => __nikaia_value, None => return Range::open() };
+        let ad = match a.checked_mul(d) { Some(__nikaia_value) => __nikaia_value, None => return Range::open() };
+        let bc = match b.checked_mul(c) { Some(__nikaia_value) => __nikaia_value, None => return Range::open() };
+        let bd = match b.checked_mul(d) { Some(__nikaia_value) => __nikaia_value, None => return Range::open() };
+        Range { lo: Some(ac.min(ad).min(bc.min(bd))), hi: Some(ac.max(ad).max(bc.max(bd))) }
+    }
+}
+
+pub fn candidate(term: i64, facts: &[i64], term_of: &impl Fn(i64) -> SolverTerm) -> Range {
+    let form = match linear_form(term, term_of) { Some(__nikaia_value) => __nikaia_value, None => return Range::open() };
+    let known = propagate(facts, term_of);
+    evaluate(&form, &known)
+}
+
+fn linear_form(term: i64, term_of: &impl Fn(i64) -> SolverTerm) -> Option<Form> {
+    match term_of(term) {
+        SolverTerm::Int(n) => Some(Form { vars: collections::BTreeMap::new(), k: n }),
+        SolverTerm::Var(ref name) => {
+            let mut vars: collections::BTreeMap<String, i64> = collections::BTreeMap::new();
+            vars.insert(name.to_owned(), 1);
+            Some(Form { vars, k: 0 })
+        },
+        SolverTerm::Add(a, b) => {
+            let left = match linear_form(a, term_of) { Some(__nikaia_value) => __nikaia_value, None => return None };
+            let right = match linear_form(b, term_of) { Some(__nikaia_value) => __nikaia_value, None => return None };
+            sum(&left, &right, 1)
+        },
+        SolverTerm::Sub(a, b) => {
+            let left = match linear_form(a, term_of) { Some(__nikaia_value) => __nikaia_value, None => return None };
+            let right = match linear_form(b, term_of) { Some(__nikaia_value) => __nikaia_value, None => return None };
+            sum(&left, &right, -1)
+        },
+        SolverTerm::Neg(a) => {
+            let inner = match linear_form(a, term_of) { Some(__nikaia_value) => __nikaia_value, None => return None };
+            scaled(&inner, -1)
+        },
+        SolverTerm::Mul(a, b) => {
+            let left = match linear_form(a, term_of) { Some(__nikaia_value) => __nikaia_value, None => return None };
+            let right = match linear_form(b, term_of) { Some(__nikaia_value) => __nikaia_value, None => return None };
+            if left.vars.is_empty() { return scaled(&right, left.k); }
+            if right.vars.is_empty() { return scaled(&left, right.k); }
+            None
+        },
+        _ => None,
+    }
+}
+
+fn sum(left: &Form, right: &Form, sign: i64) -> Option<Form> {
+    let mut vars = left.vars.to_owned();
+    for (name, c) in right.vars.iter() {
+        let c = nikaia_std::num::value(c);
+        let before = nikaia_std::index::or(vars.get(name), || 0);
+        let by = match c.checked_mul(sign) { Some(__nikaia_value) => __nikaia_value, None => return None };
+        let after = match before.checked_add(by) { Some(__nikaia_value) => __nikaia_value, None => return None };
+        vars.insert(name.to_owned(), after);
+    }
+    let by = match right.k.checked_mul(sign) { Some(__nikaia_value) => __nikaia_value, None => return None };
+    let k = match left.k.checked_add(by) { Some(__nikaia_value) => __nikaia_value, None => return None };
+    Some(Form { vars, k })
+}
+
+fn scaled(form: &Form, by: i64) -> Option<Form> {
+    let mut vars: collections::BTreeMap<String, i64> = collections::BTreeMap::new();
+    for (name, c) in form.vars.iter() {
+        let c = nikaia_std::num::value(c);
+        let times = match c.checked_mul(by) { Some(__nikaia_value) => __nikaia_value, None => return None };
+        vars.insert(name.to_owned(), times);
+    }
+    let k = match form.k.checked_mul(by) { Some(__nikaia_value) => __nikaia_value, None => return None };
+    Some(Form { vars, k })
+}
+
+fn shifted(form: &Form, n: i64) -> Option<Form> {
+    let k = match form.k.checked_add(n) { Some(__nikaia_value) => __nikaia_value, None => return None };
+    Some(Form { vars: form.vars.to_owned(), k })
+}
+
+fn atoms(fact: i64, term_of: &impl Fn(i64) -> SolverTerm, out: &mut Vec<Form>) {
+    match term_of(fact) {
+        SolverTerm::And(ref parts) => {
+            for part in parts.iter() {
+                let part = nikaia_std::num::value(part);
+                atoms(part, term_of, out);
+            }
+        },
+        SolverTerm::Le(a, b) => {
+            let d = match difference(a, b, term_of) { Some(__nikaia_value) => __nikaia_value, None => return };
+            out.push(d);
+        },
+        SolverTerm::Lt(a, b) => {
+            let d = match difference(a, b, term_of) { Some(__nikaia_value) => __nikaia_value, None => return };
+            let strict = match shifted(&d, 1) { Some(__nikaia_value) => __nikaia_value, None => return };
+            out.push(strict);
+        },
+        SolverTerm::Ge(a, b) => {
+            let d = match difference(a, b, term_of) { Some(__nikaia_value) => __nikaia_value, None => return };
+            let turned = match scaled(&d, -1) { Some(__nikaia_value) => __nikaia_value, None => return };
+            out.push(turned);
+        },
+        SolverTerm::Gt(a, b) => {
+            let d = match difference(a, b, term_of) { Some(__nikaia_value) => __nikaia_value, None => return };
+            let turned = match scaled(&d, -1) { Some(__nikaia_value) => __nikaia_value, None => return };
+            let strict = match shifted(&turned, 1) { Some(__nikaia_value) => __nikaia_value, None => return };
+            out.push(strict);
+        },
+        SolverTerm::Eq(a, b) => {
+            let d = match difference(a, b, term_of) { Some(__nikaia_value) => __nikaia_value, None => return };
+            let turned = match scaled(&d, -1) { Some(__nikaia_value) => __nikaia_value, None => return };
+            out.push(turned);
+            out.push(d);
+        },
+        _ => { },
+    }
+}
+
+fn difference(a: i64, b: i64, term_of: &impl Fn(i64) -> SolverTerm) -> Option<Form> {
+    let left = match linear_form(a, term_of) { Some(__nikaia_value) => __nikaia_value, None => return None };
+    let right = match linear_form(b, term_of) { Some(__nikaia_value) => __nikaia_value, None => return None };
+    sum(&left, &right, -1)
+}
+
+fn propagate(facts: &[i64], term_of: &impl Fn(i64) -> SolverTerm) -> collections::BTreeMap<String, Range> {
+    let mut all: Vec<Form> = vec![];
+    for fact in facts.iter() {
+        let fact = nikaia_std::num::value(fact);
+        atoms(fact, term_of, &mut all);
+    }
+    let mut known: collections::BTreeMap<String, Range> = collections::BTreeMap::new();
+    for _ in 0..4 {
+        let mut changed = false;
+        for atom in all.iter() {
+            for (x, cx) in atom.vars.iter() {
+                let cx = nikaia_std::num::value(cx);
+                if cx == 0 { continue; }
+                let rest = match least_of_the_rest(atom, x, &known) { Some(__nikaia_value) => __nikaia_value, None => continue };
+                let before = nikaia_std::index::or(known.get(x), || Range::open());
+                let mut entry = Range { lo: before.lo, hi: before.hi };
+                let negated = match rest.checked_neg() { Some(__nikaia_value) => __nikaia_value, None => continue };
+                if cx > 0 {
+                    let bound = negated.div_euclid(cx);
+                    if entry.hi.is_none() || bound < nikaia_std::index::or(entry.hi, || 0) {
+                        entry.hi = Some(bound);
+                        changed = true;
+                    }
+                } else {
+                    let by = match cx.checked_neg() { Some(__nikaia_value) => __nikaia_value, None => continue };
+                    let down = negated.div_euclid(by);
+                    let bound = match down.checked_neg() { Some(__nikaia_value) => __nikaia_value, None => continue };
+                    if entry.lo.is_none() || bound > nikaia_std::index::or(entry.lo, || 0) {
+                        entry.lo = Some(bound);
+                        changed = true;
+                    }
+                }
+                known.insert(x.to_owned(), entry);
+            }
+        }
+        if !changed { break; }
+    }
+    known
+}
+
+fn least_of_the_rest(atom: &Form, x: &str, known: &collections::BTreeMap<String, Range>) -> Option<i64> {
+    let mut rest = atom.k;
+    for (y, cy) in atom.vars.iter() {
+        let cy = nikaia_std::num::value(cy);
+        if y == x { continue; }
+        let bounds = match known.get(y) { Some(__nikaia_value) => __nikaia_value, None => return None };
+        let side = if cy > 0 { bounds.lo } else { bounds.hi };
+        let value = match side { Some(__nikaia_value) => __nikaia_value, None => return None };
+        let least = match cy.checked_mul(value) { Some(__nikaia_value) => __nikaia_value, None => return None };
+        rest = match rest.checked_add(least) { Some(__nikaia_value) => __nikaia_value, None => return None };
+    }
+    Some(rest)
+}
+
+fn plus_times(sum: Option<i64>, c: i64, side: Option<i64>) -> Option<i64> {
+    let start = match sum { Some(__nikaia_value) => __nikaia_value, None => return None };
+    let value = match side { Some(__nikaia_value) => __nikaia_value, None => return None };
+    let part = match c.checked_mul(value) { Some(__nikaia_value) => __nikaia_value, None => return None };
+    start.checked_add(part)
+}
+
+fn evaluate(form: &Form, known: &collections::BTreeMap<String, Range>) -> Range {
+    let mut lo: Option<i64> = Some(form.k);
+    let mut hi: Option<i64> = Some(form.k);
+    for (x, c) in form.vars.iter() {
+        let c = nikaia_std::num::value(c);
+        let bounds = nikaia_std::index::or(known.get(x), || Range::open());
+        let least_side = if c >= 0 { bounds.lo } else { bounds.hi };
+        let most_side = if c >= 0 { bounds.hi } else { bounds.lo };
+        lo = plus_times(lo, c, least_side);
+        hi = plus_times(hi, c, most_side);
+    }
+    Range { lo, hi }
+}
+
+
 // --- bounds_shape.nika ---
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -17688,6 +17975,10 @@ pub mod bounds_basic {
 pub mod bounds_body {
     #[allow(unused_imports)]
     pub use super::{breaks, pinned_in, filled_once};
+}
+pub mod bounds_interval {
+    #[allow(unused_imports)]
+    pub use super::{Range, SolverTerm, candidate};
 }
 pub mod bounds_shape {
     #[allow(unused_imports)]

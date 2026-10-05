@@ -19215,9 +19215,21 @@ impl<'a> Checker<'a> {
     /// ones are `Some(…)` below ([`Checked::some_tails`]), and the choice is a
     /// `T?`. Asked only where every arm that is not `null` is a `T` or a `T?`
     /// of one `T`, so a choice this cannot type stays unknown.
+    ///
+    /// **Or because one of them is a `T?` already** (#435): `match t { Int(n)
+    /// => Form { … }, Add(a, b) => sum(…) }` with `sum` handing back a
+    /// `Form?` is a `Form?`, the plain arm `Some(…)`. Wrapped as a whole, the
+    /// choice went below as `match … { … }.into()`, and the language below
+    /// said *`match` arms have incompatible types* before the conversion
+    /// could be reached.
     fn arms_meet_at_null(&mut self, arms: &[(Option<&Expr>, Ty)]) -> Option<Ty> {
-        let is_null = |arm: &Option<&Expr>| matches!(arm, Some(Expr::LitNull));
-        if !arms.iter().any(|(arm, _)| is_null(arm)) {
+        // A block that ends in `null` is a `null` arm too: what it returns
+        // early is the function's, not the choice's.
+        let is_null = |arm: &Option<&Expr>| arm.is_some_and(ends_in_null);
+        if !arms
+            .iter()
+            .any(|(arm, ty)| is_null(arm) || matches!(ty, Ty::Nullable(_)))
+        {
             return None;
         }
         // **A number written down takes its type from where it stands**
@@ -23391,6 +23403,15 @@ fn tail_of(block: &Block) -> Option<&Expr> {
     match block.stmts.last().map(|s| &s.node) {
         Some(Stmt::Expr(value)) => Some(value),
         _ => None,
+    }
+}
+
+/// `null`, or a block whose last value is `null`.
+fn ends_in_null(expr: &Expr) -> bool {
+    match expr {
+        Expr::LitNull => true,
+        Expr::Block(block) => tail_of(block).is_some_and(ends_in_null),
+        _ => false,
     }
 }
 

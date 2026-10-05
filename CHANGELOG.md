@@ -16,6 +16,28 @@ the operating system handed over, on every target, and `display()` shows `�`.
 Part I 2.2 now says a `String` is always valid UTF-8. Decided and specified; not
 built.
 
+## [0.0.475] — 2026-10-05
+
+**The interval propagation is Nikaia** (ADR-294, #435 step 2). `Range`, the
+closed interval with either end open, and the propagation that proposes a
+candidate bound for a linear term are moved from `bounds.rs` into
+`tools/bounds_interval.nika`. The terms stay in `nikaia-logic`'s arena and are
+read one node at a time through `term_of`, which needs `TermId::index` and
+`Arena::at`. The arithmetic is checked `i64` rather than `i128`. A candidate
+is confirmed by the solver before it is used, so an overflow loses a candidate
+and never makes a wrong bound. Every bench and example lowers to byte-identical
+Rust with both removals on.
+
+Two compiler defects the move found are fixed in the compiler (D3):
+
+- **A `match` whose arms meet at `T?` because one arm is a `T?` already** is
+  now `Some(…)` on its plain arms, as one beside a `null` was. A block that
+  ends in `null` counts as a `null` arm. Before, the whole choice was wrapped
+  in `.into()`, and `rustc` refused the arms.
+- **`is_empty` on a `BTreeMap`, `BTreeSet`, `HashMap` and `HashSet`** has an
+  entry in `std`'s ledger (#450). Without one the call resolved to nothing, and
+  the function around it lowered as `async`.
+
 ## [0.0.473] — 2026-10-05
 
 **A call to an expression function is its expression** (ADR-314 D3, #421, in
