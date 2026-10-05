@@ -4,6 +4,15 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.477] — 2026-10-05
+
+**A contract that changed in the breaking direction is said by Nikaia**
+(ADR-294, #436 step 2). `changed_contracts`, the `NK1208` warning about a
+`pub` function that asks more of its callers or promises them less than the
+committed ledger, moves from `prove.rs` into `tools/contract_changes.nika`.
+Whether one list of conditions implies another stays the prover's question,
+handed in as `implies`.
+
 ## [0.0.476] — 2026-10-05
 
 **How the prover writes a term is Nikaia** (ADR-294, #436 step 1). The text

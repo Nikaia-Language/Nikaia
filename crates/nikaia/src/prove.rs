@@ -2174,61 +2174,12 @@ fn names_in(parsed: &Parsed, expr: &Expr) -> BTreeSet<String> {
 /// direction; where it cannot show the implication, the change is said.
 /// `mine` says which entries are this package's own.
 pub fn changed_contracts(now: &Ledger, committed: &Ledger, mine: impl Fn(&str) -> bool) -> String {
-    let mut out = String::new();
-    for (key, new) in &now.functions {
-        let Some(old) = committed.functions.get(key) else {
-            continue;
-        };
-        if !new.public || !mine(key) {
-            continue;
-        }
-        let mut names = BTreeSet::from([RESULT.to_string()]);
-        for (name, ty) in new
-            .signature
-            .as_ref()
-            .map(|s| s.params.clone())
-            .unwrap_or_default()
-        {
-            if let crate::contracts::ty::Ty::Named {
-                name: type_name, ..
-            } = &ty
-                && has_a_length(type_name)
-            {
-                names.insert(length_of(&name));
-            }
-            names.insert(name);
-        }
-        let shown = |list: &[String]| match list {
-            [] => "nothing".to_string(),
-            _ => list
-                .iter()
-                .map(|c| format!("`{c}`"))
-                .collect::<Vec<_>>()
-                .join(" and "),
-        };
-        if !implies(&old.requires, &new.requires, &names) {
-            out.push_str(&format!(
-                "warning[NK1208]: `{key}` asks more of its callers than the committed ledger says.\n   \
-                 = note: it required {}, and now requires {}.\n   \
-                 = note: a caller that showed what it required before may now stop where it is \
-                 checked.\n   \
-                 = help: if that is meant, commit `nikaia.contracts`, and this is not said again.\n",
-                shown(&old.requires),
-                shown(&new.requires),
-            ));
-        }
-        if !implies(&new.ensures, &old.ensures, &names) {
-            out.push_str(&format!(
-                "warning[NK1208]: `{key}` promises less than the committed ledger says.\n   \
-                 = note: it ensured {}, and now ensures {}.\n   \
-                 = note: a caller's proof that relied on what it ensured may no longer hold.\n   \
-                 = help: if that is meant, commit `nikaia.contracts`, and this is not said again.\n",
-                shown(&old.ensures),
-                shown(&new.ensures),
-            ));
-        }
-    }
-    out
+    nikaia_std::tools::contract_changes::changed_contracts(
+        now,
+        committed,
+        &|key| mine(key),
+        &|from, to, names| implies(from, to, names),
+    )
 }
 
 /// Whether the conditions `from` imply every one of `to`, by the reference

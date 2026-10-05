@@ -1,0 +1,68 @@
+// crates/nikaia-std/src/tools/contract_changes.nika
+//
+// **A contract that changed in the breaking direction** (ADR-269 D19,
+// `NK1208`), moved from the compiler's `prove` (ADR-294, #436 step 2): a
+// `pub` function of this package that asks more of its callers, or promises
+// them less, than the committed ledger says.
+//
+// Whether one list of conditions implies another is the prover's question,
+// and the conditions are text the compiler's parser reads back, so it is
+// handed in as `implies`: this file decides what is compared and how it is
+// said, not how a condition is proved.
+
+use std::collections
+
+/// The warnings, one per contract that moved the wrong way, for every `pub`
+/// function `mine` says is this package's and the committed ledger has.
+pub fn changed_contracts(now: ref Ledger, committed: ref Ledger, mine: fn(ref String) -> bool sync, implies: fn(ref Vec[String], ref Vec[String], ref collections::BTreeSet[String]) -> bool sync) -> String {
+    let mut out: String = ""
+    for (key, new) in now.functions {
+        let old = committed.functions.get(key) ?? continue
+        if !new.public || !mine(key) {
+            continue
+        }
+        let names = condition_names(new)
+        if !implies(old.requires, new.requires, names) {
+            out.push_str(f"warning[NK1208]: `{key}` asks more of its callers than the committed ledger says.\n   = note: it required {conditions_said(old.requires)}, and now requires {conditions_said(new.requires)}.\n   = note: a caller that showed what it required before may now stop where it is checked.\n   = help: if that is meant, commit `nikaia.contracts`, and this is not said again.\n")
+        }
+        if !implies(new.ensures, old.ensures, names) {
+            out.push_str(f"warning[NK1208]: `{key}` promises less than the committed ledger says.\n   = note: it ensured {conditions_said(old.ensures)}, and now ensures {conditions_said(new.ensures)}.\n   = note: a caller's proof that relied on what it ensured may no longer hold.\n   = help: if that is meant, commit `nikaia.contracts`, and this is not said again.\n")
+        }
+    }
+    return out
+}
+
+/// The names a condition of `contract` may read: `result`, each parameter,
+/// and the length of each that has one.
+fn condition_names(contract: ref FnContract) -> collections::BTreeSet[String] {
+    let mut names: collections::BTreeSet[String] = collections::BTreeSet()
+    names.insert("result")
+    let signature = contract.signature ?? return names
+    for (name, ty) in signature.params {
+        if has_a_length(type_name_of(ty)) {
+            names.insert(f"{name}.len()")
+        }
+        names.insert(name.clone())
+    }
+    return names
+}
+
+/// A named type's name, and `""` for any other type.
+fn type_name_of(ty: ref Ty) -> String {
+    return match ty {
+        Ty::Named { name, .. } => name.clone(),
+        else => "",
+    }
+}
+
+/// `` `a` and `b` ``, or `nothing`.
+fn conditions_said(list: ref Vec[String]) -> String {
+    if list.is_empty() {
+        return "nothing"
+    }
+    let mut said: Vec[String] = []
+    for condition in list {
+        said.push(f"`{condition}`")
+    }
+    return said.join(" and ")
+}

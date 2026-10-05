@@ -3734,6 +3734,46 @@ pub fn boxed_member(owner: &str, at: i64, field: &str) -> String {
 }
 
 
+// --- contract_changes.nika ---
+
+pub fn changed_contracts(now: &Ledger, committed: &Ledger, mine: &impl Fn(&str) -> bool, implies: &impl Fn(&Vec<String>, &Vec<String>, &collections::BTreeSet<String>) -> bool) -> String {
+    let mut out: String = String::from("");
+    for (key, new) in now.functions.iter() {
+        let old = match committed.functions.get(key) { Some(__nikaia_value) => __nikaia_value, None => continue };
+        if !new.public || !mine(key) { continue; }
+        let names = condition_names(new);
+        if !implies(&old.requires, &new.requires, &names) { out.push_str(&format!("warning[NK1208]: `{}` asks more of its callers than the committed ledger says.\n   = note: it required {}, and now requires {}.\n   = note: a caller that showed what it required before may now stop where it is checked.\n   = help: if that is meant, commit `nikaia.contracts`, and this is not said again.\n", key, conditions_said(&old.requires), conditions_said(&new.requires))); }
+        if !implies(&new.ensures, &old.ensures, &names) { out.push_str(&format!("warning[NK1208]: `{}` promises less than the committed ledger says.\n   = note: it ensured {}, and now ensures {}.\n   = note: a caller's proof that relied on what it ensured may no longer hold.\n   = help: if that is meant, commit `nikaia.contracts`, and this is not said again.\n", key, conditions_said(&old.ensures), conditions_said(&new.ensures))); }
+    }
+    out
+}
+
+fn condition_names(contract: &FnContract) -> collections::BTreeSet<String> {
+    let mut names: collections::BTreeSet<String> = collections::BTreeSet::new();
+    names.insert(String::from("result"));
+    let signature = match contract.signature.as_ref() { Some(__nikaia_value) => __nikaia_value, None => return names };
+    for (name, ty) in signature.params.iter() {
+        if has_a_length(&type_name_of(ty)) { names.insert(format!("{}.len()", name)); }
+        names.insert(name.to_owned());
+    }
+    names
+}
+
+fn type_name_of(ty: &Ty) -> String {
+    match ty {
+        Ty::Named { name, .. } => name.to_owned(),
+        _ => String::from(""),
+    }
+}
+
+fn conditions_said(list: &[String]) -> String {
+    if list.is_empty() { return String::from("nothing"); }
+    let mut said: Vec<String> = vec![];
+    for condition in list.iter() { said.push(format!("`{}`", condition)); }
+    said.join(" and ")
+}
+
+
 // --- crossing.nika ---
 
 const NOT_SENDABLE: [&str; 5] = ["Rc<", "rc::Rc<", "*const ", "*mut ", "NonNull<"];
@@ -18157,6 +18197,10 @@ pub mod check_types {
 pub mod check_words {
     #[allow(unused_imports)]
     pub use super::{reserved_elsewhere, nearest_name, with_article, counted, names_listed, indented_text, brace_groups, not_promised_note, is_a_lookup, boxed_member};
+}
+pub mod contract_changes {
+    #[allow(unused_imports)]
+    pub use super::{changed_contracts};
 }
 pub mod crossing {
     #[allow(unused_imports)]
