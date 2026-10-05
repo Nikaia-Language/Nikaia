@@ -36,7 +36,7 @@ fn baseline() -> PathBuf {
 fn the_specifications_programs_are_the_ones_in_expected_txt() {
     let expected = std::fs::read_to_string(baseline()).expect("EXPECTED.txt");
     assert_eq!(
-        specbook::report(&specbook::specification_dir()),
+        specbook::report(&specbook::specification_dir(), &common::workshop()),
         expected,
         "the specification and tests/specification/EXPECTED.txt have drifted \
          apart. If that is the change you meant, regenerate it with `cargo run \
@@ -59,7 +59,7 @@ fn the_specifications_programs_are_the_ones_in_expected_txt() {
 /// to remember.
 #[test]
 fn only_the_section_about_interpolation_writes_a_plain_string_with_a_hole() {
-    let tripped: Vec<_> = specbook::verdicts(&specbook::specification_dir())
+    let tripped: Vec<_> = specbook::verdicts(&specbook::specification_dir(), &common::workshop())
         .into_iter()
         .filter(|v| v.codes.contains("NK1111"))
         .collect();
@@ -214,7 +214,7 @@ fn the_specifications_version_is_the_changelogs() {
 /// counted as a program.
 #[test]
 fn most_of_a_third_of_the_specifications_blocks_are_programs() {
-    let verdicts = specbook::verdicts(&specbook::specification_dir());
+    let verdicts = specbook::verdicts(&specbook::specification_dir(), &common::workshop());
     let lowered = verdicts
         .iter()
         .filter(|v| v.stage == Stage::Lowered)
@@ -253,7 +253,7 @@ fn what_lowers_is_handed_to_rustc_and_the_verdicts_are_the_recorded_ones() {
     // rather than for the comparison: see the verdict below.
     let mut detail = String::new();
     let mut nth: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
-    for v in specbook::verdicts(&specbook::specification_dir()) {
+    for v in specbook::verdicts(&specbook::specification_dir(), &common::workshop()) {
         // Counted over **every** block and not only the ones that lower, so the
         // ordinal means the same thing here as in the other baseline.
         let at = nth.entry(v.block.file.clone()).or_insert(0);
@@ -265,9 +265,13 @@ fn what_lowers_is_handed_to_rustc_and_the_verdicts_are_the_recorded_ones() {
         let source = specbook::reading(&v.block.code, v.reading)
             .expect("the reading that got furthest is one of the readings");
         let parsed = nikaia::parser::parse_to_ast(&source).expect("it parsed once already");
-        let rust = nikaia::emit::emit_program(&parsed, nikaia::emit::Build::default())
-            .expect("it lowered once already")
-            .rust;
+        let rust = nikaia::emit::emit_program_reading(
+            &parsed,
+            nikaia::emit::Build::default(),
+            &common::reads(),
+        )
+        .expect("it lowered once already")
+        .rust;
         let file = dir.join("block.rs");
         std::fs::write(&file, &rust).expect("write the Rust");
         let out = common::compile(

@@ -13,6 +13,9 @@
 fn main() {
     print!(
         "{}",
-        nikaia::specbook::report(&nikaia::specbook::specification_dir())
+        nikaia::specbook::report(
+            &nikaia::specbook::specification_dir(),
+            &nikaia::specbook::workshop(),
+        )
     );
 }

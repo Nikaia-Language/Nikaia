@@ -35,8 +35,15 @@ fn project(name: &str, files: &[(&str, &str)]) -> (PathBuf, PathBuf) {
 /// Lower, compile and run - the only proof that the files really became one
 /// program.
 fn run(entry: &Path, build: Build) -> String {
-    let program = Program::read(entry).expect("the program reads");
-    let lowered = program.emit(build).expect("the program lowers");
+    // **As a build reads and lowers it**: a `comptime` or a default that calls
+    // something is compiled and run in the workshop (ADR-321 D1).
+    let program = nikaia::comptime_run::defaults_compiled_in(Some(&common::workshop()), || {
+        Program::read(entry)
+    })
+    .expect("the program reads");
+    let lowered = program
+        .emit_reading(build, &common::reads())
+        .expect("the program lowers");
 
     let dir = entry.parent().expect("a directory");
     let rust = dir.join("program.rs");

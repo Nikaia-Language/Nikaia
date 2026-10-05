@@ -150,8 +150,17 @@ pub fn reading(code: &str, name: &str) -> Option<String> {
         .map(|(_, source)| source)
 }
 
-/// Take every block as far as it goes.
-pub fn verdicts(dir: &Path) -> Vec<Verdict> {
+/// **Where a build of a loose file compiles its build-time code**: the user's
+/// cache, beside the store.
+pub fn workshop() -> PathBuf {
+    orchestrator::cache::Layout::user_cache_dir().join("build-time")
+}
+
+/// Take every block as far as it goes, as a build reads it: a `comptime` that
+/// calls something is compiled and run in `workshop`
+/// ([ADR-321](../../docs/specification/adr/adr-321.md) D1).
+pub fn verdicts(dir: &Path, workshop: &Path) -> Vec<Verdict> {
+    let reads = crate::assets::Reads::at(dir).building_in(workshop);
     blocks(dir)
         .into_iter()
         .map(|block| {
@@ -162,7 +171,7 @@ pub fn verdicts(dir: &Path) -> Vec<Verdict> {
                 block: block.clone(),
             };
             for (reading, source) in readings(&block.code) {
-                let (stage, codes) = reach(&source);
+                let (stage, codes) = reach(&source, &reads);
                 if stage > best.stage {
                     best = Verdict {
                         stage,
@@ -181,13 +190,24 @@ pub fn verdicts(dir: &Path) -> Vec<Verdict> {
 }
 
 /// One source, through the three stages.
-fn reach(source: &str) -> (Stage, BTreeSet<String>) {
+fn reach(source: &str, reads: &crate::assets::Reads) -> (Stage, BTreeSet<String>) {
     let Ok(parsed) = crate::parser::parse_to_ast(source) else {
         return (Stage::Fragment, BTreeSet::new());
     };
-    let own = crate::contracts::Ledger::infer(&parsed);
+    let place = reads.workshop().place();
+    let own = crate::comptime_run::defaults_compiled_in(place, || {
+        crate::contracts::Ledger::infer(&parsed)
+    });
     let library = crate::contracts::std_ledger();
-    let found = crate::check::check(&parsed, &own, library);
+    let found = crate::check::check_against(
+        &parsed,
+        &[],
+        &own,
+        library,
+        &BTreeSet::new(),
+        &crate::check::Newly::new(),
+        reads,
+    );
     let codes: BTreeSet<String> = found.findings.iter().map(|f| f.code.to_string()).collect();
     // A warning is not a refusal, but it is worth recording: `NK1111` on a page
     // is a plain string holding what looks like a hole, which is exactly the
@@ -199,7 +219,7 @@ fn reach(source: &str) -> (Stage, BTreeSet<String>) {
     if refused {
         return (Stage::Refused, codes);
     }
-    match crate::emit::emit_program(&parsed, crate::emit::Build::default()) {
+    match crate::emit::emit_program_reading(&parsed, crate::emit::Build::default(), reads) {
         Ok(_) => (Stage::Lowered, codes),
         Err(_) => (Stage::Refused, codes),
     }
@@ -218,10 +238,10 @@ fn reach(source: &str) -> (Stage, BTreeSet<String>) {
 /// is a change worth seeing. What replaces the line as the thing a reader
 /// recognises is the block's own first line of code, which says more about which
 /// block it is than a number ever did.
-pub fn report(dir: &Path) -> String {
+pub fn report(dir: &Path, workshop: &Path) -> String {
     let mut out = String::new();
     let mut nth: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
-    for v in verdicts(dir) {
+    for v in verdicts(dir, workshop) {
         let at = nth.entry(v.block.file.clone()).or_insert(0);
         *at += 1;
         let ordinal = *at;

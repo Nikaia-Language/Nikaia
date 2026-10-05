@@ -2110,6 +2110,29 @@ pub fn propagation_against(
     described: &Ledger,
     reads: &Reads,
 ) -> Propagation {
+    propagation(parsed, beside, own, described, reads, true)
+}
+
+/// **The same, with build-time values left alone**: for a caller that asks what
+/// the program uses and not what it computes (`emit::Needs::of`).
+pub(crate) fn propagation_leaving_values(
+    parsed: &Parsed,
+    beside: &[&Parsed],
+    own: &Ledger,
+    described: &Ledger,
+    reads: &Reads,
+) -> Propagation {
+    propagation(parsed, beside, own, described, reads, false)
+}
+
+fn propagation(
+    parsed: &Parsed,
+    beside: &[&Parsed],
+    own: &Ledger,
+    described: &Ledger,
+    reads: &Reads,
+    computes: bool,
+) -> Propagation {
     let mut library = crate::contracts::std_library();
     // **And the described crates' boundary**, as the check that refused had it
     // (`project::Foreign::library`, `std` winning a collision): what a call
@@ -2137,7 +2160,7 @@ pub fn propagation_against(
     // that reads a file is answered by the checker and what the emitter writes
     // is that answer, so a walk handed a different allowlist would refuse an
     // item the check accepted ([ADR-310](../../docs/specification/adr/adr-310.md)).
-    let checked = check_against(
+    let checked = walked(
         parsed,
         beside,
         own,
@@ -2145,6 +2168,8 @@ pub fn propagation_against(
         &BTreeSet::new(),
         &Newly::new(),
         reads,
+        false,
+        computes,
     );
     Propagation {
         loops: checked.fallible_loops,

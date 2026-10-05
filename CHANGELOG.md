@@ -4,6 +4,24 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.533] — 2026-10-05
+
+**The specification's blocks and the module tests are checked through a
+workshop, and a lowering asks for build-time values once** (ADR-321 D1, #468
+stage 4).
+- `specbook::verdicts` and `report` take a workshop. `--example specification`
+  uses the user's build-time workshop, as a build of a loose file does, and
+  the tests use their shared one. `EXPECTED.txt` is unchanged.
+- `tests/modules.rs` reads and lowers its programs with a workshop.
+- A program of several files computed every `comptime` twice. Before
+  lowering, it asks each file what it uses (`Needs::of`), and that check
+  computed the values again through the interpreter. `Build::leaves_values`
+  now leaves them alone there.
+
+With this, no test outside a run's own sub-program reaches the interpreter
+for a call. Inside one, a computed default is still checked again. Every
+bench and example lowers byte for byte as before.
+
 ## [0.0.532] — 2026-10-05
 
 **The `comptime` and default tests run as a build does, through a workshop**

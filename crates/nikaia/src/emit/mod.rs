@@ -175,6 +175,11 @@ pub struct Build {
     /// `nikaia_std::build_time` holds. Set for a `comptime`'s program and
     /// nothing else.
     pub counts_steps: bool,
+    /// **The lowering is asked what the program uses, not what it computes**:
+    /// its check leaves every `comptime` and default alone. Set by
+    /// [`Needs::of`], whose answer no build-time value changes, and which would
+    /// otherwise compute each one a second time.
+    pub leaves_values: bool,
 }
 
 impl Build {
@@ -186,6 +191,7 @@ impl Build {
             bounds: crate::bounds::BoundsChecks::default(),
             overflow: crate::bounds::OverflowChecks::default(),
             counts_steps: false,
+            leaves_values: false,
         })
     }
 
@@ -964,6 +970,7 @@ impl Needs {
         let build = Build {
             bounds: crate::bounds::BoundsChecks::Kept,
             overflow: crate::bounds::OverflowChecks::Kept,
+            leaves_values: true,
             ..build
         };
         let emitter = Emitter::new(parsed, build, crate::contracts::Provenance::Trusted);
@@ -2602,8 +2609,18 @@ impl<'p> Emitter<'p> {
         // `let s = io::lines()` followed by `for line in s`. ADR-288 for the
         // method calls: a receiver's type is the type checker's to know, and
         // there is one type checker (ADR-288).
-        let propagation =
-            crate::check::propagation_against(parsed, beside, &own_contracts, described, reads);
+        let propagation = match build.leaves_values {
+            true => crate::check::propagation_leaving_values(
+                parsed,
+                beside,
+                &own_contracts,
+                described,
+                reads,
+            ),
+            false => {
+                crate::check::propagation_against(parsed, beside, &own_contracts, described, reads)
+            }
+        };
         // **Proved at every build, written without the check only where the
         // build says so** (ADR-306 D14): what is proved does not depend on
         // `remove-bounds-checks` or `remove-overflow-checks`.
