@@ -30,7 +30,7 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
-use nikaia_logic::{Answer, Arena, Budget, FourierMotzkin, Query, Solver, TermId, verify};
+use nikaia_logic::{Arena, Query, TermId};
 
 use crate::ast::{BinaryOp, Block, Expr, FPart, Item, Span, Spanned, Stmt, UnaryOp};
 use crate::check::value_node;
@@ -564,10 +564,7 @@ impl Walk<'_> {
             facts: &all,
             goal,
         };
-        match FourierMotzkin.check(&query, &Budget::default()) {
-            Answer::Proved { certificate } => verify(&query, &certificate).is_ok(),
-            _ => false,
-        }
+        crate::proofs::ask(&query) == crate::proofs::Asked::Proved
     }
 
     /// **What is known of a linear term, as constants**: a candidate from
@@ -1327,10 +1324,7 @@ impl Walk<'_> {
                     facts: &[],
                     goal: same,
                 };
-                let linear = matches!(
-                    FourierMotzkin.check(&query, &Budget::default()),
-                    Answer::Proved { certificate } if verify(&query, &certificate).is_ok()
-                );
+                let linear = crate::proofs::ask(&query) == crate::proofs::Asked::Proved;
                 linear.then_some(d0)
             }
             _ => None,

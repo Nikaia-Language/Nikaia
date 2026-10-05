@@ -4,6 +4,22 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.471] — 2026-10-05
+
+**`nikaia.proofs` is written and read** (ADR-270 D4, D19-D21, #448 steps 2-3).
+Every question the prover and the bounds walk ask now goes through one place,
+`nikaia::proofs::ask`. It puts the query in normal form, keys it by the
+SHA-256 of that form, and answers from the project's `nikaia.proofs` where an
+entry checks: a certificate is replayed against the normal form, a model is
+evaluated. A missing entry, or one that does not check, is searched for and
+written in. A project build writes the file beside `nikaia.contracts`: one line
+per question, sorted by key, `proved` with its certificate, `refuted` with its
+model, `unknown` with the solver. An entry nothing asked is removed, and a
+certificate longer than 4 KiB goes to `nikaia.proofs.d/`. A build from the same
+sources leaves the file byte-identical. The examples' files are committed.
+`--locked` (D22) does not read the file yet. A dependency's questions are
+recorded in the consumer's file rather than in the dependency's (D23).
+
 ## [0.0.470] — 2026-10-05
 
 **A query in normal form, and an answer as text** (ADR-270 D19, #448 step 1).

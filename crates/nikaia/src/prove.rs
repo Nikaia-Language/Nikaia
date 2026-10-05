@@ -29,9 +29,7 @@
 use crate::contracts::LedgerOps;
 use std::collections::{BTreeMap, BTreeSet};
 
-use nikaia_logic::{
-    Answer, Arena, Budget, FourierMotzkin, Query, Solver, TermId, verify, verify_model,
-};
+use nikaia_logic::{Arena, Query, TermId, verify_model};
 
 use crate::ast::{BinaryOp, Block, Expr, Item, Span, Spanned, Stmt, UnaryOp};
 use crate::check::{Finding, Severity};
@@ -1585,13 +1583,10 @@ impl<'a> Prover<'a> {
             facts,
             goal,
         };
-        match FourierMotzkin.check(&query, &Budget::default()) {
-            Answer::Proved { certificate } => verify(&query, &certificate).map_err(|why| {
-                Some(format!(
-                    "the solver's proof did not check ({why:?}), which is a fault of the compiler"
-                ))
-            }),
-            Answer::Refuted { .. } | Answer::Unknown(_) => Err(None),
+        match crate::proofs::ask(&query) {
+            crate::proofs::Asked::Proved => Ok(()),
+            crate::proofs::Asked::Rejected(why) => Err(Some(why)),
+            crate::proofs::Asked::Refuted(_) | crate::proofs::Asked::Unknown => Err(None),
         }
     }
 
@@ -1880,7 +1875,7 @@ impl<'a> Prover<'a> {
             facts,
             goal: falsum,
         };
-        let Answer::Refuted { model } = FourierMotzkin.check(&query, &Budget::default()) else {
+        let crate::proofs::Asked::Refuted(model) = crate::proofs::ask(&query) else {
             return None;
         };
         if !verify_model(&query, &model) {
@@ -1933,7 +1928,7 @@ impl<'a> Prover<'a> {
             facts: &scope.facts,
             goal: claim,
         };
-        let Answer::Refuted { model } = FourierMotzkin.check(&query, &Budget::default()) else {
+        let crate::proofs::Asked::Refuted(model) = crate::proofs::ask(&query) else {
             return None;
         };
         if !verify_model(&query, &model) {
@@ -2392,10 +2387,7 @@ fn implies(from: &[String], to: &[String], names: &BTreeSet<String>) -> bool {
         facts: &facts,
         goal,
     };
-    match FourierMotzkin.check(&query, &Budget::default()) {
-        Answer::Proved { certificate } => verify(&query, &certificate).is_ok(),
-        _ => false,
-    }
+    crate::proofs::ask(&query) == crate::proofs::Asked::Proved
 }
 
 /// **A condition the ledger states, read back** (ADR-269 D18): the text is

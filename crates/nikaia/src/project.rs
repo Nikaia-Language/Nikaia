@@ -1042,35 +1042,57 @@ pub fn lower_reading(
             // promised** (ADR-288 D28), not what its body happens to be: an
             // `"inferred"` `sync` reads as *may pause* across the boundary.
             let promised = program.contracts_as_promised();
-            for unit in &program.units {
-                let contracts = match &unit.package {
-                    Some(package) => program
-                        .as_its_own
-                        .get(package)
-                        .unwrap_or(&program.contracts),
-                    None => &promised,
-                };
-                check(
-                    &unit.parsed,
-                    contracts,
-                    &modules,
-                    around,
-                    &unit.path,
-                    &unit.source,
-                    &settings.user_parallelism,
-                    &settings.refuted_claims,
-                )?;
-            }
-
-            let lowered = {
-                // **The described crates' boundary reaches the emitter**
-                // (ADR-290 D20), which the checker above already read it for.
-                let mut program = program;
-                program.described = foreign.descriptions.clone();
-                let lowered = program.emit_reading(settings.build, &reads)?;
-                (lowered, program)
+            // **The prover's recorded answers** ([ADR-270](../../docs/specification/adr/adr-270.md)
+            // D4, D21, #448): open while the program is checked and lowered,
+            // which is where every question is asked, and written back beside
+            // `nikaia.contracts` after. Outside a project there is no file.
+            let book = match layout.in_project {
+                true => crate::proofs::Book::read(&layout.root),
+                false => crate::proofs::Book::default(),
             };
-            let (lowered, mut program) = lowered;
+            let (checked, book) = crate::proofs::with_book(book, || -> Result<()> {
+                for unit in &program.units {
+                    let contracts = match &unit.package {
+                        Some(package) => program
+                            .as_its_own
+                            .get(package)
+                            .unwrap_or(&program.contracts),
+                        None => &promised,
+                    };
+                    check(
+                        &unit.parsed,
+                        contracts,
+                        &modules,
+                        around,
+                        &unit.path,
+                        &unit.source,
+                        &settings.user_parallelism,
+                        &settings.refuted_claims,
+                    )?;
+                }
+                Ok(())
+            });
+            checked?;
+            let (lowered, book) = crate::proofs::with_book(book, || -> Result<_> {
+                let lowered = {
+                    // **The described crates' boundary reaches the emitter**
+                    // (ADR-290 D20), which the checker above already read it for.
+                    let mut program = program;
+                    program.described = foreign.descriptions.clone();
+                    let lowered = program.emit_reading(settings.build, &reads)?;
+                    (lowered, program)
+                };
+                Ok(lowered)
+            });
+            let (lowered, mut program) = lowered?;
+            if layout.in_project
+                && let Err(error) = book.write(&layout.root)
+            {
+                eprintln!(
+                    "warning: {} could not be written: {error}",
+                    crate::proofs::FILE
+                );
+            }
             // **The contract the `assert`s make** (ADR-269 D18): the prover
             // decided it while the program was checked, and the ledger
             // publishes it.
