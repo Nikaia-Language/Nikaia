@@ -4,6 +4,19 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.511] — 2026-10-05
+
+**`fs::exists(path, root)` is in `std`** (#454, Part III 17.1, ADR-108 D1).
+It was in the specification and nowhere else, so both spellings passed the
+checker and `rustc` refused them. The name goes through the root check the
+other path calls use: one that leaves an `fs::Root::Dir`, by `..` or by a
+link, throws `io::IoError::Outside` rather than answering `false`. The answer
+comes from `std::fs::exists`, so a directory that may not be read is
+`PermissionDenied` and not `false`. It is `sync`, one `stat`. A call with no
+root is `NK1101`, and `--trust` lists one written with `Anywhere`. Part I
+7.1's `throw` example now also reports `NK2605`, because the call it makes is
+described and can fail.
+
 ## [0.0.510] — 2026-10-05
 
 **A part an expression arm binds as a view is handed on as it is** (#456,

@@ -313,6 +313,16 @@ throws = ["io::IoError"]
 provenance = "trusted"
 signature = "(path: ?, root: ref fs::Root) -> Vec[String]"
 
+# Whether a file or directory is there (Part III 17.1). The root comes first
+# (ADR-108 D1): a name that leaves an `fs::Root::Dir` throws `Outside` rather
+# than answering `false`. `sync`: one `stat`, as `fs::scratch` is one call.
+[fn."fs::exists"]
+pub = true
+sync = true
+touches = ["file(path) read"]
+throws = ["io::IoError"]
+signature = "(path: ?, root: ref fs::Root) -> bool"
+
 # **A test's own directory, as a root** (ADR-247 D5). `sync`: making one
 # directory is one system call, the same size of blocking as `cli::args`'s read.
 # A fresh, empty directory, as an `fs::Root::Dir`.

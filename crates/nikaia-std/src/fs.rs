@@ -115,6 +115,27 @@ fn climb(path: &Path) -> Option<std::path::PathBuf> {
     Some(out)
 }
 
+/// **Whether a name is there** (Part III 17.1): a file, a directory, or a
+/// link that leads to one.
+///
+/// **The root is checked first** ([ADR-108](../../../docs/specification/adr/adr-108.md)
+/// D1): a name that leaves a `Root::Dir` - by `..`, or a link out of it - is
+/// refused with `Outside` and not answered `false`, because an outside name is
+/// refused, not absent, and the call `throws` (the fail-closed direction of
+/// [`resolve`]).
+///
+/// `std::fs::exists` and not `Path::exists`, which answers `false` where the
+/// operating system refused to say: a directory that may not be read is
+/// `PermissionDenied`.
+///
+/// **Not `async`**: one `stat`, the same size of blocking as [`scratch`]'s one
+/// system call, so it does not go through the I/O reactor as a read does.
+pub fn exists(path: impl AsRef<Path>, root: &Root) -> Result<bool, crate::io::IoError> {
+    let asked = path.as_ref();
+    let resolved = resolve(asked, root)?;
+    std::fs::exists(&resolved).map_err(|e| crate::io::IoError::of(e, &asked.display().to_string()))
+}
+
 /// A file's bytes, addressable as text for as long as the value lives.
 ///
 /// Part III, 17.1: a memory mapping. The pages *are* the buffer, so a 13 GB
@@ -1001,6 +1022,45 @@ mod walking {
         assert!(matches!(refused, Err(crate::io::IoError::Outside(_))));
         let missing = crate::rt::exec::block_on(walk("nope", &inside));
         assert!(matches!(missing, Err(crate::io::IoError::NotFound(_))));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+}
+
+#[cfg(test)]
+mod existing {
+    use super::*;
+
+    /// **There, not there, and outside the root** (ADR-108 D1): a name that
+    /// leaves a `Root::Dir`, by `..` or by a link, is refused and not `false`.
+    #[test]
+    fn exists_answers_inside_its_root_and_refuses_outside_it() {
+        let dir = std::env::temp_dir().join(format!("nikaia-exists-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let store = dir.join("store");
+        std::fs::create_dir_all(&store).expect("scratch");
+        std::fs::write(store.join("here.txt"), "").expect("write");
+        std::fs::write(dir.join("x"), "").expect("write");
+        let inside = Root::Dir(store.display().to_string());
+
+        assert!(matches!(exists("here.txt", &inside), Ok(true)));
+        assert!(matches!(exists("gone.txt", &inside), Ok(false)));
+        assert!(matches!(
+            exists("../x", &inside),
+            Err(crate::io::IoError::Outside(_))
+        ));
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(dir.join("x"), store.join("out")).expect("link");
+            assert!(matches!(
+                exists("out", &inside),
+                Err(crate::io::IoError::Outside(_))
+            ));
+            assert!(matches!(
+                exists(store.join("out"), &Root::Anywhere),
+                Ok(true)
+            ));
+        }
+        assert!(matches!(exists(dir.join("x"), &Root::Anywhere), Ok(true)));
         std::fs::remove_dir_all(&dir).ok();
     }
 }
