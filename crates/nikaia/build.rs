@@ -100,7 +100,8 @@ fn runtime_dependencies() {
 
 /// SHA256 over everything that decides what the compiler emits: its own
 /// sources, the prover's logic layer - whether a claim is proved decides
-/// whether its check is emitted (ADR-269 D4, ADR-270) - and the `std` ledger
+/// whether its check is emitted (ADR-269 D4, ADR-270) - the compiler's half
+/// written in Nikaia, `std`'s `tools` (ADR-294, #447), and the `std` ledger
 /// `contracts::STD` bakes in with `include_str!`.
 /// Deterministic - the files are visited in sorted order and each is hashed
 /// with its path, length-prefixed so two different file sets cannot agree.
@@ -111,6 +112,7 @@ fn compiler_fingerprint() -> String {
     let mut inputs = Vec::new();
     collect(&manifest.join("src"), &mut inputs);
     collect(&manifest.join("../nikaia-logic/src"), &mut inputs);
+    collect(&manifest.join("../nikaia-std/src/tools"), &mut inputs);
     inputs.push(manifest.join("../nikaia-std/std.contracts"));
     inputs.sort();
 

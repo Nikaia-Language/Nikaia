@@ -4,6 +4,15 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.468] — 2026-10-05
+
+**The build cache knows when the compiler's Nikaia half changed** (#447).
+ADR-021 D3 keys the build cache on the compiler's fingerprint, a hash over its
+sources. Since ADR-294 part of the compiler lives in `nikaia-std/src/tools` (the
+ledger grammar, `absorb_into`, the syntax tree), and that was not hashed, so an
+edit there served the previous compiler's output from the cache. The
+fingerprint now covers it.
+
 ## [0.0.467] — 2026-10-05
 
 **A computed default reaches another package** (ADR-318 D3, #374 step 4).
