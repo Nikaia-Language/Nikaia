@@ -4,6 +4,15 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.516] — 2026-10-05
+
+**No Rust code but `std`'s runs at build time** (ADR-321 D9, corrected). 0.0.515
+let a Rust crate's function run where its description said `build_time = true`;
+that column is gone. A description is a judgement, not a derivation, and a
+second claim beside it is the same judgement written again. A call that reaches
+a Rust crate's function, directly or through Nikaia code, is refused at build
+time (`NK1152`); `std`'s Rust half, this project's own code, still runs.
+
 ## [0.0.515] — 2026-10-05
 
 **A dependency's code runs at build time only on what this build checked**
