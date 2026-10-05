@@ -4,6 +4,19 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.509] — 2026-10-05
+
+**The aggressive bounds and overflow walk is Nikaia** (ADR-294, #435 step 3).
+`tools/bounds_walk.nika` holds what `bounds.rs`'s `Walk` did: the facts kept at
+each point of a body, the linear terms and intervals read off expressions, the
+expression functions followed into, the bounds on a list's values found and
+then checked (ADR-306 D7), and the questions to the solver whether an index is
+inside its list and an operation inside its type. The terms live in the
+prover's `TermArena`; the solver and the node an expression is are handed in.
+`bounds.rs` keeps the options, the program's `mut` parameters and the loop over
+the bodies. What is proved is unchanged: the bench and example lowerings with
+both removals on and their `--bounds` reports are byte for byte the same.
+
 ## [0.0.508] — 2026-10-05
 
 **`comptime` marks the name, and an integer `comptime` is an open number**

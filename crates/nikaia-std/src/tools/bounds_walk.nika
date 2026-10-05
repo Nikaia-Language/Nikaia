@@ -1,0 +1,1974 @@
+// crates/nikaia-std/src/tools/bounds_walk.nika
+//
+// **The aggressive bounds and overflow walk** (ADR-306 D4, D6, D7), moved
+// from the compiler's `bounds` (ADR-294, #435 step 3): each body walked
+// forward, keeping the linear facts that hold at each point - ranges, branch
+// and loop conditions, the operands of `&&` and `||`, `let`s and
+// assignments, the lengths a list is built or resized to - and the solver
+// asked whether an index is inside its list and an operation inside its
+// type. What it proves is a set of index nodes and a set of operators.
+//
+// **What only the compiler can do is handed in** as callbacks: the node an
+// expression is (`node_of`, the address the emitter reads) and the solver
+// (`ask`, whether facts imply a goal on a certificate the checker accepts).
+// A term is a place in the walk's arena (`prover_arena.nika`).
+
+use std::collections
+
+/// **What the program around every body says**, read once per program.
+pub struct BoundsContext {
+    /// The receivers of the `len()` calls that count a `std` list, text or
+    /// map, by node: only those are numbers of a proof.
+    pub lengths: collections::BTreeSet[i64],
+    /// Of `lengths`, those below 2^60 (#383).
+    pub sized: collections::BTreeSet[i64],
+    /// Every `+`, `-` and `*` whose two sides are one whole-number type, by
+    /// the byte its operator starts at, with that type.
+    pub arithmetic: collections::BTreeMap[i64, String],
+    pub around: Around,
+}
+
+/// What the walk proved: index nodes (`node_of` of the indexed `base`) and
+/// arithmetic operators (by the byte their operator starts at).
+pub struct BoundsProven {
+    pub indices: collections::BTreeSet[i64],
+    pub arithmetic: collections::BTreeSet[i64],
+}
+
+/// What holds at one point of a body.
+struct BoundsFacts {
+    /// Names that are whole numbers here.
+    ints: collections::BTreeSet[String],
+    facts: Vec[i64],
+}
+
+/// The names whose value, and the lists whose length, a block may change.
+struct BoundsChanged {
+    values: collections::BTreeSet[String],
+    lengths: collections::BTreeSet[String],
+}
+
+struct BoundsWalk {
+    arena: TermArena,
+    proven: BoundsProven,
+    /// **What every length the walk read of a container whose elements take
+    /// space is**, by the length's name: `0 <= len(x) <= 2^60` (#383). A fact
+    /// of every list, so it holds whatever the program did to it, and every
+    /// proof is handed it.
+    axioms: collections::BTreeMap[String, Vec[i64]],
+    /// Names a length was read of where the elements may take no space: a
+    /// name read both ways - one `xs` shadowing another - gets no axiom.
+    unsized_names: collections::BTreeSet[String],
+    /// Names a lambda, a task or an `overlap` branch changes: they may change
+    /// whenever one runs, so no fact is kept about them anywhere.
+    pinned: collections::BTreeSet[String],
+    /// Whole numbers that are never negative anywhere in the body.
+    nonnegative: collections::BTreeSet[String],
+    /// What the body is, read once before any pass.
+    shape: BodyShape,
+    /// The bounds on lists' values this pass may read (ADR-306 D7), by key:
+    /// a list's name for its values, `name[]` for the values of the lists it
+    /// holds.
+    assumed: collections::BTreeMap[String, Range],
+    /// The join of what this pass saw written, by key.
+    written: collections::BTreeMap[String, Range],
+    /// Keys a write this pass put something unbounded in.
+    poisoned: collections::BTreeSet[String],
+    /// A pass that only finds bounds and proves nothing.
+    collecting: bool,
+    /// The first byte of the statement being walked: the key a compound
+    /// assignment's operation is recorded by (#387).
+    at: i64,
+}
+
+/// No length of a container whose elements take space reaches this (#383):
+/// each element takes a byte, and no target this compiler builds for
+/// addresses more than 2^57 bytes. One number for every target, with a margin
+/// of 8 (ADR-037 D1).
+fn length_below() -> i64 {
+    return 1152921504606846976
+}
+
+/// The widest bound a proof of a whole number states (#444): `2^62`, far
+/// enough from `i64`'s ends that the solver, which counts in `i64`, can
+/// combine it with a length's bound without overflowing.
+fn solvable() -> i64 {
+    return 4611686018427387904
+}
+
+/// How many facts a point keeps: the newest, so that a long body costs the
+/// solver what a short one does.
+fn most_facts() -> i64 {
+    return 48
+}
+
+/// How deep a call to an expression function is followed into another: far
+/// enough for a helper over a helper, and a recursion stops.
+fn call_depth() -> i64 {
+    return 4
+}
+
+fn no_proofs() -> BoundsProven {
+    return BoundsProven { indices: collections::BTreeSet(), arithmetic: collections::BTreeSet() }
+}
+
+fn nothing_changed() -> BoundsChanged {
+    return BoundsChanged { values: collections::BTreeSet(), lengths: collections::BTreeSet() }
+}
+
+/// **Every index and every operation the walk proves in one body**, a
+/// function whose parameters are `args`; `nonnegative` are its whole numbers
+/// that are never negative anywhere.
+///
+/// **A bound on a list's values is an invariant, found and then checked**
+/// (ADR-306 D7): each pass reads the bounds the last one found, and the last
+/// pass keeps only those every write is proved to stay within, assuming all
+/// of them. Reads before the writes they depend on, and writes that depend on
+/// each other, are why one pass is not enough; a bound that only holds by
+/// assuming itself larger is dropped. The passes that only collect prove
+/// nothing. The pass that checks proves too, and when it keeps every bound it
+/// assumed, what it proved stands.
+pub fn bounds_aggressive(args: ref Vec[FnArg], body: ref Block, nonnegative: collections::BTreeSet[String], context: ref BoundsContext, program: ref Program, words: ref winnow_grammar::InternerContext, node_of: fn(ref Expr) -> i64 sync, ask: fn(ref TermArena, ref Vec[i64], i64) -> bool sync) -> BoundsProven {
+    let pinned = pinned_in(body, words)
+    let shape = shape_of(args, body, pinned, context.around, words)
+    let mut walk = BoundsWalk {
+        arena: TermArena::empty(),
+        proven: no_proofs(),
+        axioms: collections::BTreeMap(),
+        unsized_names: collections::BTreeSet(),
+        pinned: pinned,
+        nonnegative: nonnegative,
+        shape: shape,
+        assumed: collections::BTreeMap(),
+        written: collections::BTreeMap(),
+        poisoned: collections::BTreeSet(),
+        collecting: false,
+        at: 0,
+    }
+    let mut settled = false
+    if !walk.shape.roots.is_empty() {
+        walk.collecting = true
+        for _round in 0..<2 {
+            bounding_pass(walk, args, body, context, program, words, node_of, ask)
+            walk.assumed = bounding_found(walk)
+        }
+        walk.collecting = false
+        for _round in 0..<4 {
+            walk.proven = no_proofs()
+            bounding_pass(walk, args, body, context, program, words, node_of, ask)
+            let found = bounding_found(walk)
+            let before = walk.assumed.len()
+            let mut kept: collections::BTreeMap[String, Range] = collections::BTreeMap()
+            for (key, bound) in walk.assumed {
+                let seen = found.get(key) ?? continue
+                if bound.holds(seen) {
+                    kept.insert(key.clone(), bound.clone())
+                }
+            }
+            walk.assumed = kept
+            if walk.assumed.len() == before {
+                settled = true
+                break
+            }
+        }
+    }
+    if !settled {
+        if !walk.shape.roots.is_empty() {
+            walk.assumed = collections::BTreeMap()
+        }
+        walk.proven = no_proofs()
+        bounding_pass(walk, args, body, context, program, words, node_of, ask)
+    }
+    return walk.proven
+}
+
+/// One pass over the body: proofs into `proven`, what is written into
+/// `written`.
+fn bounding_pass(mut walk: BoundsWalk, args: ref Vec[FnArg], body: ref Block, context: ref BoundsContext, program: ref Program, words: ref winnow_grammar::InternerContext, node_of: fn(ref Expr) -> i64 sync, ask: fn(ref TermArena, ref Vec[i64], i64) -> bool sync) {
+    walk.written = collections::BTreeMap()
+    walk.poisoned = collections::BTreeSet()
+    let mut facts = BoundsFacts { ints: collections::BTreeSet(), facts: [] }
+    for arg in args {
+        let name = words.resolve(arg.name).clone()
+        let ty = words.resolve(arg.ty.name).clone()
+        if arg.ty.generics.is_empty() && is_whole_number(ty) {
+            facts.ints.insert(name.clone())
+            if ty.starts_with("u") {
+                bounding_at_least_zero(walk, facts, name)
+            }
+        }
+        if ty == "Vec" || ty == "List" || ty == "Array" {
+            bounding_at_least_zero(walk, facts, length_of(name))
+        }
+    }
+    bounding_block(walk, body, facts, context, program, words, node_of, ask)
+}
+
+/// The bounds this pass found: every key written, none written something
+/// unbounded.
+fn bounding_found(walk: ref BoundsWalk) -> collections::BTreeMap[String, Range] {
+    let mut out: collections::BTreeMap[String, Range] = collections::BTreeMap()
+    for (key, bound) in walk.written {
+        if bound.is_bounded() && !bounding_poisoned(walk, key) {
+            out.insert(key.clone(), bound.clone())
+        }
+    }
+    return out
+}
+
+/// A key is out where it, or a list it is part of, was written something
+/// unbounded: `xs.push(ys)` with `ys` unknown says nothing of `xs[]`.
+fn bounding_poisoned(walk: ref BoundsWalk, key: ref String) -> bool {
+    let mut at = key_root(key)
+    let parts: Vec[ref String] = key.split("[").collect()
+    for _part in 0..<parts.len() {
+        if walk.poisoned.contains(at) {
+            return true
+        }
+        at.push_str("[]")
+    }
+    return false
+}
+
+/// The bound assumed of `key`'s values, where there is one.
+fn bounding_assumed(walk: ref BoundsWalk, key: ref String) -> Range? {
+    let bound = walk.assumed.get(key) ?? return null
+    return bound.clone()
+}
+
+/// **`value` is written into the list whose elements are `key`** (ADR-306
+/// D7): a number joins the key's bound, a list's items join `key[]`'s, a
+/// list the walk knows joins its bound into `key[]`.
+fn bounding_write(mut walk: BoundsWalk, key: ref String, value: ref Expr, facts: ref BoundsFacts, context: ref BoundsContext, program: ref Program, words: ref winnow_grammar::InternerContext, node_of: fn(ref Expr) -> i64 sync, ask: fn(ref TermArena, ref Vec[i64], i64) -> bool sync) {
+    if !tracks(walk.shape, key) {
+        return
+    }
+    let inner = f"{key}[]"
+    match value {
+        Expr::ListLit { items, .. } => {
+            for item in items {
+                bounding_write(walk, inner, item, facts, context, program, words, node_of, ask)
+            }
+            return
+        },
+        else => {},
+    }
+    let range = bounding_range(walk, value, facts, context, program, words, node_of, ask)
+    if range != null {
+        bounding_join(walk, key, range ?? Range::open())
+        return
+    }
+    let elements = elements_key(walk.shape, value, words)
+    if elements != null {
+        let bound = bounding_assumed(walk, elements ?? "")
+        if bound != null {
+            bounding_join(walk, inner, bound ?? Range::open())
+        } else {
+            walk.poisoned.insert(inner)
+        }
+        return
+    }
+    walk.poisoned.insert(key.clone())
+}
+
+fn bounding_join(mut walk: BoundsWalk, key: ref String, range: Range) {
+    if !range.is_bounded() {
+        walk.poisoned.insert(key.clone())
+        return
+    }
+    let mut joined = range
+    let was = walk.written.get(key)
+    if was != null {
+        joined = (was ?? Range::open()).join(range)
+    }
+    walk.written.insert(key.clone(), joined)
+}
+
+/// Whether `goal` follows from what holds, on a certificate the checker
+/// accepts.
+fn bounding_proves(walk: ref BoundsWalk, facts: ref BoundsFacts, goal: i64, ask: fn(ref TermArena, ref Vec[i64], i64) -> bool sync) -> bool {
+    let mut all = facts.facts.clone()
+    for (name, axiom) in walk.axioms {
+        if !walk.unsized_names.contains(name) {
+            for fact in axiom {
+                all.push(fact)
+            }
+        }
+    }
+    return ask(walk.arena, all, goal)
+}
+
+/// **What is known of a linear term, as constants**: a candidate from
+/// interval propagation over the facts, as Wuffs bounds a value, each end
+/// then confirmed by the solver on a certificate the checker accepts. An end
+/// the solver does not confirm is open.
+fn bounding_term(mut walk: BoundsWalk, term: i64, facts: ref BoundsFacts, ask: fn(ref TermArena, ref Vec[i64], i64) -> bool sync) -> Range {
+    let known = walk.arena.constant(term)
+    if known != null {
+        return Range::exactly(known ?? 0)
+    }
+    let guess = candidate(term, facts.facts, fn(at) { walk.arena.at(at) })
+    let mut confirmed = Range::open()
+    if guess.hi != null {
+        let hi = guess.hi ?? 0
+        let k = walk.arena.int(hi)
+        let goal = walk.arena.le(term, k)
+        if bounding_proves(walk, facts, goal, ask) {
+            confirmed.hi = hi
+        }
+    }
+    if guess.lo != null {
+        let lo = guess.lo ?? 0
+        let k = walk.arena.int(lo)
+        let goal = walk.arena.ge(term, k)
+        if bounding_proves(walk, facts, goal, ask) {
+            confirmed.lo = lo
+        }
+    }
+    return confirmed
+}
+
+/// **The constants a whole number lies between**, where the walk can tell:
+/// a linear term by the solver, and around it `%` (ADR-306 D8), `>>`, `&`, a
+/// conversion, a truncation, and a value read out of a list whose values are
+/// bounded (D2). Nothing is "not a number the walk knows", which is also
+/// what anything else is.
+fn bounding_range(mut walk: BoundsWalk, expr: ref Expr, facts: ref BoundsFacts, context: ref BoundsContext, program: ref Program, words: ref winnow_grammar::InternerContext, node_of: fn(ref Expr) -> i64 sync, ask: fn(ref TermArena, ref Vec[i64], i64) -> bool sync) -> Range? {
+    let term = bounding_lin(walk, expr, facts, context, program, words, node_of)
+    if term != null {
+        return bounding_term(walk, term ?? 0, facts, ask)
+    }
+    match expr {
+        Expr::Binary { op, lhs, rhs, .. } => return bounding_range_of(walk, op, lhs, rhs, facts, context, program, words, node_of, ask),
+        Expr::Unary { op, expr } => {
+            match op {
+                UnaryOp::Neg => {
+                    let inner = bounding_range(walk, expr, facts, context, program, words, node_of, ask) ?? return null
+                    return inner.neg()
+                },
+                else => {},
+            }
+        },
+        // A conversion keeps its value or stops the program.
+        Expr::Cast { expr, ty } => {
+            if ty.generics.is_empty() {
+                let into = Range::of_type(words.resolve(ty.name)) ?? return null
+                let got = bounding_range(walk, expr, facts, context, program, words, node_of, ask) ?? return into
+                return got.meet(into)
+            }
+        },
+        Expr::MethodCall { receiver, method, args, .. } => {
+            if args.is_empty() {
+                let name = words.resolve(method)
+                if name == "len" {
+                    return Range { lo: 0, hi: null }
+                }
+                if !name.starts_with("truncating_") {
+                    return null
+                }
+                let into = Range::of_type(bounding_dropped(name, 11)) ?? return null
+                let got = bounding_range(walk, receiver, facts, context, program, words, node_of, ask) ?? return into
+                if into.holds(got) {
+                    return got
+                }
+                return into
+            }
+        },
+        Expr::Index { base, .. } => {
+            let key = elements_key(walk.shape, base, words) ?? return null
+            return bounding_assumed(walk, key)
+        },
+        else => {},
+    }
+    return null
+}
+
+/// `text` without its first `count` characters.
+fn bounding_dropped(text: ref String, count: i64) -> String {
+    let c: Vec[char] = text.chars().collect()
+    let mut out: String = ""
+    for k in count..<c.len() {
+        out.push(c[k])
+    }
+    return out
+}
+
+/// `lhs op rhs`, where it is not a linear term.
+fn bounding_range_of(mut walk: BoundsWalk, op: ref BinaryOp, lhs: ref Expr, rhs: ref Expr, facts: ref BoundsFacts, context: ref BoundsContext, program: ref Program, words: ref winnow_grammar::InternerContext, node_of: fn(ref Expr) -> i64 sync, ask: fn(ref TermArena, ref Vec[i64], i64) -> bool sync) -> Range? {
+    match op {
+        BinaryOp::Add => {
+            let a = bounding_range(walk, lhs, facts, context, program, words, node_of, ask) ?? return null
+            let b = bounding_range(walk, rhs, facts, context, program, words, node_of, ask) ?? return null
+            return a.add(b)
+        },
+        BinaryOp::Sub => {
+            let a = bounding_range(walk, lhs, facts, context, program, words, node_of, ask) ?? return null
+            let b = bounding_range(walk, rhs, facts, context, program, words, node_of, ask) ?? return null
+            return a.add(b.neg())
+        },
+        BinaryOp::Mul => {
+            let a = bounding_range(walk, lhs, facts, context, program, words, node_of, ask) ?? return null
+            let b = bounding_range(walk, rhs, facts, context, program, words, node_of, ask) ?? return null
+            return a.mul(b)
+        },
+        // **`0 <= x % n < n`** where `x` is not negative and `n` is
+        // positive; `|x % n| < n` where only `n` is known.
+        BinaryOp::Rem => {
+            let n = bounding_range(walk, rhs, facts, context, program, words, node_of, ask) ?? return null
+            let low = n.lo ?? return null
+            let high = n.hi ?? return null
+            if low < 1 {
+                return null
+            }
+            let x = bounding_range(walk, lhs, facts, context, program, words, node_of, ask)
+            return bounding_remainder(x, high)
+        },
+        BinaryOp::Shr => {
+            let by = bounding_range(walk, rhs, facts, context, program, words, node_of, ask) ?? return null
+            let k = by.lo ?? return null
+            let same = by.hi ?? return null
+            if k != same || k < 0 || k >= 64 {
+                return null
+            }
+            let x = bounding_range(walk, lhs, facts, context, program, words, node_of, ask) ?? return null
+            let lo = x.lo ?? return null
+            if lo < 0 {
+                return null
+            }
+            let mut shifted = Range { lo: lo >> k, hi: null }
+            if x.hi != null {
+                shifted.hi = (x.hi ?? 0) >> k
+            }
+            return shifted
+        },
+        BinaryOp::BitAnd => {
+            let mut mask: i64? = null
+            let first = bounding_mask(walk, lhs, facts, context, program, words, node_of)
+            if first != null {
+                mask = first
+            }
+            let second = bounding_mask(walk, rhs, facts, context, program, words, node_of)
+            if second != null {
+                mask = second
+            }
+            let most = mask ?? return null
+            return Range { lo: 0, hi: most }
+        },
+        else => {},
+    }
+    return null
+}
+
+/// `x % n` for an `n` of at most `high`.
+fn bounding_remainder(x: ref Range?, high: i64) -> Range {
+    let either = Range { lo: 1 - high, hi: high - 1 }
+    let known = x ?? return either
+    let lo = known.lo ?? return either
+    if lo < 0 {
+        return either
+    }
+    let hi = known.hi ?? return Range { lo: 0, hi: high - 1 }
+    return Range { lo: 0, hi: hi.min(high - 1) }
+}
+
+/// A side of `&` that is a constant not below zero: the mask.
+fn bounding_mask(mut walk: BoundsWalk, side: ref Expr, facts: ref BoundsFacts, context: ref BoundsContext, program: ref Program, words: ref winnow_grammar::InternerContext, node_of: fn(ref Expr) -> i64 sync) -> i64? {
+    let term = bounding_lin(walk, side, facts, context, program, words, node_of) ?? return null
+    let c = walk.arena.constant(term) ?? return null
+    if c >= 0 {
+        return c
+    }
+    return null
+}
+
+/// Whether `lhs op rhs`, an operation of type `ty`, stays inside it.
+///
+/// **A goal the solver can state** (#444): the solver counts in `i64` and
+/// refuses on overflow, so `term <= i64::MAX` - negated, `term >= 2^63` - was
+/// never decided. Inside `±2^62` is inside the type, and leaves the solver
+/// room to add facts as large as a length without overflowing; a value it
+/// does not cover keeps its check.
+fn bounding_fits(mut walk: BoundsWalk, op: ref BinaryOp, lhs: ref Expr, rhs: ref Expr, ty: ref String, facts: ref BoundsFacts, context: ref BoundsContext, program: ref Program, words: ref winnow_grammar::InternerContext, node_of: fn(ref Expr) -> i64 sync, ask: fn(ref TermArena, ref Vec[i64], i64) -> bool sync) -> bool {
+    let bounds = Range::of_type(ty) ?? return false
+    let widest_lo = bounds.lo ?? return false
+    let widest_hi = bounds.hi ?? return false
+    let lo = widest_lo.max(0 - solvable())
+    let hi = widest_hi.min(solvable())
+    let term = bounding_lin_of(walk, op, lhs, rhs, facts, context, program, words, node_of)
+    if term != null {
+        let t = term ?? 0
+        let low = walk.arena.int(lo)
+        let high = walk.arena.int(hi)
+        let above = walk.arena.ge(t, low)
+        let below = walk.arena.le(t, high)
+        let goal = walk.arena.and([above, below])
+        return bounding_proves(walk, facts, goal, ask)
+    }
+    let range = bounding_range_of(walk, op, lhs, rhs, facts, context, program, words, node_of, ask) ?? return false
+    return bounds.holds(range)
+}
+
+/// `name` lies within `range`, where it is a whole number.
+fn bounding_bounded(mut walk: BoundsWalk, mut facts: BoundsFacts, name: ref String, range: ref Range) {
+    let n = walk.arena.var(name)
+    if range.lo != null {
+        let lo = walk.arena.int(range.lo ?? 0)
+        let fact = walk.arena.ge(n, lo)
+        bounding_push(walk, facts, fact)
+    }
+    if range.hi != null {
+        let hi = walk.arena.int(range.hi ?? 0)
+        let fact = walk.arena.le(n, hi)
+        bounding_push(walk, facts, fact)
+    }
+}
+
+fn bounding_push(walk: ref BoundsWalk, mut facts: BoundsFacts, fact: i64) {
+    let mut read: collections::BTreeSet[String] = collections::BTreeSet()
+    walk.arena.variables(fact, read)
+    for name in read {
+        if walk.pinned.contains(bounding_base_of(name)) {
+            return
+        }
+    }
+    facts.facts.push(fact)
+    if facts.facts.len() > most_facts() {
+        facts.facts.remove(0)
+    }
+}
+
+/// `xs.len()` is about `xs`.
+fn bounding_base_of(name: ref String) -> String {
+    if !name.ends_with(".len()") {
+        return name.clone()
+    }
+    let c: Vec[char] = name.chars().collect()
+    let mut out: String = ""
+    for k in 0..<c.len() - 6 {
+        out.push(c[k])
+    }
+    return out
+}
+
+fn bounding_at_least_zero(mut walk: BoundsWalk, mut facts: BoundsFacts, name: ref String) {
+    let n = walk.arena.var(name)
+    let zero = walk.arena.int(0)
+    let fact = walk.arena.ge(n, zero)
+    bounding_push(walk, facts, fact)
+}
+
+/// Nothing known about `name` or its length holds any more.
+fn bounding_forget(walk: ref BoundsWalk, mut facts: BoundsFacts, name: ref String) {
+    let length = length_of(name)
+    let mut kept: Vec[i64] = []
+    for fact in facts.facts {
+        if !walk.arena.mentions(fact, name) && !walk.arena.mentions(fact, length) {
+            kept.push(fact)
+        }
+    }
+    facts.facts = kept
+}
+
+fn bounding_forget_length(walk: ref BoundsWalk, mut facts: BoundsFacts, name: ref String) {
+    let length = length_of(name)
+    let mut kept: Vec[i64] = []
+    for fact in facts.facts {
+        if !walk.arena.mentions(fact, length) {
+            kept.push(fact)
+        }
+    }
+    facts.facts = kept
+}
+
+/// Every fact `name` reads, rewritten for `name` now being `old + by`: what
+/// held of the old value holds of `name - by`.
+fn bounding_shift(mut walk: BoundsWalk, mut facts: BoundsFacts, name: ref String, by: i64) {
+    let now = walk.arena.var(name)
+    let old = walk.arena.sub(now, by)
+    let mut given: collections::BTreeMap[String, i64] = collections::BTreeMap()
+    given.insert(name.clone(), old)
+    for k in 0..<facts.facts.len() {
+        let fact = facts.facts[k]
+        if walk.arena.mentions(fact, name) {
+            facts.facts[k] = walk.arena.substitute(fact, given)
+        }
+    }
+}
+
+/// What holds again after a loop's body or a branch changed `changed`: a
+/// name that is never negative still is not.
+fn bounding_after_change(mut walk: BoundsWalk, mut facts: BoundsFacts, changed: ref BoundsChanged) {
+    for name in changed.values {
+        bounding_forget(walk, facts, name)
+        if (walk.nonnegative.contains(name) || walk.shape.unsigned.contains(name)) && facts.ints.contains(name) {
+            bounding_at_least_zero(walk, facts, name)
+        }
+    }
+    for name in changed.lengths {
+        bounding_forget_length(walk, facts, name)
+    }
+}
+
+/// **`expr` as a linear term**, where it is one.
+fn bounding_lin(mut walk: BoundsWalk, expr: ref Expr, facts: ref BoundsFacts, context: ref BoundsContext, program: ref Program, words: ref winnow_grammar::InternerContext, node_of: fn(ref Expr) -> i64 sync) -> i64? {
+    match expr {
+        Expr::LitInt { value, negative } => {
+            let n = integer_as_count(integer(value, negative)) ?? return null
+            return walk.arena.int(n)
+        },
+        Expr::Variable(name) => {
+            let text = words.resolve(name)
+            if walk.shape.constants.contains_key(text) {
+                let n = walk.shape.constants[text] ?? 0
+                return walk.arena.int(n)
+            }
+            if facts.ints.contains(text) {
+                return walk.arena.var(text)
+            }
+        },
+        Expr::MethodCall { receiver, method, args, .. } => {
+            if args.is_empty() && words.resolve(method) == "len" {
+                match receiver {
+                    Expr::Variable(name) => return bounding_length(walk, receiver, words.resolve(name), context, node_of),
+                    else => {},
+                }
+            }
+        },
+        Expr::Unary { op, expr } => {
+            match op {
+                UnaryOp::Neg => {
+                    let a = bounding_lin(walk, expr, facts, context, program, words, node_of) ?? return null
+                    return walk.arena.neg(a)
+                },
+                else => {},
+            }
+        },
+        // **A conversion keeps the value or stops the program** (Part III
+        // A.2: one that does not fit is checked at every build), so where the
+        // program goes on, the number is the one converted.
+        Expr::Cast { expr, ty } => {
+            if ty.generics.is_empty() && is_whole_number(words.resolve(ty.name)) {
+                return bounding_lin(walk, expr, facts, context, program, words, node_of)
+            }
+        },
+        Expr::Call { func, args, config } => {
+            if config.is_empty() {
+                let callee = bounding_variable(func, words) ?? return null
+                let mut given: Vec[i64] = []
+                for arg in args {
+                    let term = bounding_lin(walk, arg, facts, context, program, words, node_of) ?? return null
+                    given.push(term)
+                }
+                return bounding_called(walk, callee, given, 0, program, words)
+            }
+        },
+        Expr::Binary { op, lhs, rhs, .. } => return bounding_lin_of(walk, op, lhs, rhs, facts, context, program, words, node_of),
+        else => {},
+    }
+    return null
+}
+
+/// The name `expr` is, where it is a bare one.
+fn bounding_variable(expr: ref Expr, words: ref winnow_grammar::InternerContext) -> String? {
+    return match expr {
+        Expr::Variable(name) => words.resolve(name).clone(),
+        else => null,
+    }
+}
+
+/// `name.len()`, where `receiver` counts a `std` container.
+fn bounding_length(mut walk: BoundsWalk, receiver: ref Expr, name: ref String, context: ref BoundsContext, node_of: fn(ref Expr) -> i64 sync) -> i64? {
+    if !context.lengths.contains(node_of(receiver)) {
+        return null
+    }
+    let length = length_of(name)
+    let n = walk.arena.var(length)
+    if context.sized.contains(node_of(receiver)) {
+        if !walk.axioms.contains_key(length) {
+            let zero = walk.arena.int(0)
+            let most = walk.arena.int(length_below())
+            let low = walk.arena.ge(n, zero)
+            let high = walk.arena.le(n, most)
+            walk.axioms.insert(length, [low, high])
+        }
+    } else {
+        walk.unsized_names.insert(length)
+    }
+    return n
+}
+
+/// `lhs op rhs` as a linear term: a sum, a difference, or a product with a
+/// constant side.
+fn bounding_lin_of(mut walk: BoundsWalk, op: ref BinaryOp, lhs: ref Expr, rhs: ref Expr, facts: ref BoundsFacts, context: ref BoundsContext, program: ref Program, words: ref winnow_grammar::InternerContext, node_of: fn(ref Expr) -> i64 sync) -> i64? {
+    let l = bounding_lin(walk, lhs, facts, context, program, words, node_of) ?? return null
+    let r = bounding_lin(walk, rhs, facts, context, program, words, node_of) ?? return null
+    return bounding_combined(walk, op, l, r)
+}
+
+fn bounding_combined(mut walk: BoundsWalk, op: ref BinaryOp, l: i64, r: i64) -> i64? {
+    match op {
+        BinaryOp::Add => return walk.arena.add(l, r),
+        BinaryOp::Sub => return walk.arena.sub(l, r),
+        BinaryOp::Mul => return bounding_product(walk, l, r),
+        else => {},
+    }
+    return null
+}
+
+/// `l * r`, linear where one side is a constant.
+fn bounding_product(mut walk: BoundsWalk, l: i64, r: i64) -> i64? {
+    if walk.arena.constant(l) == null && walk.arena.constant(r) == null {
+        return null
+    }
+    return walk.arena.mul(l, r)
+}
+
+/// **A call to an expression function is its expression** (ADR-314 D3,
+/// #421): a free function whose body is one `return e` gives `e` with the
+/// arguments for its parameters, which is the `ensures result == e` it
+/// publishes. Where `e` overflows, the function's own check stops the
+/// program, so where the caller goes on the value is the one written.
+///
+/// **Only what `e` says of its parameters**: a name the body does not take
+/// as a parameter belongs to the callee's scope, not the caller's, and is not
+/// read. A call inside `e` is followed as far as `call_depth`.
+fn bounding_called(mut walk: BoundsWalk, wanted: ref String, given: ref Vec[i64], depth: i64, program: ref Program, words: ref winnow_grammar::InternerContext) -> i64? {
+    if depth >= call_depth() {
+        return null
+    }
+    for item in program.items {
+        match item.node {
+            Item::Fn { name, receiver, args, config, ret_type, body, .. } => {
+                if receiver != null || !config.is_empty() {
+                    continue
+                }
+                let declared = name ?? continue
+                if words.resolve(declared) != wanted {
+                    continue
+                }
+                let ret = ret_type ?? continue
+                if !ret.generics.is_empty() || !is_whole_number(words.resolve(ret.name)) || body.stmts.len() != 1 {
+                    continue
+                }
+                for only in body.stmts {
+                    match only.node {
+                        Stmt::Return(returned) => {
+                            let value = returned ?? continue
+                            if args.len() != given.len() {
+                                return null
+                            }
+                            let mut env: collections::BTreeMap[String, i64] = collections::BTreeMap()
+                            for k in 0..<args.len() {
+                                env.insert(words.resolve(args[k].name).clone(), given[k])
+                            }
+                            return bounding_inline(walk, value, env, depth, program, words)
+                        },
+                        else => {},
+                    }
+                }
+            },
+            else => {},
+        }
+    }
+    return null
+}
+
+/// `expr`, a callee's expression, over `env`'s terms for its parameters.
+fn bounding_inline(mut walk: BoundsWalk, expr: ref Expr, env: ref collections::BTreeMap[String, i64], depth: i64, program: ref Program, words: ref winnow_grammar::InternerContext) -> i64? {
+    match expr {
+        Expr::LitInt { value, negative } => {
+            let n = integer_as_count(integer(value, negative)) ?? return null
+            return walk.arena.int(n)
+        },
+        Expr::Variable(name) => {
+            let term = env[words.resolve(name)] ?? return null
+            return term
+        },
+        Expr::Unary { op, expr } => {
+            match op {
+                UnaryOp::Neg => {
+                    let a = bounding_inline(walk, expr, env, depth, program, words) ?? return null
+                    return walk.arena.neg(a)
+                },
+                else => {},
+            }
+        },
+        Expr::Cast { expr, ty } => {
+            if ty.generics.is_empty() && is_whole_number(words.resolve(ty.name)) {
+                return bounding_inline(walk, expr, env, depth, program, words)
+            }
+        },
+        Expr::Call { func, args, config } => {
+            if config.is_empty() {
+                let callee = bounding_variable(func, words) ?? return null
+                let mut given: Vec[i64] = []
+                for arg in args {
+                    let term = bounding_inline(walk, arg, env, depth, program, words) ?? return null
+                    given.push(term)
+                }
+                return bounding_called(walk, callee, given, depth + 1, program, words)
+            }
+        },
+        Expr::Binary { op, lhs, rhs, .. } => {
+            let l = bounding_inline(walk, lhs, env, depth, program, words) ?? return null
+            let r = bounding_inline(walk, rhs, env, depth, program, words) ?? return null
+            return bounding_combined(walk, op, l, r)
+        },
+        else => {},
+    }
+    return null
+}
+
+/// **What holds where `expr` is true**: a formula `expr` implies, which may
+/// say less than `expr` does - of `a && b`, what is read of either half - and
+/// never more.
+fn bounding_claim(mut walk: BoundsWalk, expr: ref Expr, facts: ref BoundsFacts, context: ref BoundsContext, program: ref Program, words: ref winnow_grammar::InternerContext, node_of: fn(ref Expr) -> i64 sync) -> i64? {
+    match expr {
+        Expr::LitBool(b) => return walk.arena.boolean(b),
+        Expr::Unary { op, expr } => {
+            match op {
+                UnaryOp::Not => return bounding_denial(walk, expr, facts, context, program, words, node_of),
+                else => {},
+            }
+        },
+        Expr::Binary { op, lhs, rhs, .. } => {
+            match op {
+                BinaryOp::And => {
+                    let l = bounding_claim(walk, lhs, facts, context, program, words, node_of)
+                    let r = bounding_claim(walk, rhs, facts, context, program, words, node_of)
+                    if l != null && r != null {
+                        return walk.arena.and([l ?? 0, r ?? 0])
+                    }
+                    if l != null {
+                        return l
+                    }
+                    return r
+                },
+                // A disjunction says something only where both halves do.
+                BinaryOp::Or => {
+                    let l = bounding_claim(walk, lhs, facts, context, program, words, node_of) ?? return null
+                    let r = bounding_claim(walk, rhs, facts, context, program, words, node_of) ?? return null
+                    return walk.arena.or([l, r])
+                },
+                else => {},
+            }
+        },
+        else => {},
+    }
+    return bounding_comparison(walk, expr, facts, context, program, words, node_of)
+}
+
+/// **What holds where `expr` is false**: a formula `!expr` implies, by the
+/// same rule as `bounding_claim` - so `a || b` false says what is read of
+/// either half false, and `a && b` false says something only where both
+/// halves can be denied.
+fn bounding_denial(mut walk: BoundsWalk, expr: ref Expr, facts: ref BoundsFacts, context: ref BoundsContext, program: ref Program, words: ref winnow_grammar::InternerContext, node_of: fn(ref Expr) -> i64 sync) -> i64? {
+    match expr {
+        Expr::LitBool(b) => return walk.arena.boolean(!b),
+        Expr::Unary { op, expr } => {
+            match op {
+                UnaryOp::Not => return bounding_claim(walk, expr, facts, context, program, words, node_of),
+                else => {},
+            }
+        },
+        Expr::Binary { op, lhs, rhs, .. } => {
+            match op {
+                BinaryOp::Or => {
+                    let l = bounding_denial(walk, lhs, facts, context, program, words, node_of)
+                    let r = bounding_denial(walk, rhs, facts, context, program, words, node_of)
+                    if l != null && r != null {
+                        return walk.arena.and([l ?? 0, r ?? 0])
+                    }
+                    if l != null {
+                        return l
+                    }
+                    return r
+                },
+                BinaryOp::And => {
+                    let l = bounding_denial(walk, lhs, facts, context, program, words, node_of) ?? return null
+                    let r = bounding_denial(walk, rhs, facts, context, program, words, node_of) ?? return null
+                    return walk.arena.or([l, r])
+                },
+                else => {},
+            }
+        },
+        else => {},
+    }
+    let atom = bounding_comparison(walk, expr, facts, context, program, words, node_of) ?? return null
+    return walk.arena.not(atom)
+}
+
+/// A comparison of two linear terms, exactly.
+fn bounding_comparison(mut walk: BoundsWalk, expr: ref Expr, facts: ref BoundsFacts, context: ref BoundsContext, program: ref Program, words: ref winnow_grammar::InternerContext, node_of: fn(ref Expr) -> i64 sync) -> i64? {
+    match expr {
+        Expr::Binary { op, lhs, rhs, .. } => {
+            let compares = match op {
+                BinaryOp::Lt => true,
+                BinaryOp::Le => true,
+                BinaryOp::Gt => true,
+                BinaryOp::Ge => true,
+                BinaryOp::Eq => true,
+                BinaryOp::Ne => true,
+                else => false,
+            }
+            if !compares {
+                return null
+            }
+            let a = bounding_lin(walk, lhs, facts, context, program, words, node_of) ?? return null
+            let b = bounding_lin(walk, rhs, facts, context, program, words, node_of) ?? return null
+            match op {
+                BinaryOp::Lt => return walk.arena.lt(a, b),
+                BinaryOp::Le => return walk.arena.le(a, b),
+                BinaryOp::Gt => return walk.arena.gt(a, b),
+                BinaryOp::Ge => return walk.arena.ge(a, b),
+                BinaryOp::Eq => return walk.arena.equal(a, b),
+                else => return walk.arena.unequal(a, b),
+            }
+        },
+        else => {},
+    }
+    return null
+}
+
+fn bounding_assume(mut walk: BoundsWalk, mut facts: BoundsFacts, cond: ref Expr, context: ref BoundsContext, program: ref Program, words: ref winnow_grammar::InternerContext, node_of: fn(ref Expr) -> i64 sync) {
+    let holds = bounding_claim(walk, cond, facts, context, program, words, node_of) ?? return
+    bounding_push(walk, facts, holds)
+}
+
+fn bounding_assume_not(mut walk: BoundsWalk, mut facts: BoundsFacts, cond: ref Expr, context: ref BoundsContext, program: ref Program, words: ref winnow_grammar::InternerContext, node_of: fn(ref Expr) -> i64 sync) {
+    let holds = bounding_denial(walk, cond, facts, context, program, words, node_of) ?? return
+    bounding_push(walk, facts, holds)
+}
+
+/// Whether `0 <= index < list.len()` follows from what holds.
+fn bounding_inside(mut walk: BoundsWalk, list: ref String, index: ref Expr, facts: ref BoundsFacts, context: ref BoundsContext, program: ref Program, words: ref winnow_grammar::InternerContext, node_of: fn(ref Expr) -> i64 sync, ask: fn(ref TermArena, ref Vec[i64], i64) -> bool sync) -> bool {
+    if walk.collecting || walk.pinned.contains(list) {
+        return false
+    }
+    let length = length_of(list)
+    let len = walk.arena.var(length)
+    let at = bounding_lin(walk, index, facts, context, program, words, node_of)
+    if at == null {
+        // A position read out of a list whose values are bounded (ADR-306
+        // D7), or one `%` keeps small (D3).
+        let range = bounding_range(walk, index, facts, context, program, words, node_of, ask) ?? return false
+        let lo = range.lo ?? return false
+        let hi = range.hi ?? return false
+        if lo < 0 {
+            return false
+        }
+        let most = walk.arena.int(hi)
+        let goal = walk.arena.lt(most, len)
+        return bounding_proves(walk, facts, goal, ask)
+    }
+    let position = at ?? 0
+    let zero = walk.arena.int(0)
+    let low = walk.arena.ge(position, zero)
+    let high = walk.arena.lt(position, len)
+    let goal = walk.arena.and([low, high])
+    return bounding_proves(walk, facts, goal, ask)
+}
+
+/// `base[index]`, read or written: proved where `base` is a list by name.
+fn bounding_index(mut walk: BoundsWalk, base: ref Expr, index: ref Expr, facts: ref BoundsFacts, context: ref BoundsContext, program: ref Program, words: ref winnow_grammar::InternerContext, node_of: fn(ref Expr) -> i64 sync, ask: fn(ref TermArena, ref Vec[i64], i64) -> bool sync) {
+    match base {
+        Expr::Variable(list) => {
+            if bounding_inside(walk, words.resolve(list), index, facts, context, program, words, node_of, ask) {
+                walk.proven.indices.insert(node_of(base))
+            }
+        },
+        else => {},
+    }
+}
+
+/// A block; whether control never goes past its end.
+fn bounding_block(mut walk: BoundsWalk, block: ref Block, mut facts: BoundsFacts, context: ref BoundsContext, program: ref Program, words: ref winnow_grammar::InternerContext, node_of: fn(ref Expr) -> i64 sync, ask: fn(ref TermArena, ref Vec[i64], i64) -> bool sync) -> bool {
+    let before = facts.ints.clone()
+    let mut bound: Vec[String] = []
+    let mut leaves = false
+    for stmt in block.stmts {
+        match stmt.node {
+            Stmt::Let { names, .. } => {
+                for name in names {
+                    bound.push(words.resolve(name).clone())
+                }
+            },
+            Stmt::Comptime { name, .. } => bound.push(words.resolve(name).clone()),
+            else => {},
+        }
+        walk.at = stmt.span.start as i64
+        if bounding_stmt(walk, stmt.node, facts, context, program, words, node_of, ask) {
+            leaves = true
+            break
+        }
+    }
+    // The block's own names leave with it; a name it hid is the outer one
+    // again, and what was known of that was forgotten where it was hidden.
+    for name in bound {
+        bounding_forget(walk, facts, name)
+        facts.ints.remove(name)
+        if before.contains(name) {
+            facts.ints.insert(name.clone())
+        }
+    }
+    return leaves
+}
+
+fn bounding_maybe_block(mut walk: BoundsWalk, block: ref Block?, mut facts: BoundsFacts, context: ref BoundsContext, program: ref Program, words: ref winnow_grammar::InternerContext, node_of: fn(ref Expr) -> i64 sync, ask: fn(ref TermArena, ref Vec[i64], i64) -> bool sync) -> bool {
+    let present = block ?? return false
+    return bounding_block(walk, present, facts, context, program, words, node_of, ask)
+}
+
+fn bounding_stmt(mut walk: BoundsWalk, stmt: ref Stmt, mut facts: BoundsFacts, context: ref BoundsContext, program: ref Program, words: ref winnow_grammar::InternerContext, node_of: fn(ref Expr) -> i64 sync, ask: fn(ref TermArena, ref Vec[i64], i64) -> bool sync) -> bool {
+    match stmt {
+        Stmt::Let { names, ty, value, .. } => {
+            bounding_let(walk, names, ty, value, facts, context, program, words, node_of, ask)
+            return false
+        },
+        Stmt::Comptime { name, value, .. } => {
+            bounding_expr(walk, value, facts, context, program, words, node_of, ask)
+            let text = words.resolve(name)
+            bounding_forget(walk, facts, text)
+            facts.ints.remove(text)
+            return false
+        },
+        // **The value first, and then the write**, in the order the lowering
+        // runs them (ADR-293 D2): a value that shrinks the list is reached
+        // before the index it is written at.
+        Stmt::Assign { target, op, value } => {
+            let at = walk.at
+            bounding_expr(walk, value, facts, context, program, words, node_of, ask)
+            bounding_place(walk, target, facts, context, program, words, node_of, ask)
+            bounding_compound(walk, op, target, value, at, facts, context, program, words, node_of, ask)
+            if op == null {
+                match target {
+                    Expr::Index { base, .. } => {
+                        let key = elements_key(walk.shape, base, words)
+                        if key != null {
+                            bounding_write(walk, key ?? "", value, facts, context, program, words, node_of, ask)
+                        }
+                    },
+                    else => {},
+                }
+            }
+            match target {
+                Expr::Variable(name) => bounding_assign(walk, facts, words.resolve(name), op, value, context, program, words, node_of, ask),
+                else => {},
+            }
+            return false
+        },
+        Stmt::For { bindings, iter, body } => {
+            bounding_for(walk, bindings, iter, body, facts, context, program, words, node_of, ask)
+            return false
+        },
+        Stmt::While { cond, body } => {
+            let mut changed = bounding_changed(body, context, words)
+            bounding_extend(changed, bounding_changed_in_expr(cond, context, words))
+            bounding_after_change(walk, facts, changed)
+            bounding_expr(walk, cond, facts, context, program, words, node_of, ask)
+            let mut inner = facts.clone()
+            bounding_assume(walk, inner, cond, context, program, words, node_of)
+            bounding_block(walk, body, inner, context, program, words, node_of, ask)
+            if !breaks(body, words) {
+                bounding_assume_not(walk, facts, cond, context, program, words, node_of)
+            }
+            return false
+        },
+        Stmt::Return(value) => {
+            let returned = value ?? return true
+            bounding_expr(walk, returned, facts, context, program, words, node_of, ask)
+            return true
+        },
+        Stmt::Break => return true,
+        Stmt::Continue => return true,
+        Stmt::Expr(expr) => return bounding_expr_leaves(walk, expr, facts, context, program, words, node_of, ask),
+    }
+}
+
+/// `let names: ty = value`.
+fn bounding_let(mut walk: BoundsWalk, names: ref Vec[winnow_grammar::Symbol], ty: ref Type?, value: ref Expr, mut facts: BoundsFacts, context: ref BoundsContext, program: ref Program, words: ref winnow_grammar::InternerContext, node_of: fn(ref Expr) -> i64 sync, ask: fn(ref TermArena, ref Vec[i64], i64) -> bool sync) {
+    bounding_expr(walk, value, facts, context, program, words, node_of, ask)
+    let value_lin = bounding_lin(walk, value, facts, context, program, words, node_of)
+    // **A number the walk bounds without a linear term**: a value read out
+    // of a list, a `%` (ADR-306 D7, D8).
+    let mut value_range: Range? = null
+    if value_lin == null {
+        let range = bounding_range(walk, value, facts, context, program, words, node_of, ask) ?? Range::open()
+        if range.is_bounded() {
+            value_range = range
+        }
+    }
+    let whole = bounding_declared_whole(ty, words) ?? (value_lin != null || value_range != null)
+    for symbol in names {
+        let name = words.resolve(symbol)
+        bounding_forget(walk, facts, name)
+        facts.ints.remove(name)
+    }
+    if names.len() != 1 {
+        return
+    }
+    let name = words.resolve(names[0]).clone()
+    if whole {
+        facts.ints.insert(name.clone())
+        if value_lin != null {
+            let v = value_lin ?? 0
+            if !walk.arena.mentions(v, name) {
+                let n = walk.arena.var(name)
+                let fact = walk.arena.equal(n, v)
+                bounding_push(walk, facts, fact)
+            }
+        }
+        if bounding_declared_unsigned(ty, words) {
+            bounding_at_least_zero(walk, facts, name)
+        }
+        if value_range != null {
+            bounding_bounded(walk, facts, name, value_range ?? Range::open())
+        }
+    }
+    bounding_built(walk, facts, name, value)
+    if walk.shape.roots.contains(name) {
+        match value {
+            Expr::ListLit { items, .. } => {
+                for item in items {
+                    bounding_write(walk, name, item, facts, context, program, words, node_of, ask)
+                }
+            },
+            else => {},
+        }
+    }
+}
+
+/// Whether a declared type is a whole number; nothing where none is
+/// declared.
+fn bounding_declared_whole(ty: ref Type?, words: ref winnow_grammar::InternerContext) -> bool? {
+    let t = ty ?? return null
+    return t.generics.is_empty() && is_whole_number(words.resolve(t.name))
+}
+
+fn bounding_declared_unsigned(ty: ref Type?, words: ref winnow_grammar::InternerContext) -> bool {
+    let t = ty ?? return false
+    return words.resolve(t.name).starts_with("u")
+}
+
+/// **`x += d` proved as `x + d`** (#387), before the name moves: what is
+/// known of `x` is what the operation reads.
+fn bounding_compound(mut walk: BoundsWalk, op: ref BinaryOp?, target: ref Expr, value: ref Expr, at: i64, facts: ref BoundsFacts, context: ref BoundsContext, program: ref Program, words: ref winnow_grammar::InternerContext, node_of: fn(ref Expr) -> i64 sync, ask: fn(ref TermArena, ref Vec[i64], i64) -> bool sync) {
+    let operation = op ?? return
+    let arithmetic = match operation {
+        BinaryOp::Add => true,
+        BinaryOp::Sub => true,
+        BinaryOp::Mul => true,
+        else => false,
+    }
+    if !arithmetic || walk.collecting {
+        return
+    }
+    match target {
+        Expr::Variable(_) => {},
+        else => return,
+    }
+    let ty = context.arithmetic[at] ?? return
+    if bounding_fits(walk, operation, target, value, ty, facts, context, program, words, node_of, ask) {
+        walk.proven.arithmetic.insert(at)
+    }
+}
+
+fn bounding_for(mut walk: BoundsWalk, bindings: ref Vec[winnow_grammar::Symbol], iter: ref Expr, body: ref Block, mut facts: BoundsFacts, context: ref BoundsContext, program: ref Program, words: ref winnow_grammar::InternerContext, node_of: fn(ref Expr) -> i64 sync, ask: fn(ref TermArena, ref Vec[i64], i64) -> bool sync) {
+    bounding_expr(walk, iter, facts, context, program, words, node_of, ask)
+    let changed = bounding_changed(body, context, words)
+    // `for k in low..<high`: the binding, its ends as terms, and whether the
+    // range takes its end.
+    let mut counted = false
+    let mut name: String = ""
+    let mut low: i64? = null
+    let mut high: i64? = null
+    let mut closed = false
+    if bindings.len() == 1 {
+        match iter {
+            Expr::Range { start, end, inclusive } => {
+                low = bounding_lin(walk, start, facts, context, program, words, node_of)
+                high = bounding_lin(walk, end, facts, context, program, words, node_of)
+                counted = true
+                name = words.resolve(bindings[0]).clone()
+                closed = inclusive
+            },
+            else => {},
+        }
+    }
+    let mut inner = facts.clone()
+    bounding_after_change(walk, inner, changed)
+    for binding in bindings {
+        let bound = words.resolve(binding)
+        bounding_forget(walk, inner, bound)
+        inner.ints.remove(bound)
+    }
+    // `for x in xs`, where what `xs` holds is bounded (ADR-306 D7).
+    if bindings.len() == 1 && !counted {
+        let key = elements_key(walk.shape, iter, words)
+        if key != null {
+            let bound = bounding_assumed(walk, key ?? "")
+            if bound != null {
+                let only = words.resolve(bindings[0]).clone()
+                inner.ints.insert(only.clone())
+                bounding_bounded(walk, inner, only, bound ?? Range::open())
+            }
+        }
+    }
+    if counted {
+        inner.ints.insert(name.clone())
+        let n = walk.arena.var(name)
+        // A bound is read once, before the first turn: it holds of the
+        // binding while nothing it reads has changed.
+        if low != null {
+            let l = low ?? 0
+            if bounding_stable(walk, l, changed, name) {
+                let fact = walk.arena.le(l, n)
+                bounding_push(walk, inner, fact)
+            }
+        }
+        if high != null {
+            let h = high ?? 0
+            if bounding_stable(walk, h, changed, name) {
+                let fact = bounding_below(walk, n, h, closed)
+                bounding_push(walk, inner, fact)
+            }
+        }
+    }
+    bounding_block(walk, body, inner, context, program, words, node_of, ask)
+    // **A loop that pushes once per turn adds its count to the length**
+    // (ADR-306 D9).
+    let mut filled: Vec[String] = []
+    let mut count = 0
+    if counted && low != null && high != null {
+        let l = low ?? 0
+        let h = high ?? 0
+        let mut stable = true
+        for c in changed.values {
+            if bounding_reads(walk, l, h, c) {
+                stable = false
+            }
+        }
+        for c in changed.lengths {
+            if bounding_reads(walk, l, h, c) {
+                stable = false
+            }
+        }
+        let mut lists: Vec[String] = []
+        if stable {
+            lists = filled_once(body, walk.pinned, words)
+        }
+        let not_empty = walk.arena.le(l, h)
+        if !lists.is_empty() && bounding_proves(walk, facts, not_empty, ask) {
+            let mut taken = 0
+            if closed {
+                taken = 1
+            }
+            let one = walk.arena.int(taken)
+            let span = walk.arena.sub(h, l)
+            count = walk.arena.add(span, one)
+            filled = lists
+        }
+    }
+    let mut outer = BoundsChanged { values: changed.values.clone(), lengths: changed.lengths.clone() }
+    for list in filled {
+        outer.lengths.remove(list)
+    }
+    bounding_after_change(walk, facts, outer)
+    for list in filled {
+        bounding_shift(walk, facts, length_of(list), count)
+    }
+}
+
+/// `n <= h` where the range takes its end, `n < h` where it does not.
+fn bounding_below(mut walk: BoundsWalk, n: i64, h: i64, closed: bool) -> i64 {
+    if closed {
+        return walk.arena.le(n, h)
+    }
+    return walk.arena.lt(n, h)
+}
+
+/// Whether `t` holds while the loop's body runs: it reads nothing the body
+/// changes, nor the binding.
+fn bounding_stable(walk: ref BoundsWalk, t: i64, changed: ref BoundsChanged, name: ref String) -> bool {
+    for c in changed.values {
+        if walk.arena.mentions(t, c) {
+            return false
+        }
+    }
+    for c in changed.lengths {
+        if walk.arena.mentions(t, length_of(c)) {
+            return false
+        }
+    }
+    return !walk.arena.mentions(t, name)
+}
+
+/// Whether either end reads `c` or its length.
+fn bounding_reads(walk: ref BoundsWalk, l: i64, h: i64, c: ref String) -> bool {
+    let length = length_of(c)
+    return walk.arena.mentions(l, c) || walk.arena.mentions(h, c) || walk.arena.mentions(l, length) || walk.arena.mentions(h, length)
+}
+
+/// `name = value`, or `name op= value`.
+fn bounding_assign(mut walk: BoundsWalk, mut facts: BoundsFacts, name: ref String, op: ref BinaryOp?, value: ref Expr, context: ref BoundsContext, program: ref Program, words: ref winnow_grammar::InternerContext, node_of: fn(ref Expr) -> i64 sync, ask: fn(ref TermArena, ref Vec[i64], i64) -> bool sync) {
+    if !facts.ints.contains(name) {
+        bounding_forget(walk, facts, name)
+        bounding_built(walk, facts, name, value)
+        return
+    }
+    let value_lin = bounding_lin(walk, value, facts, context, program, words, node_of)
+    let now = walk.arena.var(name)
+    let mut by: i64? = null
+    if value_lin != null {
+        let v = value_lin ?? 0
+        if bounding_is_op(op, BinaryOp::Add) && !walk.arena.mentions(v, name) {
+            by = v
+        } else if bounding_is_op(op, BinaryOp::Sub) && !walk.arena.mentions(v, name) {
+            by = walk.arena.neg(v)
+        } else if op == null && walk.arena.mentions(v, name) {
+            // `n = n + d`, with `d` not reading `n`: linear in `n` with
+            // coefficient one exactly where setting `n` to zero and to one
+            // gives the same difference.
+            let d = walk.arena.sub(v, now)
+            let mut at_zero: collections::BTreeMap[String, i64] = collections::BTreeMap()
+            at_zero.insert(name.clone(), walk.arena.int(0))
+            let d0 = walk.arena.substitute(d, at_zero)
+            let mut at_one: collections::BTreeMap[String, i64] = collections::BTreeMap()
+            at_one.insert(name.clone(), walk.arena.int(1))
+            let d1 = walk.arena.substitute(d, at_one)
+            let same = walk.arena.equal(d0, d1)
+            let none: Vec[i64] = []
+            if ask(walk.arena, none, same) {
+                by = d0
+            }
+        }
+    }
+    if by != null {
+        bounding_shift(walk, facts, name, by ?? 0)
+        return
+    }
+    if op == null && value_lin != null {
+        bounding_forget(walk, facts, name)
+        let n = walk.arena.var(name)
+        let fact = walk.arena.equal(n, value_lin ?? 0)
+        bounding_push(walk, facts, fact)
+        return
+    }
+    let mut range: Range? = null
+    if op == null && value_lin == null {
+        range = bounding_range(walk, value, facts, context, program, words, node_of, ask)
+    }
+    bounding_forget(walk, facts, name)
+    if walk.nonnegative.contains(name) || walk.shape.unsigned.contains(name) {
+        bounding_at_least_zero(walk, facts, name)
+    }
+    if range != null {
+        bounding_bounded(walk, facts, name, range ?? Range::open())
+    }
+}
+
+fn bounding_is_op(op: ref BinaryOp?, wanted: BinaryOp) -> bool {
+    let given = op ?? return false
+    return given == wanted
+}
+
+/// What is known of `name`'s length from the value it was given.
+fn bounding_built(mut walk: BoundsWalk, mut facts: BoundsFacts, name: ref String, value: ref Expr) {
+    match value {
+        Expr::ListLit { items, .. } => {
+            let length = length_of(name)
+            let len = walk.arena.var(length)
+            let n = walk.arena.int(items.len())
+            let fact = walk.arena.equal(len, n)
+            bounding_push(walk, facts, fact)
+        },
+        else => {},
+    }
+}
+
+/// The target of an assignment: an index there is a write, proved as a read
+/// is.
+fn bounding_place(mut walk: BoundsWalk, target: ref Expr, mut facts: BoundsFacts, context: ref BoundsContext, program: ref Program, words: ref winnow_grammar::InternerContext, node_of: fn(ref Expr) -> i64 sync, ask: fn(ref TermArena, ref Vec[i64], i64) -> bool sync) {
+    match target {
+        Expr::Index { base, index } => {
+            bounding_place(walk, base, facts, context, program, words, node_of, ask)
+            bounding_expr(walk, index, facts, context, program, words, node_of, ask)
+            bounding_index(walk, base, index, facts, context, program, words, node_of, ask)
+        },
+        Expr::Field { base, .. } => bounding_place(walk, base, facts, context, program, words, node_of, ask),
+        else => {},
+    }
+}
+
+/// An expression as a statement; whether control never goes past it.
+fn bounding_expr_leaves(mut walk: BoundsWalk, expr: ref Expr, mut facts: BoundsFacts, context: ref BoundsContext, program: ref Program, words: ref winnow_grammar::InternerContext, node_of: fn(ref Expr) -> i64 sync, ask: fn(ref TermArena, ref Vec[i64], i64) -> bool sync) -> bool {
+    match expr {
+        Expr::If { cond, then_branch, else_branch } => return bounding_if_leaves(walk, cond, then_branch, else_branch, facts, context, program, words, node_of, ask),
+        Expr::Return(value) => {
+            let returned = value ?? return true
+            bounding_expr(walk, returned, facts, context, program, words, node_of, ask)
+            return true
+        },
+        Expr::Break => return true,
+        Expr::Continue => return true,
+        Expr::Throw(value) => {
+            bounding_expr(walk, value, facts, context, program, words, node_of, ask)
+            return true
+        },
+        // `panic(…)` does not come back.
+        Expr::Call { func, args, .. } => {
+            let callee = bounding_variable(func, words) ?? ""
+            if callee == "panic" {
+                for arg in args {
+                    bounding_expr(walk, arg, facts, context, program, words, node_of, ask)
+                }
+                return true
+            }
+        },
+        else => {},
+    }
+    bounding_expr(walk, expr, facts, context, program, words, node_of, ask)
+    return false
+}
+
+fn bounding_if_leaves(mut walk: BoundsWalk, cond: ref Expr, then_branch: ref Block, else_branch: ref Block?, mut facts: BoundsFacts, context: ref BoundsContext, program: ref Program, words: ref winnow_grammar::InternerContext, node_of: fn(ref Expr) -> i64 sync, ask: fn(ref TermArena, ref Vec[i64], i64) -> bool sync) -> bool {
+    bounding_expr(walk, cond, facts, context, program, words, node_of, ask)
+    let mut then_facts = facts.clone()
+    bounding_assume(walk, then_facts, cond, context, program, words, node_of)
+    let then_leaves = bounding_block(walk, then_branch, then_facts, context, program, words, node_of, ask)
+    let mut else_facts = facts.clone()
+    bounding_assume_not(walk, else_facts, cond, context, program, words, node_of)
+    let else_leaves = bounding_maybe_block(walk, else_branch, else_facts, context, program, words, node_of, ask)
+    if then_leaves && else_leaves {
+        return true
+    }
+    if then_leaves {
+        facts.ints = else_facts.ints
+        facts.facts = else_facts.facts
+    } else if else_leaves {
+        facts.ints = then_facts.ints
+        facts.facts = then_facts.facts
+    } else {
+        let mut changed = bounding_changed(then_branch, context, words)
+        bounding_extend_maybe(changed, else_branch, context, words)
+        bounding_after_change(walk, facts, changed)
+    }
+    return false
+}
+
+/// Walk an expression: prove the indices in it with what holds, and keep
+/// what it changes.
+fn bounding_expr(mut walk: BoundsWalk, expr: ref Expr, mut facts: BoundsFacts, context: ref BoundsContext, program: ref Program, words: ref winnow_grammar::InternerContext, node_of: fn(ref Expr) -> i64 sync, ask: fn(ref TermArena, ref Vec[i64], i64) -> bool sync) {
+    match expr {
+        Expr::Index { base, index } => {
+            bounding_expr(walk, base, facts, context, program, words, node_of, ask)
+            bounding_expr(walk, index, facts, context, program, words, node_of, ask)
+            bounding_index(walk, base, index, facts, context, program, words, node_of, ask)
+        },
+        Expr::Binary { op, lhs, rhs, span, .. } => bounding_binary(walk, op, lhs, rhs, span.start as i64, facts, context, program, words, node_of, ask),
+        Expr::If { cond, then_branch, else_branch } => {
+            bounding_expr(walk, cond, facts, context, program, words, node_of, ask)
+            let mut then_facts = facts.clone()
+            bounding_assume(walk, then_facts, cond, context, program, words, node_of)
+            bounding_block(walk, then_branch, then_facts, context, program, words, node_of, ask)
+            let mut changed = bounding_changed(then_branch, context, words)
+            bounding_else(walk, else_branch, cond, facts, changed, context, program, words, node_of, ask)
+            bounding_after_change(walk, facts, changed)
+        },
+        Expr::Block(block) => bounding_inner_block(walk, block, facts, context, program, words, node_of, ask),
+        Expr::Unsafe(block) => bounding_inner_block(walk, block, facts, context, program, words, node_of, ask),
+        Expr::Match { value, arms } => {
+            bounding_expr(walk, value, facts, context, program, words, node_of, ask)
+            let mut changed = nothing_changed()
+            for arm in arms {
+                // A pattern may bind a name that hides an outer one, so
+                // nothing known outside is carried into an arm.
+                let mut inner = BoundsFacts { ints: collections::BTreeSet(), facts: [] }
+                bounding_maybe_expr(walk, arm.guard, inner, context, program, words, node_of, ask)
+                bounding_expr(walk, arm.body, inner, context, program, words, node_of, ask)
+                bounding_extend(changed, bounding_changed_in_expr(arm.body, context, words))
+            }
+            bounding_after_change(walk, facts, changed)
+        },
+        // Not entered: a lambda or a task may run at any later moment.
+        Expr::Closure { .. } => {},
+        Expr::Spawn { .. } => {},
+        Expr::Overlap(_) => {},
+        Expr::Select(_) => {},
+        Expr::MethodCall { receiver, method, args, .. } => bounding_method_call(walk, receiver, words.resolve(method), args, facts, context, program, words, node_of, ask),
+        Expr::SafeMethod { receiver, method, args, .. } => bounding_method_call(walk, receiver, words.resolve(method), args, facts, context, program, words, node_of, ask),
+        Expr::Call { func, args, config } => {
+            bounding_expr(walk, func, facts, context, program, words, node_of, ask)
+            for arg in args {
+                bounding_expr(walk, arg, facts, context, program, words, node_of, ask)
+            }
+            for c in config {
+                bounding_expr(walk, c.value, facts, context, program, words, node_of, ask)
+            }
+            let callee = callee_params(func, context.around, words)
+            for at in 0..<args.len() {
+                match args[at] {
+                    Expr::Variable(name) => {
+                        if hands_on(callee, at) {
+                            bounding_forget(walk, facts, words.resolve(name))
+                        }
+                    },
+                    else => {},
+                }
+            }
+        },
+        else => bounding_children(walk, expr, facts, context, program, words, node_of, ask),
+    }
+}
+
+fn bounding_maybe_expr(mut walk: BoundsWalk, expr: ref Expr?, mut facts: BoundsFacts, context: ref BoundsContext, program: ref Program, words: ref winnow_grammar::InternerContext, node_of: fn(ref Expr) -> i64 sync, ask: fn(ref TermArena, ref Vec[i64], i64) -> bool sync) {
+    let present = expr ?? return
+    bounding_expr(walk, present, facts, context, program, words, node_of, ask)
+}
+
+/// An `else` branch, walked with the condition false; what it changes is
+/// added to `changed`.
+fn bounding_else(mut walk: BoundsWalk, else_branch: ref Block?, cond: ref Expr, facts: ref BoundsFacts, mut changed: BoundsChanged, context: ref BoundsContext, program: ref Program, words: ref winnow_grammar::InternerContext, node_of: fn(ref Expr) -> i64 sync, ask: fn(ref TermArena, ref Vec[i64], i64) -> bool sync) {
+    let block = else_branch ?? return
+    let mut else_facts = facts.clone()
+    bounding_assume_not(walk, else_facts, cond, context, program, words, node_of)
+    bounding_block(walk, block, else_facts, context, program, words, node_of, ask)
+    bounding_extend(changed, bounding_changed(block, context, words))
+}
+
+/// A block inside an expression: walked with what holds here, and what it
+/// changes forgotten after it.
+fn bounding_inner_block(mut walk: BoundsWalk, block: ref Block, mut facts: BoundsFacts, context: ref BoundsContext, program: ref Program, words: ref winnow_grammar::InternerContext, node_of: fn(ref Expr) -> i64 sync, ask: fn(ref TermArena, ref Vec[i64], i64) -> bool sync) {
+    let mut inner = facts.clone()
+    bounding_block(walk, block, inner, context, program, words, node_of, ask)
+    let changed = bounding_changed(block, context, words)
+    bounding_after_change(walk, facts, changed)
+}
+
+fn bounding_binary(mut walk: BoundsWalk, op: ref BinaryOp, lhs: ref Expr, rhs: ref Expr, at: i64, mut facts: BoundsFacts, context: ref BoundsContext, program: ref Program, words: ref winnow_grammar::InternerContext, node_of: fn(ref Expr) -> i64 sync, ask: fn(ref TermArena, ref Vec[i64], i64) -> bool sync) {
+    match op {
+        // The right side runs only where the left one decided it does.
+        BinaryOp::And => {
+            bounding_expr(walk, lhs, facts, context, program, words, node_of, ask)
+            let mut right = facts.clone()
+            bounding_assume(walk, right, lhs, context, program, words, node_of)
+            bounding_expr(walk, rhs, right, context, program, words, node_of, ask)
+            let changed = bounding_changed_in_expr(rhs, context, words)
+            bounding_after_change(walk, facts, changed)
+            return
+        },
+        BinaryOp::Or => {
+            bounding_expr(walk, lhs, facts, context, program, words, node_of, ask)
+            let mut right = facts.clone()
+            bounding_assume_not(walk, right, lhs, context, program, words, node_of)
+            bounding_expr(walk, rhs, right, context, program, words, node_of, ask)
+            let changed = bounding_changed_in_expr(rhs, context, words)
+            bounding_after_change(walk, facts, changed)
+            return
+        },
+        else => {},
+    }
+    bounding_expr(walk, lhs, facts, context, program, words, node_of, ask)
+    bounding_expr(walk, rhs, facts, context, program, words, node_of, ask)
+    // **An operation that stays inside its type** (ADR-306 D6): its
+    // operands first, in the order they run.
+    let arithmetic = match op {
+        BinaryOp::Add => true,
+        BinaryOp::Sub => true,
+        BinaryOp::Mul => true,
+        else => false,
+    }
+    if !arithmetic || walk.collecting {
+        return
+    }
+    let ty = context.arithmetic[at] ?? return
+    if bounding_fits(walk, op, lhs, rhs, ty, facts, context, program, words, node_of, ask) {
+        walk.proven.arithmetic.insert(at)
+    }
+}
+
+fn bounding_method_call(mut walk: BoundsWalk, receiver: ref Expr, method: ref String, args: ref Vec[Expr], mut facts: BoundsFacts, context: ref BoundsContext, program: ref Program, words: ref winnow_grammar::InternerContext, node_of: fn(ref Expr) -> i64 sync, ask: fn(ref TermArena, ref Vec[i64], i64) -> bool sync) {
+    bounding_expr(walk, receiver, facts, context, program, words, node_of, ask)
+    for arg in args {
+        bounding_expr(walk, arg, facts, context, program, words, node_of, ask)
+    }
+    let written = writes_a_value(method, args.len())
+    if written != null {
+        let key = elements_key(walk.shape, receiver, words)
+        if key != null {
+            bounding_write(walk, key ?? "", args[written ?? 0], facts, context, program, words, node_of, ask)
+        }
+    }
+    match receiver {
+        Expr::Variable(name) => bounding_method(walk, facts, words.resolve(name), method, args, context, program, words, node_of, ask),
+        else => {},
+    }
+    let changes_its_arguments = context.around.changing_methods.contains(method)
+    for arg in args {
+        match arg {
+            Expr::Variable(name) => {
+                let text = words.resolve(name)
+                if changes_its_arguments {
+                    bounding_forget(walk, facts, text)
+                } else if !facts.ints.contains(text) {
+                    bounding_forget_length(walk, facts, text)
+                }
+            },
+            else => {},
+        }
+    }
+}
+
+/// A method on a name: what it does to the name's length.
+fn bounding_method(mut walk: BoundsWalk, mut facts: BoundsFacts, name: ref String, method: ref String, args: ref Vec[Expr], context: ref BoundsContext, program: ref Program, words: ref winnow_grammar::InternerContext, node_of: fn(ref Expr) -> i64 sync, ask: fn(ref TermArena, ref Vec[i64], i64) -> bool sync) {
+    if keeps_length(method) || facts.ints.contains(name) {
+        return
+    }
+    let length = length_of(name)
+    let count = args.len()
+    if (method == "push" && count == 1) || (method == "insert" && count == 2) {
+        let one = walk.arena.int(1)
+        bounding_shift(walk, facts, length, one)
+        return
+    }
+    if (method == "remove" || method == "swap_remove") && count == 1 {
+        let one = walk.arena.int(-1)
+        bounding_shift(walk, facts, length, one)
+        return
+    }
+    if method == "clear" && count == 0 {
+        bounding_forget_length(walk, facts, name)
+        let len = walk.arena.var(length)
+        let zero = walk.arena.int(0)
+        let fact = walk.arena.equal(len, zero)
+        bounding_push(walk, facts, fact)
+        return
+    }
+    if method == "resize" && count == 2 {
+        let to = bounding_lin(walk, args[0], facts, context, program, words, node_of)
+        bounding_forget_length(walk, facts, name)
+        if to != null {
+            let len = walk.arena.var(length)
+            let fact = walk.arena.equal(len, to ?? 0)
+            bounding_push(walk, facts, fact)
+        }
+        return
+    }
+    // **`extend(other)` adds `other`'s length** (#383): a name only, whose
+    // length is whatever the walk knows of it - nothing, where it is not a
+    // list, which leaves this length unbounded. As intervals, read before
+    // either length is forgotten: `other` is handed over, and what is known
+    // of it goes with it.
+    if method == "extend" && count == 1 {
+        let other = bounding_variable(args[0], words) ?? ""
+        if !other.is_empty() && other != name {
+            let mine = walk.arena.var(length)
+            let theirs = walk.arena.var(length_of(other))
+            let mine_known = bounding_term(walk, mine, facts, ask)
+            let theirs_known = bounding_term(walk, theirs, facts, ask)
+            bounding_forget_length(walk, facts, name)
+            let len = walk.arena.var(length)
+            if mine_known.lo != null && theirs_known.lo != null {
+                let lo = (mine_known.lo ?? 0).checked_add(theirs_known.lo ?? 0)
+                if lo != null {
+                    let k = walk.arena.int(lo ?? 0)
+                    let fact = walk.arena.ge(len, k)
+                    bounding_push(walk, facts, fact)
+                }
+            }
+            if mine_known.hi != null && theirs_known.hi != null {
+                let hi = (mine_known.hi ?? 0).checked_add(theirs_known.hi ?? 0)
+                if hi != null {
+                    let k = walk.arena.int(hi ?? 0)
+                    let fact = walk.arena.le(len, k)
+                    bounding_push(walk, facts, fact)
+                }
+            }
+            return
+        }
+    }
+    bounding_forget_length(walk, facts, name)
+}
+
+/// Each expression directly inside `expr`, then each block, of the
+/// expressions `bounding_expr` does not take apart itself.
+fn bounding_children(mut walk: BoundsWalk, expr: ref Expr, mut facts: BoundsFacts, context: ref BoundsContext, program: ref Program, words: ref winnow_grammar::InternerContext, node_of: fn(ref Expr) -> i64 sync, ask: fn(ref TermArena, ref Vec[i64], i64) -> bool sync) {
+    match expr {
+        Expr::Range { start, end, .. } => {
+            bounding_expr(walk, start, facts, context, program, words, node_of, ask)
+            bounding_expr(walk, end, facts, context, program, words, node_of, ask)
+        },
+        Expr::Tuple(items) => {
+            for item in items {
+                bounding_expr(walk, item, facts, context, program, words, node_of, ask)
+            }
+        },
+        Expr::ListLit { items, .. } => {
+            for item in items {
+                bounding_expr(walk, item, facts, context, program, words, node_of, ask)
+            }
+        },
+        Expr::LitInterpolated { parts } => {
+            for part in parts {
+                match part {
+                    FPart::Hole { expr, .. } => bounding_expr(walk, expr, facts, context, program, words, node_of, ask),
+                    else => {},
+                }
+            }
+        },
+        Expr::Field { base, .. } => bounding_expr(walk, base, facts, context, program, words, node_of, ask),
+        Expr::SafeField { base, .. } => bounding_expr(walk, base, facts, context, program, words, node_of, ask),
+        Expr::StructLit { fields, .. } => {
+            for field in fields {
+                bounding_maybe_expr(walk, field.value, facts, context, program, words, node_of, ask)
+            }
+        },
+        Expr::With { base, fields, .. } => {
+            bounding_expr(walk, base, facts, context, program, words, node_of, ask)
+            for field in fields {
+                bounding_maybe_expr(walk, field.value, facts, context, program, words, node_of, ask)
+            }
+        },
+        Expr::Unary { expr, .. } => bounding_expr(walk, expr, facts, context, program, words, node_of, ask),
+        Expr::Try(inner) => bounding_expr(walk, inner, facts, context, program, words, node_of, ask),
+        Expr::Throw(inner) => bounding_expr(walk, inner, facts, context, program, words, node_of, ask),
+        Expr::Cast { expr, .. } => bounding_expr(walk, expr, facts, context, program, words, node_of, ask),
+        Expr::TryCatch { expr, handler } => {
+            bounding_expr(walk, expr, facts, context, program, words, node_of, ask)
+            bounding_inner_block(walk, handler, facts, context, program, words, node_of, ask)
+        },
+        Expr::Return(value) => bounding_maybe_expr(walk, value, facts, context, program, words, node_of, ask),
+        Expr::Coalesce { value, fallback } => {
+            bounding_expr(walk, value, facts, context, program, words, node_of, ask)
+            bounding_expr(walk, fallback, facts, context, program, words, node_of, ask)
+        },
+        else => {},
+    }
+}
+
+// --- what a block changes --------------------------------------------------
+
+fn bounding_extend(mut changed: BoundsChanged, other: BoundsChanged) {
+    for name in other.values {
+        changed.values.insert(name.clone())
+    }
+    for name in other.lengths {
+        changed.lengths.insert(name.clone())
+    }
+}
+
+fn bounding_extend_maybe(mut changed: BoundsChanged, block: ref Block?, context: ref BoundsContext, words: ref winnow_grammar::InternerContext) {
+    let present = block ?? return
+    bounding_extend(changed, bounding_changed(present, context, words))
+}
+
+/// **The names whose value, and the lists whose length, `block` may
+/// change**, in it and the blocks inside it, lambdas included. A `let` in a
+/// nested block hides a name only there; the walk forgets it where it is
+/// bound. One in a loop's body is bound again each turn, which the walk sees
+/// the same way.
+fn bounding_changed(block: ref Block, context: ref BoundsContext, words: ref winnow_grammar::InternerContext) -> BoundsChanged {
+    let mut out = nothing_changed()
+    changed_in_block(block, context, words, out)
+    return out
+}
+
+fn bounding_changed_in_expr(expr: ref Expr, context: ref BoundsContext, words: ref winnow_grammar::InternerContext) -> BoundsChanged {
+    let mut out = nothing_changed()
+    changed_in_expr(expr, context, words, out)
+    return out
+}
+
+fn changed_in_block(block: ref Block, context: ref BoundsContext, words: ref winnow_grammar::InternerContext, mut out: BoundsChanged) {
+    for stmt in block.stmts {
+        match stmt.node {
+            Stmt::Assign { target, value, .. } => {
+                match target {
+                    Expr::Variable(name) => {
+                        out.lengths.insert(words.resolve(name).clone())
+                        out.values.insert(words.resolve(name).clone())
+                    },
+                    else => {},
+                }
+                changed_in_expr(target, context, words, out)
+                changed_in_expr(value, context, words, out)
+            },
+            Stmt::For { iter, body, .. } => {
+                changed_in_expr(iter, context, words, out)
+                changed_in_block(body, context, words, out)
+            },
+            Stmt::While { cond, body } => {
+                changed_in_expr(cond, context, words, out)
+                changed_in_block(body, context, words, out)
+            },
+            Stmt::Let { value, .. } => changed_in_expr(value, context, words, out),
+            Stmt::Comptime { value, .. } => changed_in_expr(value, context, words, out),
+            Stmt::Expr(value) => changed_in_expr(value, context, words, out),
+            Stmt::Return(value) => changed_in_maybe(value, context, words, out),
+            else => {},
+        }
+    }
+}
+
+fn changed_in_maybe(expr: ref Expr?, context: ref BoundsContext, words: ref winnow_grammar::InternerContext, mut out: BoundsChanged) {
+    let present = expr ?? return
+    changed_in_expr(present, context, words, out)
+}
+
+fn changed_in_all(exprs: ref Vec[Expr], context: ref BoundsContext, words: ref winnow_grammar::InternerContext, mut out: BoundsChanged) {
+    for e in exprs {
+        changed_in_expr(e, context, words, out)
+    }
+}
+
+/// `expr`, every expression inside it and every block inside it.
+fn changed_in_expr(expr: ref Expr, context: ref BoundsContext, words: ref winnow_grammar::InternerContext, mut out: BoundsChanged) {
+    changed_by(expr, context, words, out)
+    match expr {
+        Expr::Match { value, arms } => {
+            changed_in_expr(value, context, words, out)
+            for arm in arms {
+                changed_in_maybe(arm.guard, context, words, out)
+                changed_in_expr(arm.body, context, words, out)
+            }
+        },
+        Expr::Range { start, end, .. } => {
+            changed_in_expr(start, context, words, out)
+            changed_in_expr(end, context, words, out)
+        },
+        Expr::Tuple(items) => changed_in_all(items, context, words, out),
+        Expr::ListLit { items, .. } => changed_in_all(items, context, words, out),
+        Expr::LitInterpolated { parts } => {
+            for part in parts {
+                match part {
+                    FPart::Hole { expr, .. } => changed_in_expr(expr, context, words, out),
+                    else => {},
+                }
+            }
+        },
+        Expr::If { cond, then_branch, else_branch } => {
+            changed_in_expr(cond, context, words, out)
+            changed_in_block(then_branch, context, words, out)
+            changed_in_maybe_block(else_branch, context, words, out)
+        },
+        Expr::Call { func, args, config } => {
+            changed_in_expr(func, context, words, out)
+            changed_in_all(args, context, words, out)
+            for c in config {
+                changed_in_expr(c.value, context, words, out)
+            }
+        },
+        Expr::Spawn { body, .. } => changed_in_expr(body, context, words, out),
+        Expr::MethodCall { receiver, args, config, .. } => {
+            changed_in_expr(receiver, context, words, out)
+            changed_in_all(args, context, words, out)
+            for c in config {
+                changed_in_expr(c.value, context, words, out)
+            }
+        },
+        Expr::SafeMethod { receiver, args, config, .. } => {
+            changed_in_expr(receiver, context, words, out)
+            changed_in_all(args, context, words, out)
+            for c in config {
+                changed_in_expr(c.value, context, words, out)
+            }
+        },
+        Expr::Field { base, .. } => changed_in_expr(base, context, words, out),
+        Expr::SafeField { base, .. } => changed_in_expr(base, context, words, out),
+        Expr::StructLit { fields, .. } => {
+            for field in fields {
+                changed_in_maybe(field.value, context, words, out)
+            }
+        },
+        Expr::With { base, fields, .. } => {
+            changed_in_expr(base, context, words, out)
+            for field in fields {
+                changed_in_maybe(field.value, context, words, out)
+            }
+        },
+        Expr::Unary { expr, .. } => changed_in_expr(expr, context, words, out),
+        Expr::Try(inner) => changed_in_expr(inner, context, words, out),
+        Expr::Throw(inner) => changed_in_expr(inner, context, words, out),
+        Expr::Cast { expr, .. } => changed_in_expr(expr, context, words, out),
+        Expr::TryCatch { expr, handler } => {
+            changed_in_expr(expr, context, words, out)
+            changed_in_block(handler, context, words, out)
+        },
+        Expr::Binary { lhs, rhs, .. } => {
+            changed_in_expr(lhs, context, words, out)
+            changed_in_expr(rhs, context, words, out)
+        },
+        Expr::Return(value) => changed_in_maybe(value, context, words, out),
+        Expr::Index { base, index } => {
+            changed_in_expr(base, context, words, out)
+            changed_in_expr(index, context, words, out)
+        },
+        Expr::Coalesce { value, fallback } => {
+            changed_in_expr(value, context, words, out)
+            changed_in_expr(fallback, context, words, out)
+        },
+        Expr::Select(arms) => {
+            for arm in arms {
+                changed_in_expr(arm.value, context, words, out)
+                changed_in_block(arm.body, context, words, out)
+            }
+        },
+        Expr::Block(b) => changed_in_block(b, context, words, out),
+        Expr::Overlap(b) => changed_in_block(b, context, words, out),
+        Expr::Unsafe(b) => changed_in_block(b, context, words, out),
+        Expr::Closure { body, .. } => changed_in_block(body, context, words, out),
+        else => {},
+    }
+}
+
+fn changed_in_maybe_block(block: ref Block?, context: ref BoundsContext, words: ref winnow_grammar::InternerContext, mut out: BoundsChanged) {
+    let present = block ?? return
+    changed_in_block(present, context, words, out)
+}
+
+/// What one expression changes itself: a method's receiver's length and
+/// what it is handed, a call's arguments its callee may change.
+fn changed_by(expr: ref Expr, context: ref BoundsContext, words: ref winnow_grammar::InternerContext, mut out: BoundsChanged) {
+    match expr {
+        Expr::MethodCall { receiver, method, args, .. } => changed_by_method(receiver, words.resolve(method), args, context, words, out),
+        Expr::SafeMethod { receiver, method, args, .. } => changed_by_method(receiver, words.resolve(method), args, context, words, out),
+        Expr::Call { func, args, .. } => {
+            let callee = callee_params(func, context.around, words)
+            for at in 0..<args.len() {
+                match args[at] {
+                    Expr::Variable(name) => {
+                        if hands_on(callee, at) {
+                            out.lengths.insert(words.resolve(name).clone())
+                            out.values.insert(words.resolve(name).clone())
+                        }
+                    },
+                    else => {},
+                }
+            }
+        },
+        else => {},
+    }
+}
+
+fn changed_by_method(receiver: ref Expr, method: ref String, args: ref Vec[Expr], context: ref BoundsContext, words: ref winnow_grammar::InternerContext, mut out: BoundsChanged) {
+    match receiver {
+        Expr::Variable(name) => {
+            if !keeps_length(method) {
+                out.lengths.insert(words.resolve(name).clone())
+            }
+        },
+        else => {},
+    }
+    let changes_its_arguments = context.around.changing_methods.contains(method)
+    for arg in args {
+        match arg {
+            Expr::Variable(name) => {
+                if changes_its_arguments {
+                    out.values.insert(words.resolve(name).clone())
+                }
+                out.lengths.insert(words.resolve(name).clone())
+            },
+            else => {},
+        }
+    }
+}

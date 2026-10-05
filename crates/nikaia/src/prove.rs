@@ -219,7 +219,7 @@ fn condition_nodes(text: &str, names: &BTreeSet<String>) -> Vec<SolverTerm> {
 
 /// `nikaia-logic`'s copy of the terms, as far as it has been made.
 #[derive(Debug, Clone, Default)]
-struct SolverCopy {
+pub(crate) struct SolverCopy {
     logic: Arena,
     /// The copy's `TermId` of each node of `held`, by place.
     ids: Vec<TermId>,
@@ -227,7 +227,7 @@ struct SolverCopy {
 
 /// The solver's question whether `facts` imply `goal`, handed to `ask`,
 /// once `copy` has every node of `held`.
-fn asked_of<R>(
+pub(crate) fn asked_of<R>(
     copy: &std::cell::RefCell<SolverCopy>,
     held: &TermArena,
     facts: &[i64],
