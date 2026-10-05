@@ -18362,17 +18362,22 @@ impl<'a> Checker<'a> {
         span: &Span,
     ) -> Option<(Option<build_time::Value>, bool)> {
         let workshop = self.reads.workshop();
+        // **Every file of the program** (Part I 9.1), this one among them; a
+        // check handed none is this file alone.
+        let mut files: Vec<&Parsed> = self.beside.to_vec();
+        if !files.iter().any(|other| std::ptr::eq(*other, self.parsed)) {
+            files.insert(0, self.parsed);
+        }
+        let here = files
+            .iter()
+            .position(|other| std::ptr::eq(*other, self.parsed))?;
         if !workshop.somewhere()
-            || self
-                .beside
-                .iter()
-                .any(|other| !std::ptr::eq(*other, self.parsed))
-            || self
-                .parsed
-                .program
-                .items
-                .iter()
-                .any(|item| matches!(item.node, Item::Grammar(_)))
+            || files.iter().any(|file| {
+                file.program
+                    .items
+                    .iter()
+                    .any(|item| matches!(item.node, Item::Grammar(_)))
+            })
         {
             return None;
         }
@@ -18410,11 +18415,27 @@ impl<'a> Checker<'a> {
             })
             .unwrap_or_default();
         let known = |name: &str| outermost.get(name).cloned();
-        let sub = crate::comptime_run::sub_program(self.parsed, bound, value, found, &known)?;
+        let mut sub = Some(crate::comptime_run::sub_program(
+            self.parsed,
+            bound,
+            value,
+            found,
+            &known,
+        )?);
+        let mut units: Vec<Parsed> = Vec::with_capacity(files.len());
+        for (at, file) in files.iter().enumerate() {
+            match at == here {
+                true => units.push(sub.take()?),
+                false => units.push(crate::comptime_run::unit_without_its_constants(
+                    file, bound, &known,
+                )?),
+            }
+        }
+        let unit_refs: Vec<&Parsed> = units.iter().collect();
         // **The rule is asked of what the initialiser reaches** (D2), as the
         // ledger derives it for the function that hands the value back: every
         // call in it, by name or on a value, and everything those call.
-        let derived = Ledger::infer_package(&[&sub], self.library);
+        let derived = Ledger::infer_package(&unit_refs, self.library);
         if let Some(because) = derived
             .functions
             .get(crate::comptime_run::VALUE_FN)
@@ -18439,8 +18460,11 @@ impl<'a> Checker<'a> {
             counts_steps: true,
             ..Default::default()
         };
-        let lowered = crate::emit::emit_program(&sub, counted).ok()?;
-        let dump = crate::grammar_run::dumper(&sub, found).ok()?;
+        let lowered = match units.len() {
+            1 => crate::emit::emit_program(&units[here], counted).ok()?,
+            _ => crate::comptime_run::lowered_units(&units, here, counted, &derived, self.library)?,
+        };
+        let dump = crate::grammar_run::dumper(&units[here], found).ok()?;
         let program = crate::comptime_run::with_driver(&lowered, &dump, workshop.bounds())?;
         match workshop.run_comptime(&program, bound) {
             Ok(text) => match crate::grammar_run::decode(&text) {
@@ -18448,7 +18472,7 @@ impl<'a> Checker<'a> {
                 Err(_) => None,
             },
             Err(crate::grammar_run::Wall::Refused { detail }) => {
-                self.a_build_time_run_that_stopped(bound, &detail, span);
+                self.a_build_time_run_that_stopped(bound, &detail, &files, here, span);
                 Some((None, true))
             }
             Err(_) => None,
@@ -18459,7 +18483,14 @@ impl<'a> Checker<'a> {
     /// ([ADR-321](../../docs/specification/adr/adr-321.md) D1): the same code
     /// stops the program the same way. In its own words, at the place it
     /// stopped where the run named one (`comptime_run::STOPPED_AT`).
-    fn a_build_time_run_that_stopped(&mut self, bound: &str, said: &str, span: &Span) {
+    fn a_build_time_run_that_stopped(
+        &mut self,
+        bound: &str,
+        said: &str,
+        files: &[&Parsed],
+        here: usize,
+        span: &Span,
+    ) {
         if let Some(over) = said
             .lines()
             .find_map(|line| line.strip_prefix("nikaia-build-time: "))
@@ -18474,10 +18505,30 @@ impl<'a> Checker<'a> {
             Some((place, why)) => (Some(place), why),
             None => (None, line),
         };
-        let at = place
+        // `@<file>:<byte>`: a place in this file is shown, and one in another
+        // is named by the function it is in.
+        let stopped = place
             .and_then(|place| place.strip_prefix(crate::comptime_run::STOPPED_AT))
-            .and_then(|byte| byte.strip_prefix(':'))
-            .and_then(|byte| byte.parse::<u32>().ok());
+            .and_then(|rest| rest.split_once(':'))
+            .and_then(|(unit, byte)| {
+                Some((unit.parse::<usize>().ok()?, byte.parse::<u32>().ok()?))
+            });
+        let at = stopped
+            .filter(|(unit, _)| *unit == here)
+            .map(|(_, byte)| byte);
+        let elsewhere = stopped
+            .filter(|(unit, _)| *unit != here)
+            .and_then(|(unit, byte)| {
+                let file = files.get(unit)?;
+                file.program.items.iter().find_map(|item| match &item.node {
+                    Item::Fn {
+                        name: Some(name), ..
+                    } if (item.span.start..item.span.end).contains(&byte) => {
+                        Some(file.text(*name).to_string())
+                    }
+                    _ => None,
+                })
+            });
         let mut labels = Vec::new();
         if let Some(at) = at {
             labels.push(Label {
@@ -18493,16 +18544,23 @@ impl<'a> Checker<'a> {
                 main: false,
             });
         }
+        let mut notes = Vec::new();
+        if let Some(function) = elsewhere {
+            notes.push(format!(
+                "It stopped in `{function}`, in another file of the program."
+            ));
+        }
+        notes.push(
+            "The code a `comptime` runs is the program's own, and it stops where the program \
+             would stop when it runs."
+                .to_string(),
+        );
         self.checked.findings.push(Finding {
             severity: Severity::Error,
             span: *span,
             code: "NK1152",
             message: format!("`{bound}` stopped while the program was built: {why}."),
-            notes: vec![
-                "The code a `comptime` runs is the program's own, and it stops where the \
-                 program would stop when it runs."
-                    .to_string(),
-            ],
+            notes,
             help: Some(
                 "Fix it as you would fix the program stopping there, or compute the value \
                  while the program runs, with `let` instead of `comptime`."

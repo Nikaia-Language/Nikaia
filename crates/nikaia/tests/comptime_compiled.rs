@@ -342,3 +342,54 @@ fn a_method_runs_at_build_time_whoever_declares_it() {
     assert!(rust.contains("const LOUD: &str = \"ABC\";"), "{rust}");
     assert!(rust.contains("const S: i64 = 7;"), "{rust}");
 }
+
+/// **A program of several files** (Part I 9.1): the callee is in another
+/// file, which is lowered with the one the `comptime` stands in; a stop there
+/// is named by the function it is in.
+#[test]
+fn a_callee_in_another_file_runs_and_a_stop_there_is_named() {
+    let main = parse_to_ast(
+        "comptime T = triple(14)\n\
+         comptime C = sq(100000)\n\
+         \n\
+         fn main() {\n\
+         \x20   println(f\"{T} {C}\")\n\
+         }\n",
+    )
+    .expect("the source parses");
+    let helpers = parse_to_ast(
+        "fn triple(n: i64) -> i64 {\n\
+         \x20   return n * 3\n\
+         }\n\
+         \n\
+         fn sq(x: i32) -> i32 {\n\
+         \x20   return x * x\n\
+         }\n",
+    )
+    .expect("the source parses");
+    let library = Ledger::parse(STD).expect("std's shipped ledger parses");
+    let own = Ledger::infer_package(&[&main, &helpers], &library);
+    let found = check::check_against(
+        &main,
+        &[&main, &helpers],
+        &own,
+        &library,
+        &BTreeSet::new(),
+        &check::Newly::new(),
+        &reads(),
+    )
+    .findings;
+    let stopped = the_one(found);
+    assert_eq!(
+        stopped.message,
+        "`C` stopped while the program was built: attempt to multiply with overflow."
+    );
+    assert!(
+        stopped
+            .notes
+            .iter()
+            .any(|n| n == "It stopped in `sq`, in another file of the program."),
+        "{:#?}",
+        stopped.notes
+    );
+}

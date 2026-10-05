@@ -4,6 +4,16 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.521] — 2026-10-05
+
+**A `comptime` in a program of several files is compiled and run too** (ADR-321
+D1, Part I 9.1, #468). Each file of the package is lowered with the others into
+the `comptime`'s program, as a package is lowered, so a callee in another file
+runs from its own body. A stop there is named by the function it is in:
+*It stopped in `sq`, in another file of the program.* A program with a grammar
+and an initialiser that reads an `asset` are still the interpreter's. Every
+bench and example lowers byte for byte as before.
+
 ## [0.0.520] — 2026-10-05
 
 **A `comptime` may call a method, `std`'s or the program's** (ADR-321 D2,

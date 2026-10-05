@@ -48,6 +48,37 @@ pub(crate) fn sub_program(
     ty: &Ty,
     known: &dyn Fn(&str) -> Option<Value>,
 ) -> Option<Parsed> {
+    let mut kept = unit_without_its_constants(parsed, bound, known)?;
+    let returns = written_type(ty, &kept)?;
+    let main = kept.interner.intern_string("main");
+    let value_fn = kept.interner.intern_string(VALUE_FN);
+    kept.program.items.push(Spanned::new(
+        a_function(main, None, Vec::new()),
+        Span::nowhere(),
+    ));
+    kept.program.items.push(Spanned::new(
+        a_function(
+            value_fn,
+            Some(returns),
+            vec![Spanned::new(
+                Stmt::Return(Some(value.clone())),
+                Span::nowhere(),
+            )],
+        ),
+        Span::nowhere(),
+    ));
+    Some(kept)
+}
+
+/// **One file of the program as the sub-program carries it**: without its
+/// `fn main`, and with each `comptime` that is not `bound` as the literal it
+/// came to - or left out, where it has not been worked out. Nothing where one
+/// that was worked out has no literal here.
+pub(crate) fn unit_without_its_constants(
+    parsed: &Parsed,
+    bound: &str,
+    known: &dyn Fn(&str) -> Option<Value>,
+) -> Option<Parsed> {
     let mut kept = parsed.keeping(|item| match item {
         // **The program's `main` is not this program's**, and its constants
         // are carried below as what they came to.
@@ -84,25 +115,51 @@ pub(crate) fn sub_program(
             item.span,
         ));
     }
-    let returns = written_type(ty, &kept)?;
-    let main = kept.interner.intern_string("main");
-    let value_fn = kept.interner.intern_string(VALUE_FN);
-    kept.program.items.push(Spanned::new(
-        a_function(main, None, Vec::new()),
-        Span::nowhere(),
-    ));
-    kept.program.items.push(Spanned::new(
-        a_function(
-            value_fn,
-            Some(returns),
-            vec![Spanned::new(
-                Stmt::Return(Some(value.clone())),
-                Span::nowhere(),
-            )],
-        ),
-        Span::nowhere(),
-    ));
     Some(kept)
+}
+
+/// **A program of several files, lowered as one** (Part I 9.1): each file
+/// against all of them, in order, as `modules::Program` lowers a package -
+/// `entry` is the file that holds the value function and so the `fn main`.
+pub(crate) fn lowered_units(
+    units: &[Parsed],
+    entry: usize,
+    build: crate::emit::Build,
+    contracts: &crate::contracts::Ledger,
+    library: &crate::contracts::Ledger,
+) -> Option<crate::emit::Lowered> {
+    use crate::emit::{Lowered, Needs, SourceMap};
+    let beside: Vec<&Parsed> = units.iter().collect();
+    let provenance = crate::contracts::trust::analyse(&units[entry], library).provenance;
+    let needs = units.iter().fold(Needs::default(), |acc, unit| {
+        acc.join(Needs::of(unit, build))
+    });
+    let mut rust = String::from("// Generated: a `comptime`'s program (ADR-321).\n\n");
+    rust.push_str(&needs.preamble());
+    rust.push('\n');
+    let mut map = SourceMap::default();
+    for (at, unit) in units.iter().enumerate() {
+        let body = crate::emit::emit_module_body_at(
+            unit,
+            &beside,
+            build,
+            provenance,
+            contracts,
+            &crate::contracts::Ledger::blank(),
+            at == entry,
+            &crate::assets::Reads::none(),
+        )
+        .ok()?;
+        map.extend(body.map.placed(rust.len(), at));
+        rust.push_str(&body.rust);
+        rust.push('\n');
+    }
+    rust.push_str("\nconst __NIKAIA_SITES: &[nikaia_std::abort::Site] = &[];\n");
+    Some(Lowered {
+        rust,
+        map,
+        published: Default::default(),
+    })
 }
 
 fn a_function(
@@ -239,20 +296,28 @@ pub(crate) fn with_driver(
             .filter(|(_, c)| *c == '\n')
             .map(|(i, _)| i + 1),
     );
-    let mut rows: std::collections::BTreeMap<usize, usize> = std::collections::BTreeMap::new();
-    for (generated, byte, _) in lowered.map.rows() {
-        if generated >= start || byte == 0 {
+    let mut rows: std::collections::BTreeMap<usize, (usize, usize)> =
+        std::collections::BTreeMap::new();
+    // A line below the `main` this replaces moves by what the new one adds.
+    let lines = |text: &str| text.matches('\n').count() as isize;
+    let moved = lines(&main) - lines(&rust[start..end]);
+    for (generated, byte, unit) in lowered.map.rows() {
+        if (start..end).contains(&generated) || byte == 0 {
             continue;
         }
         let line = match starts.binary_search(&generated) {
             Ok(i) => i + 1,
             Err(i) => i,
         };
-        rows.entry(line).or_insert(byte);
+        let line = match generated >= end {
+            true => (line as isize + moved) as usize,
+            false => line,
+        };
+        rows.entry(line).or_insert((unit, byte));
     }
     let mut table = String::from("const __NIKAIA_SITES: &[nikaia_std::abort::Site] = &[\n");
-    for (line, byte) in rows {
-        table.push_str(&format!("    ({line}, {STOPPED_AT:?}, {byte}),\n"));
+    for (line, (unit, byte)) in rows {
+        table.push_str(&format!("    ({line}, \"{STOPPED_AT}{unit}\", {byte}),\n"));
     }
     table.push_str("];\n");
     let rest = &rust[end..];
@@ -289,7 +354,8 @@ impl Default for Bounds {
     }
 }
 
-/// What a stop's row names instead of a file: the byte follows it.
+/// What a stop's row names instead of a file: the file's place among the
+/// program's follows it, and then the byte.
 pub(crate) const STOPPED_AT: &str = "@";
 
 // --- compiling and running -----------------------------------------------------
