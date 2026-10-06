@@ -259,6 +259,8 @@ fn read_unit(
             },
         )?;
     check_imports(&parsed, path, reachable, standing)?;
+    let mut parsed = parsed;
+    parsed.package = package.map(str::to_string);
     Ok(Unit {
         package: package.map(str::to_string),
         renames: renames.clone(),

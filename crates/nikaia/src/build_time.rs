@@ -723,6 +723,7 @@ impl<'a> BuildTime<'a> {
             rule,
             input,
             result: &result,
+            units: self.beside,
         };
         match self.reads.workshop().run(parsed, &ask) {
             Ok(dump) => crate::grammar_run::decode(&dump).map_err(|why| Refusal::GrammarWall {

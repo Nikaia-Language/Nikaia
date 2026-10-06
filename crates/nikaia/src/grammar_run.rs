@@ -71,6 +71,10 @@ pub struct Ask<'a> {
     pub input: &'a str,
     /// What the rule declares it hands back, for the dump this generates.
     pub result: &'a Ty,
+    /// The program's files, a dependency's among them: what an action may
+    /// call of a dependency is compiled in as the module the program names
+    /// it by ([ADR-321](../../../docs/specification/adr/adr-321.md) D13).
+    pub units: &'a [&'a Parsed],
 }
 
 /// Where a build compiles the parsers it runs, and the guard against nesting.
@@ -315,6 +319,29 @@ fn driver(parsed: &Parsed, ask: &Ask<'_>) -> Result<String, Wall> {
         .to_string();
 
     let mut out = body;
+    // **A dependency's functions, for the actions that call them** (D13).
+    // The grammar's own package is the program here, and the program's own
+    // files are not visible from a dependency's grammar.
+    let others: Vec<&Parsed> = ask
+        .units
+        .iter()
+        .copied()
+        .filter(|u| u.package.is_some() && u.package != parsed.package)
+        .collect();
+    let packages = crate::comptime_run::by_package(&others);
+    let provenance =
+        crate::contracts::trust::analyse(parsed, crate::contracts::std_ledger()).provenance;
+    out.push_str(
+        &crate::comptime_run::dependency_modules(
+            &others,
+            &packages,
+            crate::emit::Build::default(),
+            provenance,
+        )
+        .ok_or_else(|| Wall::DidNotBuild {
+            detail: "lowering a dependency the grammar's actions call".to_string(),
+        })?,
+    );
     out.push_str(DUMP_HELPERS);
     let dump = dumper(parsed, ask.result)?;
     out.push_str(&format!(

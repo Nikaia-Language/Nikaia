@@ -21,6 +21,7 @@
 //! the value in the encoding a grammar run already uses
 //! ([`crate::grammar_run::decode`]).
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::OnceLock;
@@ -127,10 +128,12 @@ pub(crate) fn lowered_units(
     entry: usize,
     build: crate::emit::Build,
     contracts: &crate::contracts::Ledger,
+    packages: &BTreeMap<String, crate::contracts::Ledger>,
     library: &crate::contracts::Ledger,
 ) -> Option<crate::emit::Lowered> {
     use crate::emit::{Lowered, Needs, SourceMap};
-    let beside: Vec<&Parsed> = units.iter().collect();
+    let home = &units[entry].package;
+    let beside: Vec<&Parsed> = units.iter().filter(|u| &u.package == home).collect();
     let provenance = crate::contracts::trust::analyse(&units[entry], library).provenance;
     let needs = units.iter().fold(Needs::default(), |acc, unit| {
         acc.join(Needs::of(unit, build))
@@ -140,6 +143,9 @@ pub(crate) fn lowered_units(
     rust.push('\n');
     let mut map = SourceMap::default();
     for (at, unit) in units.iter().enumerate() {
+        if &unit.package != home {
+            continue;
+        }
         let body = crate::emit::emit_module_body_at(
             unit,
             &beside,
@@ -155,12 +161,77 @@ pub(crate) fn lowered_units(
         rust.push_str(&body.rust);
         rust.push('\n');
     }
+    let refs: Vec<&Parsed> = units.iter().collect();
+    rust.push_str(&dependency_modules(&refs, packages, build, provenance)?);
     rust.push_str("\nconst __NIKAIA_SITES: &[nikaia_std::abort::Site] = &[];\n");
     Some(Lowered {
         rust,
         map,
         published: Default::default(),
     })
+}
+
+/// **Each dependency, as the module the program names it by** (ADR-321 D13):
+/// `lib::tripled` is `crate::lib::tripled`, lowered against the package's own
+/// entries and with the prelude its files are written for. Empty where the
+/// build reads no dependency.
+pub(crate) fn dependency_modules(
+    units: &[&Parsed],
+    packages: &BTreeMap<String, crate::contracts::Ledger>,
+    build: crate::emit::Build,
+    provenance: crate::contracts::Provenance,
+) -> Option<String> {
+    let mut rust = String::new();
+    for (name, own) in packages {
+        let theirs: Vec<&Parsed> = units
+            .iter()
+            .copied()
+            .filter(|u| u.package.as_deref() == Some(name.as_str()))
+            .collect();
+        rust.push_str(&format!(
+            "pub mod {name} {{\n#[allow(unused_imports)]\nuse nikaia_std::prelude::*;\n"
+        ));
+        for unit in &theirs {
+            let body = crate::emit::emit_module_body_at(
+                unit,
+                &theirs,
+                build,
+                provenance,
+                own,
+                &crate::contracts::Ledger::blank(),
+                false,
+                &crate::assets::Reads::none(),
+            )
+            .ok()?;
+            rust.push_str(&body.rust);
+            rust.push('\n');
+        }
+        rust.push_str("}\n");
+    }
+    Some(rust)
+}
+
+/// **Each dependency's units, derived as the package they are** (ADR-321
+/// D13), by the name the program reaches it by.
+pub(crate) fn by_package(units: &[&Parsed]) -> BTreeMap<String, crate::contracts::Ledger> {
+    use crate::contracts::LedgerOps;
+    let mut names: Vec<&str> = units.iter().filter_map(|u| u.package.as_deref()).collect();
+    names.sort();
+    names.dedup();
+    names
+        .into_iter()
+        .map(|name| {
+            let theirs: Vec<&Parsed> = units
+                .iter()
+                .copied()
+                .filter(|u| u.package.as_deref() == Some(name))
+                .collect();
+            (
+                name.to_string(),
+                crate::contracts::Ledger::infer_package(&theirs, crate::contracts::std_ledger()),
+            )
+        })
+        .collect()
 }
 
 /// **What a compiled build-time run came to.**
@@ -233,8 +304,25 @@ fn computed(
             None => return Computed::NotHere,
         }
     }
-    let unit_refs: Vec<&Parsed> = units.iter().collect();
-    let derived = crate::contracts::Ledger::infer_package(&unit_refs, library);
+    // **A dependency's functions are the program's to call** (ADR-321 D13):
+    // each package's units are derived on their own, and the program's
+    // against `std` and those entries, under the package's name - as the
+    // program's own ledger has them.
+    // **The run's home is the package of the file it stands in**: a default
+    // of a dependency's function is computed in that dependency, where the
+    // program's own files are not visible and the other packages are.
+    let home = units[here].package.clone();
+    let others: Vec<&Parsed> = units
+        .iter()
+        .filter(|u| u.package.is_some() && u.package != home)
+        .collect();
+    let packages = by_package(&others);
+    let mut with_packages = library.clone();
+    for (name, ledger) in &packages {
+        with_packages.absorb(Some(name), ledger.clone());
+    }
+    let unit_refs: Vec<&Parsed> = units.iter().filter(|u| u.package == home).collect();
+    let derived = crate::contracts::Ledger::infer_package(&unit_refs, &with_packages);
     if let Some(because) = derived
         .functions
         .get(VALUE_FN)
@@ -250,7 +338,7 @@ fn computed(
     };
     let lowered = match units.len() {
         1 => crate::emit::emit_program(&units[here], counted).ok(),
-        _ => lowered_units(&units, here, counted, &derived, library),
+        _ => lowered_units(&units, here, counted, &derived, &packages, library),
     };
     let Some(lowered) = lowered else {
         return Computed::NotHere;

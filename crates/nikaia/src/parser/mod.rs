@@ -491,6 +491,12 @@ pub struct Parsed {
     /// that is not text of its own below, one line each, for `--tethers`
     /// ([ADR-282](../../../docs/specification/adr/adr-282.md) D26).
     pub text_tiers: Vec<String>,
+    /// **The package this file is a part of**, where a build of several
+    /// packages read it as a dependency's (`modules::Unit::package`), and
+    /// `None` for the program's own. What a build-time run needs to write a
+    /// dependency's code as the module the program names it by
+    /// ([ADR-321](../../../docs/specification/adr/adr-321.md) D13).
+    pub package: Option<String>,
     /// **What goes into a mixed position from inside an `f"…"` hole**, by the
     /// hole's place - the byte its `{` stands at: the shape of each value and the method it is handed over
     /// with ([ADR-229](../../../docs/specification/adr/adr-229.md) D1). An
@@ -547,6 +553,7 @@ impl Parsed {
             interner: self.interner.clone(),
             aliases: self.aliases.clone(),
             text_tiers: self.text_tiers.clone(),
+            package: self.package.clone(),
             hole_wraps: self.hole_wraps.clone(),
             holes: Default::default(),
         }
@@ -621,6 +628,7 @@ impl Parsed {
             interner: self.interner.clone(),
             aliases: self.aliases.clone(),
             text_tiers: self.text_tiers.clone(),
+            package: self.package.clone(),
             hole_wraps: self.hole_wraps.clone(),
             holes: Default::default(),
         }
@@ -1211,6 +1219,7 @@ pub fn parse_to_ast(input: &str) -> Result<Parsed> {
         interner,
         aliases,
         text_tiers: Vec::new(),
+        package: None,
         hole_wraps: std::collections::BTreeMap::new(),
         holes: Default::default(),
     };

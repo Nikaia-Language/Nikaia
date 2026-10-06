@@ -4,6 +4,26 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.590] — 2026-10-06
+
+**Build-time code calls its package's Nikaia dependencies** (ADR-321 D13,
+#479).
+- A `comptime` that called a dependency's function was refused as *can pause*:
+  the build-time run derived its ledger against `std`'s entries alone. Each
+  dependency's units are now derived as their package, and the program's
+  against `std` and those entries under the package's name.
+- The build-time program, and a grammar's build-time sub-project, write each
+  dependency as `pub mod <package> { … }`, lowered against its own entries:
+  `lib::tripled(14)` in a `comptime`, and in a grammar action beside a helper
+  of the program, are computed while the program is built.
+- A `Parsed` knows the package it is a part of (`Parsed::package`). A run's
+  home is the package of the file it stands in: a default of a dependency's
+  function is computed in that dependency, where the program's files are not
+  visible.
+- A dependency's function whose path reaches C is still `NK1152`, and nothing
+  runs.
+- Tests: `build_time_dependencies.rs`.
+
 ## [0.0.589] — 2026-10-06
 
 **Timers and keep-alive for `http`** (ADR-326 D6-D9, #121).
