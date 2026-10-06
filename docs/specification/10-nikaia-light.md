@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part I: The Language Core**
-**Version:** 0.0.549 (Draft)
+**Version:** 0.0.550 (Draft)
 **Date:** 2026-10-06
 
 ---
@@ -1072,14 +1072,16 @@ result is flattened: `a?.b?.c` never reaches through a nullable of a nullable.
 A read of a map whose values are `T?` is flattened the same way (4.5).
 The compiler decides which case applies from the declared type.
 
-**`?.` through a type that cannot be absent is refused** with `NK1121`. A type
-that is not `T?` always has a value, and the plain `.` reaches it.
+**`?.` or `??` after a type that cannot be absent is a warning.** A type that
+is not `T?` always has a value: `s?.len()` is `s.len()`, with the member's type
+and the warning `NK1217`; `s ?? "b"` is `s`, its fallback never runs, and the
+warning is `NK1216`.
 
-**`??` after a type that cannot be absent is refused** with `NK1211`. The left
-side's type decides: a list's index is a `T` (4.5), so `xs[i] ?? 0` over a
-`Vec[i64]` is refused; over a `Vec[i64?]` the index is an `i64?`, and `??`
-replaces a `null` element. `??` never guards an index: one past the end stops
-the program.
+**After a list's index they are refused.** A list's index is a `T` (4.5), so
+`xs[i] ?? 0` over a `Vec[i64]` is `NK1211` and `users[i]?.name` over a
+`Vec[User]` is `NK1121`: one past the end stops the program, and neither
+operator guards an index. Over a `Vec[i64?]` the index is an `i64?`, and `??`
+replaces a `null` element.
 
 **`?.` takes nothing.** It reaches through a view of its receiver, so `user` is
 usable on the line after `user?.name`. What comes out is a copy where the

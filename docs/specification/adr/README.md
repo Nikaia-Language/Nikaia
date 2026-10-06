@@ -90,7 +90,7 @@ implementation.
 | [293](adr-293.md) | A map read is a `T?` and a key is not a position, a sequence says what it is as a whole, and what is handed over is gone, part by part. | Accepted | yes |
 | [283](adr-283.md) | A view that escapes is tethered: its buffer lives in the keep of whatever keeps the view, the compiler decides where with nothing written, and `Bytes` is the language's buffer. | Accepted | partly: the retention lint (D6), `Mapped`'s deref to `Bytes` |
 | [291](adr-291.md) | A `let` takes names or a flat tuple, `_` ignores a value, and a `match` takes nested patterns, ends in `else`, covers every case and lends what an arm only reads; `..` is inclusive and `..<` exclusive. | Accepted | yes |
-| [279](adr-279.md) | `??` takes one value as its fallback, has no postfix form, and lends its left side where the answer is read and takes it where it is kept; after a type that is not `T?` it is refused (`NK1211`). | Accepted | partly: D12 (#342) |
+| [279](adr-279.md) | `??` takes one value as its fallback, has no postfix form, and lends its left side where the answer is read and takes it where it is kept; after a type that is not `T?` it is a warning (`NK1216`), after a list's index refused (`NK1211`); `?.` alike (D13). | Accepted | partly: D12 (#342), D13 not built (#476) |
 | [246](adr-246.md) | A type that holds itself holds itself through a box the compiler writes. | Accepted | partly: `Option<Box<T>>` for a nullable field |
 | [247](adr-247.md) | An output test runs in a directory of its own with `NAME.in/` and `NAME.out/`, its expectations are written by `nikaia test --bless`, and a `test` block gets a scratch root. | Accepted | yes |
 | [235](adr-235.md) | `par_iter()` walks a list on every core, and its lambda may neither pause nor write what is shared. | Accepted | yes |
@@ -191,7 +191,7 @@ implementation.
 | [286](adr-286.md) | A package is a directory and a crate, `use` names one and brings no name in, and a dependency is found by path or by version through Cargo. | Accepted | partly: a dependency by version |
 | [289](adr-289.md) | An HTTP server is the application's own: `std` lends the socket, the `http` package speaks the protocol, and a handler is a lambda over the request. | Accepted | partly: bare `String`/`html::Raw`/`Bytes` results, `.route(…)`, file bodies, `--trust`'s wide-bind listing |
 | [295](adr-295.md) | A generic is checked at both ends: a type parameter is a type in its body and a variable at the call, a bound names a declared trait, and the ledger carries the trait, each `impl` and the bound. | Accepted | partly: D14's call to the implementing type's own entry |
-| [278](adr-278.md) | `T?` is a type the compiler wraps into, and `?.` reaches a member through a view of its receiver. | Accepted | yes |
+| [278](adr-278.md) | `T?` is a type the compiler wraps into, and `?.` reaches a member through a view of its receiver. | Accepted | partly: D13 as changed by ADR-279 D13 not built (#476) |
 | [276](adr-276.md) | `while true` is the unconditional loop, `break` and `continue` leave the innermost loop and carry nothing, and a jump is a never-typed expression that may carry its condition. | Accepted | yes |
 | [013](adr-013.md) | Stage 0 infers only what it states it infers, `std` is a crate, and methods resolve through the receiver. | Accepted | yes |
 | [014](adr-014.md) | `std` is written in Nikaia where it can be, `fs::map` maps, and `par_fold` runs on rayon. | Accepted | yes |

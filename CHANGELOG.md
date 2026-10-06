@@ -4,6 +4,21 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.550] — 2026-10-06
+
+**`??` and `?.` after a value that cannot be absent warn; after a list's index
+they are still refused** (ADR-279 D13, #476).
+- `x ?? y` where `x` is not a `T?`: the warning `NK1216`; the answer is `x`, and
+  `y` never runs.
+- `a?.m` where `a` is not a `T?`: the warning `NK1217`; it is `a.m`, with the
+  member's type.
+- After an index into a list whose element is not a `T?`, `NK1211` (`??`) and
+  `NK1121` (`?.`) still refuse the line, with the length check as the help.
+- Why: a type that becomes narrower upstream (`-> User?` to `-> User`, a driver
+  that sees `WHERE email IS NOT NULL`) no longer breaks the callers.
+- Changes ADR-279 D12 and ADR-278 D13; Part I 3.5 and Part III's code table.
+- Not built yet: the checker still refuses both (#476).
+
 ## [0.0.549] — 2026-10-06
 
 **The help says when a number goes into another type on its own** (ADR-285
