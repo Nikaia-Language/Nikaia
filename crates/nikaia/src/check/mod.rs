@@ -1786,6 +1786,12 @@ fn views_into_nullable_text(found: &Ty, want: &Ty) -> bool {
 }
 
 fn wrap_for(found: &Ty, want: &Ty, literal: bool) -> Option<Wrap> {
+    if let Some(view) = text_as_a_path(found, want) {
+        return Some(match view {
+            true => Wrap::PathView,
+            false => Wrap::Path,
+        });
+    }
     if !matches!(want, Ty::Nullable(_)) || matches!(found, Ty::Nullable(_)) {
         return None;
     }
@@ -1814,6 +1820,30 @@ pub enum Wrap {
     /// directions - Rust has `From<T> for Option<T>` and the identity
     /// `From<T> for T` - so the uncertainty stops needing an answer.
     Conversion,
+    /// **Text where a file's name is asked**
+    /// ([ADR-319](../../../docs/specification/adr/adr-319.md) D2): an
+    /// `fs::Path` made from it.
+    Path,
+    /// …and a view of one, which text lends without a copy.
+    PathView,
+}
+
+/// **Text stands wherever a file's name is asked**
+/// ([ADR-319](../../../docs/specification/adr/adr-319.md) D2): whether `found`
+/// is text and `want` an `fs::Path`, and then whether a view of one is wanted.
+fn text_as_a_path(found: &Ty, want: &Ty) -> Option<bool> {
+    let Ty::Named { name, args, view } = want else {
+        return None;
+    };
+    if name != "fs::Path" || !args.is_empty() {
+        return None;
+    }
+    match found {
+        Ty::Named { name, args, .. } if args.is_empty() && (name == "String" || name == "str") => {
+            Some(*view)
+        }
+        _ => None,
+    }
 }
 
 /// would cost a whole type check to answer a question the first one already
@@ -15603,6 +15633,11 @@ impl<'a> Checker<'a> {
             self.literal_receivers_take(want);
         }
         if self.fits_through_deref(found, want) {
+            return;
+        }
+        // A file's name made from text: the position recorded how
+        // (`wrap_for`, ADR-319 D2).
+        if text_as_a_path(found, want).is_some() {
             return;
         }
         let code = match what {

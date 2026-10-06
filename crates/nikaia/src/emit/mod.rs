@@ -5982,6 +5982,13 @@ impl<'p> Emitter<'p> {
         // be the wrong thing: every `std` entry that takes text takes a `&str`,
         // and a `&String` at a call is a borrow of a borrow at the first one
         // that does not coerce.
+        // **A view of a file's name is a `&std::path::Path`**
+        // ([ADR-319](../../docs/specification/adr/adr-319.md) D2), which text
+        // lends without a copy - the same pairing as `ref String` and `&str`.
+        if ty.is_view && self.text(ty.name) == "fs::Path" && ty.generics.is_empty() {
+            out.push_str("std::path::Path");
+            return out;
+        }
         if ty.is_view && self.text(ty.name) == "String" && ty.generics.is_empty() {
             // **Held, where the keeper drops entries** (ADR-283 D12): a view
             // that carries its own handle on the buffer it points into.
@@ -7559,6 +7566,10 @@ impl<'p> Emitter<'p> {
         match how {
             Some(crate::check::Wrap::Constructor) => ("Some(", ")"),
             Some(crate::check::Wrap::Conversion) => ("", ".into()"),
+            // A file's name made from text (ADR-319 D2): an owned one is
+            // built, a view is lent without a copy.
+            Some(crate::check::Wrap::Path) => ("std::path::PathBuf::from(", ")"),
+            Some(crate::check::Wrap::PathView) => ("std::path::Path::new(&(", "))"),
             None => ("", ""),
         }
     }

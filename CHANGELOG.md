@@ -4,6 +4,27 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.536] — 2026-10-06
+
+**`fs::Path` exists, and text stands wherever a file's name is asked** (ADR-319
+D1–D2, #449 steps 1–2).
+- `std`'s Rust half declares `fs::Path` as the platform's own bytes (a
+  `PathBuf`), and `std.contracts` describes it (`pub`, `crosses`,
+  `compares`).
+- `ref fs::Path` lowers to `&std::path::Path`, the way `ref String` lowers to
+  `&str`.
+- Text is accepted wherever a name is asked: a `let` with a declared type, an
+  argument, a field, a variant's part, a `return` or an assignment.
+  - An owned name is made from the text: `std::path::PathBuf::from("a.txt")`.
+  - A view borrows the text without a copy: `std::path::Path::new(&(name))`.
+  - The checker records which conversion each site needs, in the same table
+    as the nullable wrap (`Wrap::Path`, `Wrap::PathView`).
+- Part I 7.1's `NotFound(Path)` written as `NotFound(fs::Path)` now compiles.
+- Not yet built: the `std::fs` signatures (step 3), the operations (step 4),
+  `f"…"` by use, `to_text()` and `display()`.
+
+Every bench and example lowers byte for byte as before.
+
 ## [0.0.535] — 2026-10-06
 
 **`develop` is green again after 0.0.534.** `nikaia_std::build_time::Parts`

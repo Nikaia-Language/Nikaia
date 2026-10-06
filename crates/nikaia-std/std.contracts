@@ -3195,6 +3195,14 @@ variants = ["Dir(String)", "Anywhere"]
 # read up front, which is what makes a file larger than memory workable.
 #
 # It reads as text through the ordinary `ref String` surface.
+# **A file's name, in the platform's own bytes** (ADR-319 D1): made from text,
+# by the system, or by its own operations. Text stands wherever one is asked
+# (D2).
+[type."fs::Path"]
+pub = true
+crosses = true
+compares = true
+
 [type."fs::Mapped"]
 pub = true
 # **Reading it is a page fault** (ADR-281 D34): the pages arrive as they are

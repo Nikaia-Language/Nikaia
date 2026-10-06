@@ -1,6 +1,13 @@
 //! `std::fs` - files.
 
-use std::path::Path;
+use std::path::Path as FilePath;
+
+/// **A file's name, in the platform's own bytes**
+/// ([ADR-319](../../../docs/specification/adr/adr-319.md) D1): raw bytes on
+/// Unix, WTF-8 on Windows. Made from text, by the system, or by its own
+/// operations, so no call fails for its encoding. A view of one, `ref
+/// fs::Path`, is a `&std::path::Path`, which text lends without a copy (D2).
+pub type Path = std::path::PathBuf;
 
 /// **Where a path may go** ([ADR-108](../../../docs/specification/adr/adr-108.md)
 /// D2): the directory the name is resolved under, or the word that says the
@@ -55,7 +62,7 @@ pub enum Root {
 ///
 /// **`Anywhere` resolves nothing**, which is the whole of what it costs at run
 /// time: the name goes to the operating system exactly as the program wrote it.
-fn resolve(path: &Path, root: &Root) -> Result<std::path::PathBuf, crate::io::IoError> {
+fn resolve(path: &FilePath, root: &Root) -> Result<std::path::PathBuf, crate::io::IoError> {
     let Root::Dir(dir) = root else {
         return Ok(path.to_path_buf());
     };
@@ -65,7 +72,7 @@ fn resolve(path: &Path, root: &Root) -> Result<std::path::PathBuf, crate::io::Io
     // The root itself has to resolve. One that does not is not a directory a
     // name may be used under, and answering `Outside` for it is the fail-closed
     // direction ([ADR-010](../../../docs/specification/adr/adr-010.md) D1).
-    let base = std::fs::canonicalize(Path::new(dir)).map_err(|_| outside())?;
+    let base = std::fs::canonicalize(FilePath::new(dir)).map_err(|_| outside())?;
 
     // **An absolute name gets the same treatment**: resolved, compared, and fine
     // where it lies inside. A relative one is joined under the root, which is
@@ -93,7 +100,7 @@ fn resolve(path: &Path, root: &Root) -> Result<std::path::PathBuf, crate::io::Io
 /// **A `..` with nothing to pop is `None`**, because a name that climbs above the
 /// filesystem root has left every directory it could have been joined to. The
 /// caller reads that as *outside*.
-fn climb(path: &Path) -> Option<std::path::PathBuf> {
+fn climb(path: &FilePath) -> Option<std::path::PathBuf> {
     use std::path::Component;
     let mut out = std::path::PathBuf::new();
     for part in path.components() {
@@ -130,7 +137,7 @@ fn climb(path: &Path) -> Option<std::path::PathBuf> {
 ///
 /// **Not `async`**: one `stat`, the same size of blocking as [`scratch`]'s one
 /// system call, so it does not go through the I/O reactor as a read does.
-pub fn exists(path: impl AsRef<Path>, root: &Root) -> Result<bool, crate::io::IoError> {
+pub fn exists(path: impl AsRef<FilePath>, root: &Root) -> Result<bool, crate::io::IoError> {
     let asked = path.as_ref();
     let resolved = resolve(asked, root)?;
     std::fs::exists(&resolved).map_err(|e| crate::io::IoError::of(e, &asked.display().to_string()))
@@ -225,7 +232,7 @@ impl crate::tether::Viewed for Mapped {
 /// poll ([ADR-055](../../../docs/specification/adr/adr-055.md) D1). A page
 /// fault later is not a suspension point this language can see, and pretending
 /// otherwise would be a promise nothing keeps.
-pub async fn map(path: impl AsRef<Path>, root: &Root) -> Result<Mapped, crate::io::IoError> {
+pub async fn map(path: impl AsRef<FilePath>, root: &Root) -> Result<Mapped, crate::io::IoError> {
     // **The path, held**: an operating system's error does not carry what was
     // asked for, and `NotFound` without it is the round trip to the user
     // [ADR-023](../../../docs/specification/adr/adr-023.md) D3 names. What is
@@ -281,7 +288,7 @@ pub async fn map(path: impl AsRef<Path>, root: &Root) -> Result<Mapped, crate::i
 /// hands back a shared buffer and this wants the bytes themselves, so going
 /// through it would buy a handle only to copy out of it.
 pub async fn read_to_string(
-    path: impl AsRef<Path>,
+    path: impl AsRef<FilePath>,
     root: &Root,
 ) -> Result<String, crate::io::IoError> {
     // **The name is written out only for a failure** (ADR-263 D3): building
@@ -342,8 +349,8 @@ fn text_named(bytes: Vec<u8>, what: impl FnOnce() -> String) -> Result<String, c
 /// D1) and the twin went with it, so this is the only pair vehicle left and
 /// every use of it is a written one.
 pub fn read_both(
-    a: impl AsRef<Path>,
-    b: impl AsRef<Path>,
+    a: impl AsRef<FilePath>,
+    b: impl AsRef<FilePath>,
 ) -> (
     Result<Vec<u8>, std::io::Error>,
     Result<Vec<u8>, std::io::Error>,
@@ -363,7 +370,7 @@ pub fn read_both(
 /// true: one shared buffer, so handing the file on costs a count rather than a
 /// copy of it.
 pub async fn read(
-    path: impl AsRef<Path>,
+    path: impl AsRef<FilePath>,
     root: &Root,
 ) -> Result<crate::bytes::Bytes, crate::io::IoError> {
     let asked = path.as_ref();
@@ -408,7 +415,7 @@ pub async fn read(
 /// It is not `sync` (Part II, 12.1) and it is not a source (ADR-010 D2): it
 /// does I/O, and the bytes travel out of the program rather than in.
 pub async fn write(
-    path: impl AsRef<Path>,
+    path: impl AsRef<FilePath>,
     root: &Root,
     data: impl AsRef<[u8]>,
     append: bool,
@@ -515,7 +522,7 @@ impl crate::cleanup::CleanupSend for Buffered {
 /// **A file to write, empty**: made where it is not there, emptied where it
 /// is. What is written to it is held until it is flushed, closed, or done
 /// with.
-pub async fn create(path: impl AsRef<Path>, root: &Root) -> Result<Writer, crate::io::IoError> {
+pub async fn create(path: impl AsRef<FilePath>, root: &Root) -> Result<Writer, crate::io::IoError> {
     let shown = path.as_ref().display().to_string();
     let path = resolve(path.as_ref(), root)?;
     crate::rt::io::writing(&path, b"", false, true)
@@ -554,12 +561,15 @@ pub async fn create(path: impl AsRef<Path>, root: &Root) -> Result<Writer, crate
 ///
 /// `async` with nothing awaited, for the reason [`map`] gives: the ledger says
 /// it does I/O and may pause.
-pub async fn walk(path: impl AsRef<Path>, root: &Root) -> Result<Vec<String>, crate::io::IoError> {
+pub async fn walk(
+    path: impl AsRef<FilePath>,
+    root: &Root,
+) -> Result<Vec<String>, crate::io::IoError> {
     let asked = path.as_ref().display().to_string();
     let start = resolve(path.as_ref(), root)?;
     let base = match root {
         Root::Dir(dir) => Some(
-            std::fs::canonicalize(Path::new(dir))
+            std::fs::canonicalize(FilePath::new(dir))
                 .map_err(|_| crate::io::IoError::Outside(asked.clone()))?,
         ),
         Root::Anywhere => None,
@@ -645,7 +655,7 @@ mod writer {
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
+    use std::path::Path as FilePath;
 
     /// Half of a pair finished by `task::as_text` is finished exactly as
     /// `read_to_string` would have finished it (ADR-292 D6).
@@ -893,7 +903,7 @@ mod tests {
         std::fs::write(sibling.join("near.txt"), "near").expect("write");
 
         let root = super::Root::Dir(store.display().to_string());
-        let inside = |name: &str| super::resolve(Path::new(name), &root).is_ok();
+        let inside = |name: &str| super::resolve(FilePath::new(name), &root).is_ok();
 
         assert!(inside("ok.txt"), "a plain name under the root");
         assert!(inside("./ok.txt"), "a `.` is not a way out");
@@ -933,18 +943,18 @@ mod tests {
         // one** — D3's *never a rewritten name*. `sub/../ok.txt` resolves onto
         // `ok.txt`, and handing that to the operating system would serve a file
         // that an `open` of the written name does not find.
-        let handed = super::resolve(Path::new("sub/../ok.txt"), &root).expect("inside");
+        let handed = super::resolve(FilePath::new("sub/../ok.txt"), &root).expect("inside");
         assert_eq!(handed, store.join("sub/../ok.txt"));
 
         // A root that does not resolve is not a directory a name may be used
         // under, and the answer is the fail-closed one (ADR-010 D1).
         let nowhere = super::Root::Dir(dir.join("no-such-store").display().to_string());
-        assert!(super::resolve(Path::new("ok.txt"), &nowhere).is_err());
+        assert!(super::resolve(FilePath::new("ok.txt"), &nowhere).is_err());
 
         // **`Anywhere` resolves nothing**: the name goes over exactly as written.
-        let free = super::resolve(Path::new("../outside.txt"), &super::Root::Anywhere)
+        let free = super::resolve(FilePath::new("../outside.txt"), &super::Root::Anywhere)
             .expect("`Anywhere` checks nothing");
-        assert_eq!(free, Path::new("../outside.txt"));
+        assert_eq!(free, FilePath::new("../outside.txt"));
 
         std::fs::remove_dir_all(&dir).ok();
     }
