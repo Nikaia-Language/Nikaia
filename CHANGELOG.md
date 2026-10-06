@@ -4,6 +4,25 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.552] — 2026-10-06
+
+**A `dsl` block may name the struct its rows are: `dsl … -> T { … } eod`**
+(ADR-299 D15-D19, #114; build: #477).
+- Columns match fields by name, never by position. A field of a struct type
+  named like an alias or a table matches that table's columns.
+- Strict by default: a column without a field is `NK1219`, a field without a
+  column `NK1220`. `extra_columns: true` and `missing_fields: true` (only for a
+  `T?` field) relax it; both are the compiler's and never reach the grammar
+  (`NK1223`).
+- A column that may be `NULL` goes only into a `T?` field (`NK1221`). A `NULL`
+  that reaches another field while the program runs fails `execute` with an
+  error naming the field, the column and its table.
+- A flat field two tables' columns could fill is `NK1222`; a field type that is
+  neither a scalar, its `T?` nor a group is `NK1218`, `Shared[T]` among them
+  (#475, after the MVP).
+- Open: a column of one number type into a field of another; the run-time
+  error's type.
+
 ## [0.0.551] — 2026-10-06
 
 **A value the compiler shows is not negative goes into an unsigned type**
