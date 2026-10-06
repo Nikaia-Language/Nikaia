@@ -10004,6 +10004,52 @@ impl<'a> Checker<'a> {
         Some(want.clone())
     }
 
+    /// **A map's read, past a jump, assigned to a place that owns its value**
+    /// ([ADR-293](../../docs/specification/adr/adr-293.md) D15, #492):
+    /// `x = m[k] ?? return …` reads a view of what the map keeps, as
+    /// `let found = m[k] ?? return …` binds one. A value that copies is copied
+    /// out, and one that does not is refused with the copy to write - the rule
+    /// `let k: Kind? = m[1]` follows - where it reached `rustc` as *mismatched
+    /// types*.
+    fn a_map_read_assigned(&mut self, into: &Ty, value: &Expr, span: &Span) {
+        let Expr::Coalesce {
+            value: read,
+            fallback,
+        } = value
+        else {
+            return;
+        };
+        if !matches!(
+            **fallback,
+            Expr::Return(_) | Expr::Throw(_) | Expr::Continue | Expr::Break
+        ) || !self.map_read_sites.contains(&address(read))
+            || into.is_a_view()
+            || into.is_unknown()
+        {
+            return;
+        }
+        if self.copied(into) || !self.takes_away(into) {
+            self.checked
+                .copied_reads
+                .insert((span.at(), argument_shape(read)));
+            return;
+        }
+        self.checked.findings.push(Finding {
+            severity: Severity::Error,
+            span: *span,
+            code: "NK1102",
+            message: format!(
+                "This keeps a `{into}` of its own, and a map's read is a view of what the map keeps."
+            ),
+            notes: vec![
+                "Nikaia never makes a copy behind your back, so the copy is written where it happens."
+                    .to_string(),
+            ],
+            help: Some("Write `?.clone()` after the read: `m[k]?.clone()`.".to_string()),
+            labels: Vec::new(),
+        });
+    }
+
     fn wraps_into_nullable(&mut self, found: &Ty, want: &Ty, value: &Expr, span: &Span) {
         self.a_map_read_kept(found, want, value, span);
         let Some(how) = self.widened_slot(found, want, Some(value), span) else {
@@ -11163,6 +11209,9 @@ impl<'a> Checker<'a> {
                 self.reading_only = outer;
                 self.writing_index = false;
                 let found = self.expr(value, span);
+                if op.is_none() {
+                    self.a_map_read_assigned(&into, value, span);
+                }
                 // **An assignment keeps what it is given**, so a text literal
                 // assigned to a `String` place - a name, a field, a map's or a
                 // list's slot - is built into text of its own there, as it is at

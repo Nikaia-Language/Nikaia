@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part I: The Language Core**
-**Version:** 0.0.580 (Draft)
+**Version:** 0.0.581 (Draft)
 **Date:** 2026-10-06
 
 ---
@@ -1325,8 +1325,9 @@ The standard library provides types for groups of values.
 
     The value reached is a **view** of the map where it does not copy, and
     `m[k] ?? 0` on a map of numbers is the number. Kept where a `T?` of its
-    own is wanted - `let k: Kind? = m[1]` - a value that copies is copied out,
-    and one that does not is written `m[k]?.clone()`.
+    own is wanted - `let k: Kind? = m[1]`, or `x = m[k] ?? return` into a
+    name that owns its value - a value that copies is copied out, and one
+    that does not is written `m[k]?.clone()`.
 
     **A map of `T?` values reads one `T?`**, as `?.` does (2.3): a key that
     is absent and a key that holds `null` both answer `null`, and

@@ -4,6 +4,17 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.581] — 2026-10-06
+
+**A map's read past a jump, assigned to a name that owns its value, is copied
+out or refused** (ADR-293 D15, #492).
+- `x = m[k] ?? return …` reads a view of what the map keeps, as the `let` of
+  the same does. A value that copies is copied out; one that does not is
+  `NK1102`, with `m[k]?.clone()` as the way out - the rule a `T?` kept of its
+  own already followed. It reached `rustc` as *mismatched types*.
+- Part I's map section names the assignment beside the `let`. Tests:
+  `map_reads.rs`.
+
 ## [0.0.580] — 2026-10-06
 
 **A path in a text `f"…"` is `NK1201`; `IoError::Other` stays a message**

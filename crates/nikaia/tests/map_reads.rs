@@ -586,3 +586,59 @@ fn main() {
     assert!(findings(source).is_empty(), "{:?}", findings(source));
     assert_eq!(output("lent-parameter-key", source), "3 0");
 }
+
+/// **A read past a jump, assigned to a name that owns its value** (#492,
+/// D15): `chosen = spans[name] ?? return -1` reads a view of what the map
+/// keeps. A value that copies is copied out; it reached `rustc` as
+/// *mismatched types*.
+#[test]
+fn a_read_past_a_jump_assigned_is_copied_out() {
+    let source = "\
+use std::collections
+struct Span {
+    lo: i64,
+    hi: i64,
+}
+fn pick(spans: ref collections::BTreeMap[String, Span], name: ref String) -> i64 {
+    let mut chosen = Span { lo: 0, hi: 0 }
+    if name.len() > 1 {
+        chosen = spans[name] ?? return -1
+    }
+    return chosen.hi - chosen.lo
+}
+fn main() {
+    let mut spans: collections::BTreeMap[String, Span] = collections::BTreeMap()
+    spans.insert(\"ab\", Span { lo: 2, hi: 7 })
+    println(f\"{pick(spans, \"ab\")} {pick(spans, \"cd\")} {pick(spans, \"x\")}\")
+}
+";
+    assert_eq!(output("assigned-past-a-jump", source), "5 -1 0");
+}
+
+/// …and one that does not copy is refused with the copy to write, as a `T?`
+/// kept of its own is.
+#[test]
+fn a_read_past_a_jump_that_does_not_copy_is_refused() {
+    let source = "\
+use std::collections
+struct Named {
+    name: String,
+}
+fn pick(all: ref collections::BTreeMap[String, Named], key: ref String) -> i64 {
+    let mut chosen = Named { name: \"\" }
+    chosen = all[key] ?? return -1
+    return chosen.name.len()
+}
+fn main() {
+    let all: collections::BTreeMap[String, Named] = collections::BTreeMap()
+    println(f\"{pick(all, \"a\")}\")
+}
+";
+    let found = findings(source);
+    assert_eq!(found.len(), 1, "{found:#?}");
+    assert_eq!(found[0].code, "NK1102");
+    assert!(
+        found[0].message.contains("a map's read is a view"),
+        "{found:#?}"
+    );
+}
