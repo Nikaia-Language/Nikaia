@@ -173,23 +173,6 @@ fn over_memory(bound: usize) -> ! {
     std::process::exit(3);
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn a_step_counts_and_a_frame_leaves_the_path() {
-        start(100);
-        {
-            let _outer = enter("outer");
-            let _inner = enter("inner");
-            PATH.with(|p| assert_eq!(*p.borrow(), ["outer", "inner"]));
-        }
-        PATH.with(|p| assert!(p.borrow().is_empty()));
-        assert_eq!(LEFT.load(Ordering::Relaxed), 98);
-    }
-}
-
 /// **A value the compiler cannot walk, taken apart into what its ledger's
 /// `constant` constructor takes** ([ADR-318](../../../docs/specification/adr/adr-318.md)
 /// D5): each part already in the form the compiler reads back, `(i 30)`.
@@ -204,5 +187,22 @@ impl Parts for std::time::Duration {
             format!("(i {})", self.as_secs()),
             format!("(i {})", self.subsec_nanos()),
         ]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_step_counts_and_a_frame_leaves_the_path() {
+        start(100);
+        {
+            let _outer = enter("outer");
+            let _inner = enter("inner");
+            PATH.with(|p| assert_eq!(*p.borrow(), ["outer", "inner"]));
+        }
+        PATH.with(|p| assert!(p.borrow().is_empty()));
+        assert_eq!(LEFT.load(Ordering::Relaxed), 98);
     }
 }

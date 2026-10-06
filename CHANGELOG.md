@@ -4,6 +4,12 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.535] — 2026-10-06
+
+**`develop` is green again after 0.0.534.** `nikaia_std::build_time::Parts`
+stood after the module's tests, which clippy refuses
+(`items_after_test_module`); it now stands before them.
+
 ## [0.0.534] — 2026-10-06
 
 **A span of time can be computed while the program is built: `comptime T:
