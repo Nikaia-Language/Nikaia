@@ -4,6 +4,19 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.603] — 2026-10-07
+
+**What fallible collections cost: measured** (ADR-327 D4, D5, #490 step 1).
+- `benches/fallible/`: 1BRC's aggregation and `benches/taskblock`'s tasks,
+  each written on today's `Vec`, `String` and `HashMap` and on
+  `allocator-api2`'s `Vec<T, A>` and `hashbrown`'s map with an allocator that
+  counts against a budget and may refuse. `fallible.sh` checks both sides
+  print the same bytes and counts them with callgrind.
+- Instructions within 0.2% on both (393.8 against 394.4 a row, 17 872
+  against 17 882 a task); mispredicted branches 5% and 7% more.
+- `allocator-api2`'s `extend_from_slice` copies one element at a time on
+  stable Rust and doubled the tasks' count; the bench copies as `std` does.
+
 ## [0.0.602] — 2026-10-06
 
 **What a memory block per task costs: measured** (ADR-327 D4, D5, #490

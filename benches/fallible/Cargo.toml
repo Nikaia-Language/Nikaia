@@ -1,0 +1,16 @@
+# What fallible collections cost against today's `Vec`, `String` and
+# `HashMap` (ADR-327 D4, D5; #490 step 1).
+[package]
+name = "fallible-bench"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+# `Vec<T, A>` on stable Rust, with an allocator that may refuse.
+allocator-api2 = "0.2"
+# The table `std`'s `HashMap` is, taking the same allocator.
+hashbrown = { version = "0.17", default-features = false, features = ["allocator-api2", "inline-more"] }
+# The hash a Nikaia program's map gets for keys the operator chose, on both
+# sides.
+nikaia-std = { workspace = true }
