@@ -364,3 +364,31 @@ fn an_upper_case_exponent_is_refused_with_its_spelling() {
     let rust = lowered("    let x = 2e3\n    println(f\"{x}\")");
     assert!(rust.contains("2e3"), "{rust}");
 }
+
+/// **A number where no number is declared is a mismatch** (#471): a literal
+/// takes its type from its use, and a use that is not a number gives it none.
+/// It used to fit anything and reach `rustc`.
+#[test]
+fn a_number_literal_where_text_is_declared_is_refused() {
+    let codes =
+        |source: &str| -> Vec<&'static str> { findings(source).iter().map(|f| f.code).collect() };
+    assert_eq!(
+        codes("fn main() {\n    let s: String = 3\n    println(s)\n}\n"),
+        ["NK1103"]
+    );
+    assert_eq!(
+        codes("fn f() -> String {\n    return -2\n}\nfn main() {\n    println(f())\n}\n"),
+        ["NK1104"]
+    );
+    assert_eq!(
+        codes(
+            "struct P { name: String }\nfn main() {\n    let p = P { name: 1.5 }\n    println(p.name)\n}\n"
+        ),
+        ["NK1106"]
+    );
+    // A number declared, or a number that may be absent, still takes it.
+    assert!(
+        codes("fn main() {\n    let n: i32 = 4\n    let x: f64 = 2\n    let y: i64? = 3\n    println(f\"{n} {x} {y ?? 0}\")\n}\n")
+            .is_empty()
+    );
+}

@@ -1828,6 +1828,32 @@ pub enum Wrap {
     PathView,
 }
 
+/// **A number literal where the declared type is not a number** (#471): the
+/// type it takes when nothing asks, so the position's ordinary mismatch says
+/// so. A literal has no type of its own because its use gives it one (Part I
+/// 2.4); a use that is not a number gives it none, and fitting anything was
+/// the hole.
+fn number_where_no_number_is(want: &Ty, value: &Expr) -> Option<Ty> {
+    let Ty::Named { name, .. } = want else {
+        return None;
+    };
+    if nikaia_std::tools::dump::is_whole(name) || matches!(name.as_str(), "f32" | "f64") {
+        return None;
+    }
+    let literal = match value {
+        Expr::Unary {
+            op: crate::ast::UnaryOp::Neg,
+            expr,
+        } => expr.as_ref(),
+        value => value,
+    };
+    match literal {
+        Expr::LitInt { .. } => Some(Ty::named("i64")),
+        Expr::LitFloat(_) => Some(Ty::named("f64")),
+        _ => None,
+    }
+}
+
 /// **Text stands wherever a file's name is asked**
 /// ([ADR-319](../../../docs/specification/adr/adr-319.md) D2): whether `found`
 /// is text and `want` an `fs::Path`, and then whether a view of one is wanted.
@@ -19588,6 +19614,7 @@ impl<'a> Checker<'a> {
             .or_else(|| self.tuple_literal(found, want, value))
             .or_else(|| self.list_of_tuple_literals(found, want, value))
             .or_else(|| self.collect_by_use(found, want, value, span))
+            .or_else(|| number_where_no_number_is(want, value))
     }
 
     /// **A list of tuple literals builds each tuple's text where the list is

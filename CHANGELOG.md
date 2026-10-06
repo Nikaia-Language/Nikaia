@@ -4,6 +4,21 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.537] — 2026-10-06
+
+**A number literal where no number is declared is refused** (#471).
+- `let s: String = 3`, a `return -2` from a function declared `-> String` and
+  `P { name: 1.5 }` passed the checker and failed in `rustc`.
+- A literal takes its type from its use (Part I 2.4). A use that is not a
+  number gives it none, and the literal used to fit anything.
+- Now each is the position's ordinary mismatch, `NK1103`, `NK1104` or
+  `NK1106`, naming `i64` or `f64`.
+- A number declared, or one that may be absent (`i64?`), takes the literal as
+  before.
+
+Every bench and example lowers byte for byte as before, and the
+specification's blocks keep their verdicts.
+
 ## [0.0.536] — 2026-10-06
 
 **`fs::Path` exists, and text stands wherever a file's name is asked** (ADR-319
