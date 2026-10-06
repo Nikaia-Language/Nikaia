@@ -4,6 +4,18 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.558] — 2026-10-06
+
+**`docs/open-decisions.md` is retired; a question for the owner is an issue
+labelled `decision`** (6a7f4ead).
+- Its five open entries are issues #484 (`Shared` twice in Part I 6.2), #485
+  (how `dsl` names a package's grammar), #486 (`html::Raw::new` in Part III
+  17.1), #487 (the `image` comment in Part III 15.2) and #488 (a call through
+  a module nothing declares).
+- `docs/README.md`, the roadmap, the ADR template and ADR-258 D5 point at the
+  label; an ADR that answered one of its questions names the former page in
+  plain text.
+
 ## [0.0.557] — 2026-10-06
 
 **There is no build script; a package links a C library by name** (ADR-324, #483).
