@@ -80,6 +80,16 @@ pub fn report(
                     }
                 }
             }
+            // A grammar's actions are walked too (ADR-314 D1).
+            Item::Grammar(grammar) => {
+                for rule in &grammar.rules {
+                    for alt in &rule.alts {
+                        if let Some(action) = &alt.action {
+                            walk.block(action);
+                        }
+                    }
+                }
+            }
             _ => {}
         }
     }

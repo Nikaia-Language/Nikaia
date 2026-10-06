@@ -34,6 +34,12 @@ pub struct BoundsContext {
     /// What a callee's ledger entry ensures, by the name a call writes
     /// (ADR-314 D3).
     pub ensured: collections::BTreeMap[String, Ensured],
+    /// **What a grammar binding matched** (ADR-314 D1), for the action it
+    /// stands in: a whole number's range by name (`dec[i32](digit{1,2})` is
+    /// `0..=99`), and a `char`'s code by name (`digit` is `48..=57`). Empty
+    /// for a function.
+    pub given: collections::BTreeMap[String, Range],
+    pub classes: collections::BTreeMap[String, Range],
     pub around: Around,
 }
 
@@ -228,6 +234,14 @@ fn bounding_pass(mut walk: BoundsWalk, args: ref Vec[FnArg], body: ref Block, co
         }
         if ty == "Vec" || ty == "List" || ty == "Array" {
             bounding_at_least_zero(walk, facts, length_of(name))
+        }
+    }
+    // **A grammar binding** (ADR-314 D1): a number within what it matched,
+    // unless the action binds the name again.
+    for (name, range) in context.given {
+        if !walk.shape.bound.contains(name) {
+            facts.ints.insert(name.clone())
+            bounding_bounded(walk, facts, name, range)
         }
     }
     bounding_block(walk, body, facts, context, program, words, node_of, ask)
@@ -683,7 +697,7 @@ fn bounding_lin(mut walk: BoundsWalk, expr: ref Expr, facts: ref BoundsFacts, co
         Expr::Cast { expr, ty } => {
             if ty.generics.is_empty() && is_whole_number(words.resolve(ty.name)) {
                 if context.char_codes.contains(node_of(expr)) {
-                    return bounding_code(walk)
+                    return bounding_code_of(walk, expr, context, words)
                 }
                 return bounding_lin(walk, expr, facts, context, program, words, node_of)
             }
@@ -732,6 +746,30 @@ fn bounding_code(mut walk: BoundsWalk) -> i64 {
     return v
 }
 
+/// **The code of the `char` `expr`**: within its class where it is a grammar
+/// binding the action does not bind again (ADR-314 D1), any code otherwise
+/// (D2).
+fn bounding_code_of(mut walk: BoundsWalk, expr: ref Expr, context: ref BoundsContext, words: ref winnow_grammar::InternerContext) -> i64 {
+    let v = bounding_code(walk)
+    let name = bounding_variable(expr, words) ?? return v
+    if walk.shape.bound.contains(name) {
+        return v
+    }
+    let class = context.classes[name] ?? return v
+    let key = f"code#{walk.codes - 1}"
+    let mut held: Vec[i64] = []
+    if class.lo != null {
+        let lo = walk.arena.int(class.lo ?? 0)
+        held.push(walk.arena.ge(v, lo))
+    }
+    if class.hi != null {
+        let hi = walk.arena.int(class.hi ?? 0)
+        held.push(walk.arena.le(v, hi))
+    }
+    walk.axioms.insert(key, held)
+    return v
+}
+
 /// The name a call writes for its callee: a bare one, or a path such as
 /// `text::digit_value`.
 fn bounding_callee(func: ref Expr, words: ref winnow_grammar::InternerContext) -> String? {
@@ -762,7 +800,7 @@ fn bounding_ensured(mut walk: BoundsWalk, ensured: ref Ensured, args: ref Vec[Ex
     let mut given: collections::BTreeMap[String, i64] = collections::BTreeMap()
     for k in 0..<args.len() {
         if ensured.chars[k] {
-            given.insert(ensured.params[k].clone(), bounding_code(walk))
+            given.insert(ensured.params[k].clone(), bounding_code_of(walk, args[k], context, words))
         } else {
             let term = bounding_lin(walk, args[k], facts, context, program, words, node_of) ?? return null
             given.insert(ensured.params[k].clone(), term)

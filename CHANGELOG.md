@@ -4,6 +4,27 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.574] — 2026-10-06
+
+**A grammar's action is proved from what its bindings matched** (ADR-314 D1,
+#421).
+- The checker types a binding by what the built-in yields (Part II 10.8):
+  `x:dec[T](…)` is a `T`, `c:digit` and `c:hex_digit` a `char`, where the
+  grammar has no rule of that name. Before, every binding was unknown, so no
+  operation in an action was a site at all, and a `digit` put into an `i32`
+  field went unsaid (`typecheck.rs`'s grammar test did that; it now writes
+  `dec[i32](digit+)`).
+- The bounds walk walks each action like a function's body: a
+  `dec[T](digit{m,n})` binding starts in `0..=10^n - 1`, a `digit` binding's
+  code in `48..=57`, unless the action binds the name again. `--bounds`
+  lists actions' sites.
+- 1BRC's `TENTHS`: `whole * 10` and `whole * 10 + text::digit_value(frac)` are
+  proved; `n * 10` over `dec[i64](digit+)` stays checked.
+- Part III 13.3 states what a proof reads of a grammar, a `char` and an
+  `ensures`.
+- Tests: `tests/facts_of_the_walk.rs` (was `char_codes.rs`), the report and a
+  run with the proved checks dropped.
+
 ## [0.0.573] — 2026-10-06
 
 **A callee's `ensures` is a fact at the call; an expression function

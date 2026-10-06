@@ -109,6 +109,92 @@ pub struct Proven {
     pub nonnegative: HashSet<usize>,
 }
 
+/// **What a pattern's bindings matched** (ADR-314 D1), through sequences and
+/// groups: `x:dec[T](digit{m,n})` (or one `digit`) is a whole number in
+/// `0..=10^n - 1`, `c:digit` a `char` whose code is `48..=57` (`hex_digit`
+/// `48..=102`, a one-character literal its own code). A name the grammar
+/// declares as a rule of its own is not a built-in, and says nothing.
+fn matched(
+    parsed: &Parsed,
+    rules: &BTreeSet<&str>,
+    pattern: &crate::ast::Pattern,
+    given: &mut BTreeMap<String, nikaia_std::tools::bounds_interval::Range>,
+    classes: &mut BTreeMap<String, nikaia_std::tools::bounds_interval::Range>,
+) {
+    use crate::ast::{Pattern, Repeat};
+    use nikaia_std::tools::bounds_interval::Range;
+    let range = |lo: i64, hi: i64| Range {
+        lo: Some(lo),
+        hi: Some(hi),
+    };
+    let class = |pattern: &Pattern| -> Option<Range> {
+        match pattern {
+            Pattern::Ref {
+                name,
+                generics,
+                args,
+            } if generics.is_empty() && args.is_empty() && !rules.contains(parsed.text(*name)) => {
+                match parsed.text(*name) {
+                    "digit" => Some(range(48, 57)),
+                    "hex_digit" => Some(range(48, 102)),
+                    _ => None,
+                }
+            }
+            Pattern::Literal(text) if text.chars().count() == 1 => {
+                let code = text.chars().next()? as i64;
+                Some(range(code, code))
+            }
+            _ => None,
+        }
+    };
+    match pattern {
+        Pattern::Seq(parts) => {
+            for part in parts {
+                matched(parsed, rules, &part.node, given, classes);
+            }
+        }
+        Pattern::Group(inner) => matched(parsed, rules, &inner.node, given, classes),
+        Pattern::Bind { name, pat } => {
+            let name = parsed.text(*name).to_string();
+            if let Some(code) = class(&pat.node) {
+                classes.insert(name, code);
+                return;
+            }
+            let Pattern::Ref {
+                name: called,
+                generics,
+                args,
+            } = &pat.node
+            else {
+                return;
+            };
+            if parsed.text(*called) != "dec" || rules.contains("dec") || generics.len() != 1 {
+                return;
+            }
+            let digits = match args.as_slice() {
+                [only] => match &only.node {
+                    Pattern::Repeat {
+                        pat,
+                        rep: Repeat::Exactly(n) | Repeat::Between(_, n),
+                    } if class(&pat.node).is_some_and(|c| c.lo == Some(48) && c.hi == Some(57)) => {
+                        *n
+                    }
+                    other if class(other).is_some_and(|c| c.lo == Some(48) && c.hi == Some(57)) => {
+                        1
+                    }
+                    _ => return,
+                },
+                _ => return,
+            };
+            if digits > 18 {
+                return;
+            }
+            given.insert(name, range(0, 10i64.pow(digits) - 1));
+        }
+        _ => {}
+    }
+}
+
 /// **What each callee the ledgers describe ensures**
 /// ([ADR-314](../../docs/specification/adr/adr-314.md) D3), read back over its
 /// parameters and `result`, by the name a call writes. The first ledger that
@@ -222,6 +308,8 @@ pub fn proven(
             .map(|(at, ty)| (*at as i64, ty.clone()))
             .collect(),
         nonnegative: nonnegative.iter().map(|n| *n as i64).collect(),
+        given: BTreeMap::new(),
+        classes: BTreeMap::new(),
         around,
     };
     let mut bodies: Vec<&Spanned<Item>> = Vec::new();
@@ -273,6 +361,59 @@ pub fn proven(
             .extend(walked.arithmetic.into_iter().map(|n| n as usize));
         out.nonnegative
             .extend(walked.nonnegative.into_iter().map(|n| n as usize));
+    }
+    // **A grammar's actions, walked like a function's body**
+    // ([ADR-314](../../docs/specification/adr/adr-314.md) D1), from what each
+    // binding matched.
+    for item in &parsed.program.items {
+        let Item::Grammar(grammar) = &item.node else {
+            continue;
+        };
+        let rules: BTreeSet<&str> = grammar.rules.iter().map(|r| parsed.text(r.name)).collect();
+        for rule in &grammar.rules {
+            for alt in &rule.alts {
+                let Some(action) = &alt.action else {
+                    continue;
+                };
+                let mut given = BTreeMap::new();
+                let mut classes = BTreeMap::new();
+                matched(parsed, &rules, &alt.pattern.node, &mut given, &mut classes);
+                let context = BoundsContext {
+                    given,
+                    classes,
+                    ..context.clone()
+                };
+                let copy = std::cell::RefCell::new(SolverCopy::default());
+                let walked = crate::proofs::in_function(
+                    parsed.text(rule.name),
+                    rule.span.start as usize,
+                    || {
+                        walk::bounds_aggressive(
+                            &Vec::new(),
+                            action,
+                            crate::emit::nonnegative_names(action)
+                                .into_iter()
+                                .map(|s| parsed.text(s).to_string())
+                                .collect(),
+                            &context,
+                            &parsed.program,
+                            &parsed.interner,
+                            &node_of,
+                            &|arena, facts, goal| {
+                                asked_of(&copy, arena, facts, goal, crate::proofs::ask)
+                                    == crate::proofs::Asked::Proved
+                            },
+                        )
+                    },
+                );
+                out.indices
+                    .extend(walked.indices.into_iter().map(|n| n as usize));
+                out.arithmetic
+                    .extend(walked.arithmetic.into_iter().map(|n| n as usize));
+                out.nonnegative
+                    .extend(walked.nonnegative.into_iter().map(|n| n as usize));
+            }
+        }
     }
     out
 }

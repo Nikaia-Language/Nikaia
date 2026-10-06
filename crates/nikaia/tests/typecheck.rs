@@ -276,7 +276,7 @@ fn a_condition_that_is_not_a_bool_is_reported() {
 fn a_grammar_action_is_checked_against_its_rule() {
     let (code, message) = one("struct Reading { name: ref String, temp: i32 }\n\
          grammar Measurements {\n\
-         \x20   rule LINE -> Reading = name:until(\";\") \";\" temp:digit\n\
+         \x20   rule LINE -> Reading = name:until(\";\") \";\" temp:dec[i32](digit+)\n\
          \x20       { Reading { nmae: name, temp: temp } }\n\
          }");
     assert_eq!(code, "NK1107");

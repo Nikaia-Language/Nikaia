@@ -1,7 +1,8 @@
-//! **A `char`'s code is a number of the proof**
-//! ([ADR-314](../../../docs/specification/adr/adr-314.md) D2, #421): `c as T`
-//! of a `char` into a whole number is in `0..=0x10FFFF`, so arithmetic over it
-//! that cannot leave its type is proved.
+//! **What a grammar matched and what a callee promises are facts of the
+//! walk** ([ADR-314](../../../docs/specification/adr/adr-314.md), #421): a
+//! grammar binding is what it matched (D1), a `char`'s code is in
+//! `0..=0x10FFFF` (D2), and a callee's `ensures` holds of the call (D3), so
+//! arithmetic over them that cannot leave its type is proved.
 
 mod common;
 
@@ -132,4 +133,67 @@ fn an_expression_function_publishes_what_it_returns() {
     assert_eq!(ledger.functions["twice"].ensures, ["result == n * 2"]);
     // Not linear: nothing the prover reads, nothing published.
     assert!(ledger.functions["square"].ensures.is_empty());
+}
+
+/// **D1: a grammar's action starts from what its bindings matched** - a
+/// `dec[i32](digit{1,2})` is `0..=99`, a `digit` a `char` whose code is
+/// `48..=57` - so 1BRC's `TENTHS` stays inside `i32`. A run of digits with no
+/// bound says nothing.
+const TENTHS: &str = "\
+use text
+
+grammar Temps {
+    entry rule tenths -> i32 =
+        neg:\"-\"? whole:dec[i32](digit{1,2}) \".\" frac:digit
+        {
+            let value = whole * 10 + text::digit_value(frac)
+            if neg != null { -value } else { value }
+        }
+
+    entry rule any -> i64 = n:dec[i64](digit+) { n * 10 }
+}
+
+fn main() throws {
+    println(f\"{Temps::tenths(\"-12.3\")} {Temps::tenths(\"4.5\")} {Temps::any(\"7\")}\")
+}
+";
+
+#[test]
+fn a_grammar_binding_is_what_it_matched() {
+    let out = report(TENTHS);
+    assert!(line(&out, "whole * 10 + ").ends_with("proved"), "{out}");
+    assert!(line(&out, "whole * 10 ").ends_with("proved"), "{out}");
+    assert!(line(&out, "n * 10").contains("checked"), "{out}");
+}
+
+/// The same numbers with the proved checks dropped.
+#[test]
+fn a_grammar_action_runs_the_same_without_its_proved_checks() {
+    let parsed = parse_to_ast(TENTHS).expect("the source parses");
+    let build = Build {
+        overflow: OverflowChecks::Removed,
+        ..Build::default()
+    };
+    let rust = emit_program(&parsed, build).expect("lowers").rust;
+    let dir = common::scratch_dir("grammar-bindings");
+    let file = dir.join("main.rs");
+    std::fs::write(&file, &rust).expect("write the Rust");
+    let binary = dir.join("program");
+    let out = common::compile(
+        &file,
+        &[
+            "--crate-type",
+            "bin",
+            "-o",
+            binary.to_str().expect("utf-8 path"),
+        ],
+    );
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let ran = std::process::Command::new(&binary).output().expect("runs");
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(String::from_utf8_lossy(&ran.stdout).trim(), "-123 45 70");
 }

@@ -1584,6 +1584,7 @@ pub struct BodyShape {
     pub unsigned: collections::BTreeSet<String>,
     pub roots: collections::BTreeSet<String>,
     pub aliases: collections::BTreeMap<String, String>,
+    pub bound: collections::BTreeSet<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1608,9 +1609,10 @@ struct ShapeSeen {
 }
 
 pub fn shape_of(args: &[FnArg], body: &Block, pinned: &collections::BTreeSet<String>, around: &Around, words: &winnow_grammar::InternerContext) -> BodyShape {
-    let mut seen = ShapeSeen { bound: collections::BTreeMap::new(), shape: BodyShape { constants: collections::BTreeMap::new(), unsigned: collections::BTreeSet::new(), roots: collections::BTreeSet::new(), aliases: collections::BTreeMap::new() }, lost: collections::BTreeSet::new() };
+    let mut seen = ShapeSeen { bound: collections::BTreeMap::new(), shape: BodyShape { constants: collections::BTreeMap::new(), unsigned: collections::BTreeSet::new(), roots: collections::BTreeSet::new(), aliases: collections::BTreeMap::new(), bound: collections::BTreeSet::new() }, lost: collections::BTreeSet::new() };
     for arg in args.iter() { bind_name(words.resolve(arg.name), &mut seen); }
     look_block(body, &Look::Bound, false, around, words, &mut seen);
+    for (name, _) in seen.bound.iter() { seen.shape.bound.insert(name.to_owned()); }
     for arg in args.iter() {
         let name = words.resolve(arg.name).to_owned();
         if once(&name, &seen) && is_unsigned(&plain_name(&arg.ty, words)) { seen.shape.unsigned.insert(name); }
@@ -1995,6 +1997,8 @@ pub struct BoundsContext {
     pub nonnegative: collections::BTreeSet<i64>,
     pub char_codes: collections::BTreeSet<i64>,
     pub ensured: collections::BTreeMap<String, Ensured>,
+    pub given: collections::BTreeMap<String, Range>,
+    pub classes: collections::BTreeMap<String, Range>,
     pub around: Around,
 }
 
@@ -2105,6 +2109,12 @@ fn bounding_pass(walk: &mut BoundsWalk, args: &[FnArg], body: &Block, context: &
             if ty.starts_with("u") { bounding_at_least_zero(walk, &mut facts, &name); }
         }
         if ty == "Vec" || ty == "List" || ty == "Array" { bounding_at_least_zero(walk, &mut facts, &length_of(&name)); }
+    }
+    for (name, range) in context.given.iter() {
+        if !walk.shape.bound.contains(name) {
+            facts.ints.insert(name.to_owned());
+            bounding_bounded(walk, &mut facts, name, range);
+        }
     }
     bounding_block(walk, body, &mut facts, context, program, words, node_of, ask);
 }
@@ -2459,7 +2469,7 @@ fn bounding_lin(walk: &mut BoundsWalk, expr: &Expr, facts: &BoundsFacts, context
         Expr::Cast { expr, ty } => {
             let expr = nikaia_std::boxed::open(expr);
             if ty.generics.is_empty() && is_whole_number(words.resolve(ty.name)) {
-                if context.char_codes.contains(&node_of(expr)) { return Some(bounding_code(walk)); }
+                if context.char_codes.contains(&node_of(expr)) { return Some(bounding_code_of(walk, expr, context, words)); }
                 return bounding_lin(walk, expr, facts, context, program, words, node_of);
             }
         },
@@ -2499,6 +2509,25 @@ fn bounding_code(walk: &mut BoundsWalk) -> i64 {
     v
 }
 
+fn bounding_code_of(walk: &mut BoundsWalk, expr: &Expr, context: &BoundsContext, words: &winnow_grammar::InternerContext) -> i64 {
+    let v = bounding_code(walk);
+    let name = match bounding_variable(expr, words) { Some(__nikaia_value) => __nikaia_value, None => return v };
+    if walk.shape.bound.contains(&name) { return v; }
+    let class = match *nikaia_std::index::get(&context.classes, &name) { Some(__nikaia_value) => __nikaia_value, None => return v };
+    let key = format!("code#{}", walk.codes - 1);
+    let mut held: Vec<i64> = vec![];
+    if class.lo.is_some() {
+        let lo = walk.arena.int(nikaia_std::index::or(class.lo, || 0));
+        held.push(walk.arena.ge(v, lo));
+    }
+    if class.hi.is_some() {
+        let hi = walk.arena.int(nikaia_std::index::or(class.hi, || 0));
+        held.push(walk.arena.le(v, hi));
+    }
+    walk.axioms.insert(key, held);
+    v
+}
+
 fn bounding_callee(func: &Expr, words: &winnow_grammar::InternerContext) -> Option<String> {
     match func {
         Expr::Variable(name) => { let name = *name; Some(words.resolve(name).to_owned()) },
@@ -2519,7 +2548,7 @@ fn bounding_ensured(walk: &mut BoundsWalk, ensured: &Ensured, args: &[Expr], fac
     if (args.len() as i64) != ensured.params.len() as i64 || ensured.conditions.is_empty() { return None; }
     let mut given: collections::BTreeMap<String, i64> = collections::BTreeMap::new();
     for k in 0..args.len() as i64 {
-        if *nikaia_std::index::get(&ensured.chars, (k) as usize) { given.insert((*nikaia_std::index::get(&ensured.params, (k) as usize)).to_owned(), bounding_code(walk)); } else {
+        if *nikaia_std::index::get(&ensured.chars, (k) as usize) { given.insert((*nikaia_std::index::get(&ensured.params, (k) as usize)).to_owned(), bounding_code_of(walk, nikaia_std::index::get(&args, (k) as usize), context, words)); } else {
             let term = match bounding_lin(walk, nikaia_std::index::get(&args, (k) as usize), facts, context, program, words, node_of) { Some(__nikaia_value) => __nikaia_value, None => return None };
             given.insert((*nikaia_std::index::get(&ensured.params, (k) as usize)).to_owned(), term);
         }

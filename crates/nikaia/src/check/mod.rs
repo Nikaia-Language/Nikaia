@@ -4904,7 +4904,12 @@ impl<'a> Checker<'a> {
                 .replace(format!("{named}::{}", self.parsed.text(rule.name)));
             for alt in &rule.alts {
                 let mut frame = Vec::new();
-                self.bindings_of(&alt.pattern.node, &mut frame);
+                let rules: BTreeSet<&str> = grammar
+                    .rules
+                    .iter()
+                    .map(|r| self.parsed.text(r.name))
+                    .collect();
+                self.bindings_of(&alt.pattern.node, &rules, &mut frame);
                 // **A fold's lambdas first, and in the pattern's own frame**
                 // ([ADR-296](../../../docs/specification/adr/adr-296.md)),
                 // because a fold may stand beside a binding in a sequence:
@@ -5114,8 +5119,11 @@ impl<'a> Checker<'a> {
             .filter(|result| !result.is_unknown())
     }
 
-    /// Every `name:pattern` in a pattern, all of them `?`.
-    fn bindings_of(&self, pattern: &ast::Pattern, out: &mut Vec<Local>) {
+    /// Every `name:pattern` in a pattern: what the built-ins that say match
+    /// ([ADR-314](../../docs/specification/adr/adr-314.md) D1) - `dec[T](…)` a
+    /// `T`, `digit` and `hex_digit` a `char` (Part II 10.8), where `rules` (the
+    /// grammar's own) has no rule of that name - and `?` otherwise.
+    fn bindings_of(&self, pattern: &ast::Pattern, rules: &BTreeSet<&str>, out: &mut Vec<Local>) {
         match pattern {
             ast::Pattern::Bind { name, pat } => {
                 // **What `x?` binds may be absent**, whatever `x` is: put into
@@ -5127,23 +5135,52 @@ impl<'a> Checker<'a> {
                         rep: ast::Repeat::Optional,
                         ..
                     } => Ty::Nullable(Box::new(Ty::Unknown)),
+                    ast::Pattern::Ref {
+                        name: called,
+                        generics,
+                        args,
+                    } => {
+                        let called = self.parsed.text(*called);
+                        let builtin = !rules.contains(called);
+                        match (called, generics.as_slice()) {
+                            ("dec", [ty])
+                                if builtin
+                                    && ty.generics.is_empty()
+                                    && INTEGERS.contains(&self.parsed.text(ty.name)) =>
+                            {
+                                Ty::Named {
+                                    name: self.parsed.text(ty.name).to_string(),
+                                    args: Vec::new(),
+                                    view: false,
+                                }
+                            }
+                            ("digit" | "hex_digit", []) if builtin && args.is_empty() => {
+                                Ty::Named {
+                                    name: "char".to_string(),
+                                    args: Vec::new(),
+                                    view: false,
+                                }
+                            }
+                            _ => Ty::Unknown,
+                        }
+                    }
                     _ => Ty::Unknown,
                 };
                 out.push(Local::free(self.parsed.text(*name).to_string(), ty));
-                self.bindings_of(&pat.node, out);
+                self.bindings_of(&pat.node, rules, out);
             }
             ast::Pattern::Seq(parts) | ast::Pattern::Choice(parts) => {
                 for part in parts {
-                    self.bindings_of(&part.node, out);
+                    self.bindings_of(&part.node, rules, out);
                 }
             }
             ast::Pattern::Ref { args, .. } => {
                 for arg in args {
-                    self.bindings_of(&arg.node, out);
+                    self.bindings_of(&arg.node, rules, out);
                 }
             }
             ast::Pattern::Repeat { pat, .. } | ast::Pattern::Group(pat) => {
-                self.bindings_of(&pat.node, out)
+                self.bindings_of(&pat.node, rules, out)
             }
             ast::Pattern::Literal(_) | ast::Pattern::Cut | ast::Pattern::Fold(_) => {}
         }

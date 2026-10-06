@@ -29,6 +29,10 @@ pub struct BodyShape {
     /// Names bound once, not `mut`, to a list of the roots or to an element
     /// of one: the key of its elements.
     pub aliases: collections::BTreeMap[String, String],
+    /// Every name the body itself binds, by `let`, a loop or a pattern: a
+    /// grammar binding of that name is not what the body reads everywhere
+    /// (ADR-314 D1).
+    pub bound: collections::BTreeSet[String],
 }
 
 /// **What the program around a body says about a call**: each free
@@ -67,6 +71,7 @@ pub fn shape_of(args: ref Vec[FnArg], body: ref Block, pinned: ref collections::
             unsigned: collections::BTreeSet(),
             roots: collections::BTreeSet(),
             aliases: collections::BTreeMap(),
+            bound: collections::BTreeSet(),
         },
         lost: collections::BTreeSet(),
     }
@@ -74,6 +79,9 @@ pub fn shape_of(args: ref Vec[FnArg], body: ref Block, pinned: ref collections::
         bind_name(words.resolve(arg.name), seen)
     }
     look_block(body, Look::Bound, false, around, words, seen)
+    for (name, _) in seen.bound {
+        seen.shape.bound.insert(name.clone())
+    }
     for arg in args {
         let name = words.resolve(arg.name).clone()
         if once(name, seen) && is_unsigned(plain_name(arg.ty, words)) {
