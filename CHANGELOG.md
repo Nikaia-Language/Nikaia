@@ -4,6 +4,17 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.569] — 2026-10-06
+
+**The tools below Nikaia take no orders from the project** (ADR-325, #480).
+- Cargo, `rustc` and what rustup starts run in a directory of the compiler's
+  own under the cache (`where_tools_start`), never in the project: a project's
+  `.cargo/config.toml` (a linker, a runner) and `rust-toolchain.toml` are not
+  read. Every path handed to them is absolute.
+- The user's `CARGO_HOME`, environment and rustup default still apply.
+- Tests: a project's linker script does not run, a project's unknown toolchain
+  does not stop the build, the user's `CARGO_HOME` linker does run.
+
 ## [0.0.568] — 2026-10-06
 
 **A `dsl` block names a grammar from a package as `package::Grammar`, always**

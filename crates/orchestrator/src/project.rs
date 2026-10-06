@@ -368,6 +368,7 @@ pub fn toolchain_is_new_enough(floor: &str) -> Result<()> {
 /// which nothing here can see.
 pub fn toolchain_can_build_for(triple: &str) -> Result<()> {
     let Ok(out) = Command::new("rustc")
+        .current_dir(crate::cache::Layout::where_tools_start())
         .args(["--print", "target-libdir", "--target", triple])
         .output()
     else {
@@ -394,13 +395,17 @@ pub fn toolchain_can_build_for(triple: &str) -> Result<()> {
         "cannot build for `{triple}`: this toolchain has no `std` for it.\n\
          Install it with `rustup target add {triple}`. A machine other than the one \
          this runs on also needs a linker for it, named to Cargo in \
-         `.cargo/config.toml` as `[target.{triple}] linker = \"…\"`."
+         `$CARGO_HOME/config.toml` (a project's own is not read) as `[target.{triple}] linker = \"…\"`."
     ))
 }
 
 /// `rustc --version`'s major and minor, where both can be read.
 fn installed_rustc() -> Option<(u32, u32)> {
-    let out = Command::new("rustc").arg("--version").output().ok()?;
+    let out = Command::new("rustc")
+        .current_dir(crate::cache::Layout::where_tools_start())
+        .arg("--version")
+        .output()
+        .ok()?;
     let text = String::from_utf8(out.stdout).ok()?;
     // `rustc 1.86.0 (05f9846f8 2025-03-31)`
     version_parts(text.split_whitespace().nth(1)?)
@@ -420,6 +425,7 @@ impl Cargo {
     /// a program's arguments.
     pub fn run(&self, subcommand: &str, args: &[String], after: &[String]) -> Result<i32> {
         let mut command = Command::new(cargo_binary());
+        command.current_dir(crate::cache::Layout::where_tools_start());
         command.arg(subcommand);
         command.arg("--manifest-path").arg(&self.manifest);
         if let Some(dir) = &self.target_dir {
@@ -459,6 +465,7 @@ impl Cargo {
     /// thing at the worst moment.
     pub fn messages(&self, subcommand: &str, args: &[String]) -> Result<(i32, String)> {
         let mut command = Command::new(cargo_binary());
+        command.current_dir(crate::cache::Layout::where_tools_start());
         command.arg(subcommand);
         command.arg("--manifest-path").arg(&self.manifest);
         if let Some(dir) = &self.target_dir {

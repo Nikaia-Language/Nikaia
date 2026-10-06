@@ -665,6 +665,7 @@ pub(crate) fn bundle(at: &Path) -> Result<Bundle, String> {
     write_if_changed(&dir.join("Cargo.toml"), &manifest)?;
     write_if_changed(&dir.join("src").join("lib.rs"), BUNDLE)?;
     let built = Command::new(cargo())
+        .current_dir(orchestrator::cache::Layout::where_tools_start())
         .args(["rustc", "--quiet", "--lib", "--crate-type", "dylib"])
         .arg("--message-format=json")
         .arg("--manifest-path")
@@ -756,6 +757,7 @@ pub(crate) fn run(at: &Path, bundle: &Bundle, program: &str, name: &str) -> Resu
     write_if_changed(&source, program).map_err(did_not)?;
     let binary = dir.join("run");
     let compiled = Command::new(rustc())
+        .current_dir(orchestrator::cache::Layout::where_tools_start())
         .args([
             "--edition=2024",
             "--crate-name",
@@ -895,6 +897,7 @@ fn toolchain() -> &'static str {
     static HELD: OnceLock<String> = OnceLock::new();
     HELD.get_or_init(|| {
         Command::new(rustc())
+            .current_dir(orchestrator::cache::Layout::where_tools_start())
             .arg("-vV")
             .output()
             .map(|out| String::from_utf8_lossy(&out.stdout).to_string())
@@ -908,6 +911,7 @@ fn target_libdir() -> &'static str {
     static HELD: OnceLock<String> = OnceLock::new();
     HELD.get_or_init(|| {
         Command::new(rustc())
+            .current_dir(orchestrator::cache::Layout::where_tools_start())
             .args(["--print", "target-libdir"])
             .output()
             .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_string())

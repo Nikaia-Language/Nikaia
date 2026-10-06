@@ -105,8 +105,11 @@ impl Workshop {
 
     /// A build that compiles its parsers under `at`.
     pub fn at(at: impl Into<PathBuf>) -> Workshop {
+        // **Absolute**, because Cargo and `rustc` are started elsewhere
+        // (ADR-325 D1).
+        let at = at.into();
         Workshop {
-            at: Some(at.into()),
+            at: Some(std::path::absolute(&at).unwrap_or(at)),
             running: std::sync::Mutex::new(Vec::new()),
             bundle: std::sync::OnceLock::new(),
             bounds: crate::comptime_run::Bounds::default(),
@@ -187,6 +190,7 @@ impl Workshop {
         write_if_changed(&dir.join("Cargo.toml"), &manifest(&key, &program))?;
 
         let built = Command::new(cargo())
+            .current_dir(orchestrator::cache::Layout::where_tools_start())
             .arg("build")
             .arg("--quiet")
             .arg("--manifest-path")

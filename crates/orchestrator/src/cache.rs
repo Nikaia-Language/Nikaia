@@ -618,6 +618,22 @@ impl Layout {
         std::env::temp_dir().join("nikaia-cache")
     }
 
+    /// **Where Cargo, `rustc` and every tool rustup starts are started**
+    /// ([ADR-325](../../../docs/specification/adr/adr-325.md) D1): a directory
+    /// of the compiler's own, under the user cache and outside every project.
+    ///
+    /// Cargo reads `.cargo/config.toml` from the directory it is started in
+    /// and every one above it, and rustup reads `rust-toolchain.toml` the same
+    /// way. Started inside a project, both would take orders from files the
+    /// project carries, such as a linker to run. Started here, they read only
+    /// the user's own: `CARGO_HOME`, the environment and rustup's default
+    /// (D3). Every path handed to them is therefore absolute.
+    pub fn where_tools_start() -> PathBuf {
+        let dir = Layout::user_cache_dir().join("tools");
+        let _ = std::fs::create_dir_all(&dir);
+        dir
+    }
+
     pub fn resolve(input: &Path) -> Layout {
         let start = input
             .parent()
