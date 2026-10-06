@@ -4,6 +4,20 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.553] — 2026-10-06
+
+**The prover's logic layer is a package any package may ask, also while it is
+built** (ADR-270 D24-D26, #478).
+- Public: terms, queries, answers and `verify`. Not public: the solvers.
+- A question asked at build time is not an entry of `nikaia.proofs`. It gets
+  the reference solver's answer under a counted budget, the same on every
+  machine; `unknown` proves nothing.
+- A package, not `std::logic`.
+- Why: a driver's grammar can ask whether a `WHERE` rules out a `NULL`
+  (ADR-299 D18) without writing a solver of its own.
+- Open: whether a grammar may call its package's functions and dependencies
+  (ADR-321 §6), which a driver needs first; the package's name in `use`.
+
 ## [0.0.552] — 2026-10-06
 
 **A `dsl` block may name the struct its rows are: `dsl … -> T { … } eod`**
