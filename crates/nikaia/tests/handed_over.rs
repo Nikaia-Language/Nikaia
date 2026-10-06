@@ -825,3 +825,14 @@ fn owned_text_into_a_literal_binding_names_the_annotation() {
         Some("Declare it as text of its own: `let mut s: String = \"a\"`.")
     );
 }
+
+/// **What is printed is only read** (ADR-279 D5, #473): a print call takes
+/// any value by `?`, which used to count as kept, so the second print of the
+/// same `String` was `NK2105`.
+#[test]
+fn a_printed_value_is_only_read() {
+    let found = findings(
+        "fn main() {\n    let s: String = \"a\".clone()\n    print(s)\n    println(s)\n    eprintln(s)\n}\n",
+    );
+    assert!(found.iter().all(|f| f.code != "NK2105"), "{found:#?}");
+}

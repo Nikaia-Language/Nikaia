@@ -262,3 +262,43 @@ fn an_interpolated_name_is_joined_by_its_bytes() {
         "data.csv.3.bak false\n"
     );
 }
+
+/// **A name is printed as its bytes** (ADR-319 D4): `print`, `println`,
+/// `eprint` and `eprintln` take text or a name, and a name - alone or in an
+/// `f"…"` - reaches the output unchanged.
+#[test]
+fn a_name_is_printed_as_its_bytes() {
+    let source = "use std::fs\n\
+         \n\
+         fn main() {\n\
+         \x20   let p: fs::Path = \"data.csv\"\n\
+         \x20   println(f\"found: {p}\")\n\
+         \x20   print(p)\n\
+         \x20   println(\"\")\n\
+         \x20   eprintln(f\"{p}!\")\n\
+         }\n";
+    let rust = lowered(source);
+    assert!(
+        rust.contains("nikaia_std::fs::path::print(&(p), false, false);"),
+        "{rust}"
+    );
+    let dir = common::scratch_dir("file-path-print");
+    let file = dir.join("main.rs");
+    std::fs::write(&file, &rust).expect("write the Rust");
+    let binary = dir.join("program");
+    let out = common::compile(&file, &["-o", binary.to_str().expect("utf-8 path")]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let run = std::process::Command::new(&binary)
+        .output()
+        .expect("run the program");
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(
+        String::from_utf8_lossy(&run.stdout),
+        "found: data.csv\ndata.csv\n"
+    );
+    assert_eq!(String::from_utf8_lossy(&run.stderr), "data.csv!\n");
+}

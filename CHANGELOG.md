@@ -4,6 +4,20 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.544] — 2026-10-06
+
+**A file's name is printed as its bytes, and what is printed is only read**
+(ADR-319 D4, #449 step 5; ADR-279 D5, #473).
+- `println(f"found: {p}")`, `print(p)` and the `stderr` halves write a name's
+  bytes as they are (`nikaia_std::fs::path::print`), alone or joined into an
+  `f"…"`. The name reaches the output unchanged.
+- **#473:** `print(s)` then `println(s)` was `NK2105`, because a print call
+  takes any value by `?`, which counted as kept. An argument of the four print
+  calls is now lent, as ADR-279 D5 says and as the emitted `print!` always
+  did.
+
+Every bench and example lowers byte for byte as before.
+
 ## [0.0.543] — 2026-10-06
 
 **An `f"…"` with a file's name in it is a name, joined by its bytes**

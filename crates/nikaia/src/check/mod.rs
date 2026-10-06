@@ -15062,11 +15062,15 @@ impl<'a> Checker<'a> {
             // own where the callee keeps it, and the literal as it is where the
             // callee only reads it, because that parameter is a `&str` below
             // (D3) and a constant needs no copy to be read.
+            // **What is printed is only read** (ADR-279 D5): the four print
+            // calls take any value by `?`, which would otherwise count as
+            // kept, and format it by reference (#473).
             let lent = crate::contracts::keeps::lends_in(
                 contract,
                 at + usize::from(signature.takes_a_receiver()),
                 &[self.library],
-            ) || (at == 0 && is_a_lookup(key));
+            ) || (at == 0 && is_a_lookup(key))
+                || matches!(key, "println" | "eprintln" | "print" | "eprint");
             let kept = !lent;
             // **What the callee keeps, it is given** (ADR-293 D29): no `&` is
             // written for this position, so a name here moves.
@@ -15183,6 +15187,17 @@ impl<'a> Checker<'a> {
                 && let Some(given) = given.get(at)
                 && self.a_pending_coalesce_is_lent(given, span)
             {
+                continue;
+            }
+            // **A file's name is printed as its bytes** (ADR-319 D4): the
+            // print calls take text or a name.
+            if matches!(written, "println" | "eprintln" | "print" | "eprint")
+                && let Some(given) = given.get(at)
+                && matches!(found, Ty::Named { name, .. } if name == "fs::Path")
+            {
+                self.checked
+                    .path_holes
+                    .insert((span.at(), argument_shape(given)), vec![true]);
                 continue;
             }
             let is_literal = given.get(at).is_some_and(is_literal);

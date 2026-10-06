@@ -9980,6 +9980,24 @@ impl<'p> Emitter<'p> {
             // piece by piece - a pretty-printer, a progress line - cannot be
             // written with the newline attached.
             if matches!(text, "println" | "eprintln" | "print" | "eprint") {
+                // **A file's name is written as its bytes** (ADR-319 D4): an
+                // `f"…"` with one in it, or the name itself.
+                if let [given] = args
+                    && let Some(names) = self
+                        .path_holes
+                        .get(&(flow.statement, crate::check::argument_shape(given)))
+                {
+                    let (to_err, newline) = (text.starts_with('e'), text.ends_with("ln"));
+                    out.push("nikaia_std::fs::path::print(&(");
+                    match given {
+                        Expr::LitInterpolated { parts } => {
+                            self.joined_name(out, parts, names, depth, flow)?
+                        }
+                        other => self.expr(out, other, depth, flow)?,
+                    }
+                    out.push(&format!("), {to_err}, {newline})"));
+                    return Ok(());
+                }
                 if let [Expr::LitInterpolated { parts }] = args {
                     out.push(&format!("{text}!("));
                     self.format_string(out, parts, depth, flow)?;
