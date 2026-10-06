@@ -14,7 +14,6 @@ root=$(cd "$(dirname "$0")/../.." && pwd)
 rows=${1:-1000000}
 work=${TMPDIR:-/tmp}/brc-bench
 input="$work/measurements-$rows.txt"
-cache=${XDG_CACHE_HOME:-$HOME/.cache}/nikaia
 mkdir -p "$work"
 
 command -v valgrind >/dev/null || { echo "brc.sh needs valgrind (callgrind)"; exit 1; }
@@ -49,15 +48,14 @@ incremental = false
 TOML
 }
 
-# Builds the project and copies the binary out of the shared build cache, where
-# the next build would overwrite it.
+# Builds the project and copies the binary out of the project, where the next
+# build would overwrite it.
 build_nikaia() {
     local name=$1 parallel=$2
     nikaia_toml "$parallel"
     ( cd "$proj" && "$nikaia" build >/dev/null 2>&1 ) || { echo "nikaia build failed ($name)"; exit 1; }
     local built
-    built=$(find "$cache" -type f -name brc -perm -u+x -printf '%T@ %p\n' | sort -n | tail -1 | cut -d' ' -f2-)
-    cp "$built" "$work/nikaia.$name"
+    cp "$proj/target/nikaia/bin/brc" "$work/nikaia.$name"
 }
 
 build_nikaia parallel yes

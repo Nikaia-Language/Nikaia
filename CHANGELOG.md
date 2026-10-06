@@ -4,6 +4,21 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.602] — 2026-10-06
+
+**What a memory block per task costs: measured** (ADR-327 D4, D5, #490
+step 2).
+- `benches/taskblock/`: one workload of many short tasks, each reading a
+  request and writing a response, in three binaries that differ only in
+  their global allocator - the system's, the system's with a budget counted
+  per task, and a block of 64 KiB per task. `taskblock.sh` checks they print
+  the same bytes and counts them with callgrind.
+- Per task: 17 410 instructions with `malloc`, 17 810 with a budget counted
+  over it (+2.3%), 10 188 with a block (-41%, half the mispredicted
+  branches).
+- `benches/brc/brc.sh` takes the program from the project's
+  `target/nikaia/bin/`, where 0.0.597 (#495) puts it.
+
 ## [0.0.601] — 2026-10-06
 
 **A static C library a dependency package names links with GNU `ld`**
