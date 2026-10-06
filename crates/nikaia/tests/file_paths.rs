@@ -217,3 +217,48 @@ fn a_file_names_operations_run() {
         "true true dir/data.bak dir/other.txt data.csv csv\ntrue false true\n"
     );
 }
+
+const JOINED: &str = "use std::fs\n\
+     \n\
+     fn main() {\n\
+     \x20   let p: fs::Path = \"data.csv\"\n\
+     \x20   let n = 3\n\
+     \x20   let bak: fs::Path = f\"{p}.{n}.bak\"\n\
+     \x20   let there = fs::exists(f\"{p}.bak\", fs::Root::Anywhere) catch { return }\n\
+     \x20   println(f\"{bak.display()} {there}\")\n\
+     }\n";
+
+/// **An `f"…"` with a file's name in it is a name** (ADR-319 D4): the parts
+/// are joined in the platform's encoding, the name by its bytes and the rest
+/// by its text, where a `let` or an argument asks for a `Path`.
+#[test]
+fn an_interpolated_name_is_joined_by_its_bytes() {
+    let rust = lowered(JOINED);
+    assert!(
+        rust.contains(
+            "nikaia_std::fs::path::joined(&[std::convert::AsRef::<std::ffi::OsStr>::as_ref(&(p)), \
+             std::ffi::OsStr::new(&format!(\".\")), std::ffi::OsStr::new(&format!(\"{}\", n)), \
+             std::ffi::OsStr::new(&format!(\".bak\"))])"
+        ),
+        "{rust}"
+    );
+    let dir = common::scratch_dir("file-path-joined");
+    let file = dir.join("main.rs");
+    std::fs::write(&file, &rust).expect("write the Rust");
+    let binary = dir.join("program");
+    let out = common::compile(&file, &["-o", binary.to_str().expect("utf-8 path")]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let run = std::process::Command::new(&binary)
+        .current_dir(&dir)
+        .output()
+        .expect("run the program");
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(
+        String::from_utf8_lossy(&run.stdout),
+        "data.csv.3.bak false\n"
+    );
+}

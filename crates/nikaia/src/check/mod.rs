@@ -724,6 +724,11 @@ pub struct Checked {
     /// operation's position: the bytes are compared, where Rust's `Path`
     /// compares components and has no `==` against text.
     pub path_comparisons: BTreeSet<usize>,
+    /// **An `f"…"` with a file's name in a hole**
+    /// ([ADR-319](../../docs/specification/adr/adr-319.md) D4), by the
+    /// statement and the literal's shape, with which holes are names: it is
+    /// joined in the platform's encoding into an `fs::Path`.
+    pub path_holes: BTreeMap<(usize, String), Vec<bool>>,
     /// The `?.` reaches whose field is **itself** nullable, as the byte the
     /// statement starts at and the field's name (Part I 3.5).
     ///
@@ -2033,6 +2038,8 @@ pub struct Propagation {
     pub concatenations: BTreeSet<usize>,
     /// [`Checked::path_comparisons`].
     pub path_comparisons: BTreeSet<usize>,
+    /// [`Checked::path_holes`].
+    pub path_holes: BTreeMap<(usize, String), Vec<bool>>,
     /// [`Checked::lent_lets`].
     pub lent_lets: BTreeSet<usize>,
     /// [`Checked::lent_returns`].
@@ -2322,6 +2329,7 @@ fn propagation(
         unrolled_calls: checked.unrolled_calls,
         concatenations: checked.concatenations,
         path_comparisons: checked.path_comparisons,
+        path_holes: checked.path_holes,
         lent_lets: checked.lent_lets,
         lent_returns: checked.lent_returns,
         compares: checked.compares,
@@ -14152,6 +14160,7 @@ impl<'a> Checker<'a> {
                 .map(|(hole, bound)| (std::borrow::Cow::Owned(hole), bound))
                 .collect(),
         };
+        let mut names: Vec<bool> = Vec::new();
         for (index, (hole, bound)) in walked.into_iter().enumerate() {
             let hole: &Expr = &hole;
             let frame: Vec<Local> = bound
@@ -14180,6 +14189,14 @@ impl<'a> Checker<'a> {
             if let Some(spec) = specs.get(index) {
                 self.a_collection_in_a_hole(hole, &held, spec.as_deref(), span);
             }
+            names.push(matches!(&held, Ty::Named { name, .. } if name == "fs::Path"));
+        }
+        // **An `f"…"` with a file's name in it is joined in the platform's
+        // encoding** (ADR-319 D4), so a name that is not text keeps its bytes.
+        if matches!(literal, Expr::LitInterpolated { .. }) && names.contains(&true) {
+            self.checked
+                .path_holes
+                .insert((span.at(), argument_shape(literal)), names);
         }
     }
 

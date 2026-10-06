@@ -1547,6 +1547,8 @@ struct Emitter<'p> {
     concatenations: std::collections::BTreeSet<usize>,
     /// `check::Checked::path_comparisons`.
     path_comparisons: std::collections::BTreeSet<usize>,
+    /// `check::Checked::path_holes`.
+    path_holes: std::collections::BTreeMap<(usize, String), Vec<bool>>,
     /// What each `comptime` is written as below - its type and its value - by the
     /// byte its statement starts at (`check::Checked::comptime_values`,
     /// [ADR-287](../../docs/specification/adr/adr-287.md) D4, D5).
@@ -2748,6 +2750,7 @@ impl<'p> Emitter<'p> {
             nullable_sites: propagation.nullable,
             concatenations: propagation.concatenations,
             path_comparisons: propagation.path_comparisons,
+            path_holes: propagation.path_holes,
             lent_lets: propagation.lent_lets,
             lent_returns: propagation.lent_returns,
             compares: propagation.compares,
@@ -11715,6 +11718,15 @@ impl<'p> Emitter<'p> {
             // hole there is nothing to format, and `format!("x")` is a
             // roundabout way of writing what `.to_string()` says plainly.
             Expr::LitInterpolated { parts } => {
+                // **A file's name in a hole** (ADR-319 D4): the parts are
+                // joined in the platform's encoding, a name by its bytes and
+                // anything else by its text.
+                if let Some(names) = self
+                    .path_holes
+                    .get(&(flow.statement, crate::check::argument_shape(expr)))
+                {
+                    return self.joined_name(out, parts, names, depth, flow);
+                }
                 // A malformed literal never gets here: the grammar refuses it
                 // at its place (ADR-309 D8).
                 if interpolated_holes(parts).is_empty() {
@@ -11741,6 +11753,58 @@ impl<'p> Emitter<'p> {
             true => "nikaia_std::func::SendBoxed",
             false => "nikaia_std::func::Boxed",
         }
+    }
+
+    /// **An `f"…"` with a file's name in it, as one name**
+    /// ([ADR-319](../../docs/specification/adr/adr-319.md) D4): each text part
+    /// and each hole that is not a name as its text, each name as its bytes.
+    fn joined_name(
+        &self,
+        out: &mut Out,
+        parts: &[crate::ast::FPart],
+        names: &[bool],
+        depth: usize,
+        flow: Flow<'_>,
+    ) -> Result<()> {
+        out.push("nikaia_std::fs::path::joined(&[");
+        let mut hole = 0;
+        for (at, part) in parts.iter().enumerate() {
+            if at > 0 {
+                out.push(", ");
+            }
+            match part {
+                crate::ast::FPart::Text(_) => {
+                    out.push(&format!(
+                        "std::ffi::OsStr::new(&format!(\"{}\"))",
+                        format_of(std::slice::from_ref(part))
+                    ));
+                }
+                crate::ast::FPart::Hole { .. } => {
+                    let held = interpolated_holes(std::slice::from_ref(part));
+                    let Some((place, expr)) = held.first() else {
+                        continue;
+                    };
+                    let expr = hole_as_read(self.parsed, *place, expr);
+                    let key = (flow.statement, crate::check::argument_shape(&expr));
+                    let outer = self.hole.replace(Some(key));
+                    let named = names.get(hole).copied().unwrap_or(false);
+                    out.push(match named {
+                        true => "std::convert::AsRef::<std::ffi::OsStr>::as_ref(&(",
+                        false => "std::ffi::OsStr::new(&format!(\"{}\", ",
+                    });
+                    let written = self.expr(out, &expr, depth, flow);
+                    self.hole.replace(outer);
+                    written?;
+                    out.push(match named {
+                        true => "))",
+                        false => "))",
+                    });
+                    hole += 1;
+                }
+            }
+        }
+        out.push("])");
+        Ok(())
     }
 
     /// The literal as a Rust format string, with its holes as arguments.

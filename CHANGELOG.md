@@ -4,6 +4,23 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.543] — 2026-10-06
+
+**An `f"…"` with a file's name in it is a name, joined by its bytes**
+(ADR-319 D4, #449 step 5, first half).
+- `let bak: fs::Path = f"{p}.{n}.bak"` and `fs::exists(f"{p}.bak", root)`
+  now compile.
+- The parts are joined in the platform's encoding (`nikaia_std::fs::path::joined`):
+  the name by its bytes, text and numbers by their text. A name that is not
+  text keeps its bytes.
+- The checker records which holes of an `f"…"` are names. Where none is, the
+  literal is `format!` as before.
+- Not yet built: refusing a name in an `f"…"` used as text (its code is asked
+  in #449), printing a name's bytes as they are, and a `let` without a type
+  taking `Path` from its first use.
+
+Every bench and example lowers byte for byte as before.
+
 ## [0.0.542] — 2026-10-06
 
 **What a program does with a file's name, it does on the `fs::Path`**

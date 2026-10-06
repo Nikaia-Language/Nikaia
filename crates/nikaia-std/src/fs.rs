@@ -69,6 +69,16 @@ pub mod path {
         a.as_ref().as_encoded_bytes() == b.as_ref().as_encoded_bytes()
     }
 
+    /// **An `f"…"` with a name in it, joined in the platform's encoding**
+    /// (ADR-319 D4): a name keeps its bytes, and text is added as text.
+    pub fn joined(parts: &[&std::ffi::OsStr]) -> PathBuf {
+        let mut name = std::ffi::OsString::new();
+        for part in parts {
+            name.push(part);
+        }
+        PathBuf::from(name)
+    }
+
     /// **Text for showing** (ADR-319 D6): `�` for what is not text. It never
     /// fails, and nothing tracks what is done with it.
     pub fn display(p: &FilePath) -> String {
@@ -100,6 +110,14 @@ pub mod path {
             assert!(same(&p, &named(b"caf\xe9.txt")));
             assert!(!same(&p, "caf\u{e9}.txt"));
             assert_eq!(display(&p), "caf\u{fffd}.txt");
+        }
+
+        /// An `f"…"` with such a name in it keeps the name's bytes (D4).
+        #[test]
+        fn a_name_joined_with_text_keeps_its_bytes() {
+            let p = named(b"caf\xe9.txt");
+            let joined = joined(&[p.as_os_str(), std::ffi::OsStr::new(".bak")]);
+            assert_eq!(joined.as_os_str().as_bytes(), b"caf\xe9.txt.bak");
         }
     }
 }
