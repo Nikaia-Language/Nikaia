@@ -4,6 +4,19 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.554] — 2026-10-06
+
+**A grammar calls its package's Nikaia; no foreign code runs while a program
+is built, not even by being loaded** (ADR-321 D13-D15, #479).
+- A grammar's actions may call functions of its own package and its Nikaia
+  dependencies, under the rule every build-time body meets.
+- The build-time library holds the packages' Nikaia code and `std` only. A
+  package with `extern "C"` or Rust crates is compiled again without them, since
+  loading a library runs its constructors before any call.
+- There is no grant, project entry or sandbox that lets foreign code run at
+  build time: nothing build-time code does needs it.
+- Not built yet.
+
 ## [0.0.553] — 2026-10-06
 
 **The prover's logic layer is a package any package may ask, also while it is

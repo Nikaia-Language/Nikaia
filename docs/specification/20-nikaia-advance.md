@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part II: Advanced Features & Metaprogramming**
-**Version:** 0.0.553 (Draft)
+**Version:** 0.0.554 (Draft)
 **Date:** 2026-10-06
 
 ---
@@ -100,8 +100,11 @@ function the ledger does not describe touches everything. For a Nikaia
 dependency the build reads the entries it derives from the dependency's
 sources, and refuses where they disagree with the ledger the dependency ships;
 a dependency without sources runs nothing at build time. No Rust code runs at
-build time but `std`'s: a function of a Rust crate is refused, and so is a
-function whose calls reach one. A callee that fails either condition is refused with
+build time but `std`'s, and no C: a function of a Rust crate or an
+`extern "C"` block is refused, and so is a function whose calls reach one. A
+grammar's actions call under the same rule, its own package's functions and its
+Nikaia dependencies among them. Nothing lets foreign code run while the program
+is built. A callee that fails either condition is refused with
 `NK1152`. `NK1127` says *not yet*; `NK1152` says *not allowed*.
 
 **`comptime` marks the name.** It is not an expression: `let x = comptime f()`

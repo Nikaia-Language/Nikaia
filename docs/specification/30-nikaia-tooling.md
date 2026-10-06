@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part III: Tooling, Ecosystem & Interoperability**
-**Version:** 0.0.553 (Draft)
+**Version:** 0.0.554 (Draft)
 **Date:** 2026-10-06
 
 ---
@@ -57,7 +57,7 @@ A file inside a project is a file of that project: the nearest `nikaia.toml` abo
 * **`user-parallelism` is not one of those keys.** The build option reaches `std` as a value its runtime is started with, never as a compile-time condition. One compiled `std` serves both values.
 * **Nothing in `std`'s Nikaia half may lower differently per build option.** The Nikaia half is lowered at one value of every build option. `Shared` is ruled out of it, since the emission of a `Shared`'s count follows `user-parallelism`. `Locked` is ruled out likewise (Part II, 12.2). The toolchain lowers every module at both values; the bytes must agree, and a difference fails the toolchain's own build.
 * **`std`'s ledger travels inside the compiler.** `std.contracts` (13.5) is part of the compiler, not of the sysroot copy it is read from.
-* **Build-time code links against the package's dependencies dynamically** (Part II 10.2, [ADR-321](adr/adr-321.md)). Beside the package the build generates one crate naming `std` and every Nikaia dependency a `comptime` may reach, built as a dynamic library from the dependencies already compiled for the program, which are not built again for it. A package's build-time code is one crate, compiled by `rustc` against that library and run on the machine that builds; where the target is another machine, the dependencies it reaches are built for the building machine too. The shipped program is linked statically.
+* **Build-time code links against the package's dependencies dynamically** (Part II 10.2, [ADR-321](adr/adr-321.md)). Beside the package the build generates one crate naming `std` and every Nikaia dependency a `comptime` may reach, built as a dynamic library from the dependencies already compiled for the program, which are not built again for it. The library holds the packages' Nikaia code and `std`, and nothing an `extern "C"` block links or a Rust crate other than `std`'s: a package that has them is compiled for it without them, so no foreign code runs, not even when the library is loaded. A package's build-time code is one crate, compiled by `rustc` against that library and run on the machine that builds; where the target is another machine, the dependencies it reaches are built for the building machine too. The shipped program is linked statically.
 
 ### 13.3. Manifest Configuration (`nikaia.toml`)
 The manifest defines the project's metadata and the build options of Part I 1.2.
