@@ -859,6 +859,7 @@ pub fn project_for_file(
 
     let settings = Settings::resolve(&Manifest::find(file)?, target, user_parallelism)?;
     lower_reading(file, &settings, no_cache, &[], allowlist)?;
+    let warned = true;
 
     let canonical_file = canonical(file);
     let key = orchestrator::cache::sha256_hex(canonical_file.to_string_lossy().as_bytes());
@@ -896,7 +897,9 @@ pub fn project_for_file(
         &std::fs::read_to_string(file)
             .with_context(|| format!("cannot read {}", file.display()))?,
     )?;
-    Project::open(&root, target, user_parallelism)
+    let mut project = Project::open(&root, target, user_parallelism)?;
+    project.warned = warned;
+    Ok(project)
 }
 
 pub fn lower_reading(
@@ -1452,12 +1455,21 @@ pub fn check(
         return Ok(());
     }
 
-    // A warning is printed and does not stop anything. There is one, and it is
-    // a migration (ADR-309 D15): a string written before `f"…"` existed looks
-    // exactly like one that meant its braces, and neither refusing it nor
-    // saying nothing would be right.
+    // A warning is printed and does not stop anything: a string that looks
+    // like an `f"…"` (ADR-309 D15), or a `??` or `?.` after a value that
+    // cannot be absent (ADR-279 D13).
+    //
+    // **Once** (#481): the build lowers every member before `cargo` runs, and
+    // the wrapper lowers it again inside, so the wrapper keeps its warnings to
+    // itself. An error is still said - the build has stopped before the
+    // wrapper on any it saw.
+    let in_the_wrapper =
+        std::env::var_os(WRAPPER_MARKER).is_some() || WARNED.with(|warned| warned.get());
     let path = path.display().to_string();
     for finding in &all {
+        if in_the_wrapper && finding.severity == check::Severity::Warning {
+            continue;
+        }
         eprint!("{}", diagnostics::render_finding(finding, &path, source));
     }
     let findings: Vec<&check::Finding> = all
@@ -2079,6 +2091,15 @@ pub struct Project {
     pub root: PathBuf,
     pub manifest: Manifest,
     pub settings: Settings,
+    /// **The warnings were said already** (#481): `nikaia run` with a file
+    /// lowers it where it stands first, so its findings name the file the
+    /// author wrote, and the build of the copy then keeps them to itself.
+    pub warned: bool,
+}
+
+thread_local! {
+    /// Set while a build lowers what [`Project::warned`] said already.
+    static WARNED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 impl Project {
@@ -2126,6 +2147,7 @@ impl Project {
             root: layout.root,
             manifest,
             settings,
+            warned: false,
         })
     }
 
@@ -2414,13 +2436,16 @@ impl Project {
         let mut rust: Vec<Option<String>> = vec![None; members.len()];
         for at in order {
             let member = &members[at];
+            let outer = WARNED.with(|warned| warned.replace(self.warned));
             let lowered = lower_reading(
                 &member.entry,
                 &self.settings,
                 no_cache,
                 &member.dependencies,
                 allowlist,
-            )?;
+            );
+            WARNED.with(|warned| warned.set(outer));
+            let lowered = lowered?;
             // **Each package's ledger in that package's own root**
             // (Part III 13.5, ADR-100 D1): written here so the consumers
             // lowered after it read it, and committed with the package the way

@@ -4,6 +4,17 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.556] — 2026-10-06
+
+**A warning is said once** (#481).
+- `nikaia run file.nika` printed every warning twice.
+  - First the file is lowered where it stands, so its findings name the file
+    the author wrote. That run still prints them.
+  - Then the build lowers a copy in the cache. That run no longer prints them.
+- The rustc wrapper inside a project build keeps its warnings to itself as
+  well. The build has already lowered every member and said them.
+- Errors are said as before.
+
 ## [0.0.555] — 2026-10-06
 
 **`??` and `?.` after a value that cannot be absent warn** (ADR-279 D13,
