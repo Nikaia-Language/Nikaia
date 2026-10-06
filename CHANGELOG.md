@@ -4,6 +4,19 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.540] — 2026-10-06
+
+**A grammar describes a type as data, and a row's fields are named by table**
+(ADR-323; ADR-299 D12-D14; #114). `meta::column(name, type)` and
+`meta::parameter(name, type)` take a `std::meta::Type` — scalars, `Maybe`,
+`List`, `Record` and `Named` — from which the compiler writes a `dsl` block's
+row and parameter types; a message about such a type names the block that
+declared it. A row has a field per table (`u.a.id`) and a flat field per
+unique column name; a shared name is no flat field, and `NK1107`'s help names
+the qualified paths and `AS`; a name that cannot be a field is refused at the
+query. Whether two blocks with the same columns share a type is not decided.
+Decided and specified; not built.
+
 ## [0.0.539] — 2026-10-06
 
 **A socket read through a method is an untrusted source** (#472, ADR-010
