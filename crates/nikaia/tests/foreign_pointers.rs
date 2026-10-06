@@ -1,7 +1,7 @@
 //! What the C boundary lends: a view, and no raw pointer
 //! ([ADR-302](../../../docs/specification/adr/adr-302.md) D5).
 //!
-//! `extern "C" { fn malloc(size: usize) -> Pointer[u8] }` was refused with
+//! `extern { fn malloc(size: usize) -> Pointer[u8] }` was refused with
 //! `NK1135`, and [ADR-302](../../../docs/specification/adr/adr-302.md) left
 //! it that way on purpose — *a pointer that outlives what it points at wants a
 //! record with a lifetime story, not a name.* What that cost was most of C:
@@ -46,7 +46,7 @@ fn lowered(source: &str) -> String {
 #[test]
 fn a_view_in_a_declaration_is_the_pointer() {
     let rust = lowered(
-        "extern \"C\" {\n\
+        "extern {\n\
          \x20   fn strlen(s: ref Array[u8]) -> usize\n\
          \x20   fn read(fd: i32, buf: ref mut Array[u8], count: usize) -> i64\n\
          \x20   fn takes_one(n: ref i32) -> i32\n\
@@ -71,7 +71,7 @@ fn a_view_in_a_declaration_is_the_pointer() {
 #[test]
 fn a_call_hands_over_the_address() {
     let rust = lowered(
-        "extern \"C\" {\n\
+        "extern {\n\
          \x20   fn strlen(s: ref Array[u8]) -> usize\n\
          }\n\
          \n\
@@ -89,7 +89,7 @@ fn a_call_hands_over_the_address() {
 #[test]
 fn a_value_parameter_is_passed_as_it_was_written() {
     let rust = lowered(
-        "extern \"C\" {\n\
+        "extern {\n\
          \x20   fn abs(n: i32) -> i32\n\
          }\n\
          \n\
@@ -214,7 +214,7 @@ fn the_mut_is_the_boundarys_and_the_run_is_not() {
 #[test]
 fn the_boundary_itself_is_left_alone() {
     let found = findings(
-        "extern \"C\" {\n\
+        "extern {\n\
          \x20   fn strlen(s: ref Array[u8]) -> usize\n\
          \x20   fn read(fd: i32, buf: ref mut Array[u8], count: usize) -> i64\n\
          }\n\
@@ -236,7 +236,7 @@ fn the_boundary_itself_is_left_alone() {
 #[test]
 fn a_declaration_ships_in_this_languages_words() {
     let parsed = parse_to_ast(
-        "extern \"C\" {\n\
+        "extern {\n\
          \x20   fn read(fd: i32, buf: ref mut Array[u8], count: usize) -> i64\n\
          }\n",
     )
@@ -257,7 +257,7 @@ fn a_declaration_ships_in_this_languages_words() {
 fn the_boundary_compiles_and_runs() {
     let rust = lowered(
         r#"
-extern "C" {
+extern {
     fn strlen(s: ref Array[u8]) -> usize
     fn abs(n: i32) -> i32
 }
@@ -306,7 +306,7 @@ fn main() {
 fn a_length_a_buffer_covers_is_accepted() {
     for count in ["room.len()", "32", "0"] {
         let source = format!(
-            "extern \"C\" {{\n\
+            "extern {{\n\
              \x20   fn read(fd: i32, buf: ref mut Array[u8], count: usize) -> i64\n\
              }}\n\
              \n\
@@ -334,7 +334,7 @@ fn a_length_a_buffer_covers_is_accepted() {
 /// ([ADR-152](../../../docs/specification/adr/adr-152.md) D1).
 #[test]
 fn a_constant_within_a_known_length_is_accepted() {
-    let source = "extern \"C\" {\n\
+    let source = "extern {\n\
                   \x20   fn read(fd: i32, buf: ref mut Array[u8], count: usize) -> i64\n\
                   }\n\
                   \n\
@@ -352,7 +352,7 @@ fn a_constant_within_a_known_length_is_accepted() {
 #[test]
 fn a_length_that_cannot_be_shown_to_fit_is_refused() {
     let found: Vec<_> = findings(
-        "extern \"C\" {\n\
+        "extern {\n\
          \x20   fn read(fd: i32, buf: ref mut Array[u8], count: usize) -> i64\n\
          }\n\
          \n\
@@ -387,7 +387,7 @@ fn a_length_that_cannot_be_shown_to_fit_is_refused() {
 /// `buf.len() as usize`, which is a cast into a type Part I 2.2 does not offer.
 #[test]
 fn a_size_takes_an_i64_and_the_conversion_is_written() {
-    let source = "extern \"C\" {\n\
+    let source = "extern {\n\
                   \x20   fn read(fd: i32, buf: ref mut Array[u8], count: usize) -> i64\n\
                   }\n\
                   \n\
@@ -417,7 +417,7 @@ fn a_size_takes_an_i64_and_the_conversion_is_written() {
 /// front of it is an ordinary parameter and nothing is claimed about it.
 #[test]
 fn a_size_with_no_buffer_before_it_is_left_alone() {
-    let source = "extern \"C\" {\n\
+    let source = "extern {\n\
                   \x20   fn sleep(seconds: usize) -> i32\n\
                   }\n\
                   \n\
@@ -437,7 +437,7 @@ fn a_size_with_no_buffer_before_it_is_left_alone() {
 #[test]
 fn an_opaque_handle_is_an_address_and_a_cleanup() {
     let rust = lowered(
-        "extern \"C\" {\n\
+        "extern {\n\
          \x20   opaque type FILE released by fclose\n\
          \x20   fn fopen(path: ref Array[u8], mode: ref Array[u8]) -> FILE\n\
          \x20   fn fclose(f: FILE) -> i32\n\
@@ -478,7 +478,7 @@ fn an_opaque_handle_is_an_address_and_a_cleanup() {
 #[test]
 fn a_handle_is_lent_and_only_its_release_takes_it() {
     let rust = lowered(
-        "extern \"C\" {\n\
+        "extern {\n\
          \x20   opaque type FILE released by fclose\n\
          \x20   fn fopen(path: ref Array[u8], mode: ref Array[u8]) -> FILE\n\
          \x20   fn fclose(f: FILE) -> i32\n\
@@ -503,7 +503,7 @@ fn a_handle_is_lent_and_only_its_release_takes_it() {
 #[test]
 fn nothing_reaches_inside_a_handle() {
     let found: Vec<_> = findings(
-        "extern \"C\" {\n\
+        "extern {\n\
          \x20   opaque type FILE released by fclose\n\
          \x20   fn fopen(path: ref Array[u8], mode: ref Array[u8]) -> FILE\n\
          \x20   fn fclose(f: FILE) -> i32\n\
@@ -563,7 +563,7 @@ fn the_four_words_are_still_names() {
 fn a_handle_compiles_and_runs_and_is_released_once() {
     let rust = lowered(
         r#"
-extern "C" {
+extern {
     opaque type FILE released by fclose
     fn fopen(path: ref Array[u8], mode: ref Array[u8]) -> FILE
     fn fclose(f: FILE) -> i32
@@ -612,7 +612,7 @@ fn main() {
 /// every program would otherwise write the same loop.
 #[test]
 fn returned_text_is_copied_by_std() {
-    let source = "use std::foreign\n\nextern \"C\" {\n\
+    let source = "use std::foreign\n\nextern {\n\
                   \x20   fn getenv(name: ref Array[u8]) -> foreign::CStr\n\
                   }\n\
                   \n\
@@ -648,7 +648,7 @@ fn returned_text_is_copied_by_std() {
 #[test]
 fn the_copy_is_a_call_that_can_fail() {
     let found: Vec<_> = findings(
-        "use std::foreign\n\nextern \"C\" {\n\
+        "use std::foreign\n\nextern {\n\
          \x20   fn getenv(name: ref Array[u8]) -> foreign::CStr\n\
          }\n\
          \n\
@@ -674,7 +674,7 @@ fn a_c_string_compiles_and_runs() {
         r#"
 use std::foreign
 
-extern "C" {
+extern {
     fn getenv(name: ref Array[u8]) -> foreign::CStr
 }
 
@@ -712,7 +712,7 @@ fn main() throws {
 /// means everywhere else: `??` and `?.` are how a program gets past it.
 #[test]
 fn a_handle_may_be_absent() {
-    let source = "use std::foreign\n\nextern \"C\" {\n\
+    let source = "use std::foreign\n\nextern {\n\
                   \x20   fn getenv(name: ref Array[u8]) -> foreign::CStr?\n\
                   }\n\
                   \n\
@@ -739,7 +739,7 @@ fn a_handle_may_be_absent() {
 #[test]
 fn a_declaration_that_claims_a_handle_is_checked() {
     let rust = lowered(
-        "extern \"C\" {\n\
+        "extern {\n\
          \x20   opaque type FILE released by fclose\n\
          \x20   fn fopen(path: ref Array[u8], mode: ref Array[u8]) -> FILE\n\
          \x20   fn fclose(f: FILE) -> i32\n\
@@ -765,7 +765,7 @@ fn a_declaration_that_claims_a_handle_is_checked() {
 #[test]
 fn a_nullable_handle_is_one_machine_word() {
     let rust = lowered(
-        "extern \"C\" {\n\
+        "extern {\n\
          \x20   opaque type Block released by free\n\
          \x20   fn posix_memalign(out: ref mut Block?, alignment: usize, size: usize) -> i32\n\
          \x20   fn free(b: Block)\n\
@@ -844,7 +844,7 @@ fn an_absent_handle_is_a_value_and_runs() {
         r#"
 use std::foreign
 
-extern "C" {
+extern {
     fn getenv(name: ref Array[u8]) -> foreign::CStr?
 }
 

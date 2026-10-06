@@ -3698,19 +3698,21 @@ impl<'p> Emitter<'p> {
             // sides, and a declaration is `trait_method`'s shape with `sync`
             // said by the caller (D2).
             //
-            // **Only `"C"`**, and refusing a second ABI is a check rather than a
-            // shape: the grammar takes any string so that the message about an
-            // unknown one is this compiler's rather than the backend's about a
-            // file nobody wrote (Part III C.1).
+            // **C's convention, and not written** (ADR-324 D6): `extern "C"`
+            // below, whatever the source said, and a source that named one is
+            // the checker's `NK1227`.
             Item::Extern {
                 abi,
                 declarations,
                 opaque,
+                ..
             } => {
-                if abi != "C" {
+                // **The convention is not written** (ADR-324 D6): the checker
+                // says `NK1227` about one that is; this is the backstop.
+                if abi.is_some() {
                     return Err(refused_at!(
                         span.at(),
-                        "Nikaia doesn't support `extern \"{abi}\"`. Use `extern \"C\"`."
+                        "[NK1227] `extern` takes no convention: write `extern {{ … }}`."
                     ));
                 }
                 // **A handle is a type of its own, outside the block**
@@ -3722,7 +3724,7 @@ impl<'p> Emitter<'p> {
                         Ok(())
                     })?;
                 }
-                out.push(&format!("unsafe extern \"{abi}\" {{\n"));
+                out.push("unsafe extern \"C\" {\n");
                 for declaration in declarations {
                     out.from(&declaration.span, |out| {
                         out.push("    ");

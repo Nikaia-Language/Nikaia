@@ -4566,6 +4566,27 @@ impl<'a> Checker<'a> {
             match &item.node {
                 // Walked by `item_constants` above, in a frame that stays.
                 Item::Comptime { .. } => {}
+                // **`NK1227`: the convention is not written**
+                // ([ADR-324](../../docs/specification/adr/adr-324.md) D6).
+                Item::Extern { abi: Some(abi), .. } => {
+                    self.checked.findings.push(Finding {
+                        severity: Severity::Error,
+                        span: item.span,
+                        code: "NK1227",
+                        message: format!("`extern` takes no convention, and this names `{abi:?}`."),
+                        notes: vec![
+                            "`extern` is the C calling convention, the only one on every target, \
+                             so it is not written."
+                                .to_string(),
+                        ],
+                        help: Some(
+                            "Write `extern { … }`, or `extern(library: \"name\") { … }` for a \
+                             block whose functions come from a system library."
+                                .to_string(),
+                        ),
+                        labels: Vec::new(),
+                    });
+                }
                 Item::Fn { .. } => self.function(&item.node, None),
                 Item::Impl {
                     target,

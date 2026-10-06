@@ -1605,8 +1605,11 @@ grammar! {
         rule test_item -> Item =
             KW_TEST title:STRING body:block -> { Item::Test { name: title, body } }
 
-        // Part III 15.1: `extern "C" { fn getpid() -> i32 }`
-        // ([ADR-302](../../../../docs/specification/adr/adr-302.md) D1).
+        // Part III 15.1: `extern { fn getpid() -> i32 }`
+        // ([ADR-302](../../../../docs/specification/adr/adr-302.md) D1), and
+        // `extern(library: "sqlite3") { … }` naming the system library the
+        // functions come from (13.4,
+        // [ADR-324](../../../../docs/specification/adr/adr-324.md) D2, D6).
         //
         // **The declarations are `trait_method`s**, because a signature without
         // a body is the same shape wherever it stands. What differs is how one
@@ -1614,9 +1617,9 @@ grammar! {
         // `throws`, where a trait method without `sync` may pause - and that is
         // the ledger's business rather than the grammar's.
         //
-        // The ABI is the string the source wrote. Only `"C"` means anything
-        // today, and refusing a second one is a **check** rather than a shape,
-        // so the grammar takes any string and the ledger pass says which.
+        // **The convention is not written** (D6): it is C's, the only one on
+        // every target. `extern "C"` still parses, so that the checker can
+        // say `NK1227` with the way out rather than a parse error at a quote.
         //
         // **A block holds two shapes since**
         // ([ADR-302](../../../../docs/specification/adr/adr-302.md) D7): a
@@ -1624,7 +1627,7 @@ grammar! {
         // freely in the source and are taken apart here, so nothing downstream
         // has to walk a list of two kinds.
         rule extern_item -> Item =
-            KW_EXTERN abi:STRING "{" members:extern_member* "}"
+            KW_EXTERN abi:STRING? library:extern_library? "{" members:extern_member* "}"
             -> {
                 let mut declarations = Vec::new();
                 let mut opaque = Vec::new();
@@ -1634,8 +1637,12 @@ grammar! {
                         ExternMember::Opaque(o) => opaque.push(o),
                     }
                 }
-                Item::Extern { abi, declarations, opaque }
+                Item::Extern { abi, library, declarations, opaque }
             }
+
+        // `(library: "sqlite3")`: the one option an `extern` block takes.
+        rule extern_library -> String =
+            "(" KW_LIBRARY ":" name:STRING ")" -> { name }
 
         rule extern_member -> ExternMember =
             o:opaque_item -> { ExternMember::Opaque(o) }
@@ -4057,6 +4064,9 @@ grammar! {
         rule KW_TYPE = "type" not(ident)
         rule KW_RELEASED = "released" not(ident)
         rule KW_BY = "by" not(ident)
+        // `extern(library: …)` (ADR-324 D2): a name everywhere else, as the
+        // four above are.
+        rule KW_LIBRARY = "library" not(ident)
         rule KW_USE = "use" not(ident)
         rule KW_WHILE = "while" not(ident)
         rule KW_WITH = "with" not(ident)

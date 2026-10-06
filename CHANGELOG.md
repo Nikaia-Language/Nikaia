@@ -4,6 +4,25 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.563] — 2026-10-06
+
+**`extern` without a convention, and `extern(library: "x")`** (ADR-324 D6,
+#483 steps 1, 4 and 5 in part).
+- The parser takes `extern { … }` and `extern(library: "sqlite3") { … }`.
+  The AST carries the library.
+- `extern "C"`, or any other string there, still parses and is `NK1227` from
+  the checker, with `extern` as the help.
+- The block lowers to Rust's `unsafe extern "C"` as before.
+- `examples/sqlite` and the tests write `extern`.
+- The four `extern` blocks of Part III 15.1 and 13.4's
+  `extern(library: "sqlite3")` compile again.
+  `tests/specification/EXPECTED.txt` and `COMPILES.txt` are regenerated.
+- Not yet: the `[library.<name>]` entry and `NK1226` (step 2), and linking
+  through `pkg-config` (step 3). Until then `examples/sqlite` still needs
+  `-l sqlite3`.
+
+Every bench and example lowers byte for byte as before.
+
 ## [0.0.562] — 2026-10-06
 
 **`extern(library: "sqlite3")` and `[library.sqlite3] pkg-config = "sqlite3"`;

@@ -178,10 +178,7 @@ fn an_items_refusal_names_the_item() {
          fn main() { println(f\"{unsafe { getpid() }}\") }\n",
         "unknown-abi",
     );
-    assert!(
-        said.contains("Nikaia doesn't support `extern \"stdcall\"`."),
-        "{said}"
-    );
+    assert!(said.contains("`extern` takes no convention"), "{said}");
     assert!(
         said.contains(":1:"),
         "the line the `extern` stands on:\n{said}"

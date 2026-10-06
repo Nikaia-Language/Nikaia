@@ -149,8 +149,9 @@ pub enum Item {
         is_public: bool,
     },
 
-    /// Part III 15.1: `extern "C" { fn getpid() -> i32 }`
-    /// ([ADR-302](../../../docs/specification/adr/adr-302.md) D1).
+    /// Part III 15.1: `extern { fn getpid() -> i32 }`, and
+    /// `extern(library: "sqlite3") { … }` (13.4,
+    /// [ADR-324](../../../docs/specification/adr/adr-324.md) D2, D6).
     ///
     /// **Signatures and nothing else**, which is `Trait`'s reason one item
     /// over: a declaration has no body, so `Item::Fn` cannot serve. The
@@ -159,11 +160,15 @@ pub enum Item {
     /// and that is D2's, not the AST's — an `extern` declaration is `sync` and
     /// carries no `throws`, where a trait method without `sync` may pause.
     ///
-    /// `abi` is the string the source wrote. Only `"C"` is accepted today and
-    /// the field carries what was written anyway, so a second one is a check
-    /// rather than a shape.
+    /// `abi` is a convention the source named, which it no longer does: the
+    /// convention is C's and not written (D6), so `extern "C"` parses only to
+    /// be `NK1227` with `extern` as the way out.
     Extern {
-        abi: String,
+        abi: String?,
+        /// The system library the block's functions come from, as the source
+        /// named it (D2): a `[library.<name>]` entry of the manifest says how
+        /// it is found.
+        library: String?,
         declarations: Vec[Spanned[TraitMethod]],
         /// **The handles the block declares**
         /// ([ADR-302](../../../docs/specification/adr/adr-302.md) D7):
@@ -747,7 +752,7 @@ pub struct Type {
     /// Beside `is_view` rather than inside it, because the two are independent
     /// in exactly the way `is_view` and `is_nullable` are: what the `&` says is
     /// *a view*, and what the `mut` adds is *and it may be written*. Set only
-    /// where the source wrote the word, which today is an `extern "C"`
+    /// where the source wrote the word, which today is an `extern`
     /// declaration and nowhere else - the C boundary is the one place this
     /// language has a use for the distinction, because a parameter's
     /// mutability is otherwise written `mut name: T`
@@ -773,7 +778,7 @@ pub struct Type {
     pub either: bool,
 }
 
-/// One line of an `extern "C"` block, before the two shapes are taken apart
+/// One line of an `extern` block, before the two shapes are taken apart
 /// ([ADR-302](../../../docs/specification/adr/adr-302.md) D7).
 ///
 /// The grammar's own type and nothing else's: a block may interleave the two

@@ -9,7 +9,7 @@
 // It needs libsqlite3 on the machine. `nikaia` has no option for linking a C
 // library, so `-l sqlite3` goes to `rustc` through `RUSTFLAGS`.
 //
-// Shows: an `extern "C"` block, opaque handles that clean up after themselves,
+// Shows: an `extern` block that names its library, opaque handles that clean up after themselves,
 // out-parameters, text owned by C, and `unsafe`.
 //
 // To run it, copy this file to `src/main.nika` of a project (guide/getting-started.md).
@@ -23,7 +23,7 @@ use std::foreign
 // `ref Array[u8]` lends a buffer for the call. `ref mut sqlite3?` is an
 // out-parameter: a slot that C fills with a handle, or leaves empty.
 // `foreign::CStr` is text that SQLite owns; `to_string()` copies it.
-extern "C" {
+extern(library: "sqlite3") {
     opaque type sqlite3 released by sqlite3_close
     opaque type sqlite3_stmt released by sqlite3_finalize
 

@@ -1,4 +1,4 @@
-//! `extern "C"` and `unsafe`, the two words Part III 15.1 writes
+//! `extern` and `unsafe`, the two words Part III 15.1 writes
 //! ([ADR-302](../../../docs/specification/adr/adr-302.md)).
 //!
 //! The page wrote C interoperability out in full and the language had **none**
@@ -22,7 +22,7 @@ use nikaia::contracts::{Ledger, LedgerOps, STD};
 use nikaia::emit::{Build, emit_program};
 use nikaia::parser::parse_to_ast;
 
-const DECLARED: &str = "extern \"C\" {\n    fn getpid() -> i32\n}\n";
+const DECLARED: &str = "extern {\n    fn getpid() -> i32\n}\n";
 
 fn findings(source: &str) -> Vec<nikaia::check::Finding> {
     let parsed = parse_to_ast(source).expect("the source parses");
@@ -146,19 +146,31 @@ fn it_lowers_to_rusts_own_extern_and_unsafe() {
     assert!(rust.contains("unsafe {"), "{rust}");
 }
 
-/// **A second ABI is refused by this compiler**, not by the backend: the
-/// grammar takes any string so that the message about an unknown one names what
-/// is written rather than arriving about a file nobody wrote (Part III C.1).
+/// **A convention is not written** (ADR-324 D6): `extern "C"`, and any other
+/// string there, is `NK1227` from the checker, with `extern` as the way out -
+/// not a parse error at a quote and not the backend's message.
 #[test]
-fn an_abi_this_compiler_does_not_write_is_refused_here() {
-    let parsed = parse_to_ast("extern \"stdcall\" {\n    fn f() -> i32\n}\nfn main() { }\n")
-        .expect("it parses — the refusal is the emitter's");
-    let error = format!(
-        "{:#}",
-        emit_program(&parsed, Build::default()).expect_err("the ABI is refused")
-    );
-    assert!(error.contains("stdcall"), "{error}");
-    assert!(error.contains("extern \"C\""), "{error}");
+fn a_written_convention_is_nk1227() {
+    for abi in ["C", "stdcall"] {
+        let parsed = parse_to_ast(&format!(
+            "extern \"{abi}\" {{\n    fn f() -> i32\n}}\nfn main() {{ }}\n"
+        ))
+        .expect("it parses - the refusal is the checker's");
+        let own = nikaia::contracts::Ledger::infer(&parsed);
+        let library =
+            nikaia::contracts::Ledger::parse(nikaia::contracts::STD).expect("std's ledger");
+        let found = nikaia::check::check(&parsed, &own, &library).findings;
+        let refusal = found
+            .iter()
+            .find(|f| f.code == "NK1227")
+            .unwrap_or_else(|| panic!("{abi}: {found:#?}"));
+        assert!(
+            refusal
+                .help
+                .as_deref()
+                .is_some_and(|h| h.contains("extern { … }"))
+        );
+    }
 }
 
 /// **And it compiles and runs**, which is the only proof that the two forms

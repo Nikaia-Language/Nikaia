@@ -101,7 +101,7 @@ pub enum Item {
     Struct { name: winnow_grammar::Symbol, generics: Vec<GenericParam>, fields: Vec<FieldDef>, is_public: bool },
     Impl { trait_name: Option<winnow_grammar::Symbol>, target: Type, methods: Vec<Spanned<Item>> },
     Trait { name: winnow_grammar::Symbol, methods: Vec<Spanned<TraitMethod>>, is_public: bool },
-    Extern { abi: String, declarations: Vec<Spanned<TraitMethod>>, opaque: Vec<Spanned<OpaqueType>> },
+    Extern { abi: Option<String>, library: Option<String>, declarations: Vec<Spanned<TraitMethod>>, opaque: Vec<Spanned<OpaqueType>> },
     Test { name: String, body: Block },
     Bench { name: String, body: Block },
     Grammar(GrammarDef),
