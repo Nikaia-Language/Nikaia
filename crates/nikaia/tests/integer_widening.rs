@@ -365,3 +365,36 @@ fn a_name_keeps_the_type_it_was_computed_in() {
     );
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// **`NK1215`: a computation whose result depends on the width, narrow, where
+/// a wider type is stated** (#439 step 8). The help names both readings; the
+/// program that wrote one runs.
+#[test]
+fn a_width_dependent_computation_says_which_width() {
+    let program = |line: &str| {
+        format!(
+            "fn main() {{\n    let a: u32 = 7\n    let b: u32 = 3\n    {line}\n    println(f\"{{t}}\")\n}}\n"
+        )
+    };
+    for line in [
+        "let t: i64 = a << 3",
+        "let t: i64 = !a",
+        "let t: i64 = a & b",
+        "let t: i64 = a.wrapping_mul(3) + 1",
+    ] {
+        let found = errors(&program(line));
+        assert!(
+            found.iter().any(|f| f.code == "NK1215"),
+            "{line}: {found:#?}"
+        );
+    }
+    let shift = errors(&program("let t: i64 = a << 3"));
+    assert_eq!(
+        shift[0].help.as_deref(),
+        Some(
+            "Say which: `(a as i64) << 3` computes in `i64`, `(a << 3) as i64` computes \
+             first and widens the result."
+        )
+    );
+    runs("written", &program("let t: i64 = (a as i64) << 3"), "56\n");
+}

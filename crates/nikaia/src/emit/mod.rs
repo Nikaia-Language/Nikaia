@@ -9122,7 +9122,19 @@ impl<'p> Emitter<'p> {
                 if read("lhs") {
                     out.push("*");
                 }
+                // **A conversion left of `<<` keeps its parentheses** (#474),
+                // as one left of `<` does: `x as i64 << 3` is `i64<…>` to Rust.
+                // Only where `nested` would not write them itself.
+                let cast_before_a_shift = matches!(op, BinaryOp::Shl)
+                    && self.ends_in_a_cast(lhs, flow)
+                    && !matches!(lhs.as_ref(), Expr::Binary { op: inner, .. } if precedence(*inner) < here);
+                if cast_before_a_shift {
+                    out.push("(");
+                }
                 self.nested(out, lhs, here, depth, flow)?;
+                if cast_before_a_shift {
+                    out.push(")");
+                }
                 out.push(&format!(" {} ", binary_op(*op)));
                 if read("rhs") {
                     out.push("*");

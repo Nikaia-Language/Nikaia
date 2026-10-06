@@ -5320,7 +5320,8 @@ impl<'a> Checker<'a> {
             };
             // **A tail widens as a `return` does** (ADR-285 D32).
             if let (Some(value), Some(into)) = (value, widened_into(&tail, expected))
-                && !self.widen_operands(value, into)
+                && !self.narrow_by_width(value, into, &span)
+                && !self.widen_operands(value, into, &span)
             {
                 self.checked
                     .wrapped
@@ -8821,7 +8822,7 @@ impl<'a> Checker<'a> {
                 continue;
             };
             self.a_map_read_kept(found, want, given, span);
-            if let Some(how) = self.widened_slot(found, want, Some(given)) {
+            if let Some(how) = self.widened_slot(found, want, Some(given), span) {
                 self.checked
                     .nullable_args
                     .entry((span.at(), written.clone(), at))
@@ -9357,10 +9358,16 @@ impl<'a> Checker<'a> {
     /// **What a slot is handed, and how it is wrapped**: [`wrap_for`], except
     /// that a widening of an arithmetic expression is pushed to its operands
     /// ([`Checker::widen_operands`]) and nothing is wrapped around it.
-    fn widened_slot(&mut self, found: &Ty, want: &Ty, value: Option<&Expr>) -> Option<Wrap> {
+    fn widened_slot(
+        &mut self,
+        found: &Ty,
+        want: &Ty,
+        value: Option<&Expr>,
+        span: &Span,
+    ) -> Option<Wrap> {
         let how = wrap_for(found, want, value.is_some_and(is_literal))?;
         if let (Wrap::Widen(into), Some(value)) = (how, value)
-            && self.widen_operands(value, into)
+            && (self.narrow_by_width(value, into, span) || self.widen_operands(value, into, span))
         {
             return None;
         }
@@ -9374,7 +9381,7 @@ impl<'a> Checker<'a> {
     /// call, an index, a bit operator - which is widened as it is. A literal
     /// among the operands is of the stated type. Whether `value` was such an
     /// operation, and so taken apart.
-    fn widen_operands(&mut self, value: &Expr, into: &'static str) -> bool {
+    fn widen_operands(&mut self, value: &Expr, into: &'static str, span: &Span) -> bool {
         match value {
             Expr::Binary {
                 op: BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div | BinaryOp::Rem,
@@ -9387,7 +9394,7 @@ impl<'a> Checker<'a> {
                     *named = into.to_string();
                 }
                 for side in [lhs, rhs] {
-                    self.widen_operand(side, into);
+                    self.widen_operand(side, into, span);
                 }
                 true
             }
@@ -9395,16 +9402,94 @@ impl<'a> Checker<'a> {
                 op: UnaryOp::Neg,
                 expr,
             } => {
-                self.widen_operand(expr, into);
+                self.widen_operand(expr, into, span);
                 true
             }
             _ => false,
         }
     }
 
+    /// **`NK1215`: a computation whose result depends on the width, in a
+    /// narrower type than the place states** (ADR-285 D32): `let t: i64 = a <<
+    /// 3` over a `u32`. Widening before and after are two different numbers, so
+    /// the program says which. Whether `value` was one, and so refused.
+    fn narrow_by_width(&mut self, value: &Expr, into: &'static str, span: &Span) -> bool {
+        let whole = written(self.parsed, value);
+        let (what, before) = match value {
+            Expr::Binary {
+                op:
+                    op @ (BinaryOp::BitAnd
+                    | BinaryOp::BitOr
+                    | BinaryOp::BitXor
+                    | BinaryOp::Shl
+                    | BinaryOp::Shr),
+                lhs,
+                rhs,
+                ..
+            } => {
+                let sign = match op {
+                    BinaryOp::BitAnd => "&",
+                    BinaryOp::BitOr => "|",
+                    BinaryOp::BitXor => "^",
+                    BinaryOp::Shl => "<<",
+                    _ => ">>",
+                };
+                let rhs = match op {
+                    BinaryOp::Shl | BinaryOp::Shr => written(self.parsed, rhs),
+                    _ => format!("({} as {into})", written(self.parsed, rhs)),
+                };
+                (
+                    format!("`{sign}`"),
+                    format!("({} as {into}) {sign} {rhs}", written(self.parsed, lhs)),
+                )
+            }
+            Expr::Unary {
+                op: UnaryOp::Not,
+                expr,
+            } => (
+                "`!`".to_string(),
+                format!("!({} as {into})", written(self.parsed, expr)),
+            ),
+            Expr::MethodCall {
+                receiver, method, ..
+            } => {
+                let name = self.parsed.text(*method);
+                if !["wrapping_", "saturating_", "truncating_"]
+                    .iter()
+                    .any(|p| name.starts_with(p))
+                {
+                    return false;
+                }
+                (
+                    format!("`{name}`"),
+                    format!("({} as {into}).{name}(…)", written(self.parsed, receiver)),
+                )
+            }
+            _ => return false,
+        };
+        self.checked.findings.push(Finding {
+            severity: Severity::Error,
+            span: *span,
+            code: "NK1215",
+            message: format!(
+                "This {what} is computed in a narrower type than the `{into}` it is put into."
+            ),
+            notes: vec![format!(
+                "The result of {what} depends on the width, so widening before it and \
+                 after it give different numbers."
+            )],
+            help: Some(format!(
+                "Say which: `{before}` computes in `{into}`, `({whole}) as {into}` computes \
+                 first and widens the result."
+            )),
+            labels: Vec::new(),
+        });
+        true
+    }
+
     /// One operand of [`Checker::widen_operands`].
-    fn widen_operand(&mut self, side: &Expr, into: &'static str) {
-        if self.widen_operands(side, into) {
+    fn widen_operand(&mut self, side: &Expr, into: &'static str, span: &Span) {
+        if self.narrow_by_width(side, into, span) || self.widen_operands(side, into, span) {
             return;
         }
         match side {
@@ -9428,7 +9513,7 @@ impl<'a> Checker<'a> {
     /// Vec[i64] = [a, b]` over `u32` names holds `i64::from(a)`. The list is then
     /// the stated type. A literal among them already took the list's type and
     /// is left as written.
-    fn widened_elements(&mut self, found: &Ty, want: &Ty, value: &Expr) -> Option<Ty> {
+    fn widened_elements(&mut self, found: &Ty, want: &Ty, value: &Expr, span: &Span) -> Option<Ty> {
         let (
             Ty::Named {
                 name: from,
@@ -9453,7 +9538,9 @@ impl<'a> Checker<'a> {
         }
         let widened = widened_into(a.first()?, b.first()?)?;
         for item in items.iter().filter(|item| !is_literal(item)) {
-            if !self.widen_operands(item, widened) {
+            if !self.narrow_by_width(item, widened, span)
+                && !self.widen_operands(item, widened, span)
+            {
                 self.checked
                     .wrapped
                     .insert(item as *const Expr as usize, Wrap::Widen(widened));
@@ -9464,7 +9551,7 @@ impl<'a> Checker<'a> {
 
     fn wraps_into_nullable(&mut self, found: &Ty, want: &Ty, value: &Expr, span: &Span) {
         self.a_map_read_kept(found, want, value, span);
-        let Some(how) = self.widened_slot(found, want, Some(value)) else {
+        let Some(how) = self.widened_slot(found, want, Some(value), span) else {
             return;
         };
         self.checked.nullable_sites.insert(span.at(), how);
@@ -10225,12 +10312,16 @@ impl<'a> Checker<'a> {
                 self.a_field_of_a_borrowed_subject(value, span, "bound");
                 self.a_mut_parameter_given_away(value, span, "bound");
                 let outer_read = std::mem::replace(&mut self.read_a_map, false);
-                self.reaching = ty.as_ref().and_then(|t| match Ty::from_ast(self.parsed, t) {
-                    Ty::Named { name, args, view: false } if args.is_empty() => {
-                        INTEGERS.iter().copied().find(|n| *n == name)
-                    }
-                    _ => None,
-                });
+                self.reaching = ty
+                    .as_ref()
+                    .and_then(|t| match Ty::from_ast(self.parsed, t) {
+                        Ty::Named {
+                            name,
+                            args,
+                            view: false,
+                        } if args.is_empty() => INTEGERS.iter().copied().find(|n| *n == name),
+                        _ => None,
+                    });
                 let found = self.expr(value, span);
                 // **A name bound to a map read is a view of the map** (#297):
                 // the read itself, not one somewhere inside the value.
@@ -10335,7 +10426,9 @@ impl<'a> Checker<'a> {
                         let found = self
                             .literal_by_use(&found, &want, value, span)
                             .unwrap_or(found);
-                        let found = self.widened_elements(&found, &want, value).unwrap_or(found);
+                        let found = self
+                            .widened_elements(&found, &want, value, span)
+                            .unwrap_or(found);
                         self.expect_kept(
                             &found,
                             &want,
@@ -12637,7 +12730,7 @@ impl<'a> Checker<'a> {
                             }
                             let value = init.value.as_ref();
                             let keeper = format!("`{owner}` keeps its `{field}` after this line");
-                            if let Some(how) = self.widened_slot(&found, &want, value) {
+                            if let Some(how) = self.widened_slot(&found, &want, value, span) {
                                 self.checked
                                     .nullable_fields
                                     .entry((span.at(), owner.clone(), field.clone()))
@@ -15049,7 +15142,7 @@ impl<'a> Checker<'a> {
                 }
                 // **A part that holds a `T?` takes a plain value as `Some`**,
                 // as a parameter does (Part I 2.3).
-                if let Some(how) = self.widened_slot(ty, want, Some(arg)) {
+                if let Some(how) = self.widened_slot(ty, want, Some(arg), span) {
                     self.checked
                         .wrapped
                         .insert(arg as *const Expr as usize, how);
@@ -15627,7 +15720,7 @@ impl<'a> Checker<'a> {
             if let Some(value) = given.get(at) {
                 self.a_map_read_kept(found, want, value, span);
             }
-            if let Some(how) = self.widened_slot(found, want, given.get(at)) {
+            if let Some(how) = self.widened_slot(found, want, given.get(at), span) {
                 self.checked
                     .nullable_args
                     .entry((span.at(), written.to_string(), at))
@@ -24018,7 +24111,7 @@ impl<'a> Checker<'a> {
             match in_an_expression {
                 false => self.wraps_into_nullable(&found, &expected, value, span),
                 true => {
-                    if let Some(how) = self.widened_slot(&found, &expected, Some(value)) {
+                    if let Some(how) = self.widened_slot(&found, &expected, Some(value), span) {
                         self.checked
                             .wrapped
                             .insert(value as *const Expr as usize, how);

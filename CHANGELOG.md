@@ -4,6 +4,21 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.548] — 2026-10-06
+
+**`NK1215`: a computation whose result depends on the width says which width**
+(ADR-285 D32, #439 step 8; #474).
+- `let t: i64 = a << 3` with `a: u32` is now refused, and so are `!a`,
+  `a & b` and `a.wrapping_mul(3)` in the same place. The help names both
+  readings: `(a as i64) << 3` computes in `i64`, and `(a << 3) as i64`
+  computes first and widens the result.
+  Before, these were widened after the narrow computation, without a word.
+- **#474:** `(a as i64) << 3` was written `a as i64 << 3` below, which `rustc`
+  reads as generic arguments. A conversion left of `<<` now keeps its
+  parentheses, as one left of `<` does.
+
+Every bench and example lowers byte for byte as before.
+
 ## [0.0.547] — 2026-10-06
 
 **A stated type reaches the operands** (ADR-285 D32, #439 steps 6 and 7).
