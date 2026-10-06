@@ -4,6 +4,21 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.585] — 2026-10-06
+
+**A block under any expression is walked** (#494).
+- The walk that finds what a body calls looked into nested blocks only under a
+  call, an `if`, a `match`, a `try … catch` and a `select`. A block under `+`,
+  a cast, `??`, a field, an index, a list, a struct literal, a `return` or an
+  `if`'s head was never walked: `n * 2 + unsafe { abs(-1) } as i64` left its
+  function `sync` and touching nothing, and a `comptime` calling it **ran the C
+  function while the program was built** (ADR-321 D15).
+- `tools/foreign.nika`'s `expression_blocks` and `contracts/sync.rs`'s
+  `visit_expr_blocks` now descend through every expression that holds others
+  (`child_exprs`); `spawn` stays out. No ledger in the corpus changes.
+- Tests: `blocks_in_expressions.rs` - the `comptime` is `NK1152`, and a pausing
+  call in an `if` that is an operand makes its function not `sync`.
+
 ## [0.0.584] — 2026-10-06
 
 **An argument made in the call is a source of the keep plan** (ADR-283 D24,

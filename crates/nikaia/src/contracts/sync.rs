@@ -313,11 +313,46 @@ pub(crate) fn visit_expr_blocks<'a>(expr: &'a Expr, f: &mut impl FnMut(&'a Block
         Expr::Block(block)
         | Expr::Unsafe(block)
         | Expr::Overlap(block)
-        | Expr::Closure { body: block, .. } => f(block),
+        | Expr::Closure { body: block, .. } => {
+            f(block);
+            return;
+        }
+        Expr::Spawn { .. } => return,
+        Expr::If {
+            then_branch,
+            else_branch,
+            ..
+        } => {
+            f(then_branch);
+            if let Some(block) = else_branch {
+                f(block);
+            }
+        }
+        Expr::TryCatch { handler, .. } => f(handler),
+        // A `select` arm's body runs in this function once its value won.
+        Expr::Select(arms) => arms.iter().for_each(|arm| f(&arm.body)),
+        _ => {}
+    }
+    // **Through every expression that holds others** (#494): a block under
+    // `+`, a cast, `??` or a field is the function's as much as one under a
+    // call, and a call in it was invisible to `sync`, `touches`, `throws` and
+    // the build-time rule - `n * 2 + unsafe { abs(-1) } as i64` ran C while
+    // the program was built.
+    for child in child_exprs(expr) {
+        visit_expr_blocks(child, f);
+    }
+}
+
+/// The expressions an expression holds directly, outside its blocks: what
+/// [`visit_expr`] descends into, and [`visit_expr_blocks`] looks for blocks
+/// in. A `spawn` holds none here, being a detached context (Part I, 5.4).
+pub(crate) fn child_exprs(expr: &Expr) -> Vec<&Expr> {
+    let mut out: Vec<&Expr> = Vec::new();
+    match expr {
         Expr::Call { func, args, config } => {
-            visit_expr_blocks(func, f);
-            args.iter().for_each(|a| visit_expr_blocks(a, f));
-            config.iter().for_each(|c| visit_expr_blocks(&c.value, f));
+            out.push(func);
+            out.extend(args.iter());
+            out.extend(config.iter().map(|c| &c.value));
         }
         Expr::MethodCall {
             receiver,
@@ -331,33 +366,60 @@ pub(crate) fn visit_expr_blocks<'a>(expr: &'a Expr, f: &mut impl FnMut(&'a Block
             config,
             ..
         } => {
-            visit_expr_blocks(receiver, f);
-            args.iter().for_each(|a| visit_expr_blocks(a, f));
-            config.iter().for_each(|c| visit_expr_blocks(&c.value, f));
+            out.push(receiver);
+            out.extend(args.iter());
+            out.extend(config.iter().map(|c| &c.value));
         }
-        Expr::If {
-            then_branch,
-            else_branch,
-            ..
-        } => {
-            f(then_branch);
-            if let Some(block) = else_branch {
-                f(block);
-            }
+        Expr::Binary { lhs, rhs, .. } => {
+            out.push(lhs);
+            out.push(rhs);
         }
-        Expr::TryCatch { expr, handler } => {
-            visit_expr_blocks(expr, f);
-            f(handler);
+        Expr::Unary { expr, .. }
+        | Expr::Try(expr)
+        | Expr::Throw(expr)
+        | Expr::Cast { expr, .. } => out.push(expr),
+        Expr::Field { base, .. } | Expr::SafeField { base, .. } => out.push(base),
+        Expr::Index { base, index } => {
+            out.push(base);
+            out.push(index);
         }
-        Expr::Match { arms, .. } => {
+        Expr::Range { start, end, .. } => {
+            out.push(start);
+            out.push(end);
+        }
+        Expr::Tuple(parts) => out.extend(parts.iter()),
+        Expr::Coalesce { value, fallback } => {
+            out.push(value);
+            out.push(fallback);
+        }
+        Expr::TryCatch { expr, .. } => out.push(expr),
+        Expr::If { cond, .. } => out.push(cond),
+        Expr::Match { value, arms } => {
+            out.push(value);
             for arm in arms {
-                visit_expr_blocks(&arm.body, f);
+                if let Some(guard) = &arm.guard {
+                    out.push(guard);
+                }
+                out.push(&arm.body);
             }
         }
-        // A `select` arm's body runs in this function once its value won.
-        Expr::Select(arms) => arms.iter().for_each(|arm| f(&arm.body)),
+        Expr::StructLit { fields, .. } => {
+            out.extend(fields.iter().filter_map(|field| field.value.as_ref()));
+        }
+        Expr::ListLit { items, .. } => out.extend(items.iter()),
+        Expr::With { base, fields, .. } => {
+            out.push(base);
+            out.extend(fields.iter().filter_map(|field| field.value.as_ref()));
+        }
+        Expr::Return(value) => {
+            if let Some(value) = &**value {
+                out.push(value);
+            }
+        }
+        Expr::Select(arms) => out.extend(arms.iter().map(|arm| &arm.value)),
         _ => {}
     }
+    out
 }
 
 /// Every expression inside one, excluding the bodies of nested blocks.

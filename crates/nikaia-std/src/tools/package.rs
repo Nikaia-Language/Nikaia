@@ -7511,7 +7511,9 @@ fn expression_blocks(expr: &Expr, names: &winnow_grammar::InternerContext, unali
             for arg in args.iter() { expression_blocks(arg, names, unaliased, holes_of, root_at, found); }
             for setting in config.iter() { expression_blocks(&setting.value, names, unaliased, holes_of, root_at, found); }
         },
-        Expr::If { then_branch, else_branch, .. } => {
+        Expr::If { cond, then_branch, else_branch } => {
+            let cond = nikaia_std::boxed::open(cond);
+            expression_blocks(cond, names, unaliased, holes_of, root_at, found);
             block_names(then_branch, names, unaliased, holes_of, root_at, found);
             block_names(match else_branch { Some(__nikaia_value) => __nikaia_value, None => return }, names, unaliased, holes_of, root_at, found);
         },
@@ -7520,11 +7522,60 @@ fn expression_blocks(expr: &Expr, names: &winnow_grammar::InternerContext, unali
             expression_blocks(expr, names, unaliased, holes_of, root_at, found);
             block_names(handler, names, unaliased, holes_of, root_at, found);
         },
-        Expr::Match { arms, .. } => { for arm in arms.iter() { expression_blocks(&arm.body, names, unaliased, holes_of, root_at, found); } },
-        Expr::Select(arms) => { for arm in arms.iter() { block_names(&arm.body, names, unaliased, holes_of, root_at, found); } },
+        Expr::Match { value, arms } => {
+            let value = nikaia_std::boxed::open(value);
+            expression_blocks(value, names, unaliased, holes_of, root_at, found);
+            for arm in arms.iter() {
+                maybe_expression_blocks((arm.guard).as_ref(), names, unaliased, holes_of, root_at, found);
+                expression_blocks(&arm.body, names, unaliased, holes_of, root_at, found);
+            }
+        },
+        Expr::Select(arms) => {
+            for arm in arms.iter() {
+                expression_blocks(&arm.value, names, unaliased, holes_of, root_at, found);
+                block_names(&arm.body, names, unaliased, holes_of, root_at, found);
+            }
+        },
+        Expr::Binary { lhs, rhs, .. } => {
+            let lhs = nikaia_std::boxed::open(lhs); let rhs = nikaia_std::boxed::open(rhs);
+            expression_blocks(lhs, names, unaliased, holes_of, root_at, found);
+            expression_blocks(rhs, names, unaliased, holes_of, root_at, found);
+        },
+        Expr::Unary { expr, .. } => { let expr = nikaia_std::boxed::open(expr); expression_blocks(expr, names, unaliased, holes_of, root_at, found) },
+        Expr::Try(inner) => { let inner = nikaia_std::boxed::open(inner); expression_blocks(inner, names, unaliased, holes_of, root_at, found) },
+        Expr::Throw(inner) => { let inner = nikaia_std::boxed::open(inner); expression_blocks(inner, names, unaliased, holes_of, root_at, found) },
+        Expr::Cast { expr, .. } => { let expr = nikaia_std::boxed::open(expr); expression_blocks(expr, names, unaliased, holes_of, root_at, found) },
+        Expr::Field { base, .. } => { let base = nikaia_std::boxed::open(base); expression_blocks(base, names, unaliased, holes_of, root_at, found) },
+        Expr::SafeField { base, .. } => { let base = nikaia_std::boxed::open(base); expression_blocks(base, names, unaliased, holes_of, root_at, found) },
+        Expr::Index { base, index } => {
+            let base = nikaia_std::boxed::open(base); let index = nikaia_std::boxed::open(index);
+            expression_blocks(base, names, unaliased, holes_of, root_at, found);
+            expression_blocks(index, names, unaliased, holes_of, root_at, found);
+        },
+        Expr::Range { start, end, .. } => {
+            let start = nikaia_std::boxed::open(start); let end = nikaia_std::boxed::open(end);
+            expression_blocks(start, names, unaliased, holes_of, root_at, found);
+            expression_blocks(end, names, unaliased, holes_of, root_at, found);
+        },
+        Expr::Tuple(parts) => { for part in parts.iter() { expression_blocks(part, names, unaliased, holes_of, root_at, found); } },
+        Expr::Coalesce { value, fallback } => {
+            let value = nikaia_std::boxed::open(value); let fallback = nikaia_std::boxed::open(fallback);
+            expression_blocks(value, names, unaliased, holes_of, root_at, found);
+            expression_blocks(fallback, names, unaliased, holes_of, root_at, found);
+        },
+        Expr::ListLit { items, .. } => { for item in items.iter() { expression_blocks(item, names, unaliased, holes_of, root_at, found); } },
+        Expr::StructLit { fields, .. } => { for field in fields.iter() { maybe_expression_blocks((field.value).as_ref(), names, unaliased, holes_of, root_at, found); } },
+        Expr::With { base, fields, .. } => {
+            let base = nikaia_std::boxed::open(base);
+            expression_blocks(base, names, unaliased, holes_of, root_at, found);
+            for field in fields.iter() { maybe_expression_blocks((field.value).as_ref(), names, unaliased, holes_of, root_at, found); }
+        },
+        Expr::Return(value) => { let value = nikaia_std::boxed::open(value); maybe_expression_blocks((value).as_ref(), names, unaliased, holes_of, root_at, found) },
         _ => { },
     }
 }
+
+fn maybe_expression_blocks(expr: Option<&Expr>, names: &winnow_grammar::InternerContext, unaliased: &impl Fn(&str) -> String, holes_of: &impl Fn(&Expr) -> Vec<Expr>, root_at: &impl Fn(&str) -> i64, found: &mut Walked) { expression_blocks(match expr { Some(__nikaia_value) => __nikaia_value, None => return }, names, unaliased, holes_of, root_at, found); }
 
 fn path_name(segments: &[winnow_grammar::Symbol], names: &winnow_grammar::InternerContext, unaliased: &impl Fn(&str) -> String) -> String {
     let mut name = unaliased(names.resolve(*nikaia_std::index::get(&segments, 0)));

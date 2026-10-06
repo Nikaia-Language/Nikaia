@@ -326,7 +326,8 @@ fn expression_blocks(expr: ref Expr, names: ref winnow_grammar::InternerContext,
                 expression_blocks(setting.value, names, unaliased, holes_of, root_at, found)
             }
         }
-        Expr::If { then_branch, else_branch, .. } => {
+        Expr::If { cond, then_branch, else_branch } => {
+            expression_blocks(cond, names, unaliased, holes_of, root_at, found)
             block_names(then_branch, names, unaliased, holes_of, root_at, found)
             block_names(else_branch ?? return, names, unaliased, holes_of, root_at, found)
         }
@@ -334,18 +335,73 @@ fn expression_blocks(expr: ref Expr, names: ref winnow_grammar::InternerContext,
             expression_blocks(expr, names, unaliased, holes_of, root_at, found)
             block_names(handler, names, unaliased, holes_of, root_at, found)
         }
-        Expr::Match { arms, .. } => {
+        Expr::Match { value, arms } => {
+            expression_blocks(value, names, unaliased, holes_of, root_at, found)
             for arm in arms {
+                maybe_expression_blocks(arm.guard, names, unaliased, holes_of, root_at, found)
                 expression_blocks(arm.body, names, unaliased, holes_of, root_at, found)
             }
         }
         Expr::Select(arms) => {
             for arm in arms {
+                expression_blocks(arm.value, names, unaliased, holes_of, root_at, found)
                 block_names(arm.body, names, unaliased, holes_of, root_at, found)
             }
         }
+        // **Through every expression that holds others** (#494): a block under
+        // `+`, a cast, `??` or a field is the function's as much as one under
+        // a call, and a call in it was invisible to `sync`, `touches`,
+        // `throws` and the build-time rule.
+        Expr::Binary { lhs, rhs, .. } => {
+            expression_blocks(lhs, names, unaliased, holes_of, root_at, found)
+            expression_blocks(rhs, names, unaliased, holes_of, root_at, found)
+        }
+        Expr::Unary { expr, .. } => expression_blocks(expr, names, unaliased, holes_of, root_at, found),
+        Expr::Try(inner) => expression_blocks(inner, names, unaliased, holes_of, root_at, found),
+        Expr::Throw(inner) => expression_blocks(inner, names, unaliased, holes_of, root_at, found),
+        Expr::Cast { expr, .. } => expression_blocks(expr, names, unaliased, holes_of, root_at, found),
+        Expr::Field { base, .. } => expression_blocks(base, names, unaliased, holes_of, root_at, found),
+        Expr::SafeField { base, .. } => expression_blocks(base, names, unaliased, holes_of, root_at, found),
+        Expr::Index { base, index } => {
+            expression_blocks(base, names, unaliased, holes_of, root_at, found)
+            expression_blocks(index, names, unaliased, holes_of, root_at, found)
+        }
+        Expr::Range { start, end, .. } => {
+            expression_blocks(start, names, unaliased, holes_of, root_at, found)
+            expression_blocks(end, names, unaliased, holes_of, root_at, found)
+        }
+        Expr::Tuple(parts) => {
+            for part in parts {
+                expression_blocks(part, names, unaliased, holes_of, root_at, found)
+            }
+        }
+        Expr::Coalesce { value, fallback } => {
+            expression_blocks(value, names, unaliased, holes_of, root_at, found)
+            expression_blocks(fallback, names, unaliased, holes_of, root_at, found)
+        }
+        Expr::ListLit { items, .. } => {
+            for item in items {
+                expression_blocks(item, names, unaliased, holes_of, root_at, found)
+            }
+        }
+        Expr::StructLit { fields, .. } => {
+            for field in fields {
+                maybe_expression_blocks(field.value, names, unaliased, holes_of, root_at, found)
+            }
+        }
+        Expr::With { base, fields, .. } => {
+            expression_blocks(base, names, unaliased, holes_of, root_at, found)
+            for field in fields {
+                maybe_expression_blocks(field.value, names, unaliased, holes_of, root_at, found)
+            }
+        }
+        Expr::Return(value) => maybe_expression_blocks(value, names, unaliased, holes_of, root_at, found),
         else => {}
     }
+}
+
+fn maybe_expression_blocks(expr: ref Expr?, names: ref winnow_grammar::InternerContext, unaliased: fn(ref String) -> String sync, holes_of: fn(ref Expr) -> Vec[Expr] sync, root_at: fn(ref String) -> i64 sync, mut found: Walked) {
+    expression_blocks(expr ?? return, names, unaliased, holes_of, root_at, found)
 }
 
 // `h::serve_once` as `hyper_shim::serve_once`: the head with the file's alias
