@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part I: The Language Core**
-**Version:** 0.0.540 (Draft)
+**Version:** 0.0.541 (Draft)
 **Date:** 2026-10-06
 
 ---
@@ -221,16 +221,14 @@ Nikaia provides basic types to represent simple values.
       of a **length**: `xs.len()` hands back an `i64`, and an index is one.
     * `i32`: a 32-bit integer. It is written where the layout matters: a
       struct that has to be small, a wire format, a C header. An `i32` that
-      meets an `i64` is widened where the program says so, with `as i64`.
+      meets an `i64` becomes one (below).
     * `u8`: one byte. It has the same conversion and arithmetic names as the
       other integer types. A file read whole is a `Bytes` (`fs::read`): one
       shared buffer of them, handed on by a count and not copied, and read
       as a run of bytes (2.6). `text.bytes` is a text's UTF-8 as `u8`s.
     * `u64` and `u32`: unsigned, 64 and 32 bits. They are written where the
       bits are the point: a hash, a mask, a wire format's field
-      ([ADR-285](adr/adr-285.md)). No two integer types mix on their own:
-      `a + b` over a `u64` and an `i64` is refused (`NK1199`), and the
-      conversion is written with `as`.
+      ([ADR-285](adr/adr-285.md)).
 * **Floats:** numbers with decimal points.
     * `f64`: a double-precision floating-point number. A literal may carry an
       **exponent**, always written `e`: `1.5e-4`, `2e3`,
@@ -360,6 +358,59 @@ fn main() {
 ```
 
 On a `bool` they are refused (`NK1198`): `&&` and `||` join two `bool`s.
+
+**One integer type becomes another without `as` where no value can be lost**
+([ADR-285](adr/adr-285.md) D32). Two integer types have a **common type** when
+one type holds every value of both:
+
+| | `u8` | `u32` | `u64` | `i32` | `i64` |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| `u8` | `u8` | `u32` | `u64` | `i32` | `i64` |
+| `u32` | | `u32` | `u64` | `i64` | `i64` |
+| `u64` | | | `u64` | none | none |
+| `i32` | | | | `i32` | `i64` |
+| `i64` | | | | | `i64` |
+
+* A place whose type is stated takes a value of a type it holds: a `let` with
+  an annotation, an argument, a `return` or a body's last expression, a field
+  in a struct literal, an assignment, an element of a list whose element type
+  is stated.
+* An operator over two integer types computes in their common type, and a list
+  literal of two integer types holds their common type. Where there is none,
+  the operator is refused (`NK1199`) and so is the list (`NK1154`).
+* A comparison of two integer types compares the numbers, for every pair.
+* A list that already exists is not converted: a `Vec[u32]` is not a
+  `Vec[i64]`.
+
+```nika
+fn area(x: i32, y: i32) -> i64 {
+    x * y                       // computed in i64
+}
+
+let total = count + offset      // u32 + i64 is an i64
+let n: u64 = xs.len()           // a length is never negative
+```
+
+**A stated type reaches through `+`, `-`, `*`, `/`, `%` and a negation to the
+operands**, each widened before the operation: `x * y` above is computed in
+`i64`, and does not stop where an `i32` would. It does not reach into what a
+name was given, into a call's arguments, a method's receiver or an index. It
+stops at `&`, `|`, `^`, `!`, `<<` and `>>` and at the `wrapping_`,
+`saturating_` and `truncating_` names, whose result depends on the width: a
+computation of them in a narrower type, put where a wider one is stated, is
+refused (`NK1215`), and the program writes `(a as i64) << 3` or
+`(a << 3) as i64`.
+
+**A value the compiler shows is not negative goes into an unsigned type
+without `as`**: a length, and a value after `if k >= 0` or `assert k >= 0`.
+Where nothing shows it, the conversion is `k as u64`, which aborts on a
+negative value.
+
+**Widening plays no part in deciding a type.** A number without an annotation
+(2.4) and a type parameter (4.6) take the type their uses ask for, and two uses
+asking two types are refused (`NK1200`) though one would widen into the other.
+`pick(a, b)` for `fn pick[T](a: T, b: T)` over an `i32` and an `i64` is
+refused; `pick(a as i64, b)` is not.
 
 **A conversion is written `as`, and one that may not fit aborts too.**
 
@@ -523,7 +574,8 @@ let small = 2 + 3                 // an i32, the same as any number that fits
 ```
 
 **A name is where the widening stops.** A name already took a type, and
-arithmetic happens in the type of its operands:
+arithmetic happens in the type of its operands where no wider type is stated
+for it (2.2):
 
 ```nika
 let a = 2000000000        // an i32 - the first type that holds it

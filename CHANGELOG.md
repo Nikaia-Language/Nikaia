@@ -4,6 +4,22 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.541] — 2026-10-06
+
+**One integer type takes another without `as` where no value can be lost**
+(#439, ADR-285 D3 amended, D32 new). Decided with the owner; not built yet.
+- A typed slot takes a narrower integer type it holds; an operator, and a list
+  literal, over two integer types takes their common type (Part I 2.2's
+  table). `u64` with a signed type has none and stays `NK1199` / `NK1154`.
+- Every comparison of two integer types compares the numbers.
+- Widening plays no part in inference: `NK1200` and a generic `T` over an
+  `i32` and an `i64` stay refused.
+- A stated type reaches through `+ - * / %` and a negation to the operands;
+  a bit operator or a `wrapping_`/`saturating_`/`truncating_` name computed
+  in a narrower type there is the new `NK1215`.
+- A value the proof shows non-negative goes into `u64` without `as`.
+- The specification's baselines move by one block (Part I 2.2's new example).
+
 ## [0.0.540] — 2026-10-06
 
 **A grammar describes a type as data, and a row's fields are named by table**
