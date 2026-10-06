@@ -1286,6 +1286,8 @@ struct Emitter<'p> {
     /// The arguments that are a count in `usize` below, by the entry the checker
     /// resolved ([ADR-293](../../docs/specification/adr/adr-293.md) D20).
     count_args: std::collections::BTreeSet<(usize, String, usize)>,
+    /// `check::Checked::path_methods`.
+    path_methods: std::collections::BTreeSet<(usize, String, String)>,
     /// How a key goes into a map's brackets where the map's keys are owned
     /// ([ADR-293](../../docs/specification/adr/adr-293.md) D27).
     map_keys: std::collections::BTreeMap<(usize, String, bool), crate::check::KeyForm>,
@@ -1543,6 +1545,8 @@ struct Emitter<'p> {
     /// a statement, because `a + b + c` is two of them and the statement they
     /// stand in is one.
     concatenations: std::collections::BTreeSet<usize>,
+    /// `check::Checked::path_comparisons`.
+    path_comparisons: std::collections::BTreeSet<usize>,
     /// What each `comptime` is written as below - its type and its value - by the
     /// byte its statement starts at (`check::Checked::comptime_values`,
     /// [ADR-287](../../docs/specification/adr/adr-287.md) D4, D5).
@@ -2680,6 +2684,7 @@ impl<'p> Emitter<'p> {
             number_lets: propagation.number_lets,
             changed_elements: propagation.changed_elements,
             count_args: propagation.count_args,
+            path_methods: propagation.path_methods,
             map_keys: propagation.map_keys,
             slice_indices: propagation.slice_indices,
             proven_indices: propagation
@@ -2742,6 +2747,7 @@ impl<'p> Emitter<'p> {
             shared,
             nullable_sites: propagation.nullable,
             concatenations: propagation.concatenations,
+            path_comparisons: propagation.path_comparisons,
             lent_lets: propagation.lent_lets,
             lent_returns: propagation.lent_returns,
             compares: propagation.compares,
@@ -8996,6 +9002,21 @@ impl<'p> Emitter<'p> {
                 // span: a number's `+` may not move into `std`, where
                 // `overflow-checks` is off and inlining would not carry the
                 // abort across (ADR-285 D5).
+                // **A file's name compares its bytes** (ADR-319 D3), against
+                // a name or against text.
+                if matches!(op, BinaryOp::Eq | BinaryOp::Ne)
+                    && self.path_comparisons.contains(&at.at())
+                {
+                    if matches!(op, BinaryOp::Ne) {
+                        out.push("!");
+                    }
+                    out.push("nikaia_std::fs::path::same(&(");
+                    self.expr(out, lhs, depth, flow)?;
+                    out.push("), &(");
+                    self.expr(out, rhs, depth, flow)?;
+                    out.push("))");
+                    return Ok(());
+                }
                 if self.concatenations.contains(&at.at()) {
                     out.push("nikaia_std::concat::plus(");
                     self.concatenated(out, lhs, depth, flow)?;
@@ -12249,6 +12270,29 @@ impl<'p> Emitter<'p> {
                 self.text(*name),
                 self.text(method)
             ));
+        }
+        // **A method of a file's name is `std`'s function**
+        // ([ADR-319](../../docs/specification/adr/adr-319.md) D3): Rust's
+        // `Path` has methods by these names that compare whole components,
+        // so the call is written to `nikaia_std::fs::path`, which compares
+        // the bytes.
+        if let Some(on) = receiver
+            && self.path_methods.contains(&(
+                flow.statement,
+                self.text(method).to_string(),
+                format!("{args:?}"),
+            ))
+        {
+            let name = self.text(method).to_string();
+            out.push(&format!("nikaia_std::fs::path::{name}(&("));
+            self.expr(out, on, depth, flow)?;
+            out.push(")");
+            if !args.is_empty() {
+                out.push(", ");
+                self.args(out, &name, args, &[], depth, flow)?;
+            }
+            out.push(")");
+            return Ok(());
         }
         if let Some(into) = truncating(self.text(method)) {
             self.receiver(out, receiver, depth, flow, true)?;

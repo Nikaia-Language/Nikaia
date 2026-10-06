@@ -9,6 +9,101 @@ use std::path::Path as FilePath;
 /// fs::Path`, is a `&std::path::Path`, which text lends without a copy (D2).
 pub type Path = std::path::PathBuf;
 
+/// **What a program does with a name, it does on the `Path`**
+/// ([ADR-319](../../../docs/specification/adr/adr-319.md) D3). Functions, and
+/// not methods, because Rust's `Path` has methods by these names that mean
+/// something else: its `ends_with` compares whole components, so
+/// `"data.csv".ends_with(".csv")` would be false. These compare the
+/// platform's bytes, and every result keeps D1's validity.
+pub mod path {
+    use std::path::{Path as FilePath, PathBuf};
+
+    fn bytes(p: &FilePath) -> &[u8] {
+        p.as_os_str().as_encoded_bytes()
+    }
+
+    /// Whether the name begins with these bytes.
+    pub fn starts_with(p: &FilePath, prefix: &FilePath) -> bool {
+        bytes(p).starts_with(bytes(prefix))
+    }
+
+    /// Whether the name ends with these bytes: `".csv"` is a suffix of
+    /// `data.csv`.
+    pub fn ends_with(p: &FilePath, suffix: &FilePath) -> bool {
+        bytes(p).ends_with(bytes(suffix))
+    }
+
+    /// The last part of the name, where there is one.
+    pub fn file_name(p: &FilePath) -> Option<PathBuf> {
+        p.file_name().map(PathBuf::from)
+    }
+
+    /// What follows the last `.` of the last part, where there is one.
+    pub fn extension(p: &FilePath) -> Option<PathBuf> {
+        p.extension().map(PathBuf::from)
+    }
+
+    /// The name without its last part, where it has one.
+    pub fn parent(p: &FilePath) -> Option<PathBuf> {
+        p.parent().map(FilePath::to_path_buf)
+    }
+
+    /// The same name with another extension; its bytes are kept as they are.
+    pub fn with_extension(p: &FilePath, extension: &FilePath) -> PathBuf {
+        p.with_extension(extension.as_os_str())
+    }
+
+    /// The name with another part after it.
+    pub fn join(p: &FilePath, part: &FilePath) -> PathBuf {
+        p.join(part)
+    }
+
+    /// **The same name, byte for byte** (ADR-319 D3), against a name or
+    /// against text. Rust's `Path` compares components, which would call
+    /// `a//b` and `a/b` one name.
+    pub fn same<A, B>(a: &A, b: &B) -> bool
+    where
+        A: AsRef<std::ffi::OsStr> + ?Sized,
+        B: AsRef<std::ffi::OsStr> + ?Sized,
+    {
+        a.as_ref().as_encoded_bytes() == b.as_ref().as_encoded_bytes()
+    }
+
+    /// **Text for showing** (ADR-319 D6): `�` for what is not text. It never
+    /// fails, and nothing tracks what is done with it.
+    pub fn display(p: &FilePath) -> String {
+        p.to_string_lossy().into_owned()
+    }
+
+    /// **A name that is not text keeps its bytes** (ADR-319 D1, D3), and
+    /// shows `�` where it is not (D6).
+    #[cfg(all(test, unix))]
+    mod not_text {
+        use super::*;
+        use std::os::unix::ffi::OsStrExt;
+
+        fn named(bytes: &[u8]) -> PathBuf {
+            PathBuf::from(std::ffi::OsStr::from_bytes(bytes))
+        }
+
+        #[test]
+        fn the_bytes_are_kept_and_compared() {
+            let p = named(b"caf\xe9.txt");
+            assert!(ends_with(&p, FilePath::new(".txt")));
+            assert!(starts_with(&p, &named(b"caf\xe9")));
+            assert_eq!(
+                with_extension(&p, FilePath::new("bak"))
+                    .as_os_str()
+                    .as_bytes(),
+                b"caf\xe9.bak"
+            );
+            assert!(same(&p, &named(b"caf\xe9.txt")));
+            assert!(!same(&p, "caf\u{e9}.txt"));
+            assert_eq!(display(&p), "caf\u{fffd}.txt");
+        }
+    }
+}
+
 /// **Where a path may go** ([ADR-108](../../../docs/specification/adr/adr-108.md)
 /// D2): the directory the name is resolved under, or the word that says the
 /// program answers for the name itself.

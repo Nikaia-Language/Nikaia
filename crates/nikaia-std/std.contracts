@@ -3203,6 +3203,57 @@ pub = true
 crosses = true
 compares = true
 
+# What a program does with a name, it does on the name (ADR-319 D3): the
+# bytes are compared and kept as they are.
+[fn."fs::Path::starts_with"]
+pub = true
+sync = true
+touches = []
+signature = "(self: ref fs::Path, prefix: ref fs::Path) -> bool"
+
+[fn."fs::Path::ends_with"]
+pub = true
+sync = true
+touches = []
+signature = "(self: ref fs::Path, suffix: ref fs::Path) -> bool"
+
+[fn."fs::Path::file_name"]
+pub = true
+sync = true
+touches = []
+signature = "(self: ref fs::Path) -> fs::Path?"
+
+[fn."fs::Path::extension"]
+pub = true
+sync = true
+touches = []
+signature = "(self: ref fs::Path) -> fs::Path?"
+
+[fn."fs::Path::parent"]
+pub = true
+sync = true
+touches = []
+signature = "(self: ref fs::Path) -> fs::Path?"
+
+[fn."fs::Path::with_extension"]
+pub = true
+sync = true
+touches = []
+signature = "(self: ref fs::Path, extension: ref fs::Path) -> fs::Path"
+
+[fn."fs::Path::join"]
+pub = true
+sync = true
+touches = []
+signature = "(self: ref fs::Path, part: ref fs::Path) -> fs::Path"
+
+# Text for showing (ADR-319 D6): `�` for what is not text. It never fails.
+[fn."fs::Path::display"]
+pub = true
+sync = true
+touches = []
+signature = "(self: ref fs::Path) -> String"
+
 [type."fs::Mapped"]
 pub = true
 # **Reading it is a page fault** (ADR-281 D34): the pages arrive as they are

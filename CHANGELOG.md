@@ -4,6 +4,28 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.542] — 2026-10-06
+
+**What a program does with a file's name, it does on the `fs::Path`**
+(ADR-319 D3, D6; #449 steps 4 and 7).
+- `starts_with`, `ends_with`, `file_name`, `extension`, `with_extension`,
+  `parent`, `join` and `display()` are methods of `fs::Path`.
+- `==` and `!=` compare a name with a name or with text.
+- Each is `std`'s own function (`nikaia_std::fs::path`), because Rust's `Path`
+  has methods of these names that compare whole components: there,
+  `"data.csv".ends_with(".csv")` is false and `dir//data.csv` equals
+  `dir/data.csv`.
+  - These compare the platform's bytes and keep them as they are: a name
+    `caf\xe9.txt` with the extension `bak` is `caf\xe9.bak`.
+  - `display()` shows `�` where a name is not text.
+  - The checker records which method calls resolved to `fs::Path` and which
+    comparisons have a name on one side, and the emitter writes those as
+    calls into `nikaia_std::fs::path`.
+- Not yet built: `f"…"` by use (step 5), `to_text()` by source (step 6, which
+  waits for #431), and `walk` returning names (step 3's second half).
+
+Every bench and example lowers byte for byte as before.
+
 ## [0.0.541] — 2026-10-06
 
 **One integer type takes another without `as` where no value can be lost**

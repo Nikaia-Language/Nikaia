@@ -160,3 +160,60 @@ fn std_fs_takes_a_file_name_and_text_stands_there() {
     );
     assert!(!rust.contains("PathBuf::from(name)"), "{rust}");
 }
+
+const OPERATIONS: &str = "use std::fs\n\
+     \n\
+     fn main() {\n\
+     \x20   let p: fs::Path = \"dir/data.csv\"\n\
+     \x20   let q: fs::Path = \"dir//data.csv\"\n\
+     \x20   let csv = p.ends_with(\".csv\")\n\
+     \x20   let dir = p.starts_with(\"dir/\")\n\
+     \x20   let bak = p.with_extension(\"bak\")\n\
+     \x20   let up = p.parent() ?? \".\"\n\
+     \x20   let joined = up.join(\"other.txt\")\n\
+     \x20   let name = p.file_name() ?? \"-\"\n\
+     \x20   let ext = p.extension() ?? \"-\"\n\
+     \x20   println(f\"{csv} {dir} {bak.display()} {joined.display()} {name.display()} {ext.display()}\")\n\
+     \x20   println(f\"{p == \"dir/data.csv\"} {p == q} {\"x\" != p}\")\n\
+     }\n";
+
+/// **What a program does with a name, it does on the `Path`** (ADR-319 D3):
+/// each operation is `std`'s function, because Rust's `Path` has methods of
+/// these names that compare whole components - `"data.csv".ends_with(".csv")`
+/// would be false there.
+#[test]
+fn a_file_names_operations_are_stds_and_compare_bytes() {
+    let rust = lowered(OPERATIONS);
+    for written in [
+        "nikaia_std::fs::path::ends_with(&(p), std::path::Path::new(&(\".csv\")))",
+        "nikaia_std::fs::path::with_extension(&(p), std::path::Path::new(&(\"bak\")))",
+        "nikaia_std::fs::path::same(&(p), &(\"dir/data.csv\"))",
+        "!nikaia_std::fs::path::same(&(\"x\"), &(p))",
+    ] {
+        assert!(rust.contains(written), "{written}\n{rust}");
+    }
+}
+
+/// **And they run**: `==` is byte for byte, so `dir//data.csv` is another
+/// name.
+#[test]
+fn a_file_names_operations_run() {
+    let dir = common::scratch_dir("file-path-operations");
+    let file = dir.join("main.rs");
+    std::fs::write(&file, lowered(OPERATIONS)).expect("write the Rust");
+    let binary = dir.join("program");
+    let out = common::compile(&file, &["-o", binary.to_str().expect("utf-8 path")]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let run = std::process::Command::new(&binary)
+        .output()
+        .expect("run the program");
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(
+        String::from_utf8_lossy(&run.stdout),
+        "true true dir/data.bak dir/other.txt data.csv csv\ntrue false true\n"
+    );
+}

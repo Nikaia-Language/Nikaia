@@ -450,6 +450,12 @@ pub struct Checked {
     /// by the byte the statement starts at, the method as written and the
     /// position ([ADR-293](../../docs/specification/adr/adr-293.md) D20).
     pub count_args: BTreeSet<(usize, String, usize)>,
+    /// **A method of a file's name** ([ADR-319](../../docs/specification/adr/adr-319.md)
+    /// D3), by the byte the statement starts at, the method as written and
+    /// the shape of its arguments: `std`'s own function lowers it, because
+    /// Rust's `Path` has methods of the same names that mean something else
+    /// (`ends_with` compares whole components).
+    pub path_methods: BTreeSet<(usize, String, String)>,
     /// How each key goes into the brackets of a map whose keys are owned, by
     /// the byte the statement starts at, the key's shape and whether it is
     /// written ([ADR-293](../../docs/specification/adr/adr-293.md) D27).
@@ -713,6 +719,11 @@ pub struct Checked {
     /// `overflow-checks` is on per Nikaia crate and off for the profile, and
     /// inlining does not carry the check across.
     pub concatenations: BTreeSet<usize>,
+    /// **A file's name compared with a name or with text**
+    /// ([ADR-319](../../docs/specification/adr/adr-319.md) D3), by the
+    /// operation's position: the bytes are compared, where Rust's `Path`
+    /// compares components and has no `==` against text.
+    pub path_comparisons: BTreeSet<usize>,
     /// The `?.` reaches whose field is **itself** nullable, as the byte the
     /// statement starts at and the field's name (Part I 3.5).
     ///
@@ -1854,6 +1865,18 @@ fn number_where_no_number_is(want: &Ty, value: &Expr) -> Option<Ty> {
     }
 }
 
+/// **A file's name on one side and a name or text on the other**
+/// (ADR-319 D3), either way round.
+fn names_a_path(left: &Ty, right: &Ty) -> bool {
+    let is = |ty: &Ty, names: &[&str]| matches!(ty, Ty::Named { name, args, .. } if args.is_empty() && names.contains(&name.as_str()));
+    let path = ["fs::Path"];
+    let either = ["fs::Path", "String", "str"];
+    (is(left, &path) && is(right, &either)) || (is(right, &path) && is(left, &either))
+}
+
+/// The ledger keys of a file name's methods (ADR-319 D3).
+const PATH_METHODS: &str = "fs::Path::";
+
 /// **Text stands wherever a file's name is asked**
 /// ([ADR-319](../../../docs/specification/adr/adr-319.md) D2): whether `found`
 /// is text and `want` an `fs::Path`, and then whether a view of one is wanted.
@@ -1894,6 +1917,8 @@ pub struct Propagation {
     pub changed_elements: BTreeSet<(usize, String)>,
     /// [`Checked::count_args`].
     pub count_args: BTreeSet<(usize, String, usize)>,
+    /// [`Checked::path_methods`].
+    pub path_methods: BTreeSet<(usize, String, String)>,
     /// [`Checked::map_keys`].
     pub map_keys: BTreeMap<(usize, String, bool), KeyForm>,
     /// [`Checked::slice_indices`].
@@ -2006,6 +2031,8 @@ pub struct Propagation {
     pub unrolled_calls: BTreeMap<usize, String>,
     /// [`Checked::concatenations`].
     pub concatenations: BTreeSet<usize>,
+    /// [`Checked::path_comparisons`].
+    pub path_comparisons: BTreeSet<usize>,
     /// [`Checked::lent_lets`].
     pub lent_lets: BTreeSet<usize>,
     /// [`Checked::lent_returns`].
@@ -2237,6 +2264,7 @@ fn propagation(
         number_lets: checked.number_lets,
         changed_elements: checked.changed_elements,
         count_args: checked.count_args,
+        path_methods: checked.path_methods,
         map_keys: checked.map_keys,
         slice_indices: checked.slice_indices,
         list_indices: checked.list_indices,
@@ -2293,6 +2321,7 @@ fn propagation(
         walks_fields: checked.walks_fields,
         unrolled_calls: checked.unrolled_calls,
         concatenations: checked.concatenations,
+        path_comparisons: checked.path_comparisons,
         lent_lets: checked.lent_lets,
         lent_returns: checked.lent_returns,
         compares: checked.compares,
@@ -8656,6 +8685,13 @@ impl<'a> Checker<'a> {
         }
         self.a_sequence_that_cannot_do_this(&on, method, contract, &found, span);
         self.counts_in_usize(&key, method, span);
+        if key.starts_with(PATH_METHODS) {
+            self.checked.path_methods.insert((
+                span.at(),
+                self.parsed.text(method).to_string(),
+                format!("{args:?}"),
+            ));
+        }
         // **The source's own name and not the ledger's**, because what
         // `arguments` records is read back by the emitter off the line as it is
         // written: a `&` the compiler owes the witness is looked up under
@@ -12661,6 +12697,9 @@ impl<'a> Checker<'a> {
                             self.a_maybe_compared_with_a_value(&left, &right, span);
                         }
                         self.a_view_compared_with_a_value(lhs, &left, rhs, &right, at);
+                        if names_a_path(&left, &right) {
+                            self.checked.path_comparisons.insert(at.at());
+                        }
                         Ty::named("bool")
                     }
                     BinaryOp::Lt | BinaryOp::Le | BinaryOp::Gt | BinaryOp::Ge => {
