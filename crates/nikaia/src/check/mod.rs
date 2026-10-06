@@ -1506,6 +1506,7 @@ fn walked<'a>(
     // walk above is what found: a call may stand above the function it names.
     checker.unroll();
     checker.unsigned_slots_proved(parsed);
+    checker.walls_a_refusal_explains();
     checker.checked.walks_fields = checker.walks_fields.clone();
     // ADR-296 D5: the DSL parameters a call forgot, and the ones it invented.
     // A separate walk because it answers a question about a *statement's
@@ -22922,6 +22923,30 @@ impl<'a> Checker<'a> {
             help: Some(way_out),
             labels: Vec::new(),
         });
+    }
+
+    /// **A parser that did not build where the program has another error is
+    /// that error's** (#479): an action that calls a function that can pause
+    /// is `NK2209`, and its lowering writes an `.await` no parser compiles.
+    /// `NK1178`'s *a bug in the compiler* beside it, once per entry rule, was a
+    /// second and wrong account of one mistake. Decided once the whole program
+    /// is checked, because a `comptime` above the grammar runs it before its
+    /// actions are walked; where nothing else is wrong, it is still said.
+    fn walls_a_refusal_explains(&mut self) {
+        let did_not_build = |f: &Finding| {
+            f.code == "NK1178"
+                && f.notes
+                    .first()
+                    .is_some_and(|n| n.starts_with("This is a bug in the compiler"))
+        };
+        let other_errors = self
+            .checked
+            .findings
+            .iter()
+            .any(|f| f.severity == Severity::Error && !did_not_build(f));
+        if other_errors {
+            self.checked.findings.retain(|f| !did_not_build(f));
+        }
     }
 
     /// **`NK1178`: a grammar this compiler could not run while it built**

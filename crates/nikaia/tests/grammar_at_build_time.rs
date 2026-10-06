@@ -451,3 +451,27 @@ fn a_rule_that_hands_back_a_run_crosses_as_a_view() {
     );
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// **An action that reaches C is refused once, for what it is** (#479,
+/// ADR-321 D13/D15): `doubled` calls a C function, so the action is `NK2209`
+/// and nothing runs while the program is built. The parser that cannot then
+/// be compiled is that refusal's, not *a bug in the compiler* beside it - for
+/// every entry rule of the grammar, as it was.
+#[test]
+fn an_action_that_reaches_c_is_refused_once() {
+    let (dir, reads) = workshop("grammar-reaches-c");
+    let source = "extern {\n    fn abs(n: i32) -> i32\n}\n\n\
+         fn doubled(n: i64) -> i64 {\n    return n * 2 + unsafe { abs(-1) } as i64\n}\n\n\
+         fn tripled(n: i64) -> i64 {\n    return n * 3\n}\n\n\
+         grammar Num {\n    \
+         entry rule n -> i64 = d:dec[i64](digit+) { doubled(d) }\n    \
+         entry rule t -> i64 = d:dec[i64](digit+) { tripled(d) }\n}\n\n\
+         comptime N: i64 = Num::n(\"21\")\n\
+         comptime T: i64 = Num::t(\"21\")\n\n\
+         fn main() {\n    println(f\"{N} {T}\")\n}\n";
+    let found = findings_in(source, &reads);
+    std::fs::remove_dir_all(&dir).ok();
+    let codes: Vec<&str> = found.iter().map(|f| f.code).collect();
+    assert_eq!(codes, ["NK2209"], "{found:#?}");
+    assert!(found[0].message.contains("`doubled`"), "{found:#?}");
+}

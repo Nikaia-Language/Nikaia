@@ -4,6 +4,16 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.588] — 2026-10-06
+
+**An action that reaches C is refused once** (ADR-321 D13/D15, #479).
+- With #494 an action calling a function that calls C is `NK2209`, and nothing
+  runs while the program is built. The parser for its grammar then cannot be
+  compiled, and `NK1178` said *a bug in the compiler* beside the refusal, once
+  per entry rule. Where the program has another error, a parser that did not
+  build is that error's and is not said; with none it still is.
+- Test: `grammar_at_build_time.rs::an_action_that_reaches_c_is_refused_once`.
+
 ## [0.0.587] — 2026-10-06
 
 **Part I 6.2's three places a `Shared` is written no longer wrap one twice**
