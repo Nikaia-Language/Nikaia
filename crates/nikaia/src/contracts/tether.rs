@@ -253,9 +253,36 @@ pub fn report(parsed: &Parsed, ledger: &Ledger) -> String {
             continue;
         }
         lines.push(format!("{key}:\n"));
+        // **What a borrowed result borrows from** (ADR-283 D24): the
+        // parameters lowered as views, each the caller's argument.
+        let lent: Vec<String> = contract
+            .signature
+            .as_ref()
+            .map(|s| {
+                s.params
+                    .iter()
+                    .enumerate()
+                    .filter(|(at, (_, ty))| {
+                        ty.is_a_view()
+                            || super::keeps::lends_in(
+                                contract,
+                                *at,
+                                &[crate::contracts::std_ledger()],
+                            )
+                    })
+                    .map(|(_, (name, _))| format!("`{name}`"))
+                    .collect()
+            })
+            .unwrap_or_default();
         for held in &contract.views {
+            let from = match (held.state.as_str().as_str(), held.position.as_str()) {
+                ("borrowed", "<result>") if !lent.is_empty() => {
+                    format!(" - from the caller's argument for {}", lent.join(", "))
+                }
+                _ => String::new(),
+            };
             lines.push(format!(
-                "    {:<9} `{}`\n",
+                "    {:<9} `{}`{from}\n",
                 held.state.as_str(),
                 held.position
             ));
@@ -264,7 +291,29 @@ pub fn report(parsed: &Parsed, ledger: &Ledger) -> String {
     // **And where each buffer lives** (ADR-283 D13): the keep plan, per
     // function, in the words a reader asks the question in.
     let library = crate::contracts::std_ledger();
-    for plan in super::keep::plans(parsed, ledger, library) {
+    let plans = super::keep::plans(parsed, ledger, library);
+    // **What a callee hands back in its caller's keep**, by callee: the
+    // buffers it puts there (D9, D23).
+    let handed: BTreeMap<String, Vec<String>> = plans
+        .iter()
+        .map(|plan| {
+            let names = plan
+                .puts
+                .iter()
+                .filter(|(_, keep)| **keep == super::keep::KeepAt::Param)
+                .filter_map(|(at, _)| {
+                    plan.escapes.iter().find_map(|(source, _)| match source {
+                        super::keep::Source::Buffer { at: a, name, .. } if a == at => {
+                            Some(format!("`{name}`"))
+                        }
+                        _ => None,
+                    })
+                })
+                .collect();
+            (plan.key.clone(), names)
+        })
+        .collect();
+    for plan in plans {
         let mut said = Vec::new();
         for (at, keep) in &plan.puts {
             // By the name the buffer is bound to, which is what a reader looks
@@ -285,10 +334,20 @@ pub fn report(parsed: &Parsed, ledger: &Ledger) -> String {
             ));
         }
         for ((_, callee), keep) in &plan.calls {
-            said.push(format!(
-                "    what `{callee}` reads lives {}\n",
-                super::keep::describe(*keep)
-            ));
+            // **Named, where the callee says what it puts there** (D23): `s`
+            // lives in `main`'s keep, handed back by `d`.
+            let names = handed.get(callee).filter(|names| !names.is_empty());
+            match (keep, names) {
+                (super::keep::KeepAt::Local(_), Some(names)) => said.push(format!(
+                    "    {} lives in `{}`'s keep: handed back by `{callee}`\n",
+                    names.join(", "),
+                    plan.key
+                )),
+                _ => said.push(format!(
+                    "    what `{callee}` reads lives {}\n",
+                    super::keep::describe(*keep)
+                )),
+            }
         }
         for keeper in &plan.element_keepers {
             // ADR-283: a struct of views carries a handle on each buffer it

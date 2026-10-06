@@ -4,6 +4,28 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.583] — 2026-10-06
+
+**A view handed back is handed back silently** (ADR-283 D23-D24, #442).
+- **The caller's keep in every position**: a body of one statement is tried
+  on one line first, and the try declared the keep and kept the mark when it
+  was thrown away - `println(d())` alone in `main` reached `rustc` as *cannot
+  find value `__keep_91`*.
+- **D8 on the lowered signature**: a parameter lowered as a view - a
+  `String` the body only reads is a `&str` - is something to borrow from, so
+  the result keeps the elision instead of `'static` (*lifetime may not live
+  long enough*). With two or more such parameters they and the result share
+  `'p`, which also keeps a function that hands back a literal compiling.
+- **An argument made in the call** (a `.clone()`, a struct literal, a call's
+  result), lent to a callee that hands back a view, goes into a keep declared
+  before the statement: `e(__keep_args_N.put("y".to_owned()))`.
+- `--tethers` says *`s` lives in `main`'s keep: handed back by `d`*, and what a
+  borrowed result borrows from (*from the caller's argument for `row`*).
+- Tests: `views_handed_back.rs`, including that following `NK1104`'s help
+  runs. `stored_views.rs` asserted the old `'static` for `fn first(xs:
+  Vec[String]) -> ref String`, a parameter the body only reads: it now borrows
+  from the argument, as D24 says, and runs.
+
 ## [0.0.582] — 2026-10-06
 
 **`dsl package::Grammar` parses, and a package's name alone is `NK1228`**

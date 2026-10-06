@@ -487,14 +487,15 @@ impl Holder {
     assert!(!rust.contains("fn label(&self) -> &'static str"), "{rust}");
 }
 
-/// **A body that cannot honour it is still refused** — by the language below,
-/// against the Nikaia line. So the `'static` never accepts a wrong program: it
-/// says what the signature can mean, and the body is checked against it.
+/// **A view into a parameter the body only reads borrows from the caller's
+/// argument** ([ADR-283](../../../docs/specification/adr/adr-283.md) D24).
 ///
-/// `Vec[String]` is passed by value, so it dies at the end of the call and a
-/// view into it cannot leave.
+/// `xs: Vec[String]` that the body only reads is lowered as a view, `&[String]`
+/// (Part I 6.5), so it is something to borrow from and the result keeps the
+/// elision. It was `'static`, which `rustc` refused as *cannot return value
+/// referencing function parameter* - about a view the language says is fine.
 #[test]
-fn a_body_that_cannot_honour_static_is_refused_by_the_language_below() {
+fn a_view_into_a_lent_parameter_borrows_from_the_argument() {
     let rust = emit_program(
         &parse_to_ast("fn first(xs: Vec[String]) -> ref String { return xs[0].as_str() }\n")
             .expect("the source parses"),
@@ -502,11 +503,8 @@ fn a_body_that_cannot_honour_static_is_refused_by_the_language_below() {
     )
     .expect("the source lowers")
     .rust;
-    // Nothing among the arguments is a view, so the result says `'static` — and
-    // the refusal that follows is about the *body*, which is the right place for
-    // it and reaches the reader as `cannot return value referencing function
-    // parameter 'xs'`.
-    assert!(rust.contains("-> &'static str"), "{rust}");
+    assert!(rust.contains("fn first(xs: &[String]) -> &str"), "{rust}");
+    assert!(!rust.contains("-> &'static str"), "{rust}");
 }
 
 /// **A result that *carries* a view needs the same lifetime a result that *is*

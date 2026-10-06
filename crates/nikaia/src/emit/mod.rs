@@ -428,6 +428,15 @@ impl Lifetimes {
         reference: "&'static ",
         params: "'static",
     };
+    /// **Every view a free function is handed, and its result, where more than
+    /// one parameter is lowered as a view**
+    /// ([ADR-283](../../../docs/specification/adr/adr-283.md) D24): the result
+    /// borrows from the caller's arguments, and with two of them Rust's
+    /// elision has no one lifetime to give it, so the one they share is named.
+    const SHARED: Lifetimes = Lifetimes {
+        reference: "&'p ",
+        params: "'p",
+    };
     /// **The keep a tethered function is given**
     /// ([ADR-283](../../../docs/specification/adr/adr-283.md) D10): its views
     /// point into the caller's keep, and live as long as it.
@@ -4344,6 +4353,39 @@ impl<'p> Emitter<'p> {
         // twice (`contracts::keeps::lends`), because the two disagreeing is a
         // `&&T` or a moved value in the language below.
         let lent = self.own_contracts.functions.get(&key);
+        // **A parameter lowered as a view** ([ADR-283](../../docs/specification/adr/adr-283.md)
+        // D24): one the body changes (`&mut`), or one it only reads, which is
+        // a `&` below whatever its written type says (Part I 6.5).
+        let lowered_as_a_view = |at: usize, a: &crate::ast::FnArg| {
+            let at = at + usize::from(receiver.is_some());
+            self.carries_a_view(&a.ty)
+                || lent.is_some_and(|c| {
+                    c.signature
+                        .as_ref()
+                        .is_some_and(|s| s.mutable.iter().any(|m| m == self.text(a.name)))
+                        || crate::contracts::keeps::lends_in(
+                            c,
+                            at,
+                            &[self.library, &self.described],
+                        )
+                })
+        };
+        // **Two or more of them and a view handed back** (D24): they and the
+        // result share one named lifetime, `'p`.
+        let shared = lifetimes == Lifetimes::ELIDED
+            && receiver.is_none()
+            && kept.is_none()
+            && inner_views.is_none()
+            && carries_input.is_none_or(|set| set.is_empty())
+            && ret_type
+                .as_ref()
+                .is_some_and(|ty| self.text(ty.name) != SELF_DSL && self.carries_a_view(ty))
+            && args
+                .iter()
+                .enumerate()
+                .filter(|(at, a)| lowered_as_a_view(*at, a))
+                .count()
+                > 1;
         // **`xs: Array[T]` is an array of any length, and the call says which**
         // ([ADR-184](../../docs/specification/adr/adr-184.md) D3). The language
         // below has the same shape and the same name for it — a `const`
@@ -4398,12 +4440,18 @@ impl<'p> Emitter<'p> {
                 .and_then(|c| c.signature.as_ref())
                 .is_some_and(|s| s.mutable.iter().any(|m| m == name));
             let reference = if changes {
-                "&mut "
+                match shared {
+                    true => "&'p mut ",
+                    false => "&mut ",
+                }
             } else if lent.is_some_and(|c| {
                 crate::contracts::keeps::lends_in(c, at, &[self.library, &self.described])
             }) && !written_as_a_view
             {
-                "&"
+                match shared {
+                    true => "&'p ",
+                    false => "&",
+                }
             } else {
                 ""
             };
@@ -4432,7 +4480,11 @@ impl<'p> Emitter<'p> {
                     let runs = lent.is_none_or(|c| !c.keeps.iter().any(|k| k == name));
                     let held = self.code_parameter_runs.replace(runs);
                     let inside = self.in_parameter.replace(true);
-                    let written = self.ty_counted(&a.ty, how(a.name), self.count_at(&key, name));
+                    let position = match shared {
+                        true => Lifetimes::SHARED,
+                        false => how(a.name),
+                    };
+                    let written = self.ty_counted(&a.ty, position, self.count_at(&key, name));
                     *self.in_parameter.borrow_mut() = inside;
                     *self.code_parameter_runs.borrow_mut() = held;
                     written
@@ -4465,8 +4517,8 @@ impl<'p> Emitter<'p> {
                 && !a.ty.is_slice
                 && written.ends_with('>');
             let written = match (reference, plain_text, plain_list) {
-                ("&", true, _) => "str".to_string(),
-                ("&", _, true) if written.starts_with("Vec<") => {
+                ("&" | "&'p ", true, _) => "str".to_string(),
+                ("&" | "&'p ", _, true) if written.starts_with("Vec<") => {
                     format!("[{}]", &written[4..written.len() - 1])
                 }
                 ("", _, true) if written.starts_with("&Vec<") => {
@@ -4565,6 +4617,10 @@ impl<'p> Emitter<'p> {
             true => std::iter::once("'a".to_string()).chain(declared).collect(),
             false => declared,
         };
+        let declared: Vec<String> = match shared {
+            true => std::iter::once("'p".to_string()).chain(declared).collect(),
+            false => declared,
+        };
         // The lifetime a published parameter's `EitherText` is of (ADR-282 D23).
         let declared: Vec<String> = match either_first.is_empty() {
             true => declared,
@@ -4631,12 +4687,22 @@ impl<'p> Emitter<'p> {
                 // `impl` cannot keep. `examples/1brc.nika`'s `Summary()` is
                 // what said so: an anonymous constructor has no parameters and
                 // no receiver, so the widening reached it.
-                let borrows_from_something =
-                    receiver.is_some() || args.iter().any(|a| self.carries_a_view(&a.ty));
+                // **A parameter lowered as a view counts too**
+                // ([ADR-283](../../docs/specification/adr/adr-283.md) D24): a
+                // `String` the body only reads is a `&str` below (Part I 6.5),
+                // and a view handed back through it borrows from the caller's
+                // argument - `'static` there was *lifetime may not live long
+                // enough* about a file nobody wrote.
+                let borrows_from_something = receiver.is_some()
+                    || args
+                        .iter()
+                        .enumerate()
+                        .any(|(at, a)| self.carries_a_view(&a.ty) || lowered_as_a_view(at, a));
                 let widens = lifetimes == Lifetimes::ELIDED
                     && self.carries_a_view(ty)
                     && !borrows_from_something;
                 let result = match (widens, kept) {
+                    _ if shared => Lifetimes::SHARED,
                     (_, Some(kept))
                         if self.tethered_position(&key, crate::contracts::tether::RESULT) =>
                     {
@@ -5025,7 +5091,7 @@ impl<'p> Emitter<'p> {
             // **The keeps a statement needs are declared before it**
             // (ADR-283), and before the `Ok(` a tail is wrapped in: a `let`
             // inside it would not be Rust.
-            self.write_keep_prelude(out, key, stmt.span.at(), depth + 1);
+            self.write_keep_prelude(out, key, &stmt.node, stmt.span.at(), depth + 1);
             out.from(&stmt.span, |out| {
                 match (wrap, binds) {
                     (true, true) => out.push(&format!("let {ARM_VALUE} = ")),
@@ -6337,6 +6403,10 @@ impl<'p> Emitter<'p> {
         // rendering it, not by guessing from the shape.
         if block.stmts.len() == 1 && opening.is_none() {
             let only = block.stmts.first().expect("one statement");
+            // **A try that is thrown away leaves nothing behind**: the keeps
+            // it declared (ADR-283 D10) are declared again by the rendering
+            // that is kept - `println(d())` alone in `main` lost its keep.
+            let declared = self.preluded.borrow().clone();
             let rendered = Out::scratch(|scratch| {
                 scratch.from(&only.span, |s| {
                     self.stmt(s, &only.node, &only.span, depth, tail, flow)
@@ -6348,6 +6418,7 @@ impl<'p> Emitter<'p> {
                 out.push(" }");
                 return Ok(());
             }
+            *self.preluded.borrow_mut() = declared;
         }
 
         let pad = "    ".repeat(depth);
@@ -6771,7 +6842,7 @@ impl<'p> Emitter<'p> {
         // expression, a nested block, a `catch` handler - sees the statement it
         // is actually in.
         let flow = flow.at(span.at());
-        self.write_keep_prelude(out, flow.function, span.at(), depth);
+        self.write_keep_prelude(out, flow.function, stmt, span.at(), depth);
         self.hold_temporaries(out, stmt, span, depth, tail, flow)?;
         match stmt {
             Stmt::Let {
@@ -13472,9 +13543,16 @@ impl<'p> Emitter<'p> {
                 out.push(after);
                 continue;
             }
+            let mut kept_here = false;
             if pointer.is_none() {
                 if change {
                     out.push("&mut ");
+                } else if lend
+                    && self.kept_argument(flow.statement, callee, i, arg)
+                    && self.preluded.borrow().contains(&flow.statement)
+                {
+                    out.push(&format!("{ARGUMENT_KEEP}{}.put(", flow.statement));
+                    kept_here = true;
                 } else if lend
                     // **A part an expression arm binds as a view** is one
                     // already (#456, `Checked::views_handed_on`).
@@ -13622,6 +13700,9 @@ impl<'p> Emitter<'p> {
                 out.push(how);
             }
             if count {
+                out.push(")");
+            }
+            if kept_here {
                 out.push(")");
             }
             if either {
@@ -14896,6 +14977,9 @@ const KEEP_PARAM: &str = "__keep";
 const HELD_READ: &str = ".map(|held| held.get())";
 /// The keep declared first in a function's body (D2).
 const KEEP_FRAME: &str = "__keep_frame";
+/// The keep a statement's arguments made in a call go into (ADR-283 D24),
+/// with the statement's place after it.
+const ARGUMENT_KEEP: &str = "__keep_args_";
 /// The keep a function's tasks share (D3).
 const KEEP_TASK: &str = "__keep_task";
 
@@ -14967,15 +15051,101 @@ impl Emitter<'_> {
     }
 
     /// Declare the keeps a statement needs, once.
-    fn write_keep_prelude(&self, out: &mut Out, function: &str, at: usize, depth: usize) {
+    fn write_keep_prelude(
+        &self,
+        out: &mut Out,
+        function: &str,
+        stmt: &Stmt,
+        at: usize,
+        depth: usize,
+    ) {
         if self.preluded.borrow().contains(&at) {
             return;
         }
-        if let Some(prelude) = self.keep_prelude(function, at) {
+        let arguments = self
+            .argument_keep_needed(stmt, at)
+            .then(|| format!("let {ARGUMENT_KEEP}{at} = nikaia_std::tether::Keep::new();"));
+        let prelude = match (self.keep_prelude(function, at), arguments) {
+            (Some(plan), Some(arguments)) => Some(format!("{plan} {arguments}")),
+            (plan, arguments) => plan.or(arguments),
+        };
+        if let Some(prelude) = prelude {
             self.preluded.borrow_mut().insert(at);
             out.push(&prelude);
             out.push("\n");
             out.push(&"    ".repeat(depth));
+        }
+    }
+
+    /// **An argument made in the call, lent to a callee that hands back a
+    /// view** ([ADR-283](../../docs/specification/adr/adr-283.md) D24): the
+    /// view may point into it, so it is moved into a keep of the caller's,
+    /// declared before the statement, rather than dropped at its end.
+    fn kept_argument(&self, statement: usize, callee: &str, i: usize, arg: &Expr) -> bool {
+        let made_here = !matches!(
+            arg,
+            Expr::Variable(_)
+                | Expr::Field { .. }
+                | Expr::SafeField { .. }
+                | Expr::Index { .. }
+                | Expr::Path(_)
+                | Expr::LitStr { .. }
+                | Expr::LitInt { .. }
+                | Expr::LitFloat { .. }
+                | Expr::LitBool(_)
+                | Expr::LitNull
+        );
+        made_here
+            && self
+                .lent_args
+                .get(&(statement, callee.to_string(), i))
+                .is_some_and(|shapes| shapes.contains(&crate::check::argument_shape(arg)))
+            && !self
+                .keep_plans
+                .get(callee)
+                .is_some_and(|plan| plan.takes_keep)
+            && self
+                .own_contracts
+                .functions
+                .get(callee)
+                .is_some_and(|contract| {
+                    contract
+                        .signature
+                        .as_ref()
+                        .and_then(|s| s.result.as_ref())
+                        .is_some_and(|result| result.is_a_view())
+                })
+    }
+
+    /// Whether a statement calls a function with an argument
+    /// [`Emitter::kept_argument`] keeps.
+    fn argument_keep_needed(&self, stmt: &Stmt, at: usize) -> bool {
+        let mut needed = false;
+        crate::contracts::sync::visit_stmt(self.parsed, stmt, &mut |expr| {
+            if let Expr::Call { func, args, .. } = expr
+                && let Some(callee) = self.written_callee(func)
+            {
+                needed |= args
+                    .iter()
+                    .enumerate()
+                    .any(|(i, arg)| self.kept_argument(at, &callee, i, arg));
+            }
+        });
+        needed
+    }
+
+    /// The callee a call writes, as its arguments are keyed.
+    fn written_callee(&self, func: &Expr) -> Option<String> {
+        match func {
+            Expr::Variable(name) => Some(self.text(*name).to_string()),
+            Expr::Path(parts) => Some(
+                parts
+                    .iter()
+                    .map(|p| self.text(*p))
+                    .collect::<Vec<_>>()
+                    .join("::"),
+            ),
+            _ => None,
         }
     }
 
