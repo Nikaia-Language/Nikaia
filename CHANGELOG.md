@@ -4,6 +4,19 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.564] — 2026-10-06
+
+**The tools below Nikaia read no configuration from the project** (ADR-325,
+#480).
+- Cargo, `rustc` and every tool rustup starts are started in a directory of the
+  compiler's own, outside the project's tree, so a project's
+  `.cargo/config.toml` or `rust-toolchain.toml` is never read. A pure Nikaia
+  project could run a program of its own while it was built through one.
+- What they need, the compiler writes there from `nikaia.toml`; the user's
+  `CARGO_HOME`, environment and rustup default still apply. The cache stays
+  where it is.
+- Not built yet.
+
 ## [0.0.563] — 2026-10-06
 
 **`extern` without a convention, and `extern(library: "x")`** (ADR-324 D6,
