@@ -5,6 +5,7 @@
 
 mod common;
 
+use std::path::Path;
 use std::process::Command;
 
 const SOURCE: &str = "fn half(n: i64) -> i64 {\n\
@@ -146,4 +147,74 @@ fn locked_fails_on_a_file_that_does_not_answer_the_questions() {
     assert!(!stale.status.success());
     let stderr = String::from_utf8_lossy(&stale.stderr);
     assert!(stderr.contains("entries no question asked"), "{stderr}");
+}
+
+/// The keys of a `nikaia.proofs`.
+fn keys(file: &Path) -> std::collections::BTreeSet<String> {
+    std::fs::read_to_string(file)
+        .unwrap_or_default()
+        .lines()
+        .filter(|line| !line.starts_with('#'))
+        .filter_map(|line| line.split(' ').next().map(str::to_string))
+        .collect()
+}
+
+/// **D23**: a dependency's own questions are in its own `nikaia.proofs`, not
+/// in the program's that uses it.
+#[test]
+fn a_dependencys_questions_are_its_own() {
+    let root = common::scratch_dir("proofs-dependency");
+    let package = root.join("sums");
+    std::fs::create_dir_all(package.join("src")).expect("the package");
+    std::fs::write(
+        package.join("nikaia.toml"),
+        "[package]\nname = \"sums\"\nversion = \"0.1.0\"\n",
+    )
+    .expect("a manifest");
+    std::fs::write(
+        package.join("src/lib.nika"),
+        "pub fn total(xs: ref Vec[i64]) -> i64 {\n\
+         \x20   let mut sum = 0\n\
+         \x20   for i in 0..<xs.len() {\n\
+         \x20       sum = sum + xs[i]\n\
+         \x20   }\n\
+         \x20   return sum\n\
+         }\n",
+    )
+    .expect("a source");
+    let program = root.join("app");
+    std::fs::create_dir_all(program.join("src")).expect("the program");
+    std::fs::write(
+        program.join("nikaia.toml"),
+        "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n[dependencies]\nsums = { path = \"../sums\" }\n",
+    )
+    .expect("a manifest");
+    std::fs::write(
+        program.join("src/main.nika"),
+        "use sums\n\nfn main() {\n    let xs = [1, 2, 3]\n    println(f\"{sums::total(xs)}\")\n}\n",
+    )
+    .expect("a source");
+    let out = Command::new(env!("CARGO_BIN_EXE_nikaia"))
+        .current_dir(&program)
+        .args(["build", "--no-cache"])
+        .output()
+        .expect("the nikaia binary runs");
+    let theirs = keys(&package.join("nikaia.proofs"));
+    let ours = keys(&program.join("nikaia.proofs"));
+    let _ = std::fs::remove_dir_all(&root);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        !theirs.is_empty(),
+        "the package's own file holds its questions"
+    );
+    assert!(
+        theirs.is_disjoint(&ours),
+        "the program's file holds the package's questions: {:?}\n{}",
+        theirs.intersection(&ours).collect::<Vec<_>>(),
+        String::from_utf8_lossy(&out.stderr)
+    );
 }

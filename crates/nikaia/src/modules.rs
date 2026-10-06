@@ -886,7 +886,12 @@ impl Program {
 
         let trust = crate::contracts::trust::analyse(&self.units[0].parsed, std_ledger());
         let needs = self.units.iter().fold(Needs::default(), |acc, u| {
-            acc.join(Needs::of(&u.parsed, build))
+            acc.join(crate::proofs::for_unit(
+                &u.path,
+                &u.source,
+                u.package.is_some(),
+                || Needs::of(&u.parsed, build),
+            ))
         });
         // **Every file, for every file.** What a `comptime` came to is the
         // checker's answer and the emitter writes it, so the two have to be
@@ -915,7 +920,7 @@ impl Program {
             if unit.package.is_some() {
                 continue;
             }
-            let body = crate::proofs::in_file(&unit.path, &unit.source, || {
+            let body = crate::proofs::for_unit(&unit.path, &unit.source, false, || {
                 crate::emit::emit_module_body_at(
                     &unit.parsed,
                     &beside,

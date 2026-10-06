@@ -1077,18 +1077,23 @@ pub fn lower_reading(
                             .unwrap_or(&program.contracts),
                         None => &promised,
                     };
-                    crate::proofs::in_file(&unit.path, &unit.source, || {
-                        check(
-                            &unit.parsed,
-                            contracts,
-                            &modules,
-                            around,
-                            &unit.path,
-                            &unit.source,
-                            &settings.user_parallelism,
-                            &settings.refuted_claims,
-                        )
-                    })?;
+                    crate::proofs::for_unit(
+                        &unit.path,
+                        &unit.source,
+                        unit.package.is_some(),
+                        || {
+                            check(
+                                &unit.parsed,
+                                contracts,
+                                &modules,
+                                around,
+                                &unit.path,
+                                &unit.source,
+                                &settings.user_parallelism,
+                                &settings.refuted_claims,
+                            )
+                        },
+                    )?;
                 }
                 Ok(())
             });

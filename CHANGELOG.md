@@ -4,6 +4,16 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.571] — 2026-10-06
+
+**A dependency's prover questions are its own** (ADR-270 D23, #448).
+- A file of a dependency is checked, and its needs read, with that package's
+  own `nikaia.proofs` open (`proofs::for_unit`): its answers are read from
+  there, and nothing it asks is written into the program's file. The package
+  writes its own when it is built.
+- Test: a program using a path dependency with a bounds question has none of
+  the dependency's keys in its `nikaia.proofs`.
+
 ## [0.0.570] — 2026-10-06
 
 **`--locked` says where a question it would have searched was asked** (ADR-270

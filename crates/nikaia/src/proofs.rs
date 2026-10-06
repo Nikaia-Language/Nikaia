@@ -123,6 +123,22 @@ pub fn in_file<R>(path: &Path, source: &str, run: impl FnOnce() -> R) -> R {
     out
 }
 
+/// **`run` for one file of the program**: its questions placed in `path`,
+/// and - for a dependency's file - answered from that package's own
+/// `nikaia.proofs` and kept out of this build's (D23). A dependency builds its
+/// own file when it is built.
+pub fn for_unit<R>(path: &Path, source: &str, dependency: bool, run: impl FnOnce() -> R) -> R {
+    if !dependency {
+        return in_file(path, source, run);
+    }
+    let theirs = orchestrator::cache::Layout::resolve(path);
+    let book = match theirs.in_project {
+        true => Book::read(&theirs.root),
+        false => Book::default(),
+    };
+    with_book(book, || in_file(path, source, run)).0
+}
+
 /// `run` with every question it asks placed in the function `name`, whose
 /// declaration starts at byte `at` of the file.
 pub fn in_function<R>(name: &str, at: usize, run: impl FnOnce() -> R) -> R {
