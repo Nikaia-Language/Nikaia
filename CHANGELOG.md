@@ -6,7 +6,7 @@ open. The version is the specification's; the compiler's crates carry their own.
 
 ## [0.0.557] — 2026-10-06
 
-**There is no build script; a package links a C library by name** (ADR-324).
+**There is no build script; a package links a C library by name** (ADR-324, #483).
 - Part III 13.4's `build.nika` and `std::build` are withdrawn: no program of a
   package runs before or during a build.
 - A package names the system libraries its `extern "C"` blocks need; the
