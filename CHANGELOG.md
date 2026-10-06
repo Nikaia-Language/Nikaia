@@ -4,6 +4,29 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.545] — 2026-10-06
+
+**Integers widen where no value can be lost** (ADR-285 D32, #439 steps 1–3).
+- `let x: i64 = a` with `a: u32` now compiles, and so does the same at an
+  argument, a `return`, a body's last expression, a field in a struct literal,
+  an assignment and an element of a list literal whose element type is stated.
+  The value is written `i64::from(a)` below.
+- `u32 + i64` is computed in `i64`, and so are the other operators except the
+  shifts. `[a, b]` over a `u32` and an `i64` is a `Vec[i64]`, whichever comes
+  first.
+- `common_integer` holds Part I 2.2's table. `u64` with a signed type has no
+  common type: it stays `NK1199` in an operator, `NK1154` in a list and
+  `NK1102`–`NK1106` in a slot. Narrowing stays refused, and a list that already
+  exists is not converted.
+- `v.push(a)` on a `Vec[i64]` widens like any argument. `v.push(b)` with
+  `b: u64` used to pass the checker and was then refused by `rustc`. It is now
+  `NK1102`.
+- `tests/specification/EXPECTED.txt`: Part I 2.2's `fn area` block is no longer
+  `NK1104`. Its `x * y` is widened after the multiplication. Computing it in
+  `i64` is step 7.
+
+Every bench and example lowers byte for byte as before.
+
 ## [0.0.544] — 2026-10-06
 
 **A file's name is printed as its bytes, and what is printed is only read**

@@ -1802,6 +1802,9 @@ fn views_into_nullable_text(found: &Ty, want: &Ty) -> bool {
 }
 
 fn wrap_for(found: &Ty, want: &Ty, literal: bool) -> Option<Wrap> {
+    if let Some(into) = widened_into(found, want) {
+        return Some(Wrap::Widen(into));
+    }
     if let Some(view) = text_as_a_path(found, want) {
         return Some(match view {
             true => Wrap::PathView,
@@ -1842,6 +1845,78 @@ pub enum Wrap {
     Path,
     /// …and a view of one, which text lends without a copy.
     PathView,
+    /// **An integer widened where no value can be lost**
+    /// ([ADR-285](../../../docs/specification/adr/adr-285.md) D32): the value
+    /// in the type the slot states, `i64::from(a)`.
+    Widen(&'static str),
+}
+
+/// **The integer types a program writes** (Part I 2.2), as the type names
+/// they are.
+const INTEGERS: [&str; 5] = ["u8", "u32", "u64", "i32", "i64"];
+
+/// **The lossless common type of two integer types**
+/// ([ADR-285](../../../docs/specification/adr/adr-285.md) D32, Part I 2.2's
+/// table): the one type that holds every value of both, where there is one.
+/// `u64` with a signed type has none.
+pub fn common_integer(a: &str, b: &str) -> Option<&'static str> {
+    // The upper half of Part I 2.2's table, row by row; the lower half is the
+    // same pairs the other way round.
+    const TABLE: [[Option<&str>; 5]; 5] = [
+        //   u8          u32         u64         i32         i64
+        [
+            Some("u8"),
+            Some("u32"),
+            Some("u64"),
+            Some("i32"),
+            Some("i64"),
+        ],
+        [None, Some("u32"), Some("u64"), Some("i64"), Some("i64")],
+        [None, None, Some("u64"), None, None],
+        [None, None, None, Some("i32"), Some("i64")],
+        [None, None, None, None, Some("i64")],
+    ];
+    let rank = |t: &str| INTEGERS.iter().position(|n| *n == t);
+    let (a, b) = (rank(a)?, rank(b)?);
+    TABLE[a.min(b)][a.max(b)]
+}
+
+/// **Two different integer types, the second not holding every value of the
+/// first** (D32): `u64` into `i64`, `i64` into `u32`.
+fn an_integer_that_does_not_widen(found: &Ty, want: &Ty) -> bool {
+    let integer = |t: &Ty| match t {
+        Ty::Named {
+            name,
+            args,
+            view: false,
+        } if args.is_empty() => INTEGERS.contains(&name.as_str()),
+        _ => false,
+    };
+    integer(found) && integer(want) && found != want && widened_into(found, want).is_none()
+}
+
+/// **The integer type a slot states, where a narrower one goes into it
+/// without loss** (D32): `u32` into `i64`, never `u64` into `i64`.
+fn widened_into(found: &Ty, want: &Ty) -> Option<&'static str> {
+    let (
+        Ty::Named {
+            name: from,
+            args: a,
+            view: false,
+        },
+        Ty::Named {
+            name: into,
+            args: b,
+            view: false,
+        },
+    ) = (found, want)
+    else {
+        return None;
+    };
+    if !a.is_empty() || !b.is_empty() || from == into {
+        return None;
+    }
+    common_integer(from, into).filter(|common| common == into)
 }
 
 /// **A number literal where the declared type is not a number** (#471): the
@@ -5225,6 +5300,12 @@ impl<'a> Checker<'a> {
                 Some(Stmt::Expr(value)) => Some(value),
                 _ => None,
             };
+            // **A tail widens as a `return` does** (ADR-285 D32).
+            if let (Some(value), Some(into)) = (value, widened_into(&tail, expected)) {
+                self.checked
+                    .wrapped
+                    .insert(value as *const Expr as usize, Wrap::Widen(into));
+            }
             self.expect_kept(
                 &tail,
                 expected,
@@ -8726,6 +8807,26 @@ impl<'a> Checker<'a> {
                     .entry((span.at(), written.clone(), at))
                     .or_default()
                     .insert(argument_shape(given), how);
+                continue;
+            }
+            // **An integer the receiver's type does not hold without loss**
+            // (ADR-285 D32): `v.push(b)` with `b: u64` on a `Vec[i64]` was
+            // passed here and refused by `rustc`. A literal takes the type it
+            // is handed to and is not asked.
+            if !is_literal(given) && an_integer_that_does_not_widen(found, want) {
+                self.checked.findings.push(Finding {
+                    severity: Severity::Error,
+                    span: *span,
+                    code: "NK1102",
+                    message: format!(
+                        "`{key}` expects `{}` here, but you're passing `{}`.",
+                        want.text(),
+                        found.text()
+                    ),
+                    notes: Vec::new(),
+                    help: Some(convert(found, want)),
+                    labels: Vec::new(),
+                });
             }
         }
         self.a_pattern_of_owned_text(&key, args, &found, span);
@@ -9233,6 +9334,43 @@ impl<'a> Checker<'a> {
     /// (Part III C.1).
     ///
     /// `null` is in neither, being a `T?` itself.
+    /// **A list's elements widen into the element type a slot states**
+    /// ([ADR-285](../../../docs/specification/adr/adr-285.md) D32): `let xs:
+    /// Vec[i64] = [a, b]` over `u32` names holds `i64::from(a)`. The list is then
+    /// the stated type. A literal among them already took the list's type and
+    /// is left as written.
+    fn widened_elements(&mut self, found: &Ty, want: &Ty, value: &Expr) -> Option<Ty> {
+        let (
+            Ty::Named {
+                name: from,
+                args: a,
+                ..
+            },
+            Ty::Named {
+                name: into,
+                args: b,
+                ..
+            },
+        ) = (found, want)
+        else {
+            return None;
+        };
+        let Expr::ListLit { items, .. } = value else {
+            return None;
+        };
+        let list = |n: &str| matches!(crate::contracts::ty::base(n), "Vec" | "List" | "Array");
+        if !list(from) || from != into {
+            return None;
+        }
+        let widened = widened_into(a.first()?, b.first()?)?;
+        for item in items.iter().filter(|item| !is_literal(item)) {
+            self.checked
+                .wrapped
+                .insert(item as *const Expr as usize, Wrap::Widen(widened));
+        }
+        Some(want.clone())
+    }
+
     fn wraps_into_nullable(&mut self, found: &Ty, want: &Ty, value: &Expr, span: &Span) {
         self.a_map_read_kept(found, want, value, span);
         let Some(how) = wrap_for(found, want, is_literal(value)) else {
@@ -10087,6 +10225,7 @@ impl<'a> Checker<'a> {
                         let found = self
                             .literal_by_use(&found, &want, value, span)
                             .unwrap_or(found);
+                        let found = self.widened_elements(&found, &want, value).unwrap_or(found);
                         self.expect_kept(
                             &found,
                             &want,
@@ -12626,9 +12765,13 @@ impl<'a> Checker<'a> {
                 }
                 // **Two number types in one operation** (D1): `u64 + i64` is
                 // `rustc`'s *mismatched types* about the generated file.
-                if !op.is_comparison() && !matches!(op, BinaryOp::And | BinaryOp::Or) {
-                    self.two_number_types(*op, &left, &right, at);
-                }
+                // **Unless they have a common type** (ADR-285 D32): `u32 + i64`
+                // is computed in `i64`, and the narrower side is widened.
+                let common =
+                    match !op.is_comparison() && !matches!(op, BinaryOp::And | BinaryOp::Or) {
+                        true => self.two_number_types(*op, [(lhs, &left), (rhs, &right)], at),
+                        false => None,
+                    };
                 // **A literal beside an unsigned side is of that side's type**
                 // (ADR-285 D3), and the emitter is told so.
                 if !matches!(op, BinaryOp::And | BinaryOp::Or) {
@@ -12805,6 +12948,10 @@ impl<'a> Checker<'a> {
                             _ => Ty::Unknown,
                         }
                     }
+                };
+                let outcome = match common {
+                    Some(common) => Ty::named(common),
+                    None => outcome,
                 };
                 match stamped {
                     true => Ty::seen(outcome.unseen()),
@@ -13753,9 +13900,47 @@ impl<'a> Checker<'a> {
     /// mix silently, and the conversion is written with `as`; a shift's count
     /// is the one side that may be any integer. Only where both sides are known
     /// (Part III C.4).
-    fn two_number_types(&mut self, op: BinaryOp, left: &Ty, right: &Ty, at: &Span) {
+    ///
+    /// **Two integer types with a common type are not two**
+    /// ([ADR-285](../../docs/specification/adr/adr-285.md) D32): the operation
+    /// is computed in the common type, the narrower side is recorded to be
+    /// widened, and the common type is the answer. Not where a side is a
+    /// literal, which takes the other side's type, or a view, which would be
+    /// widened through a reference.
+    fn two_number_types(
+        &mut self,
+        op: BinaryOp,
+        [(lhs, left), (rhs, right)]: [(&Expr, &Ty); 2],
+        at: &Span,
+    ) -> Option<&'static str> {
         if matches!(op, BinaryOp::Shl | BinaryOp::Shr) {
-            return;
+            return None;
+        }
+        let plain =
+            |side: &Expr, ty: &Ty| !is_literal(side) && matches!(ty, Ty::Named { view: false, .. });
+        if plain(lhs, left)
+            && plain(rhs, right)
+            && let (
+                Ty::Named {
+                    name: l, args: la, ..
+                },
+                Ty::Named {
+                    name: r, args: ra, ..
+                },
+            ) = (left, right)
+            && la.is_empty()
+            && ra.is_empty()
+            && l != r
+            && let Some(common) = common_integer(l, r)
+        {
+            for (side, ty) in [(lhs, l), (rhs, r)] {
+                if ty != common {
+                    self.checked
+                        .wrapped
+                        .insert(side as *const Expr as usize, Wrap::Widen(common));
+                }
+            }
+            return Some(common);
         }
         let (
             Ty::Named {
@@ -13769,7 +13954,7 @@ impl<'a> Checker<'a> {
             value_of_a_copy(right.unseen()),
         )
         else {
-            return;
+            return None;
         };
         if l == r
             || !la.is_empty()
@@ -13777,7 +13962,7 @@ impl<'a> Checker<'a> {
             || !OFFERED_NUMBERS.contains(&l.as_str())
             || !OFFERED_NUMBERS.contains(&r.as_str())
         {
-            return;
+            return None;
         }
         self.checked.findings.push(Finding {
             severity: Severity::Error,
@@ -13807,6 +13992,7 @@ impl<'a> Checker<'a> {
             )),
             labels: Vec::new(),
         });
+        None
     }
 
     /// **A `??` whose left side is a view and whose fallback owns** (`NK1185`,
@@ -15735,6 +15921,11 @@ impl<'a> Checker<'a> {
         // A file's name made from text: the position recorded how
         // (`wrap_for`, ADR-319 D2).
         if text_as_a_path(found, want).is_some() {
+            return;
+        }
+        // An integer widened where no value can be lost (ADR-285 D32): the
+        // position recorded the widening (`wrap_for`).
+        if widened_into(found, want).is_some() {
             return;
         }
         let code = match what {
@@ -19350,6 +19541,17 @@ impl<'a> Checker<'a> {
                 _ => found,
             })
             .collect();
+        let integers: Vec<Option<String>> = founds
+            .iter()
+            .map(|found| match found {
+                Ty::Named {
+                    name,
+                    args,
+                    view: false,
+                } if args.is_empty() => Some(name.clone()),
+                _ => None,
+            })
+            .collect();
         for (item, found) in items.iter().zip(founds) {
             // **A number beside text, where neither has a type yet.** A bare
             // `1` fits every numeric type and so it arrives here as `?` - which
@@ -19377,6 +19579,29 @@ impl<'a> Checker<'a> {
                 agreed = found;
                 continue;
             }
+            // **Two integer types hold their common type** (ADR-285 D32),
+            // whatever comes first: `[a, b]` over a `u32` and an `i64` is a
+            // `Vec[i64]`.
+            if let (
+                Ty::Named {
+                    name: a,
+                    args: x,
+                    view: false,
+                },
+                Ty::Named {
+                    name: b,
+                    args: y,
+                    view: false,
+                },
+            ) = (&agreed, &found)
+                && x.is_empty()
+                && y.is_empty()
+                && !is_literal(item)
+                && let Some(common) = common_integer(a, b)
+            {
+                agreed = Ty::named(common);
+                continue;
+            }
             if !found.fits(&agreed) && !said {
                 said = true;
                 let first = agreed.clone();
@@ -19387,6 +19612,27 @@ impl<'a> Checker<'a> {
                     &found,
                     span,
                 );
+            }
+        }
+        // **And the narrower elements are widened into it** (D32).
+        if let Ty::Named {
+            name: common,
+            args,
+            view: false,
+        } = &agreed
+            && args.is_empty()
+            && let Some(common) = INTEGERS.iter().find(|n| **n == common.as_str())
+        {
+            for (item, own) in items.iter().zip(&integers) {
+                if let Some(own) = own
+                    && own != common
+                    && !is_literal(item)
+                    && common_integer(own, common) == Some(*common)
+                {
+                    self.checked
+                        .wrapped
+                        .insert(item as *const Expr as usize, Wrap::Widen(common));
+                }
             }
         }
         // **A lambda beside a function value is kept as that value is**

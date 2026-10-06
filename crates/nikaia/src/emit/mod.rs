@@ -7579,6 +7579,16 @@ impl<'p> Emitter<'p> {
             // built, a view is lent without a copy.
             Some(crate::check::Wrap::Path) => ("std::path::PathBuf::from(", ")"),
             Some(crate::check::Wrap::PathView) => ("std::path::Path::new(&(", "))"),
+            // An integer widened without loss (ADR-285 D32).
+            Some(crate::check::Wrap::Widen(into)) => (
+                match into {
+                    "u32" => "u32::from(",
+                    "u64" => "u64::from(",
+                    "i32" => "i32::from(",
+                    _ => "i64::from(",
+                },
+                ")",
+            ),
             None => ("", ""),
         }
     }
