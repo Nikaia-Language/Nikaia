@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part II: Advanced Features & Metaprogramming**
-**Version:** 0.0.585 (Draft)
+**Version:** 0.0.586 (Draft)
 **Date:** 2026-10-06
 
 ---
@@ -583,7 +583,7 @@ fn main() {
 }
 ```
 
-`join` does not fail. It hands back the body's last value, and a body that can fail hands back a value that says so, as any other function does.
+`join` hands back the body's last value, and a body that can fail hands back a value that says so, as any other function does. A task that panicked makes `join` throw `task::Crashed`, which carries the message and the site and is caught as any error is ([ADR-328](adr/adr-328.md) D8). A task nobody joins reports its crash through the panic hook only.
 
 ---
 
@@ -910,7 +910,7 @@ let bright_pixels = pixels.par_iter()
 
 A `spawn` task takes its captured variables *with* it (Part I 8.3). A **scoped** task *borrows* them, because the scope waits until every task inside it has finished.
 
-`task::scope` is an **immediate context** (Part I 5.4): it does not return until every task spawned inside it has completed. A task inside the scope therefore reads the function's variables without moving or cloning them.
+`task::scope` is an **immediate context** (Part I 5.4): it does not return until every task spawned inside it has completed. A task in it that panics cancels the others, and the scope throws `task::Crashed` where it ends. A task inside the scope therefore reads the function's variables without moving or cloning them.
 
 ```nika
 let data = [1, 2, 3]
@@ -947,19 +947,28 @@ error[NK2102]: A task in `task::scope` has to be `sync` here, but `fetch_url` do
 At `no` the runtime owns all task state and tears a scope down synchronously. The language exposes no way to leak a live scope.
 
 ### 12.8. Supervision Trees
-A task may panic. A **supervisor** monitors tasks. When a child task panics, the supervisor does one of three things, according to its policy:
-* **Restart** the task.
-* **Crash** the parent (escalate).
-* **Ignore** the error.
+A **supervisor** runs tasks and restarts them when they end ([ADR-328](adr/adr-328.md)).
 
 ```nika
-// Subject: The Task (Lambda)
-// Config: restart_policy (Protocol: separated by ;)
-// Note: 'spawn' syntax (fn {}) is the subject.
-supervisor::start_link(fn {
-    server.run()
-}; restart_policy: RestartPolicy::Always)
+use std::supervisor
+
+fn main() throws {
+    let config = Config::load()
+    let cache = SharedMut::supervised(fn { Cache::load() })
+
+    supervisor::run([
+        supervisor::child(fn { refresh_loop(cache, config) }),
+        supervisor::child(fn { http::listen(config.address) fn(req) { … } }),
+    ]; strategy: supervisor::Strategy::OneForOne)
+}
 ```
 
-The policy is an **enum**. A misspelled policy is refused at the call, and the
-policies are listed where they are declared (Part I 4.4).
+**`supervisor::run` runs the supervisor until it gives up.** It returns only then, and throws `supervisor::Escalated`. Before it does, it stops every child in reverse order and their cleanups run. A supervisor in the background is `spawn fn { supervisor::run(…) }`; a child whose function calls `supervisor::run` is a supervisor below, and its giving up is a crash to the one above.
+
+**The list's order is the start order and the dependency.** A child depends on every child before it; children start in list order and stop in reverse. The strategy says which siblings restart with a crashed child: `OneForOne` the child alone; `OneForAll` all of them; `RestForOne` the child and every child after it. Those that restart are stopped in reverse order and started in list order.
+
+**A child's kind says which ends are restarted** (`restart:`): `Kind::Permanent`, the default, every end; `Kind::Transient` a panic or a thrown error, not a normal end; `Kind::Temporary` none, and a crash is reported.
+
+**When, a policy decides** (`policy:`): a value implementing `supervisor::Restart`, whose `decide` gets the history of failures - how long the last attempt ran, how many failures this cycle has had, how long since its first - and answers `Immediate`, `Delay(d)` or `Escalate`. `std`'s default restarts the first failure at once, then after a delay that grows, with jitter, up to a ceiling, starts a new cycle after an attempt that ran long enough, and gives up when a cycle lasts too long. The policy of the child that crashed decides for the siblings it takes along. `SharedMut::supervised` is rebuilt by the same policy; a door to it during a delay panics, and a value whose policy gives up stays poisoned (Part I 6.3).
+
+**A child keeps no changeable state across a restart.** Its function is called again for every attempt. A binding it captures without `mut` is lent to every attempt, and a `Shared` handle is duplicated. A captured `mut` binding, or a value an attempt would keep, hand on or use up, is refused with `NK1229`; what must be fresh is built inside the function.

@@ -4,6 +4,23 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.586] — 2026-10-06
+
+**Supervision** (ADR-328, #95).
+- `supervisor::run([children]; strategy: …)` runs until it gives up, then stops
+  every child in reverse order and throws `supervisor::Escalated`. Replaces
+  Part II 12.8's `start_link`.
+- The list's order is start order and dependency; `OneForOne`, `OneForAll`,
+  `RestForOne`; `Kind::Permanent`, `Transient`, `Temporary`.
+- When to restart, an exchangeable `supervisor::Restart` policy decides
+  (`Immediate`, `Delay`, `Escalate`); `std`'s grows its delay with jitter and
+  gives up after a long cycle.
+- A child keeps no changeable state across a restart: a captured `mut` binding,
+  or a value an attempt would take, is `NK1229`.
+- `join` on a crashed task throws `task::Crashed`; a scope with a crashed task
+  cancels the others and throws it.
+- Not built.
+
 ## [0.0.585] — 2026-10-06
 
 **A block under any expression is walked** (#494).

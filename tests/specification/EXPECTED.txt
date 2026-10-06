@@ -111,7 +111,7 @@
 20-nikaia-advance.md #23 lowered (items, then a body)  use std::channel
 20-nikaia-advance.md #24 lowered (a body)  let pixels = [/* 1 million pixels */]
 20-nikaia-advance.md #25 refused (a body) [NK1201]  let data = [1, 2, 3]
-20-nikaia-advance.md #26 refused (a body) [NK1117,NK1181]  // Subject: The Task (Lambda)
+20-nikaia-advance.md #26 fragment (as written) [sketch]  use std::supervisor
 30-nikaia-tooling.md #1 lowered (as written)  extern(library: "sqlite3") {
 30-nikaia-tooling.md #2 refused (as written) [NK1117]  test "a blank line is counted" {
 30-nikaia-tooling.md #3 lowered (as written)  fn divide(a: i64, b: i64) -> i64 sync {
