@@ -43,6 +43,10 @@ pub struct Manifest {
     dependencies: BTreeMap<String, Dependency>,
     /// `[build.<target>]` - `opt-level` and `lto`, per machine (Part III 13.3).
     codegen: BTreeMap<String, BTreeMap<String, toml::Value>>,
+    /// `[library.<name>]`: each system library an `extern(library: …)` block
+    /// names, with the `pkg-config` name it is found by (Part III 13.4,
+    /// [ADR-324](../../../docs/specification/adr/adr-324.md) D2, D3).
+    libraries: BTreeMap<String, String>,
     /// What this manifest carries that the compiler no longer reads, and where
     /// it went. Printed once per build rather than returned as an error:
     /// failing a manifest somebody already wrote to the specification would
@@ -132,6 +136,7 @@ impl Manifest {
         let mut manifest = Manifest {
             package: table_of(&document, "package"),
             dependencies: dependencies(&document)?,
+            libraries: libraries(&document)?,
             ..Manifest::default()
         };
 
@@ -218,6 +223,12 @@ impl Manifest {
             .collect()
     }
 
+    /// `[library.<name>]`: each library's name and its `pkg-config` name
+    /// (ADR-324 D2).
+    pub fn libraries(&self) -> &BTreeMap<String, String> {
+        &self.libraries
+    }
+
     /// The codegen table for one machine, empty where the manifest is silent.
     pub fn codegen_for(&self, target: &str) -> BTreeMap<String, toml::Value> {
         self.codegen.get(target).cloned().unwrap_or_default()
@@ -249,6 +260,44 @@ fn table_of(document: &toml::Value, name: &str) -> BTreeMap<String, toml::Value>
                 .collect::<BTreeMap<_, _>>()
         })
         .unwrap_or_default()
+}
+
+/// `[library.<name>]`, checked: a table per library with `pkg-config` and
+/// nothing else, because the compiler forms every argument itself (ADR-324 D3,
+/// D4) and a key it does not read would be one somebody thought it did.
+fn libraries(document: &toml::Value) -> Result<BTreeMap<String, String>> {
+    let mut out = BTreeMap::new();
+    let Some(section) = document.get("library") else {
+        return Ok(out);
+    };
+    let Some(table) = section.as_table() else {
+        return Err(refused!(
+            "`library` is a table of libraries: `[library.<name>]` with `pkg-config = \"<name>\"`."
+        ));
+    };
+    for (name, entry) in table {
+        let Some(entry) = entry.as_table() else {
+            return Err(refused!(
+                "`library.{name}` is a table: `[library.{name}]` with `pkg-config = \"{name}\"`."
+            ));
+        };
+        for key in entry.keys() {
+            if key != "pkg-config" {
+                return Err(refused!(
+                    "`[library.{name}]` takes `pkg-config` and nothing else, not `{key}`: the \
+                     compiler forms the linker's arguments itself (Part III 13.4)."
+                ));
+            }
+        }
+        let Some(found_by) = entry.get("pkg-config").and_then(toml::Value::as_str) else {
+            return Err(refused!(
+                "`[library.{name}]` needs `pkg-config = \"<name>\"`: a library is found only \
+                 through `pkg-config` (Part III 13.4)."
+            ));
+        };
+        out.insert(name.clone(), found_by.to_string());
+    }
+    Ok(out)
 }
 
 /// `[build.<target>]`, checked.

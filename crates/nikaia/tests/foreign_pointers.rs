@@ -890,7 +890,7 @@ fn main() throws {
 /// that record's own check that its four decisions are enough — for a **real
 /// library's** surface rather than for four libc calls.
 ///
-/// Everything the boundary offers is in `examples/sqlite/main.nika` and nothing
+/// Everything the boundary offers is in `examples/sqlite/src/main.nika` and nothing
 /// else is: a buffer lent for the call, an opaque handle with its `cleanup`, a
 /// handle that may be absent filled through an out-parameter
 /// ([ADR-302](../../../docs/specification/adr/adr-302.md) D10), and text the
@@ -905,7 +905,8 @@ fn main() throws {
 #[test]
 fn sqlite3_from_end_to_end() {
     let source = std::fs::read_to_string(
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/sqlite/main.nika"),
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../examples/sqlite/src/main.nika"),
     )
     .expect("the example is in the tree");
     let rust = lowered(&source);
@@ -929,40 +930,38 @@ fn sqlite3_from_end_to_end() {
         );
     }
 
-    let dir = common::scratch_dir("sqlite3");
-    let file = dir.join("main.rs");
-    std::fs::write(&file, &rust).expect("write the Rust");
-    let binary = dir.join("program");
-    let out = common::compile(
-        &file,
-        &["-l", "sqlite3", "-o", binary.to_str().expect("utf-8 path")],
-    );
-    let said = String::from_utf8_lossy(&out.stderr).into_owned();
-    if !out.status.success() {
-        // **The one thing that is allowed to be missing.** Anything else is a
-        // failure of the lowering and is reported as one.
-        assert!(
-            said.contains("-lsqlite3") || said.contains("library 'sqlite3' not found"),
-            "the lowering compiles where the library is there:\n{said}\n--- the Rust ---\n{rust}"
-        );
-        let _ = std::fs::remove_dir_all(&dir);
-        eprintln!("skipped: this machine has no `libsqlite3`");
+    // **Built as a project, which names nothing for the linker** (Part III
+    // 13.4): the block names the library, the manifest says `pkg-config`
+    // finds it, and the build links it. Skipped where the machine cannot.
+    let found = std::process::Command::new("pkg-config")
+        .args(["--exists", "sqlite3"])
+        .status()
+        .is_ok_and(|s| s.success());
+    if !found {
+        eprintln!("skipped: this machine has no `pkg-config` entry for `sqlite3`");
         return;
     }
-    assert!(
-        !said.contains("warning:"),
-        "and `rustc` says nothing about the file it was handed:\n{said}"
-    );
-    let ran = std::process::Command::new(&binary)
+    let project = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/sqlite");
+    let copy = common::scratch_dir("sqlite3-project");
+    for file in ["nikaia.toml", "src/main.nika"] {
+        let to = copy.join(file);
+        std::fs::create_dir_all(to.parent().expect("a directory")).expect("a directory");
+        std::fs::copy(project.join(file), &to).expect("copy the example");
+    }
+    let ran = std::process::Command::new(env!("CARGO_BIN_EXE_nikaia"))
+        .args(["run", "--project"])
+        .arg(&copy)
+        .env_remove("RUSTFLAGS")
+        .env_remove("CARGO_TARGET_DIR")
         .output()
-        .expect("run the program");
+        .expect("the nikaia binary runs");
+    let _ = std::fs::remove_dir_all(&copy);
     assert_eq!(
         String::from_utf8_lossy(&ran.stdout).trim(),
         "opened 0\nprepared 0\nstepped 100\nhello, C",
         "{}",
         String::from_utf8_lossy(&ran.stderr)
     );
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// **`NK1161`: a `throw` of something that is not an error** (Part I 7.1), and

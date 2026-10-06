@@ -4,6 +4,29 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.567] — 2026-10-06
+
+**A package links the system libraries it names, through `pkg-config`**
+(Part III 13.4, ADR-324 D2-D4, #483 steps 2-6).
+- **`[library.<name>]`** with a required `pkg-config` is read from
+  `nikaia.toml`. Any other key there is refused.
+- **`NK1226` both ways:** a block's `extern(library: "x")` without an entry,
+  and an entry no block names. It is checked per package before anything is
+  linked.
+- **Finding the library:** the build runs `pkg-config --libs` for each entry.
+  - `NK1224` where `pkg-config` is missing or does not find the library. It
+    names the package, the library and the name looked for.
+  - Only `-l`, `-L`, `-pthread` (and on macOS `-framework`, `-F`) are
+    taken. Any other flag is `NK1225`, named, so a `.pc` file cannot load a
+    linker plugin.
+- **Linking:** the flags reach `rustc` for the program crate only, through
+  the wrapper, and never for the build-time library (ADR-321 D14). A program
+  that uses such a package writes nothing for it.
+- **`examples/sqlite`** is a project with `[library.sqlite3]`. Its
+  end-to-end test builds it with `nikaia run` and passes no `-l`.
+- Not built: carrying the libraries in a package's ledger. It is needed only
+  for a package used without its sources, which nothing here can do yet.
+
 ## [0.0.566] — 2026-10-06
 
 **Every open issue carries one status label** (`docs/README.md`, `CLAUDE.md`).

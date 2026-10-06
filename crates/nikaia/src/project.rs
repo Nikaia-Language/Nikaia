@@ -80,6 +80,10 @@ const NO_CACHE_VAR: &str = "NIKAIA_NO_CACHE";
 /// of the build that is running rather than against anything the dependency
 /// ships.
 const READS_VAR: &str = "NIKAIA_ALLOW_READ_FROM_LIST";
+/// **The system libraries' linker flags**, as the build formed them from
+/// `pkg-config` (Part III 13.4, ADR-324 D3, D4), one per `\u{1f}`-separated
+/// field: handed to `rustc` for the program and nothing else.
+const LINK_VAR: &str = "NIKAIA_LINK_FLAGS";
 
 /// A file the wrapper appends one line to per `rustc` it is handed: the crate
 /// Cargo named, and whether this compiler lowered it or passed it through.
@@ -2434,6 +2438,7 @@ impl Project {
         // package stop being able to disagree.
         let order = dependencies_first(&members);
         let mut rust: Vec<Option<String>> = vec![None; members.len()];
+        let mut link_flags: Vec<String> = Vec::new();
         for at in order {
             let member = &members[at];
             let outer = WARNED.with(|warned| warned.replace(self.warned));
@@ -2446,6 +2451,34 @@ impl Project {
             );
             WARNED.with(|warned| warned.set(outer));
             let lowered = lowered?;
+            // **The libraries this package names, and how it finds them**
+            // (ADR-324 D2-D4): both ways before anything is linked, and the
+            // flags from `pkg-config` before `cargo` runs.
+            let own: Vec<PathBuf> = lowered
+                .sources
+                .iter()
+                .filter(|s| {
+                    s.starts_with(&member.root)
+                        && !members.iter().any(|other| {
+                            other.root != member.root
+                                && other.root.starts_with(&member.root)
+                                && s.starts_with(&other.root)
+                        })
+                })
+                .cloned()
+                .collect();
+            let declared = crate::libraries::declared(&own)?;
+            crate::libraries::named_both_ways(
+                &member.name,
+                &member.root.join("nikaia.toml"),
+                member.manifest.libraries(),
+                &declared,
+            )?;
+            for flag in crate::libraries::link_flags(&member.name, member.manifest.libraries())? {
+                if !link_flags.contains(&flag) {
+                    link_flags.push(flag);
+                }
+            }
             // **Each package's ledger in that package's own root**
             // (Part III 13.5, ADR-100 D1): written here so the consumers
             // lowered after it read it, and committed with the package the way
@@ -2505,9 +2538,16 @@ impl Project {
             std::fs::create_dir_all(dir)?;
         }
         let choices = self.settings.choices();
+        // **And the libraries' flags**, which change what the program is
+        // linked against and nothing Cargo watches.
         write_if_changed(
             &switches,
-            &format!("{}\n{}\n", choices.build, choices.backend),
+            &format!(
+                "{}\n{}\n{}\n",
+                choices.build,
+                choices.backend,
+                link_flags.join(" ")
+            ),
         )?;
 
         // **Before Cargo is handed anything** (ADR-288 D27): its own answer
@@ -2532,6 +2572,10 @@ impl Project {
         let mut env = self.settings.as_env();
         env.push((WRAPPER_MARKER.to_string(), OsString::from("1")));
         env.push((GEN_DIR_VAR.to_string(), self.gen_dir().into_os_string()));
+        env.push((
+            LINK_VAR.to_string(),
+            OsString::from(link_flags.join("\u{1f}")),
+        ));
         if no_cache {
             env.push((NO_CACHE_VAR.to_string(), OsString::from("1")));
         }
@@ -3446,6 +3490,24 @@ pub fn wrapper_main() -> Result<i32> {
     write_if_changed(&generated, &lowered.rust)?;
 
     invocation.replace_source(&generated);
+    // **The program links the libraries its packages name** (ADR-324 D2, D3),
+    // and only the program: a library crate is linked into it, and the
+    // build-time library is built elsewhere and never sees these (ADR-321 D14).
+    let a_program = invocation
+        .args
+        .windows(2)
+        .any(|pair| pair[0] == "--crate-type" && pair[1] == "bin");
+    if a_program && let Some(flags) = std::env::var_os(LINK_VAR) {
+        let flags: Vec<String> = flags
+            .to_string_lossy()
+            .split('\u{1f}')
+            .filter(|f| !f.is_empty())
+            .map(str::to_string)
+            .collect();
+        for arg in crate::libraries::as_rustc_args(&flags) {
+            invocation.args.push(OsString::from(arg));
+        }
+    }
     let code = invocation.run()?;
 
     // Cargo believes the dependency file `rustc` wrote, and `rustc` only saw

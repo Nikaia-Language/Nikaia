@@ -1,0 +1,8 @@
+[package]
+name = "sqlite"
+version = "0.1.0"
+
+# The system library the `extern(library: "sqlite3")` block names, and how the
+# build finds it (Part III 13.4).
+[library.sqlite3]
+pkg-config = "sqlite3"

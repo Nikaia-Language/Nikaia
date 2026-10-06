@@ -58,9 +58,9 @@ const DIRECTORIES_CHECKED_ELSEWHERE: &[(&str, &str)] = &[
     ),
     // **The C boundary against a real library**
     // ([ADR-302](../../../docs/specification/adr/adr-302.md) step 5). It
-    // needs `-l sqlite3`, which no build here passes and not every machine has,
-    // so its test skips rather than fails where the package is missing — and a
-    // run that may skip cannot be one this file asserts output for.
+    // needs `libsqlite3` and `pkg-config`, which not every machine has, so its
+    // test skips rather than fails where they are missing — and a run that may
+    // skip cannot be one this file asserts output for.
     (
         "sqlite",
         "tests/foreign_pointers.rs: sqlite3_from_end_to_end",

@@ -20,6 +20,7 @@ pub mod fold;
 pub mod foreign;
 pub mod grammar_run;
 pub mod interpreter;
+pub mod libraries;
 pub mod manifest;
 pub mod modules;
 pub mod parser;

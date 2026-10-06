@@ -1,18 +1,18 @@
 // Opens an in-memory SQLite database through its C API and reads one row back.
 //
-//     RUSTFLAGS="-l sqlite3" nikaia run
+//     nikaia run
 //     opened 0
 //     prepared 0
 //     stepped 100
 //     hello, C
 //
-// It needs libsqlite3 on the machine. `nikaia` has no option for linking a C
-// library, so `-l sqlite3` goes to `rustc` through `RUSTFLAGS`.
+// It needs libsqlite3 and `pkg-config` on the machine. The `extern` block names
+// the library, `nikaia.toml` says how it is found (`[library.sqlite3]`), and
+// the build links it: nothing is written for it anywhere else (Part III 13.4).
 //
 // Shows: an `extern` block that names its library, opaque handles that clean up after themselves,
 // out-parameters, text owned by C, and `unsafe`.
 //
-// To run it, copy this file to `src/main.nika` of a project (guide/getting-started.md).
 
 use std::foreign
 
