@@ -4,6 +4,15 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.596] — 2026-10-06
+
+**Part III 15.2's `image` example says what the rule above it says** (#487,
+decided with the owner).
+- Its comment credited the crate's own locking, while 15.2 decides a crossing
+  from the argument's Nikaia type. It now says the call is allowed because the
+  argument is text, and the `use` line says `image` is a Rust crate declared
+  with `type = "rust"`.
+
 ## [0.0.595] — 2026-10-06
 
 **The inline-assembly example names its grammar: `dsl x86::Asm`** (ADR-299

@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part III: Tooling, Ecosystem & Interoperability**
-**Version:** 0.0.595 (Draft)
+**Version:** 0.0.596 (Draft)
 **Date:** 2026-10-06
 
 ---
@@ -721,10 +721,10 @@ image = { type = "rust", version = "0.24" }
 
 ```nika
 // In code
-use image
+use image                    // a Rust crate: nikaia.toml declares it with type = "rust"
 
 fn process() {
-    // This is safe because the 'image' crate implements proper locking
+    // Allowed because the argument is text, and text may be passed to another thread.
     let img = image::open("test.png")
 }
 ```
