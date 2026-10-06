@@ -1993,6 +1993,7 @@ pub struct BoundsContext {
     pub sized: collections::BTreeSet<i64>,
     pub arithmetic: collections::BTreeMap<i64, String>,
     pub nonnegative: collections::BTreeSet<i64>,
+    pub char_codes: collections::BTreeSet<i64>,
     pub around: Around,
 }
 
@@ -2024,6 +2025,7 @@ struct BoundsWalk {
     floors: collections::BTreeMap<String, i64>,
     pinned: collections::BTreeSet<String>,
     nonnegative: collections::BTreeSet<String>,
+    codes: i64,
     shape: BodyShape,
     assumed: collections::BTreeMap<String, Range>,
     written: collections::BTreeMap<String, Range>,
@@ -2048,7 +2050,7 @@ fn nothing_changed() -> BoundsChanged { BoundsChanged { values: collections::BTr
 pub fn bounds_aggressive(args: &[FnArg], body: &Block, nonnegative: collections::BTreeSet<String>, context: &BoundsContext, program: &Program, words: &winnow_grammar::InternerContext, node_of: &impl Fn(&Expr) -> i64, ask: &impl Fn(&TermArena, &[i64], i64) -> bool) -> BoundsProven {
     let pinned = pinned_in(body, words);
     let shape = shape_of(args, body, &pinned, &context.around, words);
-    let mut walk = BoundsWalk { arena: TermArena::empty(), proven: no_proofs(), axioms: collections::BTreeMap::new(), unsized_names: collections::BTreeSet::new(), floors: collections::BTreeMap::new(), pinned, nonnegative, shape, assumed: collections::BTreeMap::new(), written: collections::BTreeMap::new(), poisoned: collections::BTreeSet::new(), collecting: false, at: 0 };
+    let mut walk = BoundsWalk { arena: TermArena::empty(), proven: no_proofs(), axioms: collections::BTreeMap::new(), unsized_names: collections::BTreeSet::new(), floors: collections::BTreeMap::new(), pinned, nonnegative, codes: 0, shape, assumed: collections::BTreeMap::new(), written: collections::BTreeMap::new(), poisoned: collections::BTreeSet::new(), collecting: false, at: 0 };
     let mut settled = false;
     if !walk.shape.roots.is_empty() {
         walk.collecting = true;
@@ -2448,7 +2450,10 @@ fn bounding_lin(walk: &mut BoundsWalk, expr: &Expr, facts: &BoundsFacts, context
         },
         Expr::Cast { expr, ty } => {
             let expr = nikaia_std::boxed::open(expr);
-            if ty.generics.is_empty() && is_whole_number(words.resolve(ty.name)) { return bounding_lin(walk, expr, facts, context, program, words, node_of); }
+            if ty.generics.is_empty() && is_whole_number(words.resolve(ty.name)) {
+                if context.char_codes.contains(&node_of(expr)) { return Some(bounding_code(walk)); }
+                return bounding_lin(walk, expr, facts, context, program, words, node_of);
+            }
         },
         Expr::Call { func, args, config } => {
             let func = nikaia_std::boxed::open(func);
@@ -2466,6 +2471,18 @@ fn bounding_lin(walk: &mut BoundsWalk, expr: &Expr, facts: &BoundsFacts, context
         _ => { },
     }
     None
+}
+
+fn bounding_code(walk: &mut BoundsWalk) -> i64 {
+    let name = format!("code#{}", walk.codes);
+    walk.codes += 1;
+    let v = walk.arena.var(&name);
+    let zero = walk.arena.int(0);
+    let most = walk.arena.int(1114111);
+    let low = walk.arena.ge(v, zero);
+    let high = walk.arena.le(v, most);
+    walk.axioms.insert(name, vec![low, high]);
+    v
 }
 
 fn bounding_variable(expr: &Expr, words: &winnow_grammar::InternerContext) -> Option<String> {

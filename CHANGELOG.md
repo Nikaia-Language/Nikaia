@@ -4,6 +4,17 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.572] — 2026-10-06
+
+**A `char`'s code is a number of the proof** (ADR-314 D2, #421).
+- The checker records each `c as T` of a `char` into a whole number
+  (`Checked::char_codes`); the bounds walk reads it as a number of its own in
+  `0..=0x10FFFF`, handed to every proof like a length's bounds.
+- So `c as i32 - 48` and, through a `let`, `code * 2 + 1` are proved to fit;
+  `c as i32 * 4096` stays checked.
+- Tests: `tests/char_codes.rs`, the report and a run with the proved checks
+  dropped.
+
 ## [0.0.571] — 2026-10-06
 
 **A dependency's prover questions are its own** (ADR-270 D23, #448).

@@ -124,6 +124,7 @@ pub fn proven(
     parsed: &Parsed,
     lengths: &BTreeSet<usize>,
     sized: &BTreeSet<usize>,
+    char_codes: &BTreeSet<usize>,
     arithmetic: &BTreeMap<usize, String>,
     nonnegative: &BTreeSet<usize>,
 ) -> Proven {
@@ -168,6 +169,7 @@ pub fn proven(
     let context = BoundsContext {
         lengths: lengths.iter().map(|n| *n as i64).collect(),
         sized: sized.iter().map(|n| *n as i64).collect(),
+        char_codes: char_codes.iter().map(|n| *n as i64).collect(),
         arithmetic: arithmetic
             .iter()
             .map(|(at, ty)| (*at as i64, ty.clone()))

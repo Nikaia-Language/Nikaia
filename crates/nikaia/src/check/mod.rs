@@ -490,6 +490,10 @@ pub struct Checked {
     /// such as `Vec[One]` with `enum One { Only }`, is bounded only by how it
     /// was built, and is not here.
     pub sized_lengths: BTreeSet<usize>,
+    /// **`c as T` of a `char` into a whole number**, by the node of `c`
+    /// ([ADR-314](../../docs/specification/adr/adr-314.md) D2): a code, which
+    /// [`crate::bounds`] reads as a number in `0..=0x10FFFF`.
+    pub char_codes: BTreeSet<usize>,
     /// **Every `+`, `-` and `*` of one whole-number type**, by the byte its
     /// operator starts at, with that type: both sides that type, or one a
     /// literal. What `--optimization=remove-overflow-checks` may write without
@@ -2072,6 +2076,8 @@ pub struct Propagation {
     pub std_lengths: BTreeSet<usize>,
     /// [`Checked::sized_lengths`].
     pub sized_lengths: BTreeSet<usize>,
+    /// [`Checked::char_codes`].
+    pub char_codes: BTreeSet<usize>,
     /// [`Checked::arithmetic`].
     pub arithmetic: BTreeMap<usize, String>,
     /// [`Checked::copied_slots`].
@@ -2418,6 +2424,7 @@ fn propagation(
         copied_tuple_parts: checked.copied_tuple_parts,
         std_lengths: checked.std_lengths,
         sized_lengths: checked.sized_lengths,
+        char_codes: checked.char_codes,
         arithmetic: checked.arithmetic,
         copied_slots: checked.copied_slots,
         owned_copies: checked.owned_copies,
@@ -13378,6 +13385,11 @@ impl<'a> Checker<'a> {
                     self.cast_names_a_foreign_type(name, span);
                 }
                 self.record_cast(&from, &into, span);
+                if matches!(&from, Ty::Named { name, .. } if name == "char")
+                    && matches!(&into, Ty::Named { name, .. } if INTEGERS.contains(&name.as_str()))
+                {
+                    self.checked.char_codes.insert(value_node(expr));
+                }
                 into
             }
 
@@ -16592,6 +16604,7 @@ impl<'a> Checker<'a> {
             parsed,
             &self.checked.std_lengths,
             &self.checked.sized_lengths,
+            &self.checked.char_codes,
             &self.checked.arithmetic,
             &nodes,
         );

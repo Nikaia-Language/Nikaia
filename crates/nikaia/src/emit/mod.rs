@@ -2645,6 +2645,7 @@ impl<'p> Emitter<'p> {
             parsed,
             &propagation.std_lengths,
             &propagation.sized_lengths,
+            &propagation.char_codes,
             &propagation.arithmetic,
             &std::collections::BTreeSet::new(),
         );

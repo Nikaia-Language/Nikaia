@@ -28,6 +28,9 @@ pub struct BoundsContext {
     /// Signed values put where an unsigned type is stated, by node: each is
     /// taken without a conversion where it is proved `>= 0` (ADR-285 D32).
     pub nonnegative: collections::BTreeSet[i64],
+    /// The `char`s converted to a whole number, by node: each such
+    /// conversion is a code in `0..=0x10FFFF` (ADR-314 D2).
+    pub char_codes: collections::BTreeSet[i64],
     pub around: Around,
 }
 
@@ -72,6 +75,9 @@ struct BoundsWalk {
     pinned: collections::BTreeSet[String],
     /// Whole numbers that are never negative anywhere in the body.
     nonnegative: collections::BTreeSet[String],
+    /// How many `char` codes the walk has read: each reading is a number of
+    /// its own (ADR-314 D2).
+    codes: i64,
     /// What the body is, read once before any pass.
     shape: BodyShape,
     /// The bounds on lists' values this pass may read (ADR-306 D7), by key:
@@ -147,6 +153,7 @@ pub fn bounds_aggressive(args: ref Vec[FnArg], body: ref Block, nonnegative: col
         floors: collections::BTreeMap(),
         pinned: pinned,
         nonnegative: nonnegative,
+        codes: 0,
         shape: shape,
         assumed: collections::BTreeMap(),
         written: collections::BTreeMap(),
@@ -662,6 +669,9 @@ fn bounding_lin(mut walk: BoundsWalk, expr: ref Expr, facts: ref BoundsFacts, co
         // program goes on, the number is the one converted.
         Expr::Cast { expr, ty } => {
             if ty.generics.is_empty() && is_whole_number(words.resolve(ty.name)) {
+                if context.char_codes.contains(node_of(expr)) {
+                    return bounding_code(walk)
+                }
                 return bounding_lin(walk, expr, facts, context, program, words, node_of)
             }
         },
@@ -680,6 +690,21 @@ fn bounding_lin(mut walk: BoundsWalk, expr: ref Expr, facts: ref BoundsFacts, co
         else => {},
     }
     return null
+}
+
+/// **A `char`'s code** (ADR-314 D2): a number in `0..=0x10FFFF`, and a new
+/// one at every reading, because the walk keeps no fact about which character
+/// it is. Every proof is handed its bounds, as a list's length's.
+fn bounding_code(mut walk: BoundsWalk) -> i64 {
+    let name = f"code#{walk.codes}"
+    walk.codes += 1
+    let v = walk.arena.var(name)
+    let zero = walk.arena.int(0)
+    let most = walk.arena.int(1114111)
+    let low = walk.arena.ge(v, zero)
+    let high = walk.arena.le(v, most)
+    walk.axioms.insert(name, [low, high])
+    return v
 }
 
 /// The name `expr` is, where it is a bare one.

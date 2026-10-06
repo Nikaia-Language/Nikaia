@@ -56,6 +56,7 @@ pub fn report(
         parsed,
         &checked.std_lengths,
         &checked.sized_lengths,
+        &checked.char_codes,
         &checked.arithmetic,
         &std::collections::BTreeSet::new(),
     );
