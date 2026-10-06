@@ -30,6 +30,11 @@
   (`Fixes #439, #482`). An issue left open on purpose gets a comment saying
   exactly what is still missing. One that no commit can finish - a process
   note, a duplicate, an answered question - is closed by hand, with the reason.
+* **Every open issue carries exactly one status label**: `ready`, `decision`,
+  `blocked` or `note` (`docs/README.md`). Whoever changes an issue's state
+  changes the label: a decision taken makes it `ready`, a step that turns out
+  to need the owner makes it `decision`, a blocker built frees what it blocked.
+  A new issue gets its label when it is filed.
 * **A red `develop` is fixed forward.** Whoever finds it red fixes it with the
   next commit, or reverts the commit that broke it. Until then `main` stays
   where it was, and work on `develop` goes on.

@@ -4,6 +4,14 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.566] — 2026-10-06
+
+**Every open issue carries one status label** (`docs/README.md`, `CLAUDE.md`).
+- `ready` (13), `decision` (26), `blocked` (16) and `note` (12), set on all 67
+  open issues from a reading of each issue and its comments against the code.
+- #439 is `decision`: its To-build list is built, and whether two remaining
+  limits belong to it is the owner's call.
+
 ## [0.0.565] — 2026-10-06
 
 **The commit that finishes an issue says `Fixes #N`** (`CLAUDE.md`).
