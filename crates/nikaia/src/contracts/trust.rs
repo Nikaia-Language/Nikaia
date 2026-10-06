@@ -75,6 +75,10 @@ pub struct Root {
 /// (`nikaia-std/src/tools/trust.nika`).
 pub use nikaia_std::tools::trust::Wrote;
 
+/// What `--trust` names where a method call could not be resolved, so the
+/// program has no proof of who chose the bytes it read.
+pub const UNRESOLVED: &str = "a method call this compiler could not resolve";
+
 /// The provenance of this program's input.
 pub fn analyse(parsed: &Parsed, library: &Ledger) -> Trust {
     let mut reasons: Vec<Reason> = Vec::new();
@@ -112,6 +116,39 @@ pub fn analyse(parsed: &Parsed, library: &Ledger) -> Trust {
                 span,
             });
         }
+    }
+
+    // **A source read through a method** (#472, ADR-288): `c.read()` is
+    // `net::Connection::read` once the receiver's type is known, which only
+    // the checker knows. The ledger's own pass asks it and records each
+    // function's resolved keys.
+    //
+    // **And one it could not resolve counts as untrusted** (ADR-010 D1: a
+    // barrier widens, never the other way). A map that gets the keyed hash
+    // needlessly is slower; the opposite is an attack.
+    let (_, checked) = Ledger::infer_package_checked(&[parsed], library);
+    let mut unresolved = false;
+    for calls in checked.iter().flat_map(|c| c.methods.values()) {
+        unresolved |= calls.unresolved;
+        for key in &calls.resolved {
+            let Some((key, contract)) = library.lookup(key) else {
+                continue;
+            };
+            if let Some(provenance) = contract.provenance
+                && !reasons.iter().any(|r| r.source == key)
+            {
+                reasons.push(Reason {
+                    source: key,
+                    provenance,
+                });
+            }
+        }
+    }
+    if unresolved {
+        reasons.push(Reason {
+            source: UNRESOLVED.to_string(),
+            provenance: Provenance::Untrusted,
+        });
     }
 
     reasons.sort_by(|a, b| a.source.cmp(&b.source));

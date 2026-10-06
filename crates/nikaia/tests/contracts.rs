@@ -992,6 +992,87 @@ fn one_untrusted_source_decides() {
     );
 }
 
+/// **A source read through a method is seen** (#472, ADR-010 D1/D2): `c.read()`
+/// is `net::Connection::read`, which is untrusted, and the maps get the keyed
+/// hash. The call resolved by name alone missed it, and the program was
+/// reported as reading nothing.
+#[test]
+fn a_socket_read_through_a_method_is_untrusted() {
+    let source = "use std::net\n\
+         use std::collections\n\
+         fn main() throws {\n\
+         \x20   let mut c = net::connect(\"127.0.0.1:1\")\n\
+         \x20   let b = c.read()\n\
+         \x20   let text = b.to_text()\n\
+         \x20   let mut words = collections::HashMap()\n\
+         \x20   for w in text.split(\" \") { words.insert(w, 1) }\n\
+         \x20   println(f\"{words.len()}\")\n\
+         }\n";
+    let t = provenance(source);
+    assert_eq!(t.provenance, Provenance::Untrusted, "{:?}", t.reasons);
+    assert!(
+        t.reasons
+            .iter()
+            .any(|r| r.source == "net::Connection::read" && r.provenance == Provenance::Untrusted),
+        "{:?}",
+        t.reasons
+    );
+    let parsed = parse_to_ast(source).expect("the source parses");
+    let rust = nikaia::emit::emit_program(&parsed, Default::default())
+        .expect("it lowers")
+        .rust;
+    assert!(!rust.contains("TrustedMap"), "{rust}");
+}
+
+/// **A file beside a socket does not hide it**: both are listed, and the join
+/// is untrusted.
+#[test]
+fn a_file_beside_a_socket_is_untrusted_and_both_are_named() {
+    let t = provenance(
+        "use std::net\n\
+         use std::fs\n\
+         fn main() throws {\n\
+         \x20   let a = fs::read_to_string(\"x\", fs::Root::Anywhere)\n\
+         \x20   let mut c = net::connect(\"127.0.0.1:1\")\n\
+         \x20   let b = c.read()\n\
+         \x20   println(f\"{a.len()} {b.len()}\")\n\
+         }\n",
+    );
+    assert_eq!(t.provenance, Provenance::Untrusted);
+    let named: Vec<&str> = t.reasons.iter().map(|r| r.source.as_str()).collect();
+    assert!(named.contains(&"fs::read_to_string"), "{named:?}");
+    assert!(named.contains(&"net::Connection::read"), "{named:?}");
+}
+
+/// **A method call nothing resolves fails closed** (#472 step 2): the program
+/// has no proof of who chose the bytes, so it is untrusted, and `--trust` says
+/// why.
+#[test]
+fn a_method_call_nothing_resolves_is_untrusted() {
+    let t = provenance(
+        "use std::fs\n\
+         fn main() throws {\n\
+         \x20   let a = fs::read_to_string(\"x\", fs::Root::Anywhere)\n\
+         \x20   println(a.mystery())\n\
+         }\n",
+    );
+    assert_eq!(t.provenance, Provenance::Untrusted, "{:?}", t.reasons);
+    assert!(
+        t.reasons.iter().any(|r| r.source == trust::UNRESOLVED),
+        "{:?}",
+        t.reasons
+    );
+}
+
+/// **A file alone stays trusted** (#472 step 3): 1BRC keeps its fast map.
+#[test]
+fn the_billion_rows_example_stays_trusted() {
+    let source =
+        std::fs::read_to_string(repo_root().join("examples/1brc.nika")).expect("the example");
+    let t = provenance(&source);
+    assert_eq!(t.provenance, Provenance::Trusted, "{:?}", t.reasons);
+}
+
 // --- ADR-108: a path names its root at the call ------------------------------
 
 /// **D4's third place**: every site that writes a root with nothing to check

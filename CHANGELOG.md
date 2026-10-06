@@ -4,6 +4,25 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.539] — 2026-10-06
+
+**A socket read through a method is an untrusted source** (#472, ADR-010
+D1/D2).
+- `--trust` looked up each call by its name, so `c.read()` on a
+  `net::Connection` was never seen.
+- A program that read a socket was therefore reported as reading nothing, and
+  its maps got the fixed-seed hash an adversary can flood.
+- The analysis now also reads the method calls the checker resolved
+  (ADR-288): `net::Connection::read` makes the program untrusted, and its maps
+  get the keyed hash.
+- A method call nothing resolves fails closed: *a method call this compiler
+  could not resolve is untrusted*.
+- One example changes: `k-nucleotide` calls `wanted.as_str()`, which
+  `std.contracts` does not describe, so its map is now a `HashMap`. 1BRC and
+  access-log stay trusted.
+- `net::Connection::read` is the only untrusted entry a program reaches as a
+  method, and it is tested.
+
 ## [0.0.538] — 2026-10-06
 
 **`std::fs` asks for a file's name** (ADR-319 D2, #449 step 3, first half).
