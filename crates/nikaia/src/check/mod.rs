@@ -5380,13 +5380,15 @@ impl<'a> Checker<'a> {
                 _ => None,
             };
             // **A tail widens as a `return` does** (ADR-285 D32).
-            if let (Some(value), Some(into)) = (value, widened_into(&tail, expected))
-                && !self.narrow_by_width(value, into, &span)
-                && !self.widen_operands(value, into, &span)
+            // **And into an unsigned type where the walk shows it is not
+            // negative** (D32): the slot's own question, asked here too.
+            if let Some(value) = value
+                && let Some(how @ (Wrap::Widen(_) | Wrap::Unsigned(_))) =
+                    self.widened_slot(&tail, expected, Some(value), &span)
             {
                 self.checked
                     .wrapped
-                    .insert(value as *const Expr as usize, Wrap::Widen(into));
+                    .insert(value as *const Expr as usize, how);
             }
             self.expect_kept(
                 &tail,

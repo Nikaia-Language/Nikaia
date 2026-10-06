@@ -566,3 +566,21 @@ fn a_compound_assignment_computes_in_the_common_type() {
     let none = "fn main() {\n    let b: i64 = 4\n    let mut u: u64 = 1\n    u += b\n    println(f\"{u}\")\n}\n";
     assert!(codes(none).contains(&"NK1199"), "{:?}", codes(none));
 }
+
+/// **A body's last expression asks the walk too** (D32): `xs.len()` handed
+/// back as a `u64` is taken; a parameter nothing shows is refused; and a bit
+/// operation narrow into a wider return type is `NK1215` there as well.
+#[test]
+fn a_last_expression_asks_as_a_return_does() {
+    runs(
+        "tail-len",
+        "fn count(xs: ref Vec[i64]) -> u64 {\n    xs.len()\n}\n\n\
+         fn main() {\n    let xs = [1, 2, 3]\n    println(f\"{count(xs)}\")\n}\n",
+        "3\n",
+    );
+    let refused = "fn f(k: i64) -> u64 {\n    k\n}\n\nfn main() {\n    println(f\"{f(3)}\")\n}\n";
+    assert!(codes(refused).contains(&"NK1104"), "{:?}", codes(refused));
+    let narrow =
+        "fn f(a: u32) -> i64 {\n    a << 3\n}\n\nfn main() {\n    println(f\"{f(3)}\")\n}\n";
+    assert!(codes(narrow).contains(&"NK1215"), "{:?}", codes(narrow));
+}

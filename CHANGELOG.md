@@ -4,6 +4,19 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.561] — 2026-10-06
+
+**A body's last expression is a typed slot like `return`** (ADR-285 D32,
+#439).
+- `fn count(xs: ref Vec[i64]) -> u64 { xs.len() }` now asks the bounds walk,
+  as `return xs.len()` already did, and is taken.
+- A parameter that nothing shows to be non-negative is refused with the slot's
+  help.
+- `fn f(a: u32) -> i64 { a << 3 }` is now `NK1215` there as well. Before,
+  it was widened after the narrow shift without a word.
+
+Every bench and example lowers byte for byte as before.
+
 ## [0.0.560] — 2026-10-06
 
 **`x += a` over two integer types is `x = x + a`** (ADR-285 D32, #439).
