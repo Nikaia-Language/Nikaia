@@ -558,6 +558,8 @@ impl LedgerOps for Ledger {
                                 // `views::fields_of` flattens them for the *view*
                                 // analysis, which is a different walk over the AST.
                                 tethered: Vec::new(),
+                                // A declared type is walked by its parts.
+                                constant: String::new(),
                             },
                         );
                     }
@@ -610,6 +612,7 @@ impl LedgerOps for Ledger {
                                 // ([ADR-281](../../../../docs/specification/adr/adr-281.md) D34).
                                 touches: Vec::new(),
                                 tethered,
+                                constant: String::new(),
                             },
                         );
                     }
@@ -1255,6 +1258,15 @@ pub fn literal_of(value: &crate::build_time::Value) -> Option<String> {
                 written.push(literal_of(held)?);
             }
             Some(format!("{ty}::{variant}({})", written.join(", ")))
+        }
+        // **A `std` type as its constructor over literal parts** (ADR-318
+        // D3, D5): `time::Duration::new(30, 0)`.
+        Value::Constant { constructor, parts } => {
+            let mut written = Vec::with_capacity(parts.len());
+            for held in parts {
+                written.push(literal_of(held)?);
+            }
+            Some(format!("{constructor}({})", written.join(", ")))
         }
         _ => None,
     }

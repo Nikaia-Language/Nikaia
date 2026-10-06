@@ -474,6 +474,8 @@ fn type_key(mut entry: TypeContract, key: ref String, value: ref String, n: i64)
         entry.copies = value.trim() == "true"
     } else if key == "tethered" {
         entry.tethered = entries(value, n)
+    } else if key == "constant" {
+        entry.constant = unquoted(value, n)
     } else if key == "touches" {
         entry.touches = entries(value, n)
     } else if key == "iterates" {

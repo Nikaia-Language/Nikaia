@@ -313,5 +313,8 @@ fn type_text(contract: ref TypeContract) -> String {
     if contract.tethered.len() > 0 {
         out.push_str(f"tethered = [{quoted_all(contract.tethered)}]\n")
     }
+    if contract.constant.len() > 0 {
+        out.push_str(f"constant = \"{contract.constant}\"\n")
+    }
     return out
 }

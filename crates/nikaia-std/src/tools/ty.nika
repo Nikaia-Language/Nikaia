@@ -1122,6 +1122,12 @@ pub struct TypeContract {
     pub copies: bool,
     pub touches: Vec[String],
     pub tethered: Vec[String],
+    /// **How a build-time value of a `std` type whose parts this compiler
+    /// cannot walk is written**: its constructor and the parts it takes,
+    /// `time::Duration::new(secs: u64, nanos: u32)`
+    /// ([ADR-318](../../../../docs/specification/adr/adr-318.md) D5). Empty
+    /// where the type has none, and then it does not cross.
+    pub constant: String,
 }
 
 impl TypeContract {
@@ -1137,6 +1143,7 @@ impl TypeContract {
             copies: false,
             touches: [],
             tethered: [],
+            constant: "",
         }
     }
 }

@@ -3372,11 +3372,24 @@ pub = true
 # this language, and a rule with an exception in it is one a reader has to
 # remember. `seconds`, `millis`, `micros`, `minutes` and `hours` are the five
 # names, on either integer type.
+#
+# **A span computed while the program is built is written as its constructor
+# over its parts** (ADR-318 D5): a `comptime` or an option's default of this
+# type crosses as `time::Duration::new(30, 0)`.
 [type."time::Duration"]
 pub = true
 crosses = true
 compares = true
 copies = true
+constant = "time::Duration::new(secs: u64, nanos: u32)"
+
+# The constructor `constant` names, for the compiler and not for a program: a
+# span is made with `seconds`, `millis` and the rest.
+[fn."time::Duration::new"]
+pub = false
+sync = true
+touches = []
+signature = "(secs: u64, nanos: u32) -> time::Duration"
 
 # `touches = []` and `sync = true` for the arithmetic entries' reason: a pure
 # computation that reaches no resource. A count below zero is no time at all

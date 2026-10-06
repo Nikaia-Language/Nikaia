@@ -315,19 +315,70 @@ fn a_computed_default_reaches_another_package() {
     );
 }
 
-/// **The way out of a refused default is a `T?`** (D7): an option was never
-/// a `comptime`, so *write `let` instead* is not something its author can do.
-/// `30.seconds()` meets `std`'s Rust half (step 8), and the note names it.
+/// **A span of time as a default reaches another package** (ADR-318 D3-D5):
+/// the library's ledger records `time::Duration::new(30, 0)`, and a caller
+/// that leaves the option out reads it without the body.
 #[test]
-fn a_refused_default_offers_an_optional_not_a_let() {
-    let source = "use std::time\n\
+fn a_duration_default_reaches_another_package() {
+    let dir = common::scratch_dir("option-defaults-duration");
+    let lib = "use std::time\n\
          \n\
-         fn wait(label: ref String; timeout: time::Duration = 30.seconds()) -> i64 {\n\
-         \x20   return timeout.in_seconds()\n\
+         pub fn wait(label: ref String; timeout: time::Duration = 30.seconds()) -> String {\n\
+         \x20   return f\"{label} {timeout.in_seconds()}\"\n\
          }\n\
          \n\
          fn main() {\n\
-         \x20   println(f\"{wait(\"a\")}\")\n\
+         }\n";
+    let app = "fn main() {\n\
+         \x20   println(lib::wait(\"w\"))\n\
+         }\n";
+    for (package, source, manifest) in [
+        (
+            "lib",
+            lib,
+            "[package]\nname = \"lib\"\nversion = \"0.1.0\"\n",
+        ),
+        (
+            "app",
+            app,
+            "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n[dependencies]\nlib = { path = \"../lib\" }\n",
+        ),
+    ] {
+        std::fs::create_dir_all(dir.join(package).join("src")).expect("the package");
+        std::fs::write(dir.join(package).join("nikaia.toml"), manifest).expect("a manifest");
+        std::fs::write(dir.join(package).join("src/main.nika"), source).expect("a source");
+    }
+    let run = std::process::Command::new(env!("CARGO_BIN_EXE_nikaia"))
+        .current_dir(dir.join("app"))
+        .arg("run")
+        .output()
+        .expect("the nikaia binary runs");
+    let stdout = String::from_utf8_lossy(&run.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&run.stderr).to_string();
+    let ledger = std::fs::read_to_string(dir.join("app/nikaia.contracts")).unwrap_or_default();
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(stdout, "w 30\n", "{stderr}");
+    assert!(
+        ledger.contains("timeout: time::Duration = time::Duration::new(30, 0)"),
+        "{ledger}"
+    );
+}
+
+/// **The way out of a refused default is a `T?`** (D7): an option was never
+/// a `comptime`, so *write `let` instead* is not something its author can do.
+/// A list of text has no form a default crosses in.
+#[test]
+fn a_refused_default_offers_an_optional_not_a_let() {
+    let source = "fn names() -> Vec[String] {\n\
+         \x20   return [\"a\", \"b\"]\n\
+         }\n\
+         \n\
+         fn count(label: ref String; xs: ref Vec[String] = names()) -> i64 {\n\
+         \x20   return xs.len()\n\
+         }\n\
+         \n\
+         fn main() {\n\
+         \x20   println(f\"{count(\"a\")}\")\n\
          }\n";
     let parsed = parse_to_ast(source).expect("the source parses");
     let own = common::infer(&parsed);
@@ -336,15 +387,57 @@ fn a_refused_default_offers_an_optional_not_a_let() {
     assert_eq!(found.len(), 1, "{found:#?}");
     let finding = &found[0];
     assert_eq!(finding.code, "NK1127");
-    assert!(
-        finding.notes.iter().any(|n| n.contains("`.seconds()`")),
-        "{finding:#?}"
-    );
     let help = finding.help.clone().unwrap_or_default();
     assert!(
-        help.contains("`timeout` a `T?`") && !help.contains("`let"),
+        help.contains("make it a `T?`") && !help.contains("`let"),
         "{help}"
     );
+}
+
+/// **A span of time computed while the program is built is its constructor
+/// over its parts** (ADR-318 D5, ADR-321 D1): `30.seconds()` runs from
+/// `std`'s Rust half, and the `const` is `time::Duration::new(30, 0)`.
+#[test]
+fn a_duration_comptime_is_written_as_its_constructor() {
+    let source = "use std::time\n\
+         \n\
+         comptime T: time::Duration = 90.seconds()\n\
+         \n\
+         fn main() {\n\
+         \x20   println(f\"{T.in_minutes()} {T.in_seconds()}\")\n\
+         }\n";
+    let parsed = parse_to_ast(source).expect("the source parses");
+    let rust = emit_program_reading(&parsed, Build::default(), &common::reads())
+        .expect("the source lowers")
+        .rust;
+    assert!(
+        rust.contains("const T: time::Duration = time::Duration::new(90, 0);"),
+        "{rust}"
+    );
+    assert_eq!(ran(source), "1 90\n");
+}
+
+/// **And an option's default of the type** (ADR-318 D3, D5): the ledger
+/// records the constructor, and a call that leaves the option out gets it.
+#[test]
+fn a_duration_default_is_recorded_and_handed_to_the_call() {
+    let source = "use std::time\n\
+         \n\
+         fn wait(label: ref String; timeout: time::Duration = 250.millis()) -> String {\n\
+         \x20   return f\"{label} {timeout.in_millis()}\"\n\
+         }\n\
+         \n\
+         fn main() {\n\
+         \x20   println(wait(\"a\"))\n\
+         \x20   println(wait(\"b\"; timeout: 2.seconds()))\n\
+         }\n";
+    let parsed = parse_to_ast(source).expect("the source parses");
+    let ledger = common::infer(&parsed).render();
+    assert!(
+        ledger.contains("timeout: time::Duration = time::Duration::new(0, 250000000)"),
+        "{ledger}"
+    );
+    assert_eq!(ran(source), "a 250\nb 2000\n");
 }
 
 /// **A view of a list takes a list as its default** (ADR-318 D4): computed or

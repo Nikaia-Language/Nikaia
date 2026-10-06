@@ -28,6 +28,11 @@ pub enum BuildValue {
     Tuple(Vec[BuildValue]),
     /// A value of a `struct` this program declares, by field name.
     Struct { name: String, fields: collections::BTreeMap[String, BuildValue] },
+    /// **A value of a `std` type whose parts this compiler cannot walk**,
+    /// held as its ledger's `constant` constructor and the parts it takes
+    /// ([ADR-318](../../../../docs/specification/adr/adr-318.md) D5):
+    /// `time::Duration::new` with `secs` and `nanos`.
+    Constant { constructor: String, parts: Vec[BuildValue] },
 }
 
 /// **Two values and an operator** - integers by `integers.nika`, floats as

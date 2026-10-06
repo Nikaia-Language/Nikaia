@@ -4,6 +4,30 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.534] — 2026-10-06
+
+**A span of time can be computed while the program is built: `comptime T:
+time::Duration = 30.seconds()`, and an option's default of the type**
+(ADR-318 D3–D5 with ADR-321, #374).
+- The ledger's type entries carry the `constant` column (Part III 13.5).
+  `std.contracts` gives `time::Duration` `constant =
+  "time::Duration::new(secs: u64, nanos: u32)"`, and adds the constructor's own
+  entry, which is not `pub`.
+- A build-time run takes such a value apart with `std`'s Rust half
+  (`nikaia_std::build_time::Parts`) and hands it back as the constructor and
+  its parts. The compiler holds it as a new build-time value,
+  `BuildValue::Constant`.
+- A `comptime` of the type lowers to `const T: time::Duration =
+  time::Duration::new(30, 0);`.
+- A default of the type is recorded in the ledger as `timeout: time::Duration =
+  time::Duration::new(30, 0)`. A call that leaves the option out gets that
+  value, in the same package or in another one.
+- `30.seconds()` as a default was `NK1127` until now. A list of text is still
+  refused as a default, and the help still offers a `T?`.
+
+Every bench and example lowers byte for byte as before. `std.contracts`
+changes only in `time::Duration`'s entries.
+
 ## [0.0.533] — 2026-10-05
 
 **The specification's blocks and the module tests are checked through a

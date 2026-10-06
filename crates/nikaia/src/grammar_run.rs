@@ -388,6 +388,16 @@ fn shapes(parsed: &Parsed) -> Shapes {
     let mut shapes = Shapes {
         enums: Default::default(),
         structs: Default::default(),
+        // **`std`'s types that cross through a constructor** (ADR-318 D5):
+        // the column is `std`'s, so its ledger is the one read.
+        constants: crate::contracts::std_ledger()
+            .types
+            .iter()
+            .filter_map(|(name, entry)| {
+                let constructor = entry.constant.split('(').next()?.trim();
+                (!constructor.is_empty()).then(|| (name.clone(), constructor.to_string()))
+            })
+            .collect(),
     };
     for item in &parsed.program.items {
         match &item.node {
@@ -493,6 +503,20 @@ fn read(text: &str, at: &mut Cursor<'_>) -> Result<crate::build_time::Value, Wal
             })?)
         }
         "b" => crate::build_time::Value::Bool(word(text, at) == "true"),
+        // **A `std` type as its constructor and the parts it takes**
+        // (ADR-318 D5): `(c time::Duration::new (i 30) (i 0))`.
+        "c" => {
+            let constructor = word(text, at);
+            let mut parts = Vec::new();
+            loop {
+                skip_blanks(at);
+                match at.peek() {
+                    Some((_, ')')) | None => break,
+                    _ => parts.push(read(text, at)?),
+                }
+            }
+            crate::build_time::Value::Constant { constructor, parts }
+        }
         "v" => {
             let ty = word(text, at);
             skip_blanks(at);

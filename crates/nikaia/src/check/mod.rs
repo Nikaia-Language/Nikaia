@@ -2293,6 +2293,15 @@ fn rust_constant_type(ty: &Ty) -> Option<String> {
             "i32" | "i64" | "u8" | "u32" | "u64" | "f32" | "f64" | "bool" | "char" => {
                 Some(name.clone())
             }
+            // **A `std` type its ledger gives a `constant` constructor**
+            // (ADR-318 D5) is a `const` too: the constructor is a `const fn`.
+            _ if crate::contracts::std_ledger()
+                .types
+                .get(name)
+                .is_some_and(|entry| !entry.constant.is_empty()) =>
+            {
+                Some(name.clone())
+            }
             _ => None,
         },
         // **`&str` is the crossed form of text**
@@ -2472,6 +2481,8 @@ fn rust_array_type(items: &[build_time::Value]) -> Option<String> {
             // stands is inside a `Fixed` — where the two halves are written
             // into two tables rather than beside each other.
             build_time::Value::Tuple(_) => return None,
+            // **A `std` type's constructor names it** (ADR-318 D5).
+            build_time::Value::Constant { constructor, .. } => constructed(constructor)?,
         };
         match &found {
             // `[1, 3_000_000_000]` is an `i64` array and not a mixed one: the
@@ -2535,7 +2546,22 @@ fn rust_value(value: &build_time::Value) -> Option<String> {
             }
             Some(format!("[{}]", written.join(", ")))
         }
+        // **The ledger's constructor over the parts** (ADR-318 D5):
+        // `time::Duration::new(30, 0)`, a `const fn` below.
+        build_time::Value::Constant { constructor, parts } => {
+            let mut written = Vec::with_capacity(parts.len());
+            for held in parts {
+                written.push(rust_value(held)?);
+            }
+            Some(format!("{constructor}({})", written.join(", ")))
+        }
     }
+}
+
+/// The type a `constant` constructor makes: its path without the last
+/// segment, `time::Duration` for `time::Duration::new`.
+fn constructed(constructor: &str) -> Option<String> {
+    constructor.rsplit_once("::").map(|(ty, _)| ty.to_string())
 }
 
 /// Why a `with` was refused — the four shapes
@@ -23140,6 +23166,7 @@ impl<'a> Checker<'a> {
                 Some(build_time::Value::Struct { name, .. }) => Some(name.clone()),
                 // …and a variant is its `enum`'s name, one shape over.
                 Some(build_time::Value::Variant { ty, .. }) => Some(ty.clone()),
+                Some(build_time::Value::Constant { constructor, .. }) => constructed(constructor),
                 None => None,
             },
         };

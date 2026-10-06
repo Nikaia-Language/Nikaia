@@ -44,6 +44,9 @@ pub struct FieldShape {
 pub struct Shapes {
     pub enums: collections::BTreeMap[String, Vec[VariantShape]],
     pub structs: collections::BTreeMap[String, Vec[FieldShape]],
+    /// The `std` types whose ledger names a `constant` constructor, by type:
+    /// `time::Duration` to `time::Duration::new` (ADR-318 D5).
+    pub constants: collections::BTreeMap[String, String],
 }
 
 /// A result with no form a `const` can hold: the type, and why.
@@ -114,6 +117,19 @@ fn dump_named(shapes: ref Shapes, ty: ref Ty, name: ref String, args: ref Vec[Ty
     // decoder then parses, and what a `const` is written from.
     if name == "f32" || name == "f64" {
         out.push_str(f"{pad}out.push_str(&format!(\"(f {{:?}})\", {expr}));\n")
+        return null
+    }
+    // **A `std` type whose parts this compiler cannot walk** is written as
+    // its constructor and the parts `std`'s Rust half takes it apart into
+    // (ADR-318 D5): `(c time::Duration::new (i 30) (i 0))`.
+    if shapes.constants.contains_key(name) {
+        let constructor = shapes.constants[name] ?? return uncrossable(ty, NO_FORM)
+        out.push_str(f"{pad}out.push_str(\"(c {constructor}\");\n")
+        out.push_str(f"{pad}for __nikaia_part in nikaia_std::build_time::Parts::parts(&{expr}) {{\n")
+        out.push_str(f"{pad}    out.push(' ');\n")
+        out.push_str(f"{pad}    out.push_str(&__nikaia_part);\n")
+        out.push_str(f"{pad}}}\n")
+        out.push_str(f"{pad}out.push(')');\n")
         return null
     }
     if shapes.enums.contains_key(name) {

@@ -395,6 +395,9 @@ fn literal_of(value: &Value, parsed: &Parsed) -> Option<Expr> {
             at: 0,
         }),
         Value::Tuple(parts) => Some(Expr::Tuple(all(parts)?)),
+        // **A `std` type's constructor is not a program's to write**
+        // (ADR-318 D5): a later run that reads one is answered without it.
+        Value::Constant { .. } => None,
         Value::Struct { name: ty, fields } => Some(Expr::StructLit {
             name: name(ty),
             fields: fields

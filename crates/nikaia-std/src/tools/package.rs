@@ -4719,6 +4719,7 @@ pub enum BuildValue {
     Variant { ty: String, variant: String, payload: Vec<BuildValue> },
     Tuple(Vec<BuildValue>),
     Struct { name: String, fields: collections::BTreeMap<String, BuildValue> },
+    Constant { constructor: String, parts: Vec<BuildValue> },
 }
 
 pub fn operated(op: &BinaryOp, left: &BuildValue, right: &BuildValue) -> Option<BuildValue> {
@@ -6508,6 +6509,7 @@ pub struct FieldShape {
 pub struct Shapes {
     pub enums: collections::BTreeMap<String, Vec<VariantShape>>,
     pub structs: collections::BTreeMap<String, Vec<FieldShape>>,
+    pub constants: collections::BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -6558,6 +6560,16 @@ fn dump_named(shapes: &Shapes, ty: &Ty, name: &str, args: &[Ty], expr: &str, dep
     if (name == "Vec" || name == "List" || name == ARRAY) && !args.is_empty() { return dump_run(shapes, nikaia_std::index::get(&args, 0), expr, depth, out); }
     if name == "f32" || name == "f64" {
         out.push_str(&format!("{}out.push_str(&format!(\"(f {{:?}})\", {}));\n", pad, expr));
+        return None;
+    }
+    if shapes.constants.contains_key(name) {
+        let constructor = match *nikaia_std::index::get(&shapes.constants, name) { Some(__nikaia_value) => __nikaia_value, None => return uncrossable(ty, NO_FORM) };
+        out.push_str(&format!("{}out.push_str(\"(c {}\");\n", pad, constructor));
+        out.push_str(&format!("{}for __nikaia_part in nikaia_std::build_time::Parts::parts(&{}) {{\n", pad, expr));
+        out.push_str(&format!("{}    out.push(' ');\n", pad));
+        out.push_str(&format!("{}    out.push_str(&__nikaia_part);\n", pad));
+        out.push_str(&format!("{}}}\n", pad));
+        out.push_str(&format!("{}out.push(')');\n", pad));
         return None;
     }
     if shapes.enums.contains_key(name) { return dump_variants(shapes, ty, name, expr, depth, out); }
@@ -8727,7 +8739,7 @@ fn function_key(entry: &mut FnContract, name: &str, key: &str, value: &str, n: i
 }
 
 fn type_key(entry: &mut TypeContract, key: &str, value: &str, n: i64) -> Result<(), nikaia_std::error::Thrown<Refused>> {
-    if key == "pub" { entry.public = value == "true"; } else if key == "crosses" { if value == "true" { entry.crosses = Crosses::May; } else if value == "false" { entry.crosses = Crosses::MayNot; } else { return Err(nikaia_std::error::throwing(Refused::Because(format!("line {}: `crosses` is `true` or `false`, not `{}` - and leaving the line out is the third answer", n, value)), &"type_key")); } } else if key == "compares" { entry.compares = value.trim() == "true"; } else if key == "copies" { entry.copies = value.trim() == "true"; } else if key == "tethered" { entry.tethered = entries(value, n)?; } else if key == "touches" { entry.touches = entries(value, n)?; } else if key == "iterates" {
+    if key == "pub" { entry.public = value == "true"; } else if key == "crosses" { if value == "true" { entry.crosses = Crosses::May; } else if value == "false" { entry.crosses = Crosses::MayNot; } else { return Err(nikaia_std::error::throwing(Refused::Because(format!("line {}: `crosses` is `true` or `false`, not `{}` - and leaving the line out is the third answer", n, value)), &"type_key")); } } else if key == "compares" { entry.compares = value.trim() == "true"; } else if key == "copies" { entry.copies = value.trim() == "true"; } else if key == "tethered" { entry.tethered = entries(value, n)?; } else if key == "constant" { entry.constant = unquoted(value, n)?; } else if key == "touches" { entry.touches = entries(value, n)?; } else if key == "iterates" {
         let said = unquoted(value, n)?;
         if said != "throws" { return Err(nikaia_std::error::throwing(Refused::Because(format!("line {}: `iterates` is `throws` and nothing else, not `{}` - a step that cannot fail says nothing", n, said)), &"type_key")); }
         entry.iterates_fallibly = true;
@@ -9839,6 +9851,7 @@ fn type_text(contract: &TypeContract) -> String {
     if contract.iterates_fallibly { out.push_str("iterates = \"throws\"\n"); }
     if !contract.touches.is_empty() { out.push_str(&format!("touches = [{}]\n", quoted_all(&contract.touches))); }
     if !contract.tethered.is_empty() { out.push_str(&format!("tethered = [{}]\n", quoted_all(&contract.tethered))); }
+    if !contract.constant.is_empty() { out.push_str(&format!("constant = \"{}\"\n", contract.constant)); }
     out
 }
 
@@ -20435,10 +20448,11 @@ pub struct TypeContract {
     pub copies: bool,
     pub touches: Vec<String>,
     pub tethered: Vec<String>,
+    pub constant: String,
 }
 
 impl TypeContract {
-    pub fn empty() -> TypeContract { TypeContract { public: false, fields: vec![], variants: vec![], crosses: Crosses::Undecided, iterates_fallibly: false, compares: false, copies: false, touches: vec![], tethered: vec![] } }
+    pub fn empty() -> TypeContract { TypeContract { public: false, fields: vec![], variants: vec![], crosses: Crosses::Undecided, iterates_fallibly: false, compares: false, copies: false, touches: vec![], tethered: vec![], constant: String::from("") } }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

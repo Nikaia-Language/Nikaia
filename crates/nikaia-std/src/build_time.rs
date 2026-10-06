@@ -189,3 +189,20 @@ mod tests {
         assert_eq!(LEFT.load(Ordering::Relaxed), 98);
     }
 }
+
+/// **A value the compiler cannot walk, taken apart into what its ledger's
+/// `constant` constructor takes** ([ADR-318](../../../docs/specification/adr/adr-318.md)
+/// D5): each part already in the form the compiler reads back, `(i 30)`.
+pub trait Parts {
+    fn parts(&self) -> Vec<String>;
+}
+
+/// `time::Duration::new(secs: u64, nanos: u32)`.
+impl Parts for std::time::Duration {
+    fn parts(&self) -> Vec<String> {
+        vec![
+            format!("(i {})", self.as_secs()),
+            format!("(i {})", self.subsec_nanos()),
+        ]
+    }
+}
