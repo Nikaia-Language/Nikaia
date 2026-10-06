@@ -4,6 +4,14 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.587] — 2026-10-06
+
+**Part I 6.2's three places a `Shared` is written no longer wrap one twice**
+(#484, decided with the owner).
+- `connect` returned a `Shared`, so `keep(Shared(connect(url)))` and the field
+  beside it were `NK1123`. `connect` now returns the plain value, and the result
+  example is `fn shared(url) -> Shared[Connection] { return Shared(connect(url)) }`.
+
 ## [0.0.586] — 2026-10-06
 
 **Supervision** (ADR-328, #95).

@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part I: The Language Core**
-**Version:** 0.0.586 (Draft)
+**Version:** 0.0.587 (Draft)
 **Date:** 2026-10-06
 
 ---
@@ -1823,8 +1823,8 @@ where the value is put into it.
 ```nika
 keep(Shared(connect(url)))                      // an argument
 let p = Pool { db: Shared(connect(url)) }       // a field of a literal
-fn connect(url: String) -> Shared[Connection] {
-    return Shared(Connection { url: url })      // a result
+fn shared(url: String) -> Shared[Connection] {
+    return Shared(connect(url))                 // a result
 }
 ```
 
