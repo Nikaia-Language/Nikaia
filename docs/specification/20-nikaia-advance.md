@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part II: Advanced Features & Metaprogramming**
-**Version:** 0.0.592 (Draft)
+**Version:** 0.0.593 (Draft)
 **Date:** 2026-10-06
 
 ---
@@ -236,8 +236,13 @@ error: `println` cannot format a `Vec[u8]`
      = unrolling `T::fields` for `User`, at field `avatar`
 ```
 
-A reflected field answers `.name`, its name as text, and `.of(value)`, what it
-holds on that value. A reflected variant answers `.name` and `.is(value)`,
+A reflected field answers `.name`, its name as text, `.of(value)`, what it
+holds on that value, `.ty`, its type as a `meta::Type`, and `.doc`, the `///`
+lines before it as text ([ADR-329](adr/adr-329.md)). `.name`, `.ty` and `.doc`
+are constants of each unrolled turn. A field of a struct type is a `Record` of
+that struct's fields, described the same way; a type already being described
+further up, and an `enum`, is `Named`. `.doc` is empty where there is none and
+where the build has no source of the type's package. A reflected variant answers `.name` and `.is(value)`,
 whether the value is that variant; what a variant carries is read with a
 `match`. Any other member is refused with `NK1180`. `T::fields` without a
 `Struct` bound, or `T::variants` without an `Enum` bound, is refused with

@@ -4,6 +4,18 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.593] — 2026-10-06
+
+**A reflected field answers `.ty` and `.doc`** (ADR-329, #121).
+- `.ty` is the field's type as a `meta::Type`, a constant of each unrolled turn;
+  a struct is a `Record` of its fields, a type already being described or an
+  `enum` is `Named`. `.doc` is the field's `///` text. Changes ADR-304 D4 and
+  `NK1180`.
+- What an API description needs beyond that: a route's facts are options of
+  the call that makes it, and a format is a type of its own. Annotations, for
+  wire names, examples and deprecated fields, are decided in #496.
+- Not built.
+
 ## [0.0.592] — 2026-10-06
 
 **A grammar's build-time project holds the package's other files** (ADR-321
