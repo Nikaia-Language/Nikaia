@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part III: Tooling, Ecosystem & Interoperability**
-**Version:** 0.0.575 (Draft)
+**Version:** 0.0.576 (Draft)
 **Date:** 2026-10-06
 
 ---
@@ -669,7 +669,10 @@ The rule reaches as far as the Rust signature is true. Where the compiler reads 
   picks: a Nikaia `String` crosses to Rust `&str`
   for free, and to Rust `String` only by a `.clone()` the program writes
 * Rust `Option<T>` -> Nikaia `T?` (Nullable)
-* Rust `Vec<T>` -> Nikaia `Vec[T]`, and `HashMap<K, V>` -> `HashMap[K, V]`
+* Rust `Vec<T>` -> Nikaia `Vec[T]`, and `HashMap<K, V>` -> `HashMap[K, V]`: a
+  Nikaia list crosses to Rust `&[T]` for free, and to a Rust `Vec<T>` the callee
+  owns only by a copy the program writes, which leaves the task's memory budget
+  ([ADR-327](adr/adr-327.md) D8)
 * Rust `Rc<T>` **or** `Arc<T>` -> Nikaia `Shared[T]`. The compiler decides per
   value which it becomes. A `Shared[T]` handed to a call whose body the compiler
   cannot see is refused; a lock is refused by the same rule. The way across is
@@ -908,8 +911,7 @@ while it does.
 **`http` — a package, not a module of `std`**
 An HTTP/1.1 server: `GET` and `POST`, bodies by `Content-Length`, one answer per connection. Keep-alive, chunked bodies, TLS, HTTP/2 and a client are not built. `http` is not part of `std`: it is a package reached by path, `http = { path = "../http" }`.
 
-* **At `user_parallelism = no`:** the server runs on a single-threaded event loop.
-* **At `yes`:** the server runs on a multi-threaded work-stealing executor.
+`http::listen` stands on `net::serve`: each connection is a task, on one thread at `user_parallelism = no` and on the pool at `yes`. A panic in a handler ends its connection with `500` where the response has not begun, and the server goes on.
 
 ```nika
 use http
@@ -1250,6 +1252,12 @@ An untrusted map is seeded randomly, so **its iteration order is not stable betw
   `connect`, `accept`, `read`, `write`. Everything that waits gives the thread up,
   so one thread serves many connections at either setting of `user_parallelism`.
   **What comes off a socket is `untrusted`.**
+  `net::serve(at) fn(conn) { … }` accepts connections and runs each in a task of
+  its own; every protocol, `http` among them, stands on it ([ADR-326](adr/adr-326.md)).
+  No number of connections is configured: a strategy, `net::Admission`, decides
+  beside the hot path how many are open, from what the runtime counts; `std`
+  provides an adaptive one and a package may provide another. At the system's
+  ceiling or over the limit the server stops accepting, and never ends for it.
 
 * **`std::http1`**: HTTP/1.1's **text half** — where a head ends, what its lines
   say, which header the client sent, what the query string says, and where the
@@ -1328,19 +1336,19 @@ An overflow is in this list at **every** build. Where a program means to wrap or
 
 A constant that cannot fit the type it is given is refused with `NK1116`, and a division whose divisor is a constant zero is refused with `NK1118`. Neither takes a case out of the list: a divisor the compiler cannot evaluate is divided by at run time, and a zero there is unrecoverable. The compile-time refusal replaces the run-time message only where no program had to run to know it (C.1).
 
-A panic depends on **two** of the three build options (13.3), `user_parallelism` and `target`:
+A panic depends on where it happens and on the `target`:
 
-| `user_parallelism` | Panic Behavior | Consequence |
+| Where | Panic Behavior | Consequence |
 | :--- | :--- | :--- |
-| **`no`** | **Abort** | The process terminates immediately. The stack is not unwound. |
-| **`yes`** | **Task Poisoning** | Only the affected task is terminated. The worker thread catches the panic (fault isolation). Resources (`SharedMut[T]`) held by the task are marked poisoned, so no other thread reads state a half-finished task left behind. |
+| **a task** | **The task ends** | At both values of `user_parallelism` ([ADR-326](adr/adr-326.md) D4). Its cleanups run, and the program goes on. A value a lock held for it is poisoned and never read (Part I 6.3). |
+| **`main`** | **The program ends** | The stack unwinds and the cleanups run. |
 
 **One end that is not a panic and is not success either.** A `cleanup-deadline` that expires ends the program with **exit status 70** (`EX_SOFTWARE`) and a message naming every resource whose cleanup was cut off, delivered on the panic path: standard error and the panic hook. No build option and no runtime configuration turns that into a `0`. `cleanup-deadline = "0"` does not drain and therefore never expires.
 
 The `target` decides independently: on `wasm32-unknown` a panic is a **trap** and the
 module is done, whatever `user_parallelism` says. A build with `artifact = "c-library"` unwinds instead (15.1): every entry point catches the panic and returns `E_PANICKED`, and the library is poisoned until `shutdown` and `init` have run.
 
-**The third build option changes nothing on this page.** `reentrancy-check` (13.3) decides whether a compiled program notices a lock taken while a lock is held. Taking one is refused at build time, so in a program the compiler accepted the check cannot fire; if it fires, the refusal has a hole. The re-entrancy panic Part II 12.2 describes at `user_parallelism = no` is that check, so the table above has no row for it. Poisoning happens only in the `yes` row: at `no` a panic is an abort, and no task survives to be poisoned.
+**The third build option changes nothing on this page.** `reentrancy-check` (13.3) decides whether a compiled program notices a lock taken while a lock is held. Taking one is refused at build time, so in a program the compiler accepted the check cannot fire; if it fires, the refusal has a hole. The re-entrancy panic Part II 12.2 describes at `user_parallelism = no` is that check, so the table above has no row for it. 
 
 On **every** panic path, including the abort and the WASM trap, the application's **panic hook** runs first (Part I, 7.2): one global `sync` handler receiving message, location and stack trace, for crash dumps and reports. It runs before aborting even under `panic = abort`.
 

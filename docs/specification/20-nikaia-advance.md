@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part II: Advanced Features & Metaprogramming**
-**Version:** 0.0.575 (Draft)
+**Version:** 0.0.576 (Draft)
 **Date:** 2026-10-06
 
 ---
@@ -590,6 +590,9 @@ fn main() {
 ## Chapter 12: Thread Safety and Synchronization
 
 At `user_parallelism = yes` user code runs on several CPU cores at once. The rules of this chapter keep shared data intact.
+
+
+**A task has a memory budget** ([ADR-327](adr/adr-327.md)). What a task allocates comes from a block of its own, and what a door of a `SharedMut` or the construction of a `Shared` allocates comes from that value's block. A full block is a panic in the task, which ends it; a shared value whose block is full is poisoned (Part I 6.3). How large a block is, a strategy of the runtime decides; a package may provide another. Memory a Rust crate or a C library allocates for itself is in no block.
 
 ### 12.1. The `sync` Keyword (CPU Constraints)
 Every function in Nikaia may pause unless it says otherwise. The `sync` keyword marks a function that **never pauses** and is never moved between threads mid-execution.

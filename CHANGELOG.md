@@ -4,6 +4,25 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.576] — 2026-10-06
+
+**Many connections at once, and what a crash leaves behind** (ADR-326, ADR-327,
+#121).
+- `net::serve(at) fn(conn) { … }` accepts connections, a task each; `http`
+  stands on it, and so can any other protocol.
+- No connection count is configured: an exchangeable `net::Admission` strategy
+  decides beside the hot path; `std`'s adapts to the load. At the ceiling the
+  server stops accepting and never ends. Changes ADR-289 D13.
+- A panic in a task ends that task at both values of `user_parallelism`; in
+  `main` it ends the program (Part III A.2). `http` answers `500`.
+- A value a crashed task left poisoned is never read: a door to it panics, and a
+  `SharedMut::supervised(fn { … })` value is rebuilt.
+- Direction, with costs still to measure: Nikaia allocates its own memory; every
+  task and shared value has a block that is its budget, sized by a strategy; a
+  full block ends the task or poisons the value; an owned `Vec` toward Rust is a
+  copy.
+- Not built.
+
 ## [0.0.575] — 2026-10-06
 
 **A negation is a site too** (ADR-314 D5, #421).

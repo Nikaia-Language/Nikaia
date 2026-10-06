@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part I: The Language Core**
-**Version:** 0.0.575 (Draft)
+**Version:** 0.0.576 (Draft)
 **Date:** 2026-10-06
 
 ---
@@ -1890,6 +1890,13 @@ let n = protokoll.access fn(log) { log.len() }
 straight through: no I/O, and no second lock. The compiler checks both
 (Part II, 12.2 and 12.3).
 
+**A value a crashed task left is never read** ([ADR-327](adr/adr-327.md)). A task
+that panics while it holds a lock poisons the value. A door to a poisoned value
+panics in the task that opens it. A value made with
+`SharedMut::supervised(fn { … })` is rebuilt instead: the runtime calls the
+function again, puts its result in place, and the holders keep their handle; how
+often is bounded as a supervisor's restarts are (Part II 12.8).
+
 **A value taken out of a lock is stamped.** `kasse.get()` is a `Seen[i64]`,
 and so is what `access` computes. A `Seen` reads like the value it carries: a
 program prints it, compares it, sends it in a response, and hands it to any
@@ -2510,8 +2517,9 @@ the message names as the cleanup of the value; `NK2701` is the loop's step.
 
 ### 7.2. Unrecoverable Errors (`panic`)
 An unrecoverable error is a logic bug, such as reading the tenth item of a
-list of five. The program stops. Where the machine cannot unwind, the process
-ends.
+list of five. A panic in a task ends that task, and the program goes on; a panic
+in `main` ends the program (Part III A.2). Where the machine cannot unwind, the
+process ends.
 
 **The Panic Hook (`std::panic::on_panic`)**
 An abort runs no normal cleanup. Before the process dies, or before the crashed
