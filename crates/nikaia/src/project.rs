@@ -1077,16 +1077,18 @@ pub fn lower_reading(
                             .unwrap_or(&program.contracts),
                         None => &promised,
                     };
-                    check(
-                        &unit.parsed,
-                        contracts,
-                        &modules,
-                        around,
-                        &unit.path,
-                        &unit.source,
-                        &settings.user_parallelism,
-                        &settings.refuted_claims,
-                    )?;
+                    crate::proofs::in_file(&unit.path, &unit.source, || {
+                        check(
+                            &unit.parsed,
+                            contracts,
+                            &modules,
+                            around,
+                            &unit.path,
+                            &unit.source,
+                            &settings.user_parallelism,
+                            &settings.refuted_claims,
+                        )
+                    })?;
                 }
                 Ok(())
             });
@@ -1869,16 +1871,31 @@ pub fn write_proofs(root: &Path, book: Option<&crate::proofs::Book>, locked: boo
             .with_context(|| format!("writing {}", root.join(crate::proofs::FILE).display()));
     }
     if book.searched > 0 || !book.as_recorded(root) {
+        // **Where the questions were asked** (D22), the first few: the file
+        // and the function, so the change that asked them can be found.
+        const SHOWN: usize = 5;
+        let mut places: String = book
+            .searched_at
+            .iter()
+            .take(SHOWN)
+            .map(|place| format!("\n  asked at {}", place.shown(root)))
+            .collect();
+        if book.searched_at.len() > SHOWN {
+            places.push_str(&format!(
+                "\n  and at {} other places",
+                book.searched_at.len() - SHOWN
+            ));
+        }
+        let why = match book.searched {
+            0 => "it holds entries no question asked".to_string(),
+            1 => "1 question was searched".to_string(),
+            n => format!("{n} questions were searched"),
+        };
         return Err(anyhow!(
             "--locked: {} does not hold the prover's answers for these sources \
-             ({} {} searched).\n\
+             ({why}).{places}\n\
              Run `nikaia build` and commit `{}`.",
             root.join(crate::proofs::FILE).display(),
-            book.searched,
-            match book.searched {
-                1 => "question was",
-                _ => "questions were",
-            },
             crate::proofs::FILE
         ));
     }

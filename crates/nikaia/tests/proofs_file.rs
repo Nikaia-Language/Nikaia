@@ -126,6 +126,9 @@ fn locked_fails_on_a_file_that_does_not_answer_the_questions() {
     let stderr = String::from_utf8_lossy(&refused.stderr).to_string();
     assert!(!refused.status.success(), "{stderr}");
     assert!(stderr.contains("commit `nikaia.proofs`"), "{stderr}");
+    // D22: the message names where the question was asked.
+    assert!(stderr.contains("asked at src/main.nika"), "{stderr}");
+    eprintln!("{stderr}");
     assert_eq!(
         std::fs::read_to_string(dir.join("nikaia.proofs")).expect("left alone"),
         missing,
@@ -141,4 +144,6 @@ fn locked_fails_on_a_file_that_does_not_answer_the_questions() {
     let stale = build(&["build", "--no-cache", "--locked"]);
     let _ = std::fs::remove_dir_all(&dir);
     assert!(!stale.status.success());
+    let stderr = String::from_utf8_lossy(&stale.stderr);
+    assert!(stderr.contains("entries no question asked"), "{stderr}");
 }

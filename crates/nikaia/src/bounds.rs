@@ -185,7 +185,10 @@ pub fn proven(
     }
     let node_of = |e: &Expr| value_node(e) as i64;
     for item in bodies {
-        let Item::Fn { args, body, .. } = &item.node else {
+        let Item::Fn {
+            name, args, body, ..
+        } = &item.node
+        else {
             continue;
         };
         out.indices.extend(
@@ -196,22 +199,25 @@ pub fn proven(
         // **The aggressive walk** (`tools/bounds_walk.nika`), with the
         // solver behind a copy of its arena that grows with it.
         let copy = std::cell::RefCell::new(SolverCopy::default());
-        let walked = walk::bounds_aggressive(
-            args,
-            body,
-            crate::emit::nonnegative_names(body)
-                .into_iter()
-                .map(|s| parsed.text(s).to_string())
-                .collect(),
-            &context,
-            &parsed.program,
-            &parsed.interner,
-            &node_of,
-            &|arena, facts, goal| {
-                asked_of(&copy, arena, facts, goal, crate::proofs::ask)
-                    == crate::proofs::Asked::Proved
-            },
-        );
+        let function = name.map(|n| parsed.text(n).to_string()).unwrap_or_default();
+        let walked = crate::proofs::in_function(&function, item.span.start as usize, || {
+            walk::bounds_aggressive(
+                args,
+                body,
+                crate::emit::nonnegative_names(body)
+                    .into_iter()
+                    .map(|s| parsed.text(s).to_string())
+                    .collect(),
+                &context,
+                &parsed.program,
+                &parsed.interner,
+                &node_of,
+                &|arena, facts, goal| {
+                    asked_of(&copy, arena, facts, goal, crate::proofs::ask)
+                        == crate::proofs::Asked::Proved
+                },
+            )
+        });
         out.indices
             .extend(walked.indices.into_iter().map(|n| n as usize));
         out.arithmetic

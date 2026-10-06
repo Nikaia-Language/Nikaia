@@ -4,6 +4,16 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.570] — 2026-10-06
+
+**`--locked` says where a question it would have searched was asked** (ADR-270
+D22, #448).
+- The message lists up to five places, as `src/main.nika:3, in `f``: the file,
+  and the function and its line for the bounds walk's questions. The prover's
+  passes ask for a whole file at once, so theirs name the file.
+- A file that holds only entries no question asked now says so, rather than
+  *0 questions were searched*.
+
 ## [0.0.569] — 2026-10-06
 
 **The tools below Nikaia take no orders from the project** (ADR-325, #480).

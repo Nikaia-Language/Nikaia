@@ -915,18 +915,20 @@ impl Program {
             if unit.package.is_some() {
                 continue;
             }
-            let body = crate::emit::emit_module_body_at(
-                &unit.parsed,
-                &beside,
-                build,
-                trust.provenance,
-                &self.contracts,
-                &self.described,
-                // The entry is the only file ADR-303 D4's generated `fn main`
-                // may be written from.
-                at == 0,
-                reads,
-            )
+            let body = crate::proofs::in_file(&unit.path, &unit.source, || {
+                crate::emit::emit_module_body_at(
+                    &unit.parsed,
+                    &beside,
+                    build,
+                    trust.provenance,
+                    &self.contracts,
+                    &self.described,
+                    // The entry is the only file ADR-303 D4's generated `fn main`
+                    // may be written from.
+                    at == 0,
+                    reads,
+                )
+            })
             // **A refusal from the lowering gets its line here**
             // ([ADR-171](../../../docs/specification/adr/adr-171.md) D2), which
             // is the one place that has both the byte and the file: the

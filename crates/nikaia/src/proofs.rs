@@ -18,7 +18,7 @@
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use nikaia_logic::{
     Answer, Budget, FourierMotzkin, Model, Normal, Query, Solver, certificate_of, certificate_text,
@@ -70,10 +70,86 @@ pub struct Book {
     asked: BTreeSet<String>,
     /// How many questions were searched rather than read.
     pub searched: usize,
+    /// Where those questions were asked, for `--locked`'s message (D22).
+    pub searched_at: BTreeSet<Place>,
 }
 
 thread_local! {
     static BOOK: RefCell<Option<Book>> = const { RefCell::new(None) };
+    static IN_FILE: RefCell<Option<(PathBuf, String)>> = const { RefCell::new(None) };
+    static FUNCTION: RefCell<Option<(String, usize)>> = const { RefCell::new(None) };
+}
+
+/// **Where a question was asked** (D22): the file, and the function and its
+/// line where the asker knows them. The prover's passes ask for a whole file
+/// at once, so theirs name the file alone.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Place {
+    pub file: Option<PathBuf>,
+    pub line: Option<usize>,
+    pub function: Option<String>,
+}
+
+impl Place {
+    /// `src/main.nika:3, in `f``, the file shown relative to `root`.
+    pub fn shown(&self, root: &Path) -> String {
+        let file = self.file.as_ref().map(|file| {
+            let file = file
+                .strip_prefix(root)
+                .unwrap_or(file)
+                .display()
+                .to_string();
+            match self.line {
+                Some(line) => format!("{file}:{line}"),
+                None => file,
+            }
+        });
+        let function = self.function.as_ref().map(|name| format!("in `{name}`"));
+        match (file, function) {
+            (Some(file), Some(function)) => format!("{file}, {function}"),
+            (Some(file), None) => file,
+            (None, Some(function)) => function,
+            (None, None) => "a place the compiler did not name".to_string(),
+        }
+    }
+}
+
+/// `run` with every question it asks placed in `path`, whose text is
+/// `source`.
+pub fn in_file<R>(path: &Path, source: &str, run: impl FnOnce() -> R) -> R {
+    let outer = IN_FILE.with(|held| held.replace(Some((path.to_path_buf(), source.to_string()))));
+    let out = run();
+    IN_FILE.with(|held| held.replace(outer));
+    out
+}
+
+/// `run` with every question it asks placed in the function `name`, whose
+/// declaration starts at byte `at` of the file.
+pub fn in_function<R>(name: &str, at: usize, run: impl FnOnce() -> R) -> R {
+    let outer = FUNCTION.with(|held| held.replace(Some((name.to_string(), at))));
+    let out = run();
+    FUNCTION.with(|held| held.replace(outer));
+    out
+}
+
+/// Where the question being asked now stands.
+fn here() -> Place {
+    let function = FUNCTION.with(|held| held.borrow().clone());
+    IN_FILE.with(|held| {
+        let held = held.borrow();
+        let line = match (&*held, &function) {
+            (Some((_, source)), Some((_, at))) => {
+                let before = &source.as_bytes()[..(*at).min(source.len())];
+                Some(before.iter().filter(|b| **b == b'\n').count() + 1)
+            }
+            _ => None,
+        };
+        Place {
+            file: held.as_ref().map(|(path, _)| path.clone()),
+            line,
+            function: function.map(|(name, _)| name),
+        }
+    })
 }
 
 /// `run` with `book` open for every [`ask`] on this thread, and the book as
@@ -107,6 +183,7 @@ pub fn ask(query: &Query<'_>) -> Asked {
     BOOK.with(|held| {
         if let Some(book) = held.borrow_mut().as_mut() {
             book.searched += 1;
+            book.searched_at.insert(here());
             match entry {
                 Some(entry) => book.entries.insert(key, entry),
                 None => book.entries.remove(&key),
@@ -364,5 +441,23 @@ mod tests {
     #[test]
     fn without_a_book_a_question_is_searched() {
         ask_two();
+    }
+
+    /// **D22**: a searched question keeps where it was asked - the file, and
+    /// the function with its line where the asker said it.
+    #[test]
+    fn a_searched_question_keeps_its_place() {
+        let root = Path::new("/p");
+        let source = "// one\nfn f() {}\n";
+        let ((), book) = with_book(Book::default(), || {
+            in_file(&root.join("src/a.nika"), source, || {
+                in_function("f", source.find("fn").expect("the fn"), ask_two)
+            })
+        });
+        let shown: Vec<String> = book.searched_at.iter().map(|p| p.shown(root)).collect();
+        assert_eq!(shown, ["src/a.nika:2, in `f`"]);
+        let ((), book) = with_book(Book::default(), ask_two);
+        let shown: Vec<String> = book.searched_at.iter().map(|p| p.shown(root)).collect();
+        assert_eq!(shown, ["a place the compiler did not name"]);
     }
 }
