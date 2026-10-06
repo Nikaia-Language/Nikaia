@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part I: The Language Core**
-**Version:** 0.0.561 (Draft)
+**Version:** 0.0.562 (Draft)
 **Date:** 2026-10-06
 
 ---
@@ -180,7 +180,7 @@ is not moved, so a `let` over a place stays a view of it (6.5).
 **`with` is reserved for its construct**: a copy of a value with named fields
 changed, `p with { x: 1 }` (4.2).
 
-**`extern` and `unsafe` are reserved for their constructs**: an `extern "C"`
+**`extern` and `unsafe` are reserved for their constructs**: an `extern`
 block, and the `unsafe { … }` a call into one is written in (Part III 15.1).
 
 **`select` is reserved for its construct**: the block that races several

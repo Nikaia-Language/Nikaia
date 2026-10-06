@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part II: Advanced Features & Metaprogramming**
-**Version:** 0.0.561 (Draft)
+**Version:** 0.0.562 (Draft)
 **Date:** 2026-10-06
 
 ---
@@ -101,7 +101,7 @@ dependency the build reads the entries it derives from the dependency's
 sources, and refuses where they disagree with the ledger the dependency ships;
 a dependency without sources runs nothing at build time. No Rust code runs at
 build time but `std`'s, and no C: a function of a Rust crate or an
-`extern "C"` block is refused, and so is a function whose calls reach one. A
+`extern` block is refused, and so is a function whose calls reach one. A
 grammar's actions call under the same rule, its own package's functions and its
 Nikaia dependencies among them. Nothing lets foreign code run while the program
 is built. A callee that fails either condition is refused with

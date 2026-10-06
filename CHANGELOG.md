@@ -4,6 +4,21 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.562] — 2026-10-06
+
+**`extern(library: "sqlite3")` and `[library.sqlite3] pkg-config = "sqlite3"`;
+`extern` without `"C"`** (ADR-324 D2, D3, D6, #483).
+- An `extern` block names its system library; the manifest's
+  `[library.<name>]` entry, with `pkg-config` required, says how it is found.
+  A name without an entry, or an entry no block names, is `NK1226`.
+- A library is found only through `pkg-config`; without it, or not found:
+  `NK1224`. The `-l` fallback is gone.
+- `extern` is the C convention, the only one: `extern { … }`, `pub extern fn`,
+  `pub extern struct`. `extern "C"` is `NK1227`. Changes ADR-302 D1's and
+  ADR-284 D4's spelling; every block of the specification follows.
+- Not built: the specification's `extern` blocks are refused by today's parser,
+  and the recorded verdicts say so.
+
 ## [0.0.561] — 2026-10-06
 
 **A body's last expression is a typed slot like `return`** (ADR-285 D32,
