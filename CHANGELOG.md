@@ -4,6 +4,20 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.557] — 2026-10-06
+
+**There is no build script; a package links a C library by name** (ADR-324).
+- Part III 13.4's `build.nika` and `std::build` are withdrawn: no program of a
+  package runs before or during a build.
+- A package names the system libraries its `extern "C"` blocks need; the
+  compiler finds them through `pkg-config` or by name and links them into every
+  program that uses the package (`NK1224` when one is missing).
+- Only `-l`, `-L`, `-pthread`, `-framework` and `-F` pass from `pkg-config`
+  (`NK1225`), after Go's CVE-2018-6574.
+- A package brings no C sources yet: a C compiler reads any file an `#include`
+  names, past ADR-310.
+- Open: where a library's name is written; cross-compiling; Windows.
+
 ## [0.0.556] — 2026-10-06
 
 **A warning is said once** (#481).
