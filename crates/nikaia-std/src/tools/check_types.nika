@@ -238,7 +238,7 @@ pub fn way_out_of_a_mismatch(found: ref Ty, want: ref Ty) -> String {
         return "Write `ref` in front of it to pass a view of it."
     }
     if a_number_name(found_text) && a_number_name(want_text) {
-        return f"Convert it with `as {want_text}`. Nikaia never converts numbers on its own."
+        return f"Convert it with `as {want_text}`. A number goes into another type on its own only where every value it can hold fits."
     }
     let article = if want_text.starts_with("i") || want_text.starts_with("a") || want_text.starts_with("e") || want_text.starts_with("o") || want_text.starts_with("I") || want_text.starts_with("A") || want_text.starts_with("E") || want_text.starts_with("O") { "an" } else { "a" }
     return f"Make it {article} `{want_text}`, or change the declaration to `{found_text}`."

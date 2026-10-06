@@ -4,6 +4,20 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.549] — 2026-10-06
+
+**The help says when a number goes into another type on its own** (ADR-285
+D32, #439 step 11).
+- `NK1102`–`NK1106` between two number types:
+  - before: *Nikaia never converts numbers on its own.*
+  - now: *A number goes into another type on its own only where every value
+    it can hold fits.*
+- `NK1199`'s note names the reason:
+  - for two integer types, no type holds every value of both;
+  - for an integer and a `f64`, the conversion can change the value.
+- `tests/errors/EXPECTED.txt` does not move: no program in the corpus meets
+  these lines.
+
 ## [0.0.548] — 2026-10-06
 
 **`NK1215`: a computation whose result depends on the width says which width**

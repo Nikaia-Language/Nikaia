@@ -14312,9 +14312,15 @@ impl<'a> Checker<'a> {
                 )
             },
             notes: vec![
-                "Different number types never mix on their own, so that every place a \
-                 value might not fit is visible in the code."
-                    .to_string(),
+                match common_integer(&l, &r).is_none() && l != "f64" && r != "f64" {
+                    true => format!(
+                        "Two integer types mix where one holds every value of both, and no type \
+                     holds every `{l}` and every `{r}`."
+                    ),
+                    false => "An integer and a floating-point number never mix on their own: the \
+                          conversion can change the value."
+                        .to_string(),
+                },
             ],
             help: Some(format!(
                 "Convert one side with `as`: `… as {l}` or `… as {r}`, whichever the \

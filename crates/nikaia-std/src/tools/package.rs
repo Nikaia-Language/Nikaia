@@ -5232,7 +5232,7 @@ pub fn way_out_of_a_mismatch(found: &Ty, want: &Ty) -> String {
     let want_text = want.text();
     if found_text == "ref String" && want_text == "String" { return String::from("Write `.clone()` to turn this view into text of its own."); }
     if found_text == "String" && want_text == "ref String" { return String::from("Write `ref` in front of it to pass a view of it."); }
-    if a_number_name(&found_text) && a_number_name(&want_text) { return format!("Convert it with `as {}`. Nikaia never converts numbers on its own.", want_text); }
+    if a_number_name(&found_text) && a_number_name(&want_text) { return format!("Convert it with `as {}`. A number goes into another type on its own only where every value it can hold fits.", want_text); }
     let article = if want_text.starts_with("i") || want_text.starts_with("a") || want_text.starts_with("e") || want_text.starts_with("o") || want_text.starts_with("I") || want_text.starts_with("A") || want_text.starts_with("E") || want_text.starts_with("O") { "an" } else { "a" };
     format!("Make it {} `{}`, or change the declaration to `{}`.", article, want_text, found_text)
 }

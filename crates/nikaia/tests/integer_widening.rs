@@ -398,3 +398,36 @@ fn a_width_dependent_computation_says_which_width() {
     );
     runs("written", &program("let t: i64 = (a as i64) << 3"), "56\n");
 }
+
+/// **The help says when a number goes into another type on its own** (#439
+/// step 11): where every value fits, and not otherwise.
+#[test]
+fn the_help_says_when_a_number_widens() {
+    let refusals = errors(
+        "fn main() {\n    let a: u64 = 7\n    let b: i64 = -3\n    let x: i64 = a\n    \
+         let s = a + b\n    println(f\"{x} {s}\")\n}\n",
+    );
+    let slot = refusals
+        .iter()
+        .find(|f| f.code == "NK1103")
+        .expect("NK1103");
+    assert_eq!(
+        slot.help.as_deref(),
+        Some(
+            "Convert it with `as i64`. A number goes into another type on its own only where \
+             every value it can hold fits."
+        )
+    );
+    let operator = refusals
+        .iter()
+        .find(|f| f.code == "NK1199")
+        .expect("NK1199");
+    assert_eq!(
+        operator.notes,
+        vec![
+            "Two integer types mix where one holds every value of both, and no type holds \
+             every `u64` and every `i64`."
+                .to_string()
+        ]
+    );
+}
