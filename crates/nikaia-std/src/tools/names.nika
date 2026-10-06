@@ -162,8 +162,9 @@ pub fn names_in(expr: ref Expr, words: ref winnow_grammar::InternerContext, mut 
                 }
             }
         }
-        Expr::Dsl { target, context, content } => {
+        Expr::Dsl { target, package, context, content } => {
             out.insert(words.resolve(target).clone())
+            a_symbol(package, words, out)
             a_symbol(context, words, out)
             words_of(content, out)
         }

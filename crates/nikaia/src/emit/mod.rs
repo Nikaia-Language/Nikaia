@@ -5448,14 +5448,12 @@ impl<'p> Emitter<'p> {
     fn template(
         &self,
         out: &mut Out,
-        target: Symbol,
+        name: &str,
         context: Option<&Symbol>,
         content: &str,
         depth: usize,
         flow: Flow<'_>,
     ) -> Result<()> {
-        let name = self.text(target);
-
         // ADR-296 D5: a body with `:name` holes and a target this compiler is
         // not itself the grammar for is a *statement*, and its value is its own
         // text. Nothing is substituted into it: a deferred parameter is not
@@ -8063,9 +8061,16 @@ impl<'p> Emitter<'p> {
             // property of the template rather than of whoever filled it in.
             Expr::Dsl {
                 target,
+                package,
                 content,
                 context,
-            } => self.template(out, *target, context.as_ref(), content, depth, flow)?,
+            } => {
+                let name = match package {
+                    Some(package) => format!("{}::{}", self.text(*package), self.text(*target)),
+                    None => self.text(*target).to_string(),
+                };
+                self.template(out, &name, context.as_ref(), content, depth, flow)?
+            }
             Expr::Path(segments) => {
                 let path: Vec<&str> = segments.iter().map(|s| self.text(*s)).collect();
                 out.push(&self.path(&path));
@@ -14663,8 +14668,11 @@ pub(crate) fn visit_expr<'a>(expr: &'a Expr, f: &mut impl FnMut(&'a Expr)) {
 pub(crate) fn literal_expressions_bound(parsed: &Parsed, expr: &Expr) -> Vec<(Expr, Vec<String>)> {
     match expr {
         Expr::Dsl {
-            target, content, ..
-        } if crate::dsl::is_deferred(parsed.text(*target), content) => Vec::new(),
+            target,
+            package,
+            content,
+            ..
+        } if crate::dsl::is_deferred(&dsl_name(parsed, *package, *target), content) => Vec::new(),
         Expr::Dsl { content, .. } => match template::split(content.trim()) {
             Ok(segments) => template_holes_bound(&segments)
                 .into_iter()
@@ -14757,8 +14765,11 @@ pub(crate) fn literal_expressions(parsed: &Parsed, expr: &Expr) -> Vec<Expr> {
         // them as holes would be this compiler speaking for a grammar it does
         // not have (ADR-296 D5).
         Expr::Dsl {
-            target, content, ..
-        } if crate::dsl::is_deferred(parsed.text(*target), content) => Vec::new(),
+            target,
+            package,
+            content,
+            ..
+        } if crate::dsl::is_deferred(&dsl_name(parsed, *package, *target), content) => Vec::new(),
         Expr::Dsl { content, .. } => match template::split(content.trim()) {
             Ok(segments) => template_holes(&segments)
                 .iter()
@@ -15353,5 +15364,15 @@ fn collect_blocks<'b>(block: &'b Block, out: &mut Vec<&'b Block>) {
         if let Stmt::For { body, .. } | Stmt::While { body, .. } = &stmt.node {
             out.push(body);
         }
+    }
+}
+
+/// What a `dsl` block names: `pkg::Grammar` for a package's, the bare name
+/// for one the program declares and for `html`
+/// ([ADR-299](../../docs/specification/adr/adr-299.md) D20).
+pub(crate) fn dsl_name(parsed: &Parsed, package: Option<Symbol>, target: Symbol) -> String {
+    match package {
+        Some(package) => format!("{}::{}", parsed.text(package), parsed.text(target)),
+        None => parsed.text(target).to_string(),
     }
 }

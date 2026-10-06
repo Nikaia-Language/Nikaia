@@ -139,7 +139,7 @@ fn a_refusal_from_anywhere_in_the_compiler_carries_no_trace() {
         &source,
         // `} eod` is what closes a `dsl` block, and it matters here: without it
         // this is not a `dsl` at all and the *checker* speaks first.
-        "fn main() {\n    let q = dsl postgres {\n        SELECT 1\n    } eod\n}\n",
+        "fn main() {\n    let q = dsl postgres::Sql {\n        SELECT 1\n    } eod\n}\n",
     )
     .expect("a source");
     let said = run(&[
@@ -148,7 +148,7 @@ fn a_refusal_from_anywhere_in_the_compiler_carries_no_trace() {
         "--output",
         dir.join("out.rs").to_str().expect("utf-8 path"),
     ]);
-    assert_refusal(&said, "`postgres` isn't a language the compiler knows");
+    assert_refusal(&said, "`postgres::Sql` isn't a language the compiler knows");
 
     // The project driver: no entry point.
     let project = common::scratch_dir("refusal-no-entry");

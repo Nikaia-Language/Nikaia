@@ -57,7 +57,7 @@ fn fortunes(db: Shared[postgres::Connection]) -> String throws {
     // this one has none. It is parsed at compile time, and its columns are
     // checked against the schema. As a plain string, both checks would wait
     // for the first request in production.
-    let all = dsl postgres {
+    let all = dsl postgres::Sql {
         SELECT id, message FROM fortune
     } eod
 

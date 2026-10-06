@@ -4,6 +4,23 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.582] — 2026-10-06
+
+**`dsl package::Grammar` parses, and a package's name alone is `NK1228`**
+(ADR-299 D20, #485).
+- `dsl` takes `NAME` or `NAME::NAME` before `{`; the AST's `Dsl` carries the
+  package (`ast.nika`). The emitter names the block by its whole path.
+- A bare name that a `use` line brought in, where a grammar stands, is
+  `NK1228`: *`sqlite` is a package, and a `dsl` block names a grammar*, help
+  `dsl sqlite::Grammar`. `html` and a grammar the program declares stay bare.
+  The help cannot list the package's grammars yet: `pub grammar` is decided and
+  not built (ADR-296 D25).
+- `examples/fortunes.nika` writes `dsl postgres::Sql`; so do the refusal and
+  stored-view tests. Part III's x86 example (`use std::backend::x86`, `dsl
+  x86 { … }`) is now `NK1228` in `EXPECTED.txt`; its grammar's name is asked in
+  #485.
+- Tests: `dsl_parameters.rs`.
+
 ## [0.0.581] — 2026-10-06
 
 **A map's read past a jump, assigned to a name that owns its value, is copied

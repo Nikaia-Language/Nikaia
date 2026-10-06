@@ -146,7 +146,7 @@ pub enum Expr {
     If { cond: Box<Expr>, then_branch: Block, else_branch: Option<Block> },
     Call { func: Box<Expr>, args: Vec<Expr>, config: Vec<ConfigArg> },
     Spawn { body: Box<Expr>, is_move: bool },
-    Dsl { target: winnow_grammar::Symbol, context: Option<winnow_grammar::Symbol>, content: String },
+    Dsl { target: winnow_grammar::Symbol, package: Option<winnow_grammar::Symbol>, context: Option<winnow_grammar::Symbol>, content: String },
     Path(Vec<winnow_grammar::Symbol>),
     MethodCall { receiver: Box<Expr>, method: winnow_grammar::Symbol, args: Vec<Expr>, config: Vec<ConfigArg> },
     Field { base: Box<Expr>, name: winnow_grammar::Symbol },
@@ -10745,9 +10745,10 @@ pub fn names_in(expr: &Expr, words: &winnow_grammar::InternerContext, out: &mut 
                 }
             }
         },
-        Expr::Dsl { target, context, content } => {
-            let context = *context; let target = *target;
+        Expr::Dsl { target, package, context, content } => {
+            let context = *context; let package = *package; let target = *target;
             out.insert(words.resolve(target).to_owned());
+            a_symbol(package, words, out);
             a_symbol(context, words, out);
             words_of(content, out);
         },

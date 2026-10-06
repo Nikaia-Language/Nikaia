@@ -14094,6 +14094,14 @@ impl<'a> Checker<'a> {
 
             // A template's holes are Nikaia too (ADR-017), and what the
             // template *produces* is still the emitter's business.
+            Expr::Dsl {
+                target,
+                package: None,
+                ..
+            } if self.a_package_where_a_grammar_stands(*target, span) => {
+                self.guard_has_no_answer();
+                Ty::Unknown
+            }
             Expr::Dsl { .. } => {
                 // Which is also why `NK1134` says nothing about one: what this
                 // becomes is decided after the checker has run, so whether it
@@ -14110,6 +14118,55 @@ impl<'a> Checker<'a> {
                 Ty::Unknown
             }
         }
+    }
+
+    /// **`NK1228`: a `dsl` block that names a package where a grammar
+    /// stands** ([ADR-299](../../docs/specification/adr/adr-299.md) D20):
+    /// `dsl sqlite { … }` for `dsl sqlite::Sql { … }`. A package is what a
+    /// `use` line brings in, by its alias or its last name; `html` is the
+    /// compiler's own template and a grammar this program declares is named
+    /// bare, so neither is one.
+    fn a_package_where_a_grammar_stands(
+        &mut self,
+        target: winnow_grammar::Symbol,
+        span: &Span,
+    ) -> bool {
+        let name = self.parsed.text(target);
+        if name == "html" || self.grammars.contains_key(name) {
+            return false;
+        }
+        let used = self
+            .parsed
+            .program
+            .items
+            .iter()
+            .any(|item| match &item.node {
+                Item::Import { path, alias } => {
+                    let word = alias.or_else(|| path.last().copied());
+                    word.is_some_and(|word| self.parsed.text(word) == name)
+                }
+                _ => false,
+            });
+        if !used {
+            return false;
+        }
+        self.checked.findings.push(Finding {
+            severity: Severity::Error,
+            span: *span,
+            code: "NK1228",
+            message: format!("`{name}` is a package, and a `dsl` block names a grammar."),
+            notes: vec![
+                "A grammar from a package is named with its package, as every name from one is."
+                    .to_string(),
+            ],
+            // **No list of the package's grammars yet**: a package offers one
+            // with `pub grammar`, which is decided and not built (ADR-296 D25).
+            help: Some(format!(
+                "Write `dsl {name}::Grammar`, naming the grammar `{name}` offers."
+            )),
+            labels: Vec::new(),
+        });
+        true
     }
 
     /// **`NK1117`: a `std` name written without its module**

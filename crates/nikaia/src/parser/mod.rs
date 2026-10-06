@@ -3827,10 +3827,28 @@ grammar! {
         // be a string character or absent entirely. So the body is what lies
         // before the marker, taken verbatim; what it *means* is the target
         // grammar's business and is decided when it is lowered.
+        // **A grammar from a package is `package::Grammar`**
+        // ([ADR-299](../../../docs/specification/adr/adr-299.md) D20); one the
+        // program declares is bare.
         rule dsl_block_expr -> Expr =
-            KW_DSL name:NAME "{" body:until("} eod") "} eod" -> {
-                Expr::Dsl { target: name, context: None, content: body.to_string() }
+            KW_DSL first:NAME rest:dsl_grammar? "{" body:until("} eod") "} eod" -> {
+                match rest {
+                    Some(grammar) => Expr::Dsl {
+                        target: grammar,
+                        package: Some(first),
+                        context: None,
+                        content: body.to_string(),
+                    },
+                    None => Expr::Dsl {
+                        target: first,
+                        package: None,
+                        context: None,
+                        content: body.to_string(),
+                    },
+                }
             }
+
+        rule dsl_grammar -> Symbol = "::" name:NAME -> { name }
 
         // **The form that is gone** ([ADR-296](../../../docs/specification/adr/adr-296.md)
         // D1). A grammar is entered by an ordinary call — `Json::value(input)`,

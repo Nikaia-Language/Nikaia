@@ -416,3 +416,53 @@ fn parameters_handed_to_a_callee_that_is_no_driver_are_refused() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// **A grammar from a package is `package::Grammar`**
+/// ([ADR-299](../../../docs/specification/adr/adr-299.md) D20, #485): the path
+/// parses, and the block is what a bare one was - a statement whose holes the
+/// driver binds.
+#[test]
+fn a_package_grammar_is_named_with_its_package() {
+    let source = "use http\n\nfn main() {\n    let id: i64 = 3\n    \
+                  let q = dsl http::Sql {\n        SELECT name FROM users WHERE id = :id\n    } eod\n    \
+                  println(q)\n}\n";
+    let found = findings(source);
+    assert!(found.iter().all(|f| f.code != "NK1228"), "{found:#?}");
+    let rust = emit(source);
+    assert!(
+        rust.contains("SELECT name FROM users WHERE id = :id"),
+        "{rust}"
+    );
+}
+
+/// **`NK1228`**: the package's name alone, where a grammar stands.
+#[test]
+fn a_package_where_a_grammar_stands_is_nk1228() {
+    let source = "use http\n\nfn main() {\n    let id: i64 = 3\n    \
+                  let q = dsl http {\n        SELECT name FROM users WHERE id = :id\n    } eod\n    \
+                  println(q)\n}\n";
+    let found = findings(source);
+    let nk1228: Vec<_> = found.iter().filter(|f| f.code == "NK1228").collect();
+    assert_eq!(nk1228.len(), 1, "{found:#?}");
+    assert_eq!(
+        nk1228[0].message,
+        "`http` is a package, and a `dsl` block names a grammar."
+    );
+    assert_eq!(
+        nk1228[0].help.as_deref(),
+        Some("Write `dsl http::Grammar`, naming the grammar `http` offers.")
+    );
+}
+
+/// …and not for a grammar the program declares, nor for `html`, the
+/// compiler's own template, both named bare.
+#[test]
+fn a_programs_grammar_and_html_stay_bare() {
+    let source = "use std::html\n\ngrammar Sql {\n    entry rule word -> ref String = w:until(\";\") { w }\n}\n\n\
+                  fn main() {\n    let id: i64 = 3\n    \
+                  let q = dsl Sql {\n        SELECT :id\n    } eod\n    \
+                  let page = dsl html {\n        <p>hi</p>\n    } eod\n    \
+                  println(f\"{q} {page}\")\n}\n";
+    let found = findings(source);
+    assert!(found.iter().all(|f| f.code != "NK1228"), "{found:#?}");
+}
