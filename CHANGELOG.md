@@ -4,6 +4,23 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.598] — 2026-10-06
+
+**The build-time program leaves a package's foreign parts out** (ADR-321
+D14, #479).
+- A dependency that called a Rust crate made every `comptime` of its program
+  fail with `NK1127`: the build-time program lowered the whole package, and
+  `rustc` found no crate by that name. Each file of the program and of its
+  dependencies, and each file beside a grammar, is now lowered there without
+  its `extern` blocks and without every function and method whose entry may
+  not run while the program is built - which is every one that reaches C or a
+  Rust crate, and what D9 refuses a build-time call to anyway.
+- Test: `build_time_dependencies.rs::the_build_time_program_holds_no_rust_crate`:
+  a Rust crate whose library leaves a marker when it is loaded (`.init_array`,
+  as the `ctor` crate places it); the build leaves none, the program does.
+- Part I 5.1's `request` example takes `timeout: time::Duration =
+  30.seconds()` (#374, step 9).
+
 ## [0.0.597] — 2026-10-06
 
 **Two projects of one name, built at the same time, each run their own

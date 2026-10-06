@@ -146,6 +146,7 @@ pub(crate) fn lowered_units(
         if &unit.package != home {
             continue;
         }
+        let unit = &without_foreign(unit, contracts);
         let body = crate::emit::emit_module_body_at(
             unit,
             &beside,
@@ -171,6 +172,42 @@ pub(crate) fn lowered_units(
     })
 }
 
+/// **A file without its foreign parts** (ADR-321 D14): no `extern` block, and
+/// no function or method whose entry in `ledger` may not run while the
+/// program is built - which is every one that reaches C or a Rust crate, and
+/// what D9 refuses a build-time call to anyway. So the build-time program
+/// neither links a foreign library nor names a Rust crate.
+pub(crate) fn without_foreign(parsed: &Parsed, ledger: &crate::contracts::Ledger) -> Parsed {
+    let runs = |key: String| {
+        ledger
+            .functions
+            .get(&key)
+            .is_none_or(|contract| crate::build_time::may_not_run(contract).is_none())
+    };
+    let mut kept = parsed.keeping(|item| match item {
+        Item::Extern { .. } => false,
+        Item::Fn {
+            name: Some(name), ..
+        } => runs(parsed.text(*name).to_string()),
+        _ => true,
+    });
+    for item in &mut kept.program.items {
+        if let Item::Impl {
+            target, methods, ..
+        } = &mut item.node
+        {
+            let target = parsed.text(target.name).to_string();
+            methods.retain(|method| match &method.node {
+                Item::Fn {
+                    name: Some(name), ..
+                } => runs(format!("{target}::{}", parsed.text(*name))),
+                _ => true,
+            });
+        }
+    }
+    kept
+}
+
 /// **Each dependency, as the module the program names it by** (ADR-321 D13):
 /// `lib::tripled` is `crate::lib::tripled`, lowered against the package's own
 /// entries and with the prelude its files are written for. Empty where the
@@ -192,6 +229,7 @@ pub(crate) fn dependency_modules(
             "pub mod {name} {{\n#[allow(unused_imports)]\nuse nikaia_std::prelude::*;\n"
         ));
         for unit in &theirs {
+            let unit = &without_foreign(unit, own);
             let body = crate::emit::emit_module_body_at(
                 unit,
                 &theirs,

@@ -279,3 +279,75 @@ fn a_grammar_action_calls_another_file_of_its_package() {
     assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "42");
     assert!(generated.contains("const N: i64 = 42;"), "{generated}");
 }
+
+/// **D14, a Rust crate** (#479, step 4): a dependency calls a Rust crate whose
+/// library leaves a marker when it is loaded (a function in `.init_array`, as
+/// the `ctor` crate places it), and offers a pure function too. A `comptime`
+/// calls the pure one: the build succeeds and the marker does not exist. The
+/// program, which calls the crate when it runs, writes it.
+#[test]
+fn the_build_time_program_holds_no_rust_crate() {
+    let root = projects(
+        "build-time-no-rust",
+        "\
+         pub fn tripled(n: i64) -> i64 sync {\n    return n * 3\n}\n\n\
+         pub fn shimmed(n: i64) -> i64 {\n    return shim::plus_one(n)\n}\n",
+        "use lib\n\ncomptime N: i64 = lib::tripled(14)\n\n\
+         fn main() {\n    println(f\"{N} {lib::shimmed(1)}\")\n}\n",
+    );
+    std::fs::write(
+        root.join("lib/nikaia.toml"),
+        "[package]\nname = \"lib\"\nversion = \"0.1.0\"\n\n\
+         [dependencies]\nshim = { type = \"rust\", path = \"../shim\" }\n",
+    )
+    .expect("the manifest");
+    std::fs::create_dir_all(root.join("lib/contracts")).expect("the contracts");
+    std::fs::write(
+        root.join("lib/contracts/shim.contracts"),
+        "version = 3\n\n[fn.\"shim::plus_one\"]\npub = true\nsync = true\n\
+         signature = \"(n: i64) -> i64\"\n",
+    )
+    .expect("the description");
+    std::fs::create_dir_all(root.join("shim/src")).expect("the crate");
+    std::fs::write(
+        root.join("shim/Cargo.toml"),
+        "[package]\nname = \"shim\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[workspace]\n",
+    )
+    .expect("the crate's manifest");
+    std::fs::write(
+        root.join("shim/src/lib.rs"),
+        "extern \"C\" fn mark() {\n\
+         \x20   if let Some(p) = std::env::var_os(\"NIKAIA_TEST_MARKER\") {\n\
+         \x20       let _ = std::fs::write(p, \"loaded\\n\");\n\
+         \x20   }\n\
+         }\n\n\
+         #[used]\n\
+         #[unsafe(link_section = \".init_array\")]\n\
+         static MARK: extern \"C\" fn() = mark;\n\n\
+         pub fn plus_one(n: i64) -> i64 {\n    n + 1\n}\n",
+    )
+    .expect("the crate's source");
+    let marker = root.join("MARKER");
+    let nikaia = |verb: &str| {
+        Command::new(env!("CARGO_BIN_EXE_nikaia"))
+            .current_dir(root.join("app"))
+            .args([verb, "--no-cache"])
+            .env_remove("CARGO_TARGET_DIR")
+            .env("NIKAIA_TEST_MARKER", &marker)
+            .output()
+            .expect("the nikaia binary runs")
+    };
+    let built = nikaia("build");
+    let after_the_build = marker.exists();
+    let ran = nikaia("run");
+    let after_the_run = marker.exists();
+    let _ = std::fs::remove_dir_all(&root);
+    assert!(built.status.success(), "{}", said(&built));
+    assert!(
+        !after_the_build,
+        "the Rust crate's constructor ran while the program was built"
+    );
+    assert!(ran.status.success(), "{}", said(&ran));
+    assert_eq!(String::from_utf8_lossy(&ran.stdout).trim(), "42 2");
+    assert!(after_the_run, "the program did not link the Rust crate");
+}

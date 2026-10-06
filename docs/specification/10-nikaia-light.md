@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part I: The Language Core**
-**Version:** 0.0.597 (Draft)
+**Version:** 0.0.598 (Draft)
 **Date:** 2026-10-06
 
 ---
@@ -1507,16 +1507,16 @@ Parameters *after* the semicolon are options, flags, or modifiers.
 
 ```nika
 // Definition
-fn request(url: ref String; timeout: i32 = 30, method: ref String = "GET") { ... }
+fn request(url: ref String; timeout: time::Duration = 30.seconds(), method: ref String = "GET") { ... }
 
 // Valid calls
-request("https://api.com")                              // both options defaulted
-request("https://api.com"; timeout: 60)                 // one of them named
-request("https://api.com"; method: "POST", timeout: 5)  // in any order
+request("https://api.com")                                        // both options defaulted
+request("https://api.com"; timeout: 60.seconds())                 // one of them named
+request("https://api.com"; method: "POST", timeout: 5.seconds())  // in any order
 
 // Invalid calls
-// request("https://api.com", 60)      // a positional argument in the named zone
-// request("https://api.com"; timout: 5)  // error[NK1109]: no option `timout`
+// request("https://api.com", 60.seconds())      // a positional argument in the named zone
+// request("https://api.com"; timout: 5.seconds())  // error[NK1109]: no option `timout`
 ```
 
 **The `;` stands between the two zones, and where one zone is empty it is not

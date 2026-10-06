@@ -345,6 +345,7 @@ fn driver(parsed: &Parsed, ask: &Ask<'_>) -> Result<String, Wall> {
         let provenance =
             crate::contracts::trust::analyse(parsed, crate::contracts::std_ledger()).provenance;
         for unit in &beside {
+            let unit = &crate::comptime_run::without_foreign(unit, &ledger);
             let body = crate::emit::emit_module_body_at(
                 unit,
                 &all,
