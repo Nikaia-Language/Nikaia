@@ -4,6 +4,21 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.589] — 2026-10-06
+
+**Timers and keep-alive for `http`** (ADR-326 D6-D9, #121).
+- `head_timeout: time::Duration = 10.seconds()`: the whole head of a request,
+  from the accept or the first byte; replaces `head_wait`'s count of reads.
+- `body_bytes_per_second: i64 = 500`: the body's average rate since its first
+  byte, after a start-up period. Past either, `408` and close.
+- Connections are kept alive: `idle_timeout: time::Duration = 75.seconds()`
+  between requests, above common load balancers' 60 s. Under load the server
+  ends a connection early only by `Connection: close` on its next response.
+- A quiet connection is its protocol's: `net::serve` offers a deadline per
+  read and no idle limit of its own; a WebSocket after its upgrade is not
+  HTTP's.
+- Changes ADR-289 D13 and D15. Not built.
+
 ## [0.0.588] — 2026-10-06
 
 **An action that reaches C is refused once** (ADR-321 D13/D15, #479).

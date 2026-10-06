@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part III: Tooling, Ecosystem & Interoperability**
-**Version:** 0.0.588 (Draft)
+**Version:** 0.0.589 (Draft)
 **Date:** 2026-10-06
 
 ---
@@ -909,7 +909,7 @@ large to make a span saturates. `time::sleep` pauses, and gives the thread up
 while it does.
 
 **`http` — a package, not a module of `std`**
-An HTTP/1.1 server: `GET` and `POST`, bodies by `Content-Length`, one answer per connection. Keep-alive, chunked bodies, TLS, HTTP/2 and a client are not built. `http` is not part of `std`: it is a package reached by path, `http = { path = "../http" }`.
+An HTTP/1.1 server: `GET` and `POST`, bodies by `Content-Length`, connections kept alive between requests. Chunked bodies, TLS, HTTP/2 and a client are not built. `http` is not part of `std`: it is a package reached by path, `http = { path = "../http" }`.
 
 `http::listen` stands on `net::serve`: each connection is a task, on one thread at `user_parallelism = no` and on the pool at `yes`. A panic in a handler ends its connection with `500` where the response has not begun, and the server goes on.
 
@@ -936,7 +936,16 @@ first and only one is the request. It returns an `http::Response`, a value with 
 where it is returned: `http::Response { status: 400, content_type: "text/plain", body: "id is
 required" }`. `http::Response::text(body)` is a 200 in plain text, and `http::Response::not_found()`
 a 404. The limits are options after the `;` with defaults, and a program names only what it
-changes: `body_cap`, `head_cap`, `head_wait` and `connections` ([ADR-289](adr/adr-289.md) D13).
+changes: `body_cap`, `head_cap`, `head_timeout`, `body_bytes_per_second`, `idle_timeout` and
+`connections` ([ADR-289](adr/adr-289.md) D13, [ADR-326](adr/adr-326.md) D6-D9).
+
+**Timers.** The whole head of a request arrives within `head_timeout` (10 s), counted from the
+accept for a connection's first request and from the first byte for a later one. A body keeps
+`body_bytes_per_second` (500) on average since its first byte, after a start-up period. Past
+either the server answers `408` and closes. Between requests a connection waits `idle_timeout`
+(75 s) and then closes; under load the server may end a connection early, only by saying
+`Connection: close` on its next response. A connection handed to another protocol, a WebSocket
+after its upgrade, is that protocol's.
 `examples/hello-http/` is a server built this way.
 
 **Decided, not built yet** ([ADR-289](adr/adr-289.md) D14, D17-D19, D22-D29): what follows, to the
@@ -1258,6 +1267,8 @@ An untrusted map is seeded randomly, so **its iteration order is not stable betw
   beside the hot path how many are open, from what the runtime counts; `std`
   provides an adaptive one and a package may provide another. At the system's
   ceiling or over the limit the server stops accepting, and never ends for it.
+  A read can carry a deadline; `serve` sets no idle limit of its own, which is a
+  protocol's to set.
 
 * **`std::http1`**: HTTP/1.1's **text half** — where a head ends, what its lines
   say, which header the client sent, what the query string says, and where the
