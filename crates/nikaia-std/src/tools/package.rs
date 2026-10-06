@@ -1998,6 +1998,7 @@ pub struct BoundsContext {
     pub char_codes: collections::BTreeSet<i64>,
     pub ensured: collections::BTreeMap<String, Ensured>,
     pub given: collections::BTreeMap<String, Range>,
+    pub negations: collections::BTreeMap<i64, String>,
     pub classes: collections::BTreeMap<String, Range>,
     pub around: Around,
 }
@@ -2014,6 +2015,7 @@ pub struct BoundsProven {
     pub indices: collections::BTreeSet<i64>,
     pub arithmetic: collections::BTreeSet<i64>,
     pub nonnegative: collections::BTreeSet<i64>,
+    pub negations: collections::BTreeSet<i64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2054,7 +2056,7 @@ fn most_facts() -> i64 { 48 }
 
 fn call_depth() -> i64 { 4 }
 
-fn no_proofs() -> BoundsProven { BoundsProven { indices: collections::BTreeSet::new(), arithmetic: collections::BTreeSet::new(), nonnegative: collections::BTreeSet::new() } }
+fn no_proofs() -> BoundsProven { BoundsProven { indices: collections::BTreeSet::new(), arithmetic: collections::BTreeSet::new(), nonnegative: collections::BTreeSet::new(), negations: collections::BTreeSet::new() } }
 
 fn nothing_changed() -> BoundsChanged { BoundsChanged { values: collections::BTreeSet::new(), lengths: collections::BTreeSet::new() } }
 
@@ -2526,6 +2528,27 @@ fn bounding_code_of(walk: &mut BoundsWalk, expr: &Expr, context: &BoundsContext,
     }
     walk.axioms.insert(key, held);
     v
+}
+
+#[allow(clippy::too_many_arguments)]
+fn bounding_negation(walk: &mut BoundsWalk, expr: &Expr, facts: &BoundsFacts, context: &BoundsContext, program: &Program, words: &winnow_grammar::InternerContext, node_of: &impl Fn(&Expr) -> i64, ask: &impl Fn(&TermArena, &[i64], i64) -> bool) {
+    if walk.collecting || context.negations.is_empty() { return; }
+    let node = node_of(expr);
+    let ty = match *nikaia_std::index::get(&context.negations, &node) { Some(__nikaia_value) => __nikaia_value, None => return };
+    let operand = match expr {
+        Expr::Unary { op, expr } => { let expr = nikaia_std::boxed::open(expr); match op {
+            UnaryOp::Neg => expr,
+            _ => return,
+        } },
+        _ => return,
+    };
+    let least = match Range::of_type(ty) { Some(__nikaia_value) => __nikaia_value, None => return };
+    let lo = match least.lo { Some(__nikaia_value) => __nikaia_value, None => return };
+    let above = (lo + 1).max(0 - solvable());
+    let term = match bounding_lin(walk, operand, facts, context, program, words, node_of) { Some(__nikaia_value) => __nikaia_value, None => return };
+    let k = walk.arena.int(above);
+    let goal = walk.arena.ge(term, k);
+    if bounding_proves(&walk, facts, goal, ask) { walk.proven.negations.insert(node); }
 }
 
 fn bounding_callee(func: &Expr, words: &winnow_grammar::InternerContext) -> Option<String> {
@@ -3219,6 +3242,7 @@ fn bounding_if_leaves(walk: &mut BoundsWalk, cond: &Expr, then_branch: &Block, e
 #[allow(clippy::too_many_arguments)]
 fn bounding_expr(walk: &mut BoundsWalk, expr: &Expr, facts: &mut BoundsFacts, context: &BoundsContext, program: &Program, words: &winnow_grammar::InternerContext, node_of: &impl Fn(&Expr) -> i64, ask: &impl Fn(&TermArena, &[i64], i64) -> bool) {
     bounding_nonnegative(walk, expr, &facts, context, program, words, node_of, ask);
+    bounding_negation(walk, expr, &facts, context, program, words, node_of, ask);
     match expr {
         Expr::Index { base, index } => {
             let base = nikaia_std::boxed::open(base); let index = nikaia_std::boxed::open(index);

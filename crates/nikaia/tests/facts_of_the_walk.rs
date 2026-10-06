@@ -153,8 +153,12 @@ grammar Temps {
     entry rule any -> i64 = n:dec[i64](digit+) { n * 10 }
 }
 
+fn flipped(n: i64) -> i64 {
+    return -n
+}
+
 fn main() throws {
-    println(f\"{Temps::tenths(\"-12.3\")} {Temps::tenths(\"4.5\")} {Temps::any(\"7\")}\")
+    println(f\"{Temps::tenths(\"-12.3\")} {Temps::tenths(\"4.5\")} {Temps::any(\"7\")} {flipped(3)}\")
 }
 ";
 
@@ -164,6 +168,10 @@ fn a_grammar_binding_is_what_it_matched() {
     assert!(line(&out, "whole * 10 + ").ends_with("proved"), "{out}");
     assert!(line(&out, "whole * 10 ").ends_with("proved"), "{out}");
     assert!(line(&out, "n * 10").contains("checked"), "{out}");
+    // D5: the negation too - `value` is never the least `i32`.
+    assert!(line(&out, "-value").ends_with("proved"), "{out}");
+    // A number nothing bounds may be the least `i64`.
+    assert!(line(&out, "-n").contains("checked"), "{out}");
 }
 
 /// The same numbers with the proved checks dropped.
@@ -175,6 +183,8 @@ fn a_grammar_action_runs_the_same_without_its_proved_checks() {
         ..Build::default()
     };
     let rust = emit_program(&parsed, build).expect("lowers").rust;
+    assert!(rust.contains("<i32>::wrapping_neg("), "{rust}");
+    assert!(!rust.contains("<i64>::wrapping_neg("), "{rust}");
     let dir = common::scratch_dir("grammar-bindings");
     let file = dir.join("main.rs");
     std::fs::write(&file, &rust).expect("write the Rust");
@@ -195,5 +205,5 @@ fn a_grammar_action_runs_the_same_without_its_proved_checks() {
     );
     let ran = std::process::Command::new(&binary).output().expect("runs");
     let _ = std::fs::remove_dir_all(&dir);
-    assert_eq!(String::from_utf8_lossy(&ran.stdout).trim(), "-123 45 70");
+    assert_eq!(String::from_utf8_lossy(&ran.stdout).trim(), "-123 45 70 -3");
 }

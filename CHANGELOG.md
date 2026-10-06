@@ -4,6 +4,16 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.575] — 2026-10-06
+
+**A negation is a site too** (ADR-314 D5, #421).
+- The checker records every `-x` of an `i32` or `i64` that is not a literal
+  (`Checked::negations`, by node); the bounds walk proves `x` above the type's
+  least value, and `remove-overflow-checks:on` writes it `<T>::wrapping_neg`.
+  `--bounds` lists it. Part III 13.3 says so.
+- 1BRC's `TENTHS`: `-value` is proved, so every check in the action is.
+- `bounds::proven` takes the checker's tables as one `bounds::Sites`.
+
 ## [0.0.574] — 2026-10-06
 
 **A grammar's action is proved from what its bindings matched** (ADR-314 D1,

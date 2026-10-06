@@ -39,6 +39,9 @@ pub struct BoundsContext {
     /// `0..=99`), and a `char`'s code by name (`digit` is `48..=57`). Empty
     /// for a function.
     pub given: collections::BTreeMap[String, Range],
+    /// Every `-x` of a signed whole number, by node, with that type
+    /// (ADR-314 D5).
+    pub negations: collections::BTreeMap[i64, String],
     pub classes: collections::BTreeMap[String, Range],
     pub around: Around,
 }
@@ -60,6 +63,9 @@ pub struct BoundsProven {
     pub arithmetic: collections::BTreeSet[i64],
     /// Of the context's `nonnegative`, those proved `>= 0` where they stand.
     pub nonnegative: collections::BTreeSet[i64],
+    /// Of the context's `negations`, those proved not to negate the type's
+    /// least value.
+    pub negations: collections::BTreeSet[i64],
 }
 
 /// What holds at one point of a body.
@@ -142,7 +148,7 @@ fn call_depth() -> i64 {
 }
 
 fn no_proofs() -> BoundsProven {
-    return BoundsProven { indices: collections::BTreeSet(), arithmetic: collections::BTreeSet(), nonnegative: collections::BTreeSet() }
+    return BoundsProven { indices: collections::BTreeSet(), arithmetic: collections::BTreeSet(), nonnegative: collections::BTreeSet(), negations: collections::BTreeSet() }
 }
 
 fn nothing_changed() -> BoundsChanged {
@@ -768,6 +774,32 @@ fn bounding_code_of(mut walk: BoundsWalk, expr: ref Expr, context: ref BoundsCon
     }
     walk.axioms.insert(key, held)
     return v
+}
+
+/// **`-x` that stays inside its type** (ADR-314 D5): `x` is proved above the
+/// type's least value, whose negation is the one that does not fit.
+fn bounding_negation(mut walk: BoundsWalk, expr: ref Expr, facts: ref BoundsFacts, context: ref BoundsContext, program: ref Program, words: ref winnow_grammar::InternerContext, node_of: fn(ref Expr) -> i64 sync, ask: fn(ref TermArena, ref Vec[i64], i64) -> bool sync) {
+    if walk.collecting || context.negations.is_empty() {
+        return
+    }
+    let node = node_of(expr)
+    let ty = context.negations[node] ?? return
+    let operand = match expr {
+        Expr::Unary { op, expr } => match op {
+            UnaryOp::Neg => expr,
+            else => return,
+        },
+        else => return,
+    }
+    let least = Range::of_type(ty) ?? return
+    let lo = least.lo ?? return
+    let above = (lo + 1).max(0 - solvable())
+    let term = bounding_lin(walk, operand, facts, context, program, words, node_of) ?? return
+    let k = walk.arena.int(above)
+    let goal = walk.arena.ge(term, k)
+    if bounding_proves(walk, facts, goal, ask) {
+        walk.proven.negations.insert(node)
+    }
 }
 
 /// The name a call writes for its callee: a bare one, or a path such as
@@ -1616,6 +1648,7 @@ fn bounding_if_leaves(mut walk: BoundsWalk, cond: ref Expr, then_branch: ref Blo
 /// what it changes.
 fn bounding_expr(mut walk: BoundsWalk, expr: ref Expr, mut facts: BoundsFacts, context: ref BoundsContext, program: ref Program, words: ref winnow_grammar::InternerContext, node_of: fn(ref Expr) -> i64 sync, ask: fn(ref TermArena, ref Vec[i64], i64) -> bool sync) {
     bounding_nonnegative(walk, expr, facts, context, program, words, node_of, ask)
+    bounding_negation(walk, expr, facts, context, program, words, node_of, ask)
     match expr {
         Expr::Index { base, index } => {
             bounding_expr(walk, base, facts, context, program, words, node_of, ask)

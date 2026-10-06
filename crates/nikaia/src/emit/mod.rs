@@ -1301,6 +1301,10 @@ struct Emitter<'p> {
     /// proved the operation stays inside its type: written `<T>::wrapping_*`
     /// ([ADR-306](../../docs/specification/adr/adr-306.md) D10).
     proven_arithmetic: std::collections::HashMap<usize, String>,
+    /// [`check::Checked::negations`], kept only where [`crate::bounds`]
+    /// proved the operand is not the type's least value: written
+    /// `<T>::wrapping_neg` (ADR-314 D5).
+    proven_negations: std::collections::HashMap<usize, String>,
     /// `xs[i] op= v` on a list of numbers (`check::Checked::copied_slots`).
     copied_slots: std::collections::BTreeSet<usize>,
     /// `std` copies, written `to_owned` (ADR-293 D24).
@@ -2643,11 +2647,14 @@ impl<'p> Emitter<'p> {
         // `remove-bounds-checks` or `remove-overflow-checks`.
         let proven = crate::bounds::proven(
             parsed,
-            &propagation.std_lengths,
-            &propagation.sized_lengths,
-            &propagation.char_codes,
+            &crate::bounds::Sites {
+                lengths: &propagation.std_lengths,
+                sized: &propagation.sized_lengths,
+                char_codes: &propagation.char_codes,
+                arithmetic: &propagation.arithmetic,
+                negations: &propagation.negations,
+            },
             &[&own_contracts, std_ledger()],
-            &propagation.arithmetic,
             &std::collections::BTreeSet::new(),
         );
 
@@ -2725,6 +2732,15 @@ impl<'p> Emitter<'p> {
                 .filter(|(at, _)| {
                     build.overflow == crate::bounds::OverflowChecks::Removed
                         && proven.arithmetic.contains(at)
+                })
+                .map(|(at, ty)| (*at, ty.clone()))
+                .collect(),
+            proven_negations: propagation
+                .negations
+                .iter()
+                .filter(|(at, _)| {
+                    build.overflow == crate::bounds::OverflowChecks::Removed
+                        && proven.negations.contains(at)
                 })
                 .map(|(at, ty)| (*at, ty.clone()))
                 .collect(),
@@ -9009,7 +9025,7 @@ impl<'p> Emitter<'p> {
                 };
                 self.block(out, body, depth, inside, Tail::Return)?;
             }
-            Expr::Unary { op, expr } => {
+            whole @ Expr::Unary { op, expr } => {
                 // **`-2147483648` is an `i32`**, and its digits are not
                 // ([ADR-285](../../../docs/specification/adr/adr-285.md) D23): the
                 // question is about the value, so a negation is folded here
@@ -9042,6 +9058,17 @@ impl<'p> Emitter<'p> {
                     && !flow.in_a_place
                 {
                     return self.expr(out, expr, depth, flow);
+                }
+                // **`-x` proved to stay inside its type** (ADR-314 D5) is
+                // written without its check.
+                if let (UnaryOp::Neg, Some(ty)) = (
+                    op,
+                    self.proven_negations.get(&crate::check::value_node(whole)),
+                ) {
+                    out.push(&format!("<{ty}>::wrapping_neg("));
+                    self.expr(out, expr, depth, flow)?;
+                    out.push(")");
+                    return Ok(());
                 }
                 out.push(unary_op(*op));
                 self.nested(out, expr, u8::MAX, depth, flow)?;

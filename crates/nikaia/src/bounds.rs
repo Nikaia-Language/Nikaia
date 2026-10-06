@@ -107,6 +107,9 @@ pub struct Proven {
     /// Of the `nonnegative` asked, the values proved `>= 0` where they stand
     /// (ADR-285 D32), by node.
     pub nonnegative: HashSet<usize>,
+    /// Of the negations asked, those proved to stay inside their type
+    /// (ADR-314 D5), by node.
+    pub negations: HashSet<usize>,
 }
 
 /// **What a pattern's bindings matched** (ADR-314 D1), through sequences and
@@ -245,21 +248,55 @@ fn ensured(ledgers: &[&crate::contracts::Ledger]) -> BTreeMap<String, Ensured> {
 /// linear fact D4 decides with one. What is written without its check is the
 /// emitter's choice, by `remove-bounds-checks` and `remove-overflow-checks`.
 ///
-/// `lengths` are the receivers of the `x.len()` calls that count a `std`
-/// list, text or map ([`crate::check::Checked::std_lengths`]): only those are
-/// numbers of a proof, because a `len()` a program writes for its own type
-/// may say anything. `arithmetic` is every `+`, `-` and `*` whose two sides
-/// are one whole-number type, with that type
-/// ([`crate::check::Checked::arithmetic`]): only those may be proved.
+/// **What the checker found that a proof may read or prove**, by node or by
+/// the byte an operator starts at.
+pub struct Sites<'a> {
+    /// The receivers of the `x.len()` calls that count a `std` list, text or
+    /// map ([`crate::check::Checked::std_lengths`]): only those are numbers
+    /// of a proof, because a `len()` a program writes for its own type may
+    /// say anything.
+    pub lengths: &'a BTreeSet<usize>,
+    /// Of `lengths`, those below 2^60 ([`crate::check::Checked::sized_lengths`]).
+    pub sized: &'a BTreeSet<usize>,
+    /// [`crate::check::Checked::char_codes`] (ADR-314 D2).
+    pub char_codes: &'a BTreeSet<usize>,
+    /// Every `+`, `-` and `*` whose two sides are one whole-number type, with
+    /// that type ([`crate::check::Checked::arithmetic`]): only those may be
+    /// proved.
+    pub arithmetic: &'a BTreeMap<usize, String>,
+    /// [`crate::check::Checked::negations`] (ADR-314 D5).
+    pub negations: &'a BTreeMap<usize, String>,
+}
+
+impl<'a> Sites<'a> {
+    /// The checker's tables, as [`proven`] reads them.
+    pub fn of(checked: &'a crate::check::Checked) -> Sites<'a> {
+        Sites {
+            lengths: &checked.std_lengths,
+            sized: &checked.sized_lengths,
+            char_codes: &checked.char_codes,
+            arithmetic: &checked.arithmetic,
+            negations: &checked.negations,
+        }
+    }
+}
+
+/// `sites` are what may be read and proved; `ledgers` answer what a callee
+/// ensures (ADR-314 D3); `nonnegative` are the signed values asked `>= 0`
+/// (ADR-285 D32).
 pub fn proven(
     parsed: &Parsed,
-    lengths: &BTreeSet<usize>,
-    sized: &BTreeSet<usize>,
-    char_codes: &BTreeSet<usize>,
+    sites: &Sites<'_>,
     ledgers: &[&crate::contracts::Ledger],
-    arithmetic: &BTreeMap<usize, String>,
     nonnegative: &BTreeSet<usize>,
 ) -> Proven {
+    let Sites {
+        lengths,
+        sized,
+        char_codes,
+        arithmetic,
+        negations,
+    } = *sites;
     let mut out = Proven::default();
     let mut functions: BTreeMap<String, Vec<bool>> = BTreeMap::new();
     // A method of this program that takes a parameter `mut` changes what it
@@ -309,6 +346,10 @@ pub fn proven(
             .collect(),
         nonnegative: nonnegative.iter().map(|n| *n as i64).collect(),
         given: BTreeMap::new(),
+        negations: negations
+            .iter()
+            .map(|(at, ty)| (*at as i64, ty.clone()))
+            .collect(),
         classes: BTreeMap::new(),
         around,
     };
@@ -361,6 +402,8 @@ pub fn proven(
             .extend(walked.arithmetic.into_iter().map(|n| n as usize));
         out.nonnegative
             .extend(walked.nonnegative.into_iter().map(|n| n as usize));
+        out.negations
+            .extend(walked.negations.into_iter().map(|n| n as usize));
     }
     // **A grammar's actions, walked like a function's body**
     // ([ADR-314](../../docs/specification/adr/adr-314.md) D1), from what each
@@ -412,6 +455,8 @@ pub fn proven(
                     .extend(walked.arithmetic.into_iter().map(|n| n as usize));
                 out.nonnegative
                     .extend(walked.nonnegative.into_iter().map(|n| n as usize));
+                out.negations
+                    .extend(walked.negations.into_iter().map(|n| n as usize));
             }
         }
     }

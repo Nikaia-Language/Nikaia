@@ -54,11 +54,8 @@ pub fn report(
     let checked = crate::check::check(parsed, own, library);
     let proven = crate::bounds::proven(
         parsed,
-        &checked.std_lengths,
-        &checked.sized_lengths,
-        &checked.char_codes,
+        &crate::bounds::Sites::of(&checked),
         &[own, library],
-        &checked.arithmetic,
         &std::collections::BTreeSet::new(),
     );
     let mut walk = Walk {
@@ -66,6 +63,7 @@ pub fn report(
         source,
         lists: &checked.list_indices,
         arithmetic: &checked.arithmetic,
+        negations: &checked.negations,
         proven: &proven,
         seen: HashSet::new(),
         sites: Vec::new(),
@@ -140,6 +138,7 @@ struct Walk<'a> {
     source: &'a str,
     lists: &'a BTreeSet<usize>,
     arithmetic: &'a BTreeMap<usize, String>,
+    negations: &'a BTreeMap<usize, String>,
     proven: &'a crate::bounds::Proven,
     /// Index nodes already listed: an index read in a statement is listed once.
     seen: HashSet<usize>,
@@ -216,6 +215,22 @@ impl Walk<'_> {
                     index: false,
                     proved,
                     blocked: (!proved).then(|| blocked_operation(*op, lhs, rhs)),
+                });
+            }
+            // **A negation** (ADR-314 D5): it leaves its type only from the
+            // type's least value.
+            Expr::Unary {
+                op: crate::ast::UnaryOp::Neg,
+                ..
+            } if self.negations.contains_key(&value_node(expr)) => {
+                let proved = self.proven.negations.contains(&value_node(expr));
+                found.push(Site {
+                    line,
+                    text: crate::check::written(self.parsed, expr),
+                    index: false,
+                    proved,
+                    blocked: (!proved)
+                        .then(|| "no fact keeps it above its type's least value".to_string()),
                 });
             }
             _ => {}

@@ -501,6 +501,11 @@ pub struct Checked {
     /// ([ADR-306](../../docs/specification/adr/adr-306.md) D10) - the type is
     /// named in what is written, so the proof and the operation agree on it.
     pub arithmetic: BTreeMap<usize, String>,
+    /// **Every `-x` of a signed whole number** that is not a literal, by the
+    /// node of the negation, with that type: what `remove-overflow-checks`
+    /// may write without its check where [`crate::bounds`] proved `x` is not
+    /// the type's least value (ADR-306 D10, ADR-314 D5).
+    pub negations: BTreeMap<usize, String>,
     /// **`xs[i] op= v` on a list of numbers**, by the statement's first byte
     /// (#387): the element is a copy, so where the index is proved the slot
     /// is read once and written back without either check.
@@ -2080,6 +2085,8 @@ pub struct Propagation {
     pub char_codes: BTreeSet<usize>,
     /// [`Checked::arithmetic`].
     pub arithmetic: BTreeMap<usize, String>,
+    /// [`Checked::negations`].
+    pub negations: BTreeMap<usize, String>,
     /// [`Checked::copied_slots`].
     pub copied_slots: BTreeSet<usize>,
     /// [`Checked::owned_copies`].
@@ -2426,6 +2433,7 @@ fn propagation(
         sized_lengths: checked.sized_lengths,
         char_codes: checked.char_codes,
         arithmetic: checked.arithmetic,
+        negations: checked.negations,
         copied_slots: checked.copied_slots,
         owned_copies: checked.owned_copies,
         text_as_is: checked.text_as_is,
@@ -13149,7 +13157,7 @@ impl<'a> Checker<'a> {
                 Ty::Unknown
             }
 
-            Expr::Unary { op, expr } => {
+            whole @ Expr::Unary { op, expr } => {
                 if matches!(op, UnaryOp::Neg) {
                     self.reaching = self.reached.take();
                 }
@@ -13160,7 +13168,20 @@ impl<'a> Checker<'a> {
                 let inner = self.expr(expr, span);
                 self.reading_only = outer;
                 match op {
-                    UnaryOp::Neg => inner,
+                    UnaryOp::Neg => {
+                        if let Ty::Named {
+                            name,
+                            args,
+                            view: false,
+                        } = value_of_a_copy(inner.unseen())
+                            && args.is_empty()
+                            && (name == "i32" || name == "i64")
+                            && !matches!(**expr, Expr::LitInt { .. })
+                        {
+                            self.checked.negations.insert(value_node(whole), name);
+                        }
+                        inner
+                    }
                     // `!` is a `bool`'s, and the language below spells a
                     // bitwise complement the same way. Nikaia has no bitwise
                     // operator today, so this claims `bool` where the operand
@@ -16639,11 +16660,8 @@ impl<'a> Checker<'a> {
         let nodes: BTreeSet<usize> = slots.iter().map(|s| s.node).collect();
         let proven = crate::bounds::proven(
             parsed,
-            &self.checked.std_lengths,
-            &self.checked.sized_lengths,
-            &self.checked.char_codes,
+            &crate::bounds::Sites::of(&self.checked),
             &[self.own, self.library],
-            &self.checked.arithmetic,
             &nodes,
         );
         for slot in slots {
