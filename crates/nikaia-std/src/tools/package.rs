@@ -1992,6 +1992,7 @@ pub struct BoundsContext {
     pub lengths: collections::BTreeSet<i64>,
     pub sized: collections::BTreeSet<i64>,
     pub arithmetic: collections::BTreeMap<i64, String>,
+    pub nonnegative: collections::BTreeSet<i64>,
     pub around: Around,
 }
 
@@ -1999,6 +2000,7 @@ pub struct BoundsContext {
 pub struct BoundsProven {
     pub indices: collections::BTreeSet<i64>,
     pub arithmetic: collections::BTreeSet<i64>,
+    pub nonnegative: collections::BTreeSet<i64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2019,6 +2021,7 @@ struct BoundsWalk {
     proven: BoundsProven,
     axioms: collections::BTreeMap<String, Vec<i64>>,
     unsized_names: collections::BTreeSet<String>,
+    floors: collections::BTreeMap<String, i64>,
     pinned: collections::BTreeSet<String>,
     nonnegative: collections::BTreeSet<String>,
     shape: BodyShape,
@@ -2037,7 +2040,7 @@ fn most_facts() -> i64 { 48 }
 
 fn call_depth() -> i64 { 4 }
 
-fn no_proofs() -> BoundsProven { BoundsProven { indices: collections::BTreeSet::new(), arithmetic: collections::BTreeSet::new() } }
+fn no_proofs() -> BoundsProven { BoundsProven { indices: collections::BTreeSet::new(), arithmetic: collections::BTreeSet::new(), nonnegative: collections::BTreeSet::new() } }
 
 fn nothing_changed() -> BoundsChanged { BoundsChanged { values: collections::BTreeSet::new(), lengths: collections::BTreeSet::new() } }
 
@@ -2045,7 +2048,7 @@ fn nothing_changed() -> BoundsChanged { BoundsChanged { values: collections::BTr
 pub fn bounds_aggressive(args: &[FnArg], body: &Block, nonnegative: collections::BTreeSet<String>, context: &BoundsContext, program: &Program, words: &winnow_grammar::InternerContext, node_of: &impl Fn(&Expr) -> i64, ask: &impl Fn(&TermArena, &[i64], i64) -> bool) -> BoundsProven {
     let pinned = pinned_in(body, words);
     let shape = shape_of(args, body, &pinned, &context.around, words);
-    let mut walk = BoundsWalk { arena: TermArena::empty(), proven: no_proofs(), axioms: collections::BTreeMap::new(), unsized_names: collections::BTreeSet::new(), pinned, nonnegative, shape, assumed: collections::BTreeMap::new(), written: collections::BTreeMap::new(), poisoned: collections::BTreeSet::new(), collecting: false, at: 0 };
+    let mut walk = BoundsWalk { arena: TermArena::empty(), proven: no_proofs(), axioms: collections::BTreeMap::new(), unsized_names: collections::BTreeSet::new(), floors: collections::BTreeMap::new(), pinned, nonnegative, shape, assumed: collections::BTreeMap::new(), written: collections::BTreeMap::new(), poisoned: collections::BTreeSet::new(), collecting: false, at: 0 };
     let mut settled = false;
     if !walk.shape.roots.is_empty() {
         walk.collecting = true;
@@ -2162,6 +2165,10 @@ fn bounding_proves(walk: &BoundsWalk, facts: &BoundsFacts, goal: i64, ask: &impl
                 all.push(fact);
             }
         }
+    }
+    for (name, floor) in walk.floors.iter() {
+        let floor = nikaia_std::num::value(floor);
+        if walk.unsized_names.contains(name) { all.push(floor); }
     }
     ask(&walk.arena, &all, goal)
 }
@@ -2480,7 +2487,14 @@ fn bounding_length(walk: &mut BoundsWalk, receiver: &Expr, name: &str, context: 
             let high = walk.arena.le(n, most);
             walk.axioms.insert(length, vec![low, high]);
         }
-    } else { walk.unsized_names.insert(length); }
+    } else {
+        walk.unsized_names.insert(length.to_owned());
+        if !walk.floors.contains_key(&length) {
+            let zero = walk.arena.int(0);
+            let low = walk.arena.ge(n, zero);
+            walk.floors.insert(length, low);
+        }
+    }
     Some(n)
 }
 
@@ -3106,6 +3120,7 @@ fn bounding_if_leaves(walk: &mut BoundsWalk, cond: &Expr, then_branch: &Block, e
 
 #[allow(clippy::too_many_arguments)]
 fn bounding_expr(walk: &mut BoundsWalk, expr: &Expr, facts: &mut BoundsFacts, context: &BoundsContext, program: &Program, words: &winnow_grammar::InternerContext, node_of: &impl Fn(&Expr) -> i64, ask: &impl Fn(&TermArena, &[i64], i64) -> bool) {
+    bounding_nonnegative(walk, expr, &facts, context, program, words, node_of, ask);
     match expr {
         Expr::Index { base, index } => {
             let base = nikaia_std::boxed::open(base); let index = nikaia_std::boxed::open(index);
@@ -3149,6 +3164,7 @@ fn bounding_expr(walk: &mut BoundsWalk, expr: &Expr, facts: &mut BoundsFacts, co
             bounding_expr(walk, func, facts, context, program, words, node_of, ask);
             for arg in args.iter() { bounding_expr(walk, arg, facts, context, program, words, node_of, ask); }
             for c in config.iter() { bounding_expr(walk, &c.value, facts, context, program, words, node_of, ask); }
+            if args.len() == 1 && nikaia_std::index::or(bounding_variable(func, words), || "".into()) == "assert" { bounding_assume(walk, facts, nikaia_std::index::get(&args, 0), context, program, words, node_of); }
             let callee = callee_params(func, &context.around, words);
             for at in 0..args.len() as i64 {
                 match nikaia_std::index::get(&args, nikaia_std::index::at(at)) {
@@ -3162,6 +3178,17 @@ fn bounding_expr(walk: &mut BoundsWalk, expr: &Expr, facts: &mut BoundsFacts, co
         },
         _ => bounding_children(walk, expr, facts, context, program, words, node_of, ask),
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn bounding_nonnegative(walk: &mut BoundsWalk, expr: &Expr, facts: &BoundsFacts, context: &BoundsContext, program: &Program, words: &winnow_grammar::InternerContext, node_of: &impl Fn(&Expr) -> i64, ask: &impl Fn(&TermArena, &[i64], i64) -> bool) {
+    if walk.collecting || context.nonnegative.is_empty() { return; }
+    let node = node_of(expr);
+    if !context.nonnegative.contains(&node) { return; }
+    let term = match bounding_lin(walk, expr, facts, context, program, words, node_of) { Some(__nikaia_value) => __nikaia_value, None => return };
+    let zero = walk.arena.int(0);
+    let goal = walk.arena.ge(term, zero);
+    if bounding_proves(&walk, facts, goal, ask) { walk.proven.nonnegative.insert(node); }
 }
 
 #[allow(clippy::too_many_arguments)]

@@ -25,6 +25,9 @@ pub struct BoundsContext {
     /// Every `+`, `-` and `*` whose two sides are one whole-number type, by
     /// the byte its operator starts at, with that type.
     pub arithmetic: collections::BTreeMap[i64, String],
+    /// Signed values put where an unsigned type is stated, by node: each is
+    /// taken without a conversion where it is proved `>= 0` (ADR-285 D32).
+    pub nonnegative: collections::BTreeSet[i64],
     pub around: Around,
 }
 
@@ -33,6 +36,8 @@ pub struct BoundsContext {
 pub struct BoundsProven {
     pub indices: collections::BTreeSet[i64],
     pub arithmetic: collections::BTreeSet[i64],
+    /// Of the context's `nonnegative`, those proved `>= 0` where they stand.
+    pub nonnegative: collections::BTreeSet[i64],
 }
 
 /// What holds at one point of a body.
@@ -59,6 +64,9 @@ struct BoundsWalk {
     /// Names a length was read of where the elements may take no space: a
     /// name read both ways - one `xs` shadowing another - gets no axiom.
     unsized_names: collections::BTreeSet[String],
+    /// **`0 <= len(x)` for those** (#439): a length is never negative, however
+    /// little its elements take - only the upper bound depends on memory.
+    floors: collections::BTreeMap[String, i64],
     /// Names a lambda, a task or an `overlap` branch changes: they may change
     /// whenever one runs, so no fact is kept about them anywhere.
     pinned: collections::BTreeSet[String],
@@ -109,7 +117,7 @@ fn call_depth() -> i64 {
 }
 
 fn no_proofs() -> BoundsProven {
-    return BoundsProven { indices: collections::BTreeSet(), arithmetic: collections::BTreeSet() }
+    return BoundsProven { indices: collections::BTreeSet(), arithmetic: collections::BTreeSet(), nonnegative: collections::BTreeSet() }
 }
 
 fn nothing_changed() -> BoundsChanged {
@@ -136,6 +144,7 @@ pub fn bounds_aggressive(args: ref Vec[FnArg], body: ref Block, nonnegative: col
         proven: no_proofs(),
         axioms: collections::BTreeMap(),
         unsized_names: collections::BTreeSet(),
+        floors: collections::BTreeMap(),
         pinned: pinned,
         nonnegative: nonnegative,
         shape: shape,
@@ -293,6 +302,11 @@ fn bounding_proves(walk: ref BoundsWalk, facts: ref BoundsFacts, goal: i64, ask:
             for fact in axiom {
                 all.push(fact)
             }
+        }
+    }
+    for (name, floor) in walk.floors {
+        if walk.unsized_names.contains(name) {
+            all.push(floor)
         }
     }
     return ask(walk.arena, all, goal)
@@ -692,7 +706,12 @@ fn bounding_length(mut walk: BoundsWalk, receiver: ref Expr, name: ref String, c
             walk.axioms.insert(length, [low, high])
         }
     } else {
-        walk.unsized_names.insert(length)
+        walk.unsized_names.insert(length.clone())
+        if !walk.floors.contains_key(length) {
+            let zero = walk.arena.int(0)
+            let low = walk.arena.ge(n, zero)
+            walk.floors.insert(length, low)
+        }
     }
     return n
 }
@@ -1459,6 +1478,7 @@ fn bounding_if_leaves(mut walk: BoundsWalk, cond: ref Expr, then_branch: ref Blo
 /// Walk an expression: prove the indices in it with what holds, and keep
 /// what it changes.
 fn bounding_expr(mut walk: BoundsWalk, expr: ref Expr, mut facts: BoundsFacts, context: ref BoundsContext, program: ref Program, words: ref winnow_grammar::InternerContext, node_of: fn(ref Expr) -> i64 sync, ask: fn(ref TermArena, ref Vec[i64], i64) -> bool sync) {
+    bounding_nonnegative(walk, expr, facts, context, program, words, node_of, ask)
     match expr {
         Expr::Index { base, index } => {
             bounding_expr(walk, base, facts, context, program, words, node_of, ask)
@@ -1505,6 +1525,11 @@ fn bounding_expr(mut walk: BoundsWalk, expr: ref Expr, mut facts: BoundsFacts, c
             for c in config {
                 bounding_expr(walk, c.value, facts, context, program, words, node_of, ask)
             }
+            // **What an `assert` claims holds after it** (ADR-269 D4): the
+            // program stops where it does not.
+            if args.len() == 1 && (bounding_variable(func, words) ?? "") == "assert" {
+                bounding_assume(walk, facts, args[0], context, program, words, node_of)
+            }
             let callee = callee_params(func, context.around, words)
             for at in 0..<args.len() {
                 match args[at] {
@@ -1518,6 +1543,24 @@ fn bounding_expr(mut walk: BoundsWalk, expr: ref Expr, mut facts: BoundsFacts, c
             }
         },
         else => bounding_children(walk, expr, facts, context, program, words, node_of, ask),
+    }
+}
+
+/// **A signed value put where an unsigned type is stated** (ADR-285 D32):
+/// proved `>= 0` from what holds before it runs, or left to the conversion.
+fn bounding_nonnegative(mut walk: BoundsWalk, expr: ref Expr, facts: ref BoundsFacts, context: ref BoundsContext, program: ref Program, words: ref winnow_grammar::InternerContext, node_of: fn(ref Expr) -> i64 sync, ask: fn(ref TermArena, ref Vec[i64], i64) -> bool sync) {
+    if walk.collecting || context.nonnegative.is_empty() {
+        return
+    }
+    let node = node_of(expr)
+    if !context.nonnegative.contains(node) {
+        return
+    }
+    let term = bounding_lin(walk, expr, facts, context, program, words, node_of) ?? return
+    let zero = walk.arena.int(0)
+    let goal = walk.arena.ge(term, zero)
+    if bounding_proves(walk, facts, goal, ask) {
+        walk.proven.nonnegative.insert(node)
     }
 }
 

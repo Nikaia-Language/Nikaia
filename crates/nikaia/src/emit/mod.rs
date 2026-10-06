@@ -2637,6 +2637,7 @@ impl<'p> Emitter<'p> {
             &propagation.std_lengths,
             &propagation.sized_lengths,
             &propagation.arithmetic,
+            &std::collections::BTreeSet::new(),
         );
 
         // ADR-037 D7: which count each `Shared` value gets. Computed over the
@@ -7589,6 +7590,14 @@ impl<'p> Emitter<'p> {
                     "u64" => "u64::from(",
                     "i32" => "i32::from(",
                     _ => "i64::from(",
+                },
+                ")",
+            ),
+            // A signed value the walk proved not negative (ADR-285 D32).
+            Some(crate::check::Wrap::Unsigned(into)) => (
+                match into {
+                    "u32" => "nikaia_std::num::u32_of(",
+                    _ => "nikaia_std::num::u64_of(",
                 },
                 ")",
             ),

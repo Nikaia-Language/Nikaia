@@ -1473,6 +1473,7 @@ fn walked<'a>(
         grown_text: BTreeSet::new(),
         opaque_methods: BTreeSet::new(),
         widening_casts: BTreeSet::new(),
+        unsigned_slots: BTreeMap::new(),
         checked: Checked::default(),
     };
     checker.collect_types();
@@ -1490,6 +1491,7 @@ fn walked<'a>(
     // **And once more per unrolled turn** (ADR-304 D7, ADR-304 D6), which the
     // walk above is what found: a call may stand above the function it names.
     checker.unroll();
+    checker.unsigned_slots_proved(parsed);
     checker.checked.walks_fields = checker.walks_fields.clone();
     // ADR-296 D5: the DSL parameters a call forgot, and the ones it invented.
     // A separate walk because it answers a question about a *statement's
@@ -1856,6 +1858,53 @@ pub enum Wrap {
     /// ([ADR-285](../../../docs/specification/adr/adr-285.md) D32): the value
     /// in the type the slot states, `i64::from(a)`.
     Widen(&'static str),
+    /// **A signed value proved not negative**, in the unsigned type the slot
+    /// states (ADR-285 D32): no conversion is checked, because the walk
+    /// showed there is nothing to check.
+    Unsigned(&'static str),
+}
+
+/// A signed value in a slot that states an unsigned type (ADR-285 D32),
+/// waiting for the walk's answer.
+#[derive(Debug, Clone)]
+struct UnsignedSlot {
+    node: usize,
+    found: Ty,
+    want: Ty,
+    into: &'static str,
+    written: String,
+    span: Span,
+    /// The slot's own refusal, where `expect` would have written one.
+    refusal: Option<Finding>,
+}
+
+/// **The unsigned type a signed value goes into where it is not negative**:
+/// `i64` and `i32` into `u64`, `i32` into `u32` - every value a non-negative
+/// one can hold fits.
+fn unsigned_from_signed(found: &Ty, want: &Ty) -> Option<&'static str> {
+    let (
+        Ty::Named {
+            name: from,
+            args: a,
+            view: false,
+        },
+        Ty::Named {
+            name: into,
+            args: b,
+            view: false,
+        },
+    ) = (found, want)
+    else {
+        return None;
+    };
+    if !a.is_empty() || !b.is_empty() {
+        return None;
+    }
+    match (from.as_str(), into.as_str()) {
+        ("i64" | "i32", "u64") => Some("u64"),
+        ("i32", "u32") => Some("u32"),
+        _ => None,
+    }
 }
 
 /// **The integer types a program writes** (Part I 2.2), as the type names
@@ -3424,6 +3473,10 @@ struct Checker<'a> {
     /// The conversions that do **not** narrow, so a statement holding one of
     /// those beside a narrowing one to the same type is left alone entirely.
     widening_casts: BTreeSet<(usize, String)>,
+    /// **Signed values put where an unsigned type is stated**, by the
+    /// statement they stand in: taken where the walk proves them `>= 0`, and
+    /// refused where it does not ([`Checker::unsigned_slots_proved`]).
+    unsigned_slots: BTreeMap<usize, Vec<UnsignedSlot>>,
     /// The `let`s made inside each enclosing `spawn` body, innermost last: the
     /// name, its type, and the byte its statement starts at
     /// ([ADR-055](../../docs/specification/adr/adr-055.md) D6).
@@ -9365,6 +9418,25 @@ impl<'a> Checker<'a> {
         value: Option<&Expr>,
         span: &Span,
     ) -> Option<Wrap> {
+        // **A signed value into an unsigned slot waits for the walk** (D32).
+        if let Some(value) = value
+            && !is_literal(value)
+            && let Some(into) = unsigned_from_signed(found, want)
+        {
+            self.unsigned_slots
+                .entry(span.at())
+                .or_default()
+                .push(UnsignedSlot {
+                    node: value_node(value),
+                    found: found.clone(),
+                    want: want.clone(),
+                    into,
+                    written: written(self.parsed, value),
+                    span: *span,
+                    refusal: None,
+                });
+            return Some(Wrap::Unsigned(into));
+        }
         let how = wrap_for(found, want, value.is_some_and(is_literal))?;
         if let (Wrap::Widen(into), Some(value)) = (how, value)
             && (self.narrow_by_width(value, into, span) || self.widen_operands(value, into, span))
@@ -16264,6 +16336,11 @@ impl<'a> Checker<'a> {
         if widened_into(found, want).is_some() {
             return;
         }
+        let waiting = self.unsigned_slots.get(&span.at()).and_then(|slots| {
+            slots
+                .iter()
+                .position(|s| s.refusal.is_none() && s.found == *found && s.want == *want)
+        });
         let code = match what {
             "let" => "NK1103",
             "returns" => "NK1104",
@@ -16283,7 +16360,7 @@ impl<'a> Checker<'a> {
             "const" => "NK1166",
             other => unreachable!("no code for `{other}`"),
         };
-        self.checked.findings.push(Finding {
+        let finding = Finding {
             severity: Severity::Error,
             span,
             code,
@@ -16291,7 +16368,72 @@ impl<'a> Checker<'a> {
             notes: Vec::new(),
             help: Some(convert(found, want)),
             labels: Vec::new(),
-        });
+        };
+        // **Unless the walk may still show it is not negative** (D32): the
+        // refusal waits for its answer.
+        if let Some(at) = waiting
+            && let Some(slots) = self.unsigned_slots.get_mut(&span.at())
+        {
+            slots[at].refusal = Some(finding);
+            return;
+        }
+        self.checked.findings.push(finding);
+    }
+
+    /// **The signed values in unsigned slots, asked of the walk** (ADR-285
+    /// D32, [`crate::bounds::proven`]): one proved `>= 0` where it stands is
+    /// taken as it is; one that is not is the slot's refusal, with the two
+    /// ways to say it.
+    fn unsigned_slots_proved(&mut self, parsed: &Parsed) {
+        let slots: Vec<UnsignedSlot> = std::mem::take(&mut self.unsigned_slots)
+            .into_values()
+            .flatten()
+            .collect();
+        if slots.is_empty() {
+            return;
+        }
+        let nodes: BTreeSet<usize> = slots.iter().map(|s| s.node).collect();
+        let proven = crate::bounds::proven(
+            parsed,
+            &self.checked.std_lengths,
+            &self.checked.sized_lengths,
+            &self.checked.arithmetic,
+            &nodes,
+        );
+        for slot in slots {
+            if proven.nonnegative.contains(&slot.node) {
+                continue;
+            }
+            let (value, into) = (&slot.written, slot.into);
+            let mut finding = slot.refusal.unwrap_or_else(|| Finding {
+                severity: Severity::Error,
+                span: slot.span,
+                code: "NK1102",
+                message: format!(
+                    "This is `{}`, but `{}` is wanted here.",
+                    slot.found.text(),
+                    slot.want.text()
+                ),
+                notes: Vec::new(),
+                help: None,
+                labels: Vec::new(),
+            });
+            finding.notes.push(format!(
+                "{} `{}` goes into {} `{into}` on its own only where the compiler can show it \
+                 is not negative.",
+                match an_or_a(&slot.found.text()) {
+                    "an" => "An",
+                    _ => "A",
+                },
+                slot.found.text(),
+                an_or_a(into)
+            ));
+            finding.help = Some(format!(
+                "Write `{value} as {into}`, which stops the program on a negative value, or \
+                 `assert {value} >= 0` before this line."
+            ));
+            self.checked.findings.push(finding);
+        }
     }
 
     fn expect_bool(&mut self, found: &Ty, span: &Span, why: &str) {

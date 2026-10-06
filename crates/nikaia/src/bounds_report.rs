@@ -57,6 +57,7 @@ pub fn report(
         &checked.std_lengths,
         &checked.sized_lengths,
         &checked.arithmetic,
+        &std::collections::BTreeSet::new(),
     );
     let mut walk = Walk {
         parsed,

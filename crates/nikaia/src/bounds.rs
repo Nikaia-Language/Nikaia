@@ -104,6 +104,9 @@ impl OverflowChecks {
 pub struct Proven {
     pub indices: HashSet<usize>,
     pub arithmetic: HashSet<usize>,
+    /// Of the `nonnegative` asked, the values proved `>= 0` where they stand
+    /// (ADR-285 D32), by node.
+    pub nonnegative: HashSet<usize>,
 }
 
 /// **Every index and every operation the walk proves**, whatever a build does
@@ -122,6 +125,7 @@ pub fn proven(
     lengths: &BTreeSet<usize>,
     sized: &BTreeSet<usize>,
     arithmetic: &BTreeMap<usize, String>,
+    nonnegative: &BTreeSet<usize>,
 ) -> Proven {
     let mut out = Proven::default();
     let mut functions: BTreeMap<String, Vec<bool>> = BTreeMap::new();
@@ -168,6 +172,7 @@ pub fn proven(
             .iter()
             .map(|(at, ty)| (*at as i64, ty.clone()))
             .collect(),
+        nonnegative: nonnegative.iter().map(|n| *n as i64).collect(),
         around,
     };
     let mut bodies: Vec<&Spanned<Item>> = Vec::new();
@@ -211,6 +216,8 @@ pub fn proven(
             .extend(walked.indices.into_iter().map(|n| n as usize));
         out.arithmetic
             .extend(walked.arithmetic.into_iter().map(|n| n as usize));
+        out.nonnegative
+            .extend(walked.nonnegative.into_iter().map(|n| n as usize));
     }
     out
 }

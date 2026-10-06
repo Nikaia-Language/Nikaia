@@ -4,6 +4,28 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.551] — 2026-10-06
+
+**A value the compiler shows is not negative goes into an unsigned type**
+(ADR-285 D32, #439 steps 9 and 10).
+- These now compile:
+  - `let n: u64 = xs.len()`;
+  - `let n: u64 = k` after `if k >= 0`;
+  - `let n: u64 = k` after `assert(k >= 0)`;
+  - the same `i64`/`i32` values into `u64`, and `i32` into `u32`, at the other
+    typed slots.
+- The checker asks the bounds walk (through `proofs::ask`, so the answer is
+  recorded in `nikaia.proofs`) whether the value is `>= 0` where it stands.
+  A proved value is written `nikaia_std::num::u64_of(k)`, without a check.
+- Where nothing shows it, the slot is refused as before. A note says why, and
+  the help names `k as u64` (checked) and `assert k >= 0`.
+- The walk now takes what an `assert` claims as a fact after it.
+- It also reads `0 <= len(x)` for a list whose elements take no space, which
+  has no upper bound.
+
+Every bench and example lowers byte for byte as before, and their
+`nikaia.proofs` do not move.
+
 ## [0.0.550] — 2026-10-06
 
 **`??` and `?.` after a value that cannot be absent warn; after a list's index

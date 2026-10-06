@@ -172,6 +172,24 @@ pub fn unsigned_with_signed(unsigned: u64, signed: i64) -> std::cmp::Ordering {
     }
 }
 
+/// **A signed value the compiler proved not negative, as a `u64`**
+/// ([ADR-285](../../../docs/specification/adr/adr-285.md) D32): every value it
+/// can then hold fits, so nothing is checked. `let n: u64 = k` after `if k >=
+/// 0` is written `let n: u64 = nikaia_std::num::u64_of(k)`.
+#[inline]
+pub fn u64_of<T: Into<i64>>(value: T) -> u64 {
+    let value: i64 = value.into();
+    debug_assert!(value >= 0, "a value proved not negative was {value}");
+    value as u64
+}
+
+/// The same for an `i32` into a `u32`.
+#[inline]
+pub fn u32_of(value: i32) -> u32 {
+    debug_assert!(value >= 0, "a value proved not negative was {value}");
+    value as u32
+}
+
 /// The same with the signed side written first.
 #[inline]
 pub fn signed_with_unsigned(signed: i64, unsigned: u64) -> std::cmp::Ordering {

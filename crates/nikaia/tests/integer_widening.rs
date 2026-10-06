@@ -431,3 +431,113 @@ fn the_help_says_when_a_number_widens() {
         ]
     );
 }
+
+const NOT_NEGATIVE: &str = "fn half(k: i64) -> u64 {\n\
+     \x20   if k >= 0 {\n\
+     \x20       let n: u64 = k\n\
+     \x20       return n / 2\n\
+     \x20   }\n\
+     \x20   return 0\n\
+     }\n\
+     \n\
+     fn main() {\n\
+     \x20   let xs = [1, 2, 3]\n\
+     \x20   let n: u64 = xs.len()\n\
+     \x20   println(f\"{n} {half(9)} {half(-4)}\")\n\
+     }\n";
+
+/// **A value the walk shows is not negative goes into a `u64`** (#439 step
+/// 9): a length, and a value after `if k >= 0`. Neither is checked again in
+/// the emitted Rust.
+#[test]
+fn a_value_proved_not_negative_goes_into_a_u64() {
+    runs("not-negative", NOT_NEGATIVE, "3 4 0\n");
+    let parsed = parse_to_ast(NOT_NEGATIVE).expect("the source parses");
+    let rust = emit_program(&parsed, Build::default())
+        .expect("it lowers")
+        .rust;
+    assert!(
+        rust.contains("let n: u64 = nikaia_std::num::u64_of(k);"),
+        "{rust}"
+    );
+    assert!(!rust.contains("u64::try_from"), "{rust}");
+}
+
+/// **Where nothing shows it, the slot is refused** (#439 step 9), and the help
+/// names the checked conversion and the `assert`.
+#[test]
+fn a_value_nothing_shows_not_negative_is_refused() {
+    let found = errors(
+        "fn f(k: i64) -> u64 {\n    let n: u64 = k\n    n\n}\n\n\
+         fn main() {\n    println(f\"{f(3)}\")\n}\n",
+    );
+    let refusal = found
+        .iter()
+        .find(|f| f.code == "NK1103")
+        .unwrap_or_else(|| panic!("{found:#?}"));
+    assert_eq!(
+        refusal.help.as_deref(),
+        Some(
+            "Write `k as u64`, which stops the program on a negative value, or `assert k >= 0` before this line."
+        )
+    );
+    // **And the `assert` is a way out**: what it claims holds after it.
+    let asserted = errors(
+        "fn f(k: i64) -> u64 {\n    assert(k >= 0)\n    let n: u64 = k\n    n\n}\n\n\
+         fn main() {\n    println(f\"{f(3)}\")\n}\n",
+    );
+    assert!(asserted.is_empty(), "{asserted:#?}");
+}
+
+/// **The answer is the recorded one** (#439 step 9, ADR-270 D4): a project
+/// build writes it into `nikaia.proofs`, and a `--locked` build reads it back.
+#[test]
+fn the_answer_is_recorded_and_replayed() {
+    let dir = common::scratch_dir("widening-proofs");
+    std::fs::create_dir_all(dir.join("src")).expect("the package");
+    std::fs::write(
+        dir.join("nikaia.toml"),
+        "[package]\nname = \"wp\"\nversion = \"0.1.0\"\n",
+    )
+    .expect("a manifest");
+    std::fs::write(dir.join("src/main.nika"), NOT_NEGATIVE).expect("a source");
+    let build = |locked: bool| {
+        let mut args = vec!["build", "--no-cache"];
+        if locked {
+            args.push("--locked");
+        }
+        Command::new(env!("CARGO_BIN_EXE_nikaia"))
+            .current_dir(&dir)
+            .args(args)
+            .output()
+            .expect("the nikaia binary runs")
+    };
+    let first = build(false);
+    assert!(
+        first.status.success(),
+        "{}",
+        String::from_utf8_lossy(&first.stderr)
+    );
+    let written = std::fs::read_to_string(dir.join("nikaia.proofs")).expect("the file is written");
+    let again = build(true);
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(
+        again.status.success(),
+        "{}",
+        String::from_utf8_lossy(&again.stderr)
+    );
+    assert!(written.lines().any(|l| l.contains(" proved ")), "{written}");
+}
+
+/// **`len() >= 0` for every list** (#439 step 10): a list whose elements take
+/// no space has no upper bound on its length, and still none below zero.
+#[test]
+fn a_length_of_elements_that_take_no_space_is_not_negative() {
+    runs(
+        "unsized",
+        "enum One {\n    It,\n}\n\n\
+         fn main() {\n    let units = [One::It, One::It]\n    let n: u64 = units.len()\n    \
+         println(f\"{n}\")\n}\n",
+        "2\n",
+    );
+}
