@@ -4,6 +4,15 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.599] — 2026-10-06
+
+**A call through a head nothing declares is `NK1181`, as a value is** (#488,
+ADR-286 D31 and D33). Decided with the owner; not built yet.
+- `nowhere::wobble(1)` passed the checker and was refused by `rustc`; D31
+  already refused such a head, and the checker asked it of values only.
+- The help is the `use` line (D33) and names a known head one edit away first:
+  `fx::read` → *did you mean `fs`?*
+
 ## [0.0.598] — 2026-10-06
 
 **The build-time program leaves a package's foreign parts out** (ADR-321
