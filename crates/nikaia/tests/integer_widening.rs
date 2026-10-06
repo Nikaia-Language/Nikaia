@@ -541,3 +541,28 @@ fn a_length_of_elements_that_take_no_space_is_not_negative() {
         "2\n",
     );
 }
+
+/// **`x += a` is `x = x + a`** (D32): over a `u32` into an `i64` it widens and
+/// runs; a sum that is wider than `x` does not fit it (`NK1105`); `u64` with
+/// `i64` has no common type (`NK1199`).
+#[test]
+fn a_compound_assignment_computes_in_the_common_type() {
+    runs(
+        "compound",
+        "fn main() {\n\
+         \x20   let xs: Vec[u32] = [1, 2, 3]\n\
+         \x20   let a: u32 = 4\n\
+         \x20   let mut total: i64 = 0\n\
+         \x20   total += a\n\
+         \x20   for n in xs {\n\
+         \x20       total += n * 2\n\
+         \x20   }\n\
+         \x20   println(f\"{total}\")\n\
+         }\n",
+        "16\n",
+    );
+    let narrower = "fn main() {\n    let b: i64 = 4\n    let mut small: u32 = 1\n    small += b\n    println(f\"{small}\")\n}\n";
+    assert!(codes(narrower).contains(&"NK1105"), "{:?}", codes(narrower));
+    let none = "fn main() {\n    let b: i64 = 4\n    let mut u: u64 = 1\n    u += b\n    println(f\"{u}\")\n}\n";
+    assert!(codes(none).contains(&"NK1199"), "{:?}", codes(none));
+}

@@ -4,6 +4,23 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.560] — 2026-10-06
+
+**`x += a` over two integer types is `x = x + a`** (ADR-285 D32, #439).
+- The checker did not compare the two sides of `x += a` when they were two
+  different integer types, so `total += a` with `total: i64` and `a: u32`
+  was refused by `rustc`.
+- Now it computes in the common type: `total += i64::from(a)`. The value's own
+  operands are widened as a stated type's are, and a bit operation inside it
+  is `NK1215`.
+- Where the common type is wider than `x`'s (`small += b` with
+  `small: u32`, `b: i64`), the result does not fit: `NK1105`, with the
+  conversion as help.
+- `u64` with `i64` has no common type and stays `NK1199`, as for `+`.
+- Shifts are left as they were.
+
+Every bench and example lowers byte for byte as before.
+
 ## [0.0.559] — 2026-10-06
 
 **A map's trust is the map's** (ADR-010 D1, #431).

@@ -11118,6 +11118,14 @@ impl<'a> Checker<'a> {
                 if op.is_some() {
                     self.a_compound_write_to_a_map_slot(target, span);
                 }
+                // **`x += a` over two integer types is `x = x + a`**
+                // ([ADR-285](../../docs/specification/adr/adr-285.md) D32): it
+                // computes in their common type, which has to be `x`'s.
+                if let Some(op) = op
+                    && !matches!(op, BinaryOp::Shl | BinaryOp::Shr)
+                {
+                    self.a_compound_over_two_integer_types(*op, target, &into, value, &found, span);
+                }
                 // **`x += d` is `x = x + d`, and may be proved as one** (#387):
                 // a name of one whole-number type and a value of it, or a
                 // literal, recorded by the statement's first byte - where no
@@ -14349,6 +14357,70 @@ impl<'a> Checker<'a> {
                 labels: Vec::new(),
             });
             return;
+        }
+    }
+
+    /// **`x op= value` over two integer types** (D32): the value is widened
+    /// where `x`'s type is the common one; where the common type is wider
+    /// than `x`'s, the result does not fit `x` (`NK1105`); where there is none,
+    /// it is the operator's `NK1199`.
+    fn a_compound_over_two_integer_types(
+        &mut self,
+        op: BinaryOp,
+        target: &Expr,
+        into: &Ty,
+        value: &Expr,
+        found: &Ty,
+        span: &Span,
+    ) {
+        let integer = |ty: &Ty| match ty {
+            Ty::Named {
+                name,
+                args,
+                view: false,
+            } if args.is_empty() && INTEGERS.contains(&name.as_str()) => Some(name.clone()),
+            _ => None,
+        };
+        let (Some(x), Some(v)) = (integer(into), integer(found)) else {
+            return;
+        };
+        if x == v || is_literal(value) {
+            return;
+        }
+        match common_integer(&x, &v) {
+            Some(common) if common == x => {
+                if !self.narrow_by_width(value, common, span)
+                    && !self.widen_operands(value, common, span)
+                {
+                    self.checked
+                        .wrapped
+                        .insert(value as *const Expr as usize, Wrap::Widen(common));
+                }
+            }
+            Some(common) => {
+                let shown = written(self.parsed, target);
+                self.checked.findings.push(Finding {
+                    severity: Severity::Error,
+                    span: *span,
+                    code: "NK1105",
+                    message: format!(
+                        "This `{}=` computes in `{common}`, but `{shown}` holds `{x}`.",
+                        binary_op_text(op)
+                    ),
+                    notes: vec![format!(
+                        "Two integer types compute in the one that holds every value of both, \
+                         and a `{common}` does not fit every `{x}`."
+                    )],
+                    help: Some(format!(
+                        "Convert the value with `as {x}`, which stops the program where it does \
+                         not fit, or make `{shown}` a `{common}`."
+                    )),
+                    labels: Vec::new(),
+                });
+            }
+            None => {
+                self.two_number_types(op, [(target, into), (value, found)], span);
+            }
         }
     }
 
@@ -26176,4 +26248,28 @@ fn is_a_whole_number(name: &str) -> bool {
         name,
         "i8" | "i16" | "i32" | "i64" | "isize" | "u8" | "u16" | "u32" | "u64" | "usize"
     )
+}
+
+/// An operator as it is written.
+fn binary_op_text(op: BinaryOp) -> &'static str {
+    match op {
+        BinaryOp::Add => "+",
+        BinaryOp::Sub => "-",
+        BinaryOp::Mul => "*",
+        BinaryOp::Div => "/",
+        BinaryOp::Rem => "%",
+        BinaryOp::BitAnd => "&",
+        BinaryOp::BitOr => "|",
+        BinaryOp::BitXor => "^",
+        BinaryOp::Shl => "<<",
+        BinaryOp::Shr => ">>",
+        BinaryOp::Eq => "==",
+        BinaryOp::Ne => "!=",
+        BinaryOp::Lt => "<",
+        BinaryOp::Le => "<=",
+        BinaryOp::Gt => ">",
+        BinaryOp::Ge => ">=",
+        BinaryOp::And => "&&",
+        BinaryOp::Or => "||",
+    }
 }
