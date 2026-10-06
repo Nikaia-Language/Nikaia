@@ -124,7 +124,7 @@
 30-nikaia-tooling.md #10 lowered (as written)  use std::foreign
 30-nikaia-tooling.md #11 lowered (as written)  // In code
 30-nikaia-tooling.md #12 refused (as written) [NK1109]  // main.nika
-30-nikaia-tooling.md #13 refused (as written) [NK1228]  use std::backend::x86
+30-nikaia-tooling.md #13 refused (as written)  use std::backend::x86
 30-nikaia-tooling.md #14 fragment (as written)  pub fn read_to_string() -> String throws   // all of it…
 30-nikaia-tooling.md #15 lowered (as written) [about-a-refusal]  use std::io
 30-nikaia-tooling.md #16 refused (a body) [NK1117]  print(f"{name}: ")

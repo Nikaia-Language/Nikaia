@@ -4,6 +4,14 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.595] — 2026-10-06
+
+**The inline-assembly example names its grammar: `dsl x86::Asm`** (ADR-299
+D20, #485).
+- Part III's example wrote `dsl x86` after `use std::backend::x86`, which D20
+  makes `NK1228`; the grammar is `Asm`, reached as every grammar from a module
+  is. ADR-296's sentence follows.
+
 ## [0.0.594] — 2026-10-06
 
 **Part III 17.1 lists `html::Raw`'s constructor as a program writes it** (#486,

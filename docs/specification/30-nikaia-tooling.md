@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part III: Tooling, Ecosystem & Interoperability**
-**Version:** 0.0.594 (Draft)
+**Version:** 0.0.595 (Draft)
 **Date:** 2026-10-06
 
 ---
@@ -794,7 +794,7 @@ fn fast_add(val: i64, ptr: ref i64) -> i64 {
 
     // The grammar parses the bindings and resolves 'val', 'ptr' and 'result'
     // from the enclosing scope.
-    dsl x86 {
+    dsl x86::Asm {
         // 1. Binding header - syntax defined by the x86 grammar
         $v = in(reg) val
         $p = in(mem) ptr
