@@ -149,7 +149,7 @@ copy, for a value that fits a machine word. The block's form is `fn(mut v)`
 either way; what changes is what `v` is. The shape question below is unchanged.
 
 **It is a performance idea, and it is not a question waiting on the owner.** It
-was on [`open-decisions.md`](open-decisions.md) for a while and has been taken off
+was on the former `open-decisions.md` for a while and has been taken off
 deliberately, because that page is for questions whose answer somebody has to
 give before work can continue — and nothing is waiting on this one. The measured
 win is 6 ns a door on the values that cross a thread. Nothing is half-built, no

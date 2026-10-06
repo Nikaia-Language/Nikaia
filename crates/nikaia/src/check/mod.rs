@@ -20352,7 +20352,7 @@ impl<'a> Checker<'a> {
     /// `sqlite3_open(path, db)` wants a handle to fill, and C writes it as an
     /// uninitialised pointer. What this language does there is a question the
     /// record does not answer, and it is in
-    /// [`open-decisions.md`](../../docs/open-decisions.md) rather than guessed
+    /// the former `open-decisions.md` rather than guessed
     /// at here.
     fn a_handle_is_not_made_here(&mut self, handle: &str, span: &Span) {
         self.checked.findings.push(Finding {

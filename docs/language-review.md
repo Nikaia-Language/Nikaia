@@ -72,7 +72,7 @@ Three shapes carry most of it:
 "compiler decides" principle for ownership. *Decided since:*
 [ADR-094](specification/adr/adr-094.md) takes points 1 and 2 below, records
 how the `&` got there in the first place, and names the one semantic cost;
-point 3 is [`open-decisions.md`](open-decisions.md)'s entry on one text type.
+point 3 is the former `open-decisions.md`'s entry on one text type.
 
 1. A parameter written `T` is a **view unless the body keeps it** — stored,
    returned, spawned — and which one it is goes into the ledger beside `sync`
@@ -118,7 +118,7 @@ its parameter's. But 13.5 already solved exactly that for `std` with
 record `from(f)` for any function that runs its parameter during the call, and
 reserve `@detached` for one that stores or spawns it. The ledger already has
 the column. The same question, measured against `examples/http/`, is
-[`open-decisions.md`](open-decisions.md)'s entry on how a package receives a handler.
+the former `open-decisions.md`'s entry on how a package receives a handler.
 
 ### 1.3 Traits reintroduce the colour the language removed
 

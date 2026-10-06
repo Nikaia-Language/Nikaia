@@ -94,7 +94,7 @@ finished or not.
 registry, the C library and everything built on it (wasm, Python, bare metal), HTTP/TLS/HTTP/2,
 `fmt`/`doc`/LSP, supervision, and filling out `std`.
 
-**No question is waiting on a decision** right now ([`open-decisions.md`](open-decisions.md)).
+**Questions waiting on a decision** are the issues labelled [`decision`](https://github.com/Nikaia-Language/Nikaia/issues?q=is%3Aopen+label%3Adecision).
 
 ### So, as a tester
 
@@ -181,7 +181,7 @@ form. Self-hosting runs beside all of them: the owner's instruction is to take i
 *   [ ] **A Python binding** ([ADR-284](specification/adr/adr-284.md)): `nikaia bind python` writes a `ctypes` binding from the ledger over the C library — no second artifact, no native add-on.
 *   [ ] **A target without an operating system** ([ADR-119](specification/adr/adr-119.md)): `no_std` emission, `user_parallelism` pinned to `no`, interrupts as wakers, a handler checked as `fn() sync` touching no lock. After the C library; it reuses its allocator and baked settings.
 *   [~] **The runtime's second half, and the HTTP server** ([ADR-303](specification/adr/adr-303.md)). **Built**: the runtime before the first statement, files on `io_uring`, sockets with kept registrations ([ADR-303](specification/adr/adr-303.md)), a minimal HTTP/1.1 server (0.0.166), its parser written in Nikaia as a grammar (0.0.248), `std::process` whose wait gives the thread up ([ADR-243](specification/adr/adr-243.md)). **Open**: `rustls` (D2), HTTP/2, many connections at once, route hashing; [ADR-289](specification/adr/adr-289.md) D18's `String`/`html::Raw` bodies and [ADR-289](specification/adr/adr-289.md)'s `Bytes`/mapping/`http::File` bodies, which `examples/fortunes.nika` waits on. `nikaia serve` is **cut** ([ADR-289](specification/adr/adr-289.md) D12). `mmap` per request is 2.5× worse than plainly reading at 4 KiB ([`zero-copy-send.md`](history/zero-copy-send.md)).
-*   [~] **Standard Library**: the **shape** is settled — half Rust, half Nikaia ([ADR-014](specification/adr/adr-014.md)), every entry says what it throws ([ADR-280](specification/adr/adr-280.md)) — and the *surface* is what is left. The share written in `.nika` grows with the self-hosting road above. *Open questions on its surface* are in [`open-decisions.md`](open-decisions.md) (`Path`, `fs::exists`, `html::Raw::new`).
+*   [~] **Standard Library**: the **shape** is settled — half Rust, half Nikaia ([ADR-014](specification/adr/adr-014.md)), every entry says what it throws ([ADR-280](specification/adr/adr-280.md)) — and the *surface* is what is left. The share written in `.nika` grows with the self-hosting road above. *Open questions on its surface* are `decision` issues ([#486](https://github.com/Nikaia-Language/Nikaia/issues/486), `html::Raw::new`).
 
 ### Phase 4: Backend optimization
 
@@ -196,7 +196,7 @@ Tier-1 staging is **withdrawn** ([ADR-178](specification/adr/adr-178.md)) and ha
 This file is the long view. **What to do next is one list, and it is not here**:
 the [issue tracker](https://github.com/Nikaia-Language/Nikaia/issues) holds every decided-and-unbuilt item, with
 type (`Bug`, `Feature`, `Task`), area labels, and **Priority** and **Effort** fields for the order to take them. The unchecked boxes above are *scope*; an entry there has a record behind it and only
-*when* is open. Scope becomes work by being decided — that is [`open-decisions.md`](open-decisions.md).
+*when* is open. Scope becomes work by being decided — that is the issues labelled `decision`.
 
 What moved since the last roadmap pass (0.0.266 → 0.0.289), so it is on this page and not only in
 the CHANGELOG:

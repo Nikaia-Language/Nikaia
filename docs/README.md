@@ -61,11 +61,10 @@ is normative and nothing may depend on it to know what a program means.
   `Task`), a label says where (`language`, `libraries`, `tools`, `targets`,
   `selfhosting`, `compiler`, `spec`), and **Priority** and **Effort** give the
   order. Big pieces are issues with sub-issues. A closed issue stays: every entry the old `open-work.md` ever carried, closed ones included, is an issue, and the citations of its `§N.M` numbers in the CHANGELOG, the ADRs and code comments name the issue they mean. "The former backlog file" in old text means that file as a whole.
-* [`open-decisions.md`](open-decisions.md) — the questions work cannot settle,
-  each with what is blocked by it, the options, and a recommendation. **Only
-  what is open**: an answered question leaves this file for its
-  [ADR](specification/adr/) rather than staying with a note on it, so the answer
-  and its reasoning live in one place.
+* **Open questions for the owner** are issues labelled
+  [`decision`](https://github.com/Nikaia-Language/Nikaia/issues?q=is%3Aopen+label%3Adecision):
+  each says what is blocked by it, the options, and a recommendation, and is
+  closed when an ADR answers it.
 * [`handoff.md`](handoff.md) — how to work on the **parser backend**: testing a
   change against Nikaia, what the upstream patch does, and what was tried and
   must not be redone. A guide; the open work that was in it is in

@@ -280,7 +280,7 @@ header block is, in this order:
 
 **Status:** Accepted | Open
 **Date:** <day the decision was taken>
-**Answers:** <the question, with the issue or open-decisions.md entry that asked it>
+**Answers:** <the question, with the issue that asked it>
 **Supersedes / Related:** <records this changes or leans on, one line each>
 ```
 

@@ -6,7 +6,7 @@ lists".*
 
 **Status:** Accepted | Open
 **Date:** <day the decision was taken>
-**Answers:** <the question, with the issue or `open-decisions.md` entry that
+**Answers:** <the question, with the issue that
 asked it>
 **Supersedes / Related:** <records this changes or leans on, one line each: what
 it says that matters here>
@@ -94,7 +94,7 @@ cost this decision accepts.*
 ## 6. What this does not decide
 
 *Questions the decision leaves open on purpose, each with where it will be asked
-(an issue or an `open-decisions.md` entry). Leave the section out if there are
+(an issue; one for the owner is labelled `decision`). Leave the section out if there are
 none.*
 
 ---

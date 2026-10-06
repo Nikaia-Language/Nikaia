@@ -104,7 +104,6 @@ by measuring anything.
 ## 5. What this is not
 
 It is not a plan, not a promise and not an issue —
-an issue is for what a record decided and the compiler does not do yet, and no record decided this. It is not a question in
-[`open-decisions.md`](open-decisions.md) either: that page is for questions that
+an issue is for what a record decided and the compiler does not do yet, and no record decided this. It is not a `decision` issue either: those are for questions that
 are **answerable**, with options and a recommendation, and this one has neither
 yet. It is a note, which is what this directory is for.
