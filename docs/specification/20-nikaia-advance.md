@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part II: Advanced Features & Metaprogramming**
-**Version:** 0.0.567 (Draft)
+**Version:** 0.0.568 (Draft)
 **Date:** 2026-10-06
 
 ---
@@ -281,9 +281,11 @@ The `dsl` keyword embeds **foreign syntax** in a Nikaia file: SQL, HTML, regex, 
 
 `meta::column(name, type)` gives a grammar control over the statement's result type. The compiler builds the row type from the declared columns, one typed field per column, as it builds the parameter type from the holes. The `type` of `meta::column` and of `meta::parameter` is a `std::meta::Type`, a type described as data: `I64`, `I32`, `U8`, `U64`, `U32`, `F64`, `Bool`, `Text`, `Bytes`, `Maybe(t)` for `t?`, `List(t)` for `Vec[t]`, `Record(fields)` for a struct the compiler writes, and `Named("Mode")` for a type the program declares, resolved where the block stands (`NK1135` if nothing declares it) ([ADR-323](adr/adr-323.md)). A message about a field of a type the compiler wrote names the block and the grammar that declared it, and `--comptime` prints the type of each block.
 
-**How a row's fields are named** ([ADR-299](adr/adr-299.md) D12-D14). The row has one field per table of the query, named by its alias or its table, holding that table's columns, and one flat field per column whose name is unique in the row: `u.a.id`, and `u.name` where only one column is called `name`. Where two columns share a name, or a column is named as a table or an alias is, neither is a flat field, and reading it is `NK1107`, whose help names the qualified paths and `AS`. A column named with `AS` is a flat field. A column whose name cannot be a field is refused at the query, asking for `AS`. A database driver's grammar reads the statement and the schema and declares one column per result column. The schema is a build-time argument of the block, `dsl sqlite(schema: APP) { … } eod`, resolved from a `comptime` value. A column the schema lacks is refused by the grammar at the query, while the program is built. The compiler does not understand SQL; the driver owns the grammar, and a vendor's database is a package.
+**A grammar from a package is named with its package** ([ADR-299](adr/adr-299.md) D20): `dsl sqlite::Sql { … } eod`, as every name from a package is (Part I 9.2), with no short form. A grammar the program declares is named bare: `dsl Json { … } eod`. A block that names a package where a grammar stands is `NK1228`.
 
-**A block may name the struct its rows are** ([ADR-299](adr/adr-299.md) D15-D19): `dsl sqlite(schema: APP) -> Contact { … } eod`, and each row is a `Contact`. Columns match fields by name, never by position: a field of a scalar type matches the flat column of its name, a field of a struct type named like an alias or a table matches that table's columns, by the same rules. Every column needs a field (`NK1219`) and every field a column (`NK1220`); `extra_columns: true` leaves a column without a field unread, and `missing_fields: true` makes a `T?` field without a column `null`. Both are the compiler's, taken from any block with `-> T` and never handed to the grammar. A flat field whose name two tables' columns share is `NK1222`. A column that may be `NULL` goes only into a `T?` field (`NK1221`); one that cannot may go into either. A `NULL` that reaches a field that is not a `T?` while the program runs makes `execute` fail with an error naming the field, the column and its table. A field is a scalar, its `T?`, or a struct for a group; anything else is `NK1218`.
+**How a row's fields are named** ([ADR-299](adr/adr-299.md) D12-D14). The row has one field per table of the query, named by its alias or its table, holding that table's columns, and one flat field per column whose name is unique in the row: `u.a.id`, and `u.name` where only one column is called `name`. Where two columns share a name, or a column is named as a table or an alias is, neither is a flat field, and reading it is `NK1107`, whose help names the qualified paths and `AS`. A column named with `AS` is a flat field. A column whose name cannot be a field is refused at the query, asking for `AS`. A database driver's grammar reads the statement and the schema and declares one column per result column. The schema is a build-time argument of the block, `dsl sqlite::Sql(schema: APP) { … } eod`, resolved from a `comptime` value. A column the schema lacks is refused by the grammar at the query, while the program is built. The compiler does not understand SQL; the driver owns the grammar, and a vendor's database is a package.
+
+**A block may name the struct its rows are** ([ADR-299](adr/adr-299.md) D15-D19): `dsl sqlite::Sql(schema: APP) -> Contact { … } eod`, and each row is a `Contact`. Columns match fields by name, never by position: a field of a scalar type matches the flat column of its name, a field of a struct type named like an alias or a table matches that table's columns, by the same rules. Every column needs a field (`NK1219`) and every field a column (`NK1220`); `extra_columns: true` leaves a column without a field unread, and `missing_fields: true` makes a `T?` field without a column `null`. Both are the compiler's, taken from any block with `-> T` and never handed to the grammar. A flat field whose name two tables' columns share is `NK1222`. A column that may be `NULL` goes only into a `T?` field (`NK1221`); one that cannot may go into either. A `NULL` that reaches a field that is not a `T?` while the program runs makes `execute` fail with an error naming the field, the column and its table. A field is a scalar, its `T?`, or a struct for a group; anything else is `NK1218`.
 
 **Example: Embedding SQL**
 SQL written in a `dsl` block is verified while the program is built, against the
@@ -300,7 +302,7 @@ fn query_users(min_age: i32) {
     // 1. The driver's grammar parses this SQL while the program is built,
     //    checks it against the schema, sees ':target_age' (a parameter hole)
     //    and declares the result columns; the compiler derives the row type.
-    let query = dsl sqlite(schema: APP) {
+    let query = dsl sqlite::Sql(schema: APP) {
         SELECT name, email FROM users WHERE age >= :target_age
     } eod
 

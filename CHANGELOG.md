@@ -4,6 +4,17 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.568] — 2026-10-06
+
+**A `dsl` block names a grammar from a package as `package::Grammar`, always**
+(ADR-299 D20, #485).
+- `dsl sqlite::Sql(schema: APP) { … } eod`, as every name from a package is
+  written (Part I 9.2). No short form, not even where package and grammar share
+  a name; a grammar the program declares stays bare (`dsl Json`).
+- `dsl sqlite { … }` is `NK1228`, naming the package's `pub` grammars.
+- The specification's and ADR-299's examples now write `dsl sqlite::Sql`.
+- Not built: today's parser refuses `::` after `dsl`.
+
 ## [0.0.567] — 2026-10-06
 
 **A package links the system libraries it names, through `pkg-config`**
