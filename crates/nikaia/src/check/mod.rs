@@ -7273,7 +7273,7 @@ impl<'a> Checker<'a> {
             return;
         }
         self.computing_default = true;
-        let declared_ty = Ty::from_ast(self.parsed, &option.ty);
+        let declared_ty = crate::comptime_run::as_built(Ty::from_ast(self.parsed, &option.ty));
         let (value, said) =
             match self.compiled_build_time_value(&option.default, &declared_ty, &name, &span) {
                 Some(outcome) => outcome,
@@ -19820,6 +19820,7 @@ impl<'a> Checker<'a> {
                 }
                 bounds
             },
+            Some(self.own),
         ) {
             crate::comptime_run::Computed::Value(computed) => Some((Some(computed), false)),
             crate::comptime_run::Computed::Forbidden { callee, because } => {

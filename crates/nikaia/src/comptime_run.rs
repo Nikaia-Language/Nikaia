@@ -287,6 +287,31 @@ pub(crate) enum Computed {
     NotHere,
 }
 
+/// What a call's left-out option stands for where its default is not known in
+/// a run (#468): the emitter's placeholder, which only a refused default
+/// reaches.
+pub(crate) const NOT_COMPUTED_YET: &str = "a default not computed yet";
+
+/// **A default's type as its run builds it** (#468): the value a view
+/// views - `ref String`'s `String` - which the run hands back, and which is
+/// written into the ledger the same way.
+pub(crate) fn as_built(ty: Ty) -> Ty {
+    match ty {
+        // `ref String` is read as `str`.
+        Ty::Named { name, args, .. } if name == "str" => Ty::Named {
+            name: "String".to_string(),
+            args,
+            view: false,
+        },
+        Ty::Named { name, args, .. } => Ty::Named {
+            name,
+            args,
+            view: false,
+        },
+        other => other,
+    }
+}
+
 /// **Compile and run an initialiser** (ADR-321 D1): `value`, standing in
 /// `files[here]`, of type `ty`, with every file of the program around it and
 /// `known` for what earlier `comptime`s came to. The rule is asked first
@@ -303,14 +328,18 @@ pub(crate) fn compute(
     library: &crate::contracts::Ledger,
     workshop: &crate::grammar_run::Workshop,
     bounds: Bounds,
+    outer: Option<&crate::contracts::Ledger>,
 ) -> Computed {
     // **The sub-program's own inference and lowering compute no default
     // again**: they read the same functions, and a default compiled while a
-    // default is compiled is the same question asked without end.
-    defaults_compiled_in(None, || {
-        computed(
-            files, here, bound, value, ty, known, library, workshop, bounds,
-        )
+    // default is compiled is the same question asked without end. Where the
+    // program's ledger is at hand, they read what it recorded (#468).
+    defaults_known_from(outer, || {
+        defaults_compiled_in(None, || {
+            computed(
+                files, here, bound, value, ty, known, library, workshop, bounds,
+            )
+        })
     })
 }
 
@@ -392,6 +421,9 @@ fn computed(
             Ok(computed) => Computed::Value(computed),
             Err(_) => Computed::NotHere,
         },
+        // A default this run did not have is the default's own refusal,
+        // said where it is written.
+        Err(Wall::Refused { detail }) if detail.contains(NOT_COMPUTED_YET) => Computed::NotHere,
         Err(Wall::Refused { detail }) => Computed::Stopped(detail),
         Err(_) => Computed::NotHere,
     }
@@ -468,6 +500,45 @@ pub fn defaults_compiled_in<R>(at: Option<&Path>, read: impl FnOnce() -> R) -> R
     let out = read();
     DEFAULTS.with(|held| *held.borrow_mut() = before);
     out
+}
+
+thread_local! {
+    /// **The defaults the program's ledger recorded**, while a run's
+    /// sub-program is inferred (#468): the same functions, so the same
+    /// values, read rather than computed a second time.
+    static KNOWN: std::cell::RefCell<Option<crate::contracts::Ledger>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Read with `outer`'s recorded defaults as the ones the inference takes.
+fn defaults_known_from<R>(outer: Option<&crate::contracts::Ledger>, read: impl FnOnce() -> R) -> R {
+    let before = KNOWN.with(|held| std::mem::replace(&mut *held.borrow_mut(), outer.cloned()));
+    let out = read();
+    KNOWN.with(|held| *held.borrow_mut() = before);
+    out
+}
+
+/// What the program's ledger recorded for option `at` of `key` - qualified
+/// by the package for one that is not the program's - where a run's
+/// sub-program is being read and the ledger holds a value.
+pub(crate) fn known_default(package: Option<&str>, key: &str, at: usize) -> Option<String> {
+    KNOWN.with(|held| {
+        let held = held.borrow();
+        let ledger = held.as_ref()?;
+        let key = match package {
+            Some(package) => format!("{package}::{key}"),
+            None => key.to_string(),
+        };
+        let text = &ledger
+            .functions
+            .get(&key)?
+            .signature
+            .as_ref()?
+            .config
+            .get(at)?
+            .default;
+        (!text.is_empty()).then(|| text.clone())
+    })
 }
 
 /// The workshop defaults are compiled in now, where a build set one.

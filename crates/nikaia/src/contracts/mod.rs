@@ -1169,6 +1169,23 @@ fn evaluate_defaults(
     let nothing = |_: &str| -> Option<crate::build_time::Value> { None };
     let workshop = crate::comptime_run::defaults_workshop();
     for computed in defaults {
+        // **Read where a run's sub-program is inferred** (#468): the program's
+        // ledger has already computed it.
+        if let Some(text) = crate::comptime_run::known_default(
+            computed.parsed.package.as_deref(),
+            &computed.key,
+            computed.at,
+        ) {
+            if let Some(option) = ledger
+                .functions
+                .get_mut(&computed.key)
+                .and_then(|c| c.signature.as_mut())
+                .and_then(|s| s.config.get_mut(computed.at))
+            {
+                option.default = text;
+            }
+            continue;
+        }
         // **Compiled where the build has a workshop** (ADR-321 D1), as the
         // checker computes the same default; the interpreter answers a read
         // with none.
@@ -1176,7 +1193,10 @@ fn evaluate_defaults(
             let here = units
                 .iter()
                 .position(|unit| std::ptr::eq(*unit, computed.parsed))?;
-            let ty = crate::contracts::ty::Ty::from_ast(computed.parsed, computed.ty);
+            let ty = crate::comptime_run::as_built(crate::contracts::ty::Ty::from_ast(
+                computed.parsed,
+                computed.ty,
+            ));
             match crate::comptime_run::compute(
                 units,
                 here,
@@ -1187,6 +1207,7 @@ fn evaluate_defaults(
                 library,
                 workshop,
                 workshop.bounds(),
+                None,
             ) {
                 crate::comptime_run::Computed::Value(value) => Some(Some(value)),
                 crate::comptime_run::Computed::NotHere => None,

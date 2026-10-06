@@ -472,3 +472,43 @@ fn a_view_of_a_list_takes_a_list_default() {
     assert!(ledger.contains("xs: ref Vec[i64] = [1, 2, 3]"), "{ledger}");
     assert!(ledger.contains("xs: ref Vec[i64] = [4, 5]"), "{ledger}");
 }
+
+/// **A text default for an owned `String`** (#498): the call that leaves it
+/// out hands over a `String`, not the literal's view.
+#[test]
+fn a_text_default_for_an_owned_string_is_one() {
+    let source = "fn shout(word: ref String; mark: String = \"!!!\") -> String {\n\
+         \x20   return f\"{word}{mark}\"\n\
+         }\n\
+         \n\
+         fn main() {\n\
+         \x20   println(shout(\"yo\"))\n\
+         }\n";
+    assert_eq!(ran(source), "yo!!!\n");
+}
+
+/// **A default std's Rust half computes** (ADR-321 D1, #468): `ref String`
+/// and `String` alike, beside a function that leaves the option out, and a
+/// `comptime` whose run calls that function reads the value the ledger
+/// recorded rather than computing it again.
+#[test]
+fn a_default_std_computes_reaches_a_comptime() {
+    for ty in ["ref String", "String"] {
+        let source = format!(
+            "fn shout(word: ref String; mark: {ty} = \"!\".repeat(3)) -> String sync {{\n\
+             \x20   return f\"{{word}}{{mark}}\"\n\
+             }}\n\
+             \n\
+             fn twice() -> String {{\n\
+             \x20   return shout(\"yo\")\n\
+             }}\n\
+             \n\
+             comptime X: ref String = shout(\"hi\")\n\
+             \n\
+             fn main() {{\n\
+             \x20   println(f\"{{X}} {{twice()}}\")\n\
+             }}\n"
+        );
+        assert_eq!(ran(&source), "hi!!! yo!!!\n", "{ty}");
+    }
+}

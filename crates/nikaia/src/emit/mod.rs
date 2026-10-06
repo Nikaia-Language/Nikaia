@@ -10409,6 +10409,22 @@ impl<'p> Emitter<'p> {
                         out.push("&vec!");
                         out.push(&option.default);
                     }
+                    // **A default not computed yet** stands only in a run that
+                    // computes another one (#468): a call the run reaches
+                    // with it would be a ring, which `NK1168` refuses first.
+                    None if option.default.is_empty() => out.push(&format!(
+                        "unreachable!(\"{}\")",
+                        crate::comptime_run::NOT_COMPUTED_YET
+                    )),
+                    // **Text for an owned `String`** is one (#498): the
+                    // literal below is a `&str`.
+                    None if option.default.starts_with('"')
+                        && matches!(&option.ty, crate::contracts::ty::Ty::Named { name, view: false, .. } if name == "String") =>
+                    {
+                        out.push("String::from(");
+                        out.push(&option.default);
+                        out.push(")");
+                    }
                     None => out.push(&option.default),
                 }
             }

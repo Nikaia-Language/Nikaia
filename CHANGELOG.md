@@ -4,6 +4,25 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.600] — 2026-10-06
+
+**A run reads the defaults the program's ledger computed** (ADR-321 D1,
+#468, #498).
+- A default only `std`'s Rust half computes (`"!".repeat(3)`) was refused
+  with `NK1127` and the interpreter's note: the run that computed it lowered
+  every function of the program, and a call beside it that left an option out
+  had no value for that option yet. Such a call now stands for
+  `unreachable!`, which a run that reached it would be a ring for (`NK1168`
+  refuses that first), and a run that stops there is answered as before.
+- A `comptime`'s run reads each default from the program's ledger instead of
+  computing it a second time without a workshop.
+- A `ref String` default is computed as the `String` it views, as a
+  `comptime`'s value is.
+- A left-out `String` option with a text default is handed a `String`, not
+  the literal's view, which `rustc` refused (#498).
+- Tests: `option_defaults.rs::a_default_std_computes_reaches_a_comptime`,
+  `a_text_default_for_an_owned_string_is_one`.
+
 ## [0.0.599] — 2026-10-06
 
 **A call through a head nothing declares is `NK1181`, as a value is** (#488,
