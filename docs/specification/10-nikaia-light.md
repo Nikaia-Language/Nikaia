@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part I: The Language Core**
-**Version:** 0.0.579 (Draft)
+**Version:** 0.0.580 (Draft)
 **Date:** 2026-10-06
 
 ---
@@ -658,7 +658,7 @@ view of static text and `f"…"` builds a `String`, whether or not it has a hole
 in it. Adding a brace to a piece of text cannot change its type. Where the use
 asks for an `fs::Path`, an `f"…"` builds one, and its holes may be a path, text
 or a number (Part III 17.1); a `let` without a type takes it from the binding's
-first use. A path in a hole of an `f"…"` that is text is refused: the text is
+first use. A path in a hole of an `f"…"` that is text is refused (`NK1201`): the text is
 written `p.to_text()` or `p.display()`. Handed to `print` or `println`, a path
 in a hole is written as its bytes are.
 

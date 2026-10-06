@@ -4,6 +4,17 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.580] — 2026-10-06
+
+**A path in a text `f"…"` is `NK1201`; `IoError::Other` stays a message**
+(#449, ADR-319 D4 and D7). Decided with the owner; not built yet.
+- `let s: String = f"no file: {p}"` is refused at the hole with `NK1201`, the
+  code for a hole whose value has no text form; the help names
+  `{p.to_text()}` and `{p.display()}`.
+- `NotFound`, `PermissionDenied` and `Outside` carry the name as an `fs::Path`;
+  `Other` carries a message (D7 had listed it among the name variants).
+- Part I 2.5, Part III 17.1 and `NK1201`.
+
 ## [0.0.579] — 2026-10-06
 
 **A text binding has its length and its class** (ADR-314 D1, #491).
