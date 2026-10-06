@@ -22,6 +22,14 @@
   When every job passes, the `promote` job fast-forwards `main` to that commit
   (`.github/workflows/nikaia.yml`) - that commit, not `develop`'s tip, which
   may have moved on during the run. `main` is always a commit that passed.
+* **The commit that finishes an issue says `Fixes #N`.** `promote` closes an
+  issue only when a commit it brings to `main` names it with `Fixes`, `Closes`
+  or `Resolves` (`scripts/fixed-issues.py`); `(#N)` and `Part of #N` close
+  nothing. So the commit that builds the last step of a *To build* list
+  writes `Fixes #N`, and also names every issue that list absorbed
+  (`Fixes #439, #482`). An issue left open on purpose gets a comment saying
+  exactly what is still missing. One that no commit can finish - a process
+  note, a duplicate, an answered question - is closed by hand, with the reason.
 * **A red `develop` is fixed forward.** Whoever finds it red fixes it with the
   next commit, or reverts the commit that broke it. Until then `main` stays
   where it was, and work on `develop` goes on.

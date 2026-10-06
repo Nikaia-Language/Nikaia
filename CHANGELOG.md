@@ -4,6 +4,16 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.565] — 2026-10-06
+
+**The commit that finishes an issue says `Fixes #N`** (`CLAUDE.md`).
+- `promote` closes only what a commit names with `Fixes`, `Closes` or
+  `Resolves`. Six finished issues stayed open because their commits wrote
+  `(#N)`, or because they were built under another issue's *To build* list.
+- The last step's commit names the issue and every issue its list absorbed; an
+  issue left open says what is missing; one no commit can finish is closed by
+  hand. #482, #437, #382 and #123 were closed by hand.
+
 ## [0.0.564] — 2026-10-06
 
 **The tools below Nikaia read no configuration from the project** (ADR-325,
