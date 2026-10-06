@@ -724,6 +724,11 @@ pub struct Checked {
     /// operation's position: the bytes are compared, where Rust's `Path`
     /// compares components and has no `==` against text.
     pub path_comparisons: BTreeSet<usize>,
+    /// **A `u64` compared with a signed integer**
+    /// ([ADR-285](../../docs/specification/adr/adr-285.md) D32), by the
+    /// operation's position, and whether the `u64` is the left side: the two
+    /// have no common type, so the comparison is a sign test and a compare.
+    pub mixed_comparisons: BTreeMap<usize, bool>,
     /// **An `f"…"` with a file's name in a hole**
     /// ([ADR-319](../../docs/specification/adr/adr-319.md) D4), by the
     /// statement and the literal's shape, with which holes are names: it is
@@ -2113,6 +2118,8 @@ pub struct Propagation {
     pub concatenations: BTreeSet<usize>,
     /// [`Checked::path_comparisons`].
     pub path_comparisons: BTreeSet<usize>,
+    /// [`Checked::mixed_comparisons`].
+    pub mixed_comparisons: BTreeMap<usize, bool>,
     /// [`Checked::path_holes`].
     pub path_holes: BTreeMap<(usize, String), Vec<bool>>,
     /// [`Checked::lent_lets`].
@@ -2404,6 +2411,7 @@ fn propagation(
         unrolled_calls: checked.unrolled_calls,
         concatenations: checked.concatenations,
         path_comparisons: checked.path_comparisons,
+        mixed_comparisons: checked.mixed_comparisons,
         path_holes: checked.path_holes,
         lent_lets: checked.lent_lets,
         lent_returns: checked.lent_returns,
@@ -12762,6 +12770,7 @@ impl<'a> Checker<'a> {
                 // ([ADR-285](../../docs/specification/adr/adr-285.md) D10).
                 if op.is_comparison() {
                     self.a_bit_operation_beside_a_comparison(*op, lhs, rhs, at);
+                    self.two_integer_types_compared([(lhs, &left), (rhs, &right)], at);
                 }
                 // **Two number types in one operation** (D1): `u64 + i64` is
                 // `rustc`'s *mismatched types* about the generated file.
@@ -13892,6 +13901,122 @@ impl<'a> Checker<'a> {
                 labels: Vec::new(),
             });
             return;
+        }
+    }
+
+    /// **A type variable two integer types are handed to** (ADR-285 D32):
+    /// widening takes no part in inference, so `pick(a, b)` for `fn pick[T](a:
+    /// T, b: T)` with an `i32` and an `i64` binds `T` twice. It is `NK1102`,
+    /// which `rustc` used to answer about a file nobody wrote. A literal takes
+    /// the type it is handed to and is not asked.
+    fn one_type_variable_two_integer_types(
+        &mut self,
+        key: &str,
+        wanted: &[(String, Ty)],
+        given: &[Expr],
+        found: &[Ty],
+        span: &Span,
+    ) {
+        let integer = |ty: &Ty| match ty {
+            Ty::Named {
+                name,
+                args,
+                view: false,
+            } if args.is_empty() && INTEGERS.contains(&name.as_str()) => Some(name.clone()),
+            _ => None,
+        };
+        let mut first: BTreeMap<&str, (String, usize)> = BTreeMap::new();
+        for (at, ((_, want), found)) in wanted.iter().zip(found).enumerate() {
+            let Ty::Var {
+                name: var,
+                view: false,
+            } = want
+            else {
+                continue;
+            };
+            if given.get(at).is_some_and(is_literal) {
+                continue;
+            }
+            let Some(ty) = integer(found) else {
+                continue;
+            };
+            let Some((bound, there)) = first.get(var.as_str()).cloned() else {
+                first.insert(var, (ty, at));
+                continue;
+            };
+            if bound == ty {
+                continue;
+            }
+            let (narrow, wide) = match common_integer(&bound, &ty) {
+                Some(common) if common == bound => (at, common),
+                Some(common) => (there, common),
+                None => (at, bound.as_str()),
+            };
+            let name = given
+                .get(narrow)
+                .and_then(|arg| self.names_of(arg))
+                .unwrap_or_else(|| "…".to_string());
+            self.checked.findings.push(Finding {
+                severity: Severity::Error,
+                span: *span,
+                code: "NK1102",
+                message: format!(
+                    "`{key}` takes one type for `{var}`, but you're passing `{bound}` and `{ty}`."
+                ),
+                notes: vec![
+                    "A type parameter takes the type it is given, and an integer is not \
+                     widened to make two arguments agree."
+                        .to_string(),
+                ],
+                help: Some(format!("Convert one of them: `{name} as {wide}`.")),
+                labels: Vec::new(),
+            });
+            return;
+        }
+    }
+
+    /// **Two integer types compare as numbers, every pair**
+    /// ([ADR-285](../../docs/specification/adr/adr-285.md) D32). Where they
+    /// have a common type the narrower side is widened into it; a `u64` and a
+    /// signed type have none, and the comparison is recorded for the emitter,
+    /// the signed side widened to `i64`. Not where a side is a literal, which
+    /// takes the other side's type, or a view.
+    fn two_integer_types_compared(
+        &mut self,
+        [(lhs, left), (rhs, right)]: [(&Expr, &Ty); 2],
+        at: &Span,
+    ) {
+        let integer = |side: &Expr, ty: &Ty| match ty {
+            Ty::Named {
+                name,
+                args,
+                view: false,
+            } if args.is_empty() && !is_literal(side) && INTEGERS.contains(&name.as_str()) => {
+                Some(name.clone())
+            }
+            _ => None,
+        };
+        let (Some(l), Some(r)) = (integer(lhs, left), integer(rhs, right)) else {
+            return;
+        };
+        if l == r {
+            return;
+        }
+        let (into, unsigned_left) = match common_integer(&l, &r) {
+            Some(common) => (common, None),
+            None => ("i64", Some(l == "u64")),
+        };
+        for (side, ty) in [(lhs, &l), (rhs, &r)] {
+            if ty != into && ty != "u64" {
+                self.checked
+                    .wrapped
+                    .insert(side as *const Expr as usize, Wrap::Widen(into));
+            }
+        }
+        if let Some(unsigned_left) = unsigned_left {
+            self.checked
+                .mixed_comparisons
+                .insert(at.at(), unsigned_left);
         }
     }
 
@@ -15168,6 +15293,7 @@ impl<'a> Checker<'a> {
         // of them, and a `usize` that is measured on its own has already
         // passed.
         self.a_length_that_fits_its_buffer(written, wanted, given, found, span);
+        self.one_type_variable_two_integer_types(key, wanted, given, found, span);
 
         // Kap 5.1: an option is named, so it is checked by name - that it
         // exists, and that what is passed is what it takes.

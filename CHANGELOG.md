@@ -4,6 +4,22 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.546] — 2026-10-06
+
+**Every pair of integer types compares as numbers, and a type variable is not
+widened** (ADR-285 D32, #439 steps 4 and 5).
+- `a < b` with `a: u32` and `b: i64` widens the narrower side, as an operator
+  does.
+- `u64` against `i32` or `i64` has no common type. It is written as
+  `nikaia_std::num::unsigned_with_signed` (or `signed_with_unsigned`), which
+  tests the sign and then compares, so `(-1 as i64) < (0 as u64)` is `true`.
+  Before, the checker passed these and `rustc` refused them.
+- `pick(a, b)` for `fn pick[T](a: T, b: T)` with an `i32` and an `i64` is now
+  `NK1102`, with the help `a as i64`. Widening takes no part in inference.
+  Before, `rustc` refused it.
+
+Every bench and example lowers byte for byte as before.
+
 ## [0.0.545] — 2026-10-06
 
 **Integers widen where no value can be lost** (ADR-285 D32, #439 steps 1–3).

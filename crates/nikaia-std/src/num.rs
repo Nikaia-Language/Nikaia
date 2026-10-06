@@ -159,9 +159,43 @@ pub fn value<T: Value>(operand: T) -> T::Out {
     operand.value()
 }
 
+/// **A `u64` and a signed integer compared as numbers**
+/// ([ADR-285](../../../docs/specification/adr/adr-285.md) D32): they have no
+/// common type, so the sign is tested first and the compare is then made in
+/// `u64`. The emitted spelling is `nikaia_std::num::unsigned_with_signed(a,
+/// b).is_lt()`, the sides in the order the program wrote them.
+#[inline]
+pub fn unsigned_with_signed(unsigned: u64, signed: i64) -> std::cmp::Ordering {
+    match u64::try_from(signed) {
+        Ok(signed) => unsigned.cmp(&signed),
+        Err(_) => std::cmp::Ordering::Greater,
+    }
+}
+
+/// The same with the signed side written first.
+#[inline]
+pub fn signed_with_unsigned(signed: i64, unsigned: u64) -> std::cmp::Ordering {
+    unsigned_with_signed(unsigned, signed).reverse()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// **Every `u64` is above every negative number**, and the two compare
+    /// as numbers where both are in range.
+    #[test]
+    fn a_u64_and_an_i64_compare_as_numbers() {
+        use std::cmp::Ordering::*;
+        assert_eq!(unsigned_with_signed(0, -1), Greater);
+        assert_eq!(unsigned_with_signed(u64::MAX, i64::MAX), Greater);
+        assert_eq!(unsigned_with_signed(7, 7), Equal);
+        assert_eq!(unsigned_with_signed(6, 7), Less);
+        assert_eq!(signed_with_unsigned(-1, 0), Less);
+        assert_eq!(signed_with_unsigned(i64::MIN, 0), Less);
+        assert_eq!(signed_with_unsigned(i64::MAX, u64::MAX), Less);
+        assert_eq!(signed_with_unsigned(7, 7), Equal);
+    }
 
     /// **A cast's operand reaches the number through any number of views**,
     /// which is what `for n in NS { n as i64 }` needs: the binding is a `&i32`

@@ -255,3 +255,48 @@ fn a_u64_with_a_signed_type_stays_refused() {
         .contains(&"NK1154")
     );
 }
+
+/// **Every pair of integer types compares as numbers** (#439 step 4): with a
+/// common type the narrower side is widened, and `u64` against a signed type is
+/// a sign test and a compare - so a negative number is below every `u64`.
+#[test]
+fn every_pair_of_integer_types_compares_as_numbers() {
+    runs(
+        "comparisons",
+        "fn main() {\n\
+         \x20   let a: u32 = 7\n\
+         \x20   let b: i64 = -3\n\
+         \x20   let u: u64 = 18446744073709551615\n\
+         \x20   let i: i32 = -1\n\
+         \x20   println(f\"{(-1 as i64) < (0 as u64)} {u > 9223372036854775807 as i64}\")\n\
+         \x20   println(f\"{a > b} {b < a} {a != b}\")\n\
+         \x20   println(f\"{u == b} {i < u} {u >= i} {b <= u}\")\n\
+         }\n",
+        "true true\ntrue true true\nfalse true true true\n",
+    );
+}
+
+/// **Widening takes no part in inference** (#439 step 5): one type variable
+/// handed an `i32` and an `i64` is refused by the checker, with the
+/// conversion as the help, where `rustc` refused it before.
+#[test]
+fn a_type_variable_is_not_widened_to_agree() {
+    let source = "fn pick[T](a: T, b: T) -> T {\n    a\n}\n\n\
+                  fn main() {\n    let a: i32 = 1\n    let b: i64 = 2\n    \
+                  println(f\"{pick(a, b)}\")\n}\n";
+    let found = errors(source);
+    let refusal = found
+        .iter()
+        .find(|f| f.code == "NK1102")
+        .unwrap_or_else(|| panic!("{found:#?}"));
+    assert_eq!(
+        refusal.help.as_deref(),
+        Some("Convert one of them: `a as i64`.")
+    );
+    // **One type is one type**: the same call with two `i64`s runs.
+    runs(
+        "one-type",
+        &source.replace("let a: i32", "let a: i64"),
+        "1\n",
+    );
+}

@@ -1547,6 +1547,8 @@ struct Emitter<'p> {
     concatenations: std::collections::BTreeSet<usize>,
     /// `check::Checked::path_comparisons`.
     path_comparisons: std::collections::BTreeSet<usize>,
+    /// `check::Checked::mixed_comparisons`.
+    mixed_comparisons: std::collections::BTreeMap<usize, bool>,
     /// `check::Checked::path_holes`.
     path_holes: std::collections::BTreeMap<(usize, String), Vec<bool>>,
     /// What each `comptime` is written as below - its type and its value - by the
@@ -2750,6 +2752,7 @@ impl<'p> Emitter<'p> {
             nullable_sites: propagation.nullable,
             concatenations: propagation.concatenations,
             path_comparisons: propagation.path_comparisons,
+            mixed_comparisons: propagation.mixed_comparisons,
             path_holes: propagation.path_holes,
             lent_lets: propagation.lent_lets,
             lent_returns: propagation.lent_returns,
@@ -9028,6 +9031,27 @@ impl<'p> Emitter<'p> {
                     out.push("), &(");
                     self.expr(out, rhs, depth, flow)?;
                     out.push("))");
+                    return Ok(());
+                }
+                // **A `u64` and a signed integer compare as numbers**
+                // (ADR-285 D32): a sign test and a compare, the sides in the
+                // order they were written.
+                if let Some(unsigned_left) = self.mixed_comparisons.get(&at.at()) {
+                    out.push(match unsigned_left {
+                        true => "nikaia_std::num::unsigned_with_signed(",
+                        false => "nikaia_std::num::signed_with_unsigned(",
+                    });
+                    self.expr(out, lhs, depth, flow)?;
+                    out.push(", ");
+                    self.expr(out, rhs, depth, flow)?;
+                    out.push(match op {
+                        BinaryOp::Lt => ").is_lt()",
+                        BinaryOp::Le => ").is_le()",
+                        BinaryOp::Gt => ").is_gt()",
+                        BinaryOp::Ge => ").is_ge()",
+                        BinaryOp::Eq => ").is_eq()",
+                        _ => ").is_ne()",
+                    });
                     return Ok(());
                 }
                 if self.concatenations.contains(&at.at()) {
