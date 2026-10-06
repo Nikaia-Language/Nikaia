@@ -4,6 +4,18 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.577] — 2026-10-06
+
+**A view of what a function owns, or of a parameter, is handed back silently**
+(#442, ADR-283 D23-D24). Decided with the owner; not built yet.
+- A view of a local or anything the body owns moves the value into the
+  caller's keep (D23).
+- A view of a parameter borrows from the caller's argument; an argument made in
+  the call lives in the caller's keep (D24). D8's `'static` applies only where
+  no parameter is a view as lowered.
+- No refusal and no hint: `--tethers` shows where each buffer lives.
+- Part I 6.6 and Part III's `NK2303` say so.
+
 ## [0.0.576] — 2026-10-06
 
 **Many connections at once, and what a crash leaves behind** (ADR-326, ADR-327,

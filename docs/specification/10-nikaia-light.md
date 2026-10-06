@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part I: The Language Core**
-**Version:** 0.0.576 (Draft)
+**Version:** 0.0.577 (Draft)
 **Date:** 2026-10-06
 
 ---
@@ -2187,6 +2187,12 @@ keep is read off the program:
   entries as it goes, so that a buffer is freed when its last view leaves. A
   struct of views kept that way carries a handle on each buffer it points into,
   and is read and written through them; the struct itself is unchanged.
+
+**What a body owns is handed out the same way**, whole or a part: a view of a
+local, `fn d() -> ref String { let s = "x".clone(); return ref s }`, puts `s` in
+the caller's keep. **A view handed back from a parameter points into the
+caller's argument**, which lives as long as the result does; an argument made
+in the call itself, `let r = e(name.clone())`, lives in the caller's keep.
 
 A struct built and consumed inside the scope that owns its buffer is borrowed,
 and costs nothing:
