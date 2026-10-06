@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part III: Tooling, Ecosystem & Interoperability**
-**Version:** 0.0.593 (Draft)
+**Version:** 0.0.594 (Draft)
 **Date:** 2026-10-06
 
 ---
@@ -1034,7 +1034,7 @@ HTML escaping, on which a template's contract rests.
 ```nika
 pub fn escape(text: ref String) -> String        // for a text node or a quoted attribute
 pub struct Raw                             // "this is already markup"
-pub fn Raw::new(markup: String) -> Raw     // the audit point, and the only constructor
+impl Raw { pub fn(markup: String) -> Raw } // html::Raw(markup): the audit point, and the only constructor
 ```
 
 A template grammar escapes **every hole, unconditionally**. No flag at a hole turns it off, and

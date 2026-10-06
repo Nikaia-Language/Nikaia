@@ -4,6 +4,14 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.594] — 2026-10-06
+
+**Part III 17.1 lists `html::Raw`'s constructor as a program writes it** (#486,
+decided with the owner).
+- `pub fn Raw::new(…)` was the ledger's name; a written `Type::new` is
+  `NK1149` (Part I 4.2). The listing now declares the anonymous constructor,
+  `impl Raw { pub fn(markup: String) -> Raw }`, called `html::Raw(markup)`.
+
 ## [0.0.593] — 2026-10-06
 
 **A reflected field answers `.ty` and `.doc`** (ADR-329, #121).
