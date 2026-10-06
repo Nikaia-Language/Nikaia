@@ -4,6 +4,24 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.555] — 2026-10-06
+
+**`??` and `?.` after a value that cannot be absent warn** (ADR-279 D13,
+#476).
+- `x ?? 0` over an `i64`, and `find(x) ?? fallback` over a callee that now
+  returns `User`, build with the warning `NK1216`. The answer is the left
+  side. The fallback is checked, is not written below, and takes nothing.
+- `s?.len()` and `u?.name` on a plain value build with the warning
+  `NK1217`. They are the plain call or read, with that member's type.
+- Through a list's index both stay refused: `xs[2] ?? return false` is still
+  `NK1211`, and `users[2]?.name` is still `NK1121`. The help asks for the
+  length check, because the line promises a guard it does not give.
+- In the checker, the method call and the field read walk the receiver once
+  and branch on its type. The `?.` over a `T?` is now `a_safe_call` and
+  `a_safe_field`.
+
+Every bench and example lowers byte for byte as before.
+
 ## [0.0.554] — 2026-10-06
 
 **A grammar calls its package's Nikaia; no foreign code runs while a program

@@ -513,6 +513,11 @@ pub struct Checked {
     /// shape, with how the option is opened below: `.as_deref()` for text and
     /// `.as_ref()` for anything else.
     pub lent_coalesces: BTreeMap<(usize, String), &'static str>,
+    /// **A `??` or a `?.` after a value that cannot be absent**
+    /// ([ADR-279](../../docs/specification/adr/adr-279.md) D13), by node:
+    /// `NK1216` and `NK1217` warn, and the line is its left side alone, or the
+    /// plain `.`.
+    pub plain_reaches: BTreeSet<usize>,
     /// **A number, a `bool` or a `char` a `let` reads out of a container past
     /// a jump** (#456), by statement and the value's shape: `let v = m[k] ??
     /// return null` binds the value, read out of the view as a loop binding's
@@ -2077,6 +2082,8 @@ pub struct Propagation {
     pub text_as_is: BTreeSet<(usize, String)>,
     /// [`Checked::lent_coalesces`].
     pub lent_coalesces: BTreeMap<(usize, String), &'static str>,
+    /// [`Checked::plain_reaches`].
+    pub plain_reaches: BTreeSet<usize>,
     /// [`Checked::copied_jump_reads`].
     pub copied_jump_reads: BTreeSet<(usize, String)>,
     /// [`Checked::view_coalesces`].
@@ -2416,6 +2423,7 @@ fn propagation(
         owned_copies: checked.owned_copies,
         text_as_is: checked.text_as_is,
         lent_coalesces: checked.lent_coalesces,
+        plain_reaches: checked.plain_reaches,
         copied_jump_reads: checked.copied_jump_reads,
         view_coalesces: checked.view_coalesces,
         lent_map_fallbacks: checked.lent_map_fallbacks,
@@ -6851,6 +6859,227 @@ impl<'a> Checker<'a> {
         });
     }
 
+    /// **`x?.m(…)` over a `T?`** (Part I 3.5): the call happens only where
+    /// there is something to call it on, and the result is flattened for
+    /// [`Expr::SafeField`]'s reason - a method that hands back a `T?` would
+    /// otherwise give a nullable of a nullable
+    /// ([ADR-278](../../../docs/specification/adr/adr-278.md)). Asked from the
+    /// method call's own walk once the receiver's type is known, so the
+    /// receiver is walked once.
+    #[allow(clippy::too_many_arguments)]
+    fn a_safe_call(
+        &mut self,
+        inner: Box<Ty>,
+        receiver: &Expr,
+        method: &winnow_grammar::Symbol,
+        args: &[Expr],
+        config: &[ast::ConfigArg],
+        witness: Option<usize>,
+        span: &Span,
+    ) -> Ty {
+        let name = self.parsed.text(*method).to_string();
+        // **The same call, on the value inside.** Everything a method
+        // call is checked for - what it may throw, whether it pauses,
+        // what its arguments have to be, what the receiver's own type
+        // binds - is unchanged by the reach: a `?.` decides *whether*
+        // the call happens and never *what* a call is. The door is one
+        // of those things, so it is resolved here exactly as it is
+        // there, off the type **inside** the `T?`.
+        let door = witness
+            .filter(|_| locked_content_of(&inner).is_some())
+            .map(|at| &config[at].value);
+        if let (Some(at), None) = (witness, door) {
+            self.expr(&config[at].value, span);
+        }
+        let given: Vec<Expr>;
+        let (args, written) = match door {
+            Some(seen) => {
+                self.the_witness_takes_no_reference(seen, span);
+                self.checked.witnessed_sets.insert(span.at());
+                given = args.iter().chain([seen]).cloned().collect();
+                (&given[..], "set(after)".to_string())
+            }
+            None => (args, self.parsed.text(*method).to_string()),
+        };
+        // **The receiver is lent to the call where the call changes
+        // nothing** ([ADR-278](../../docs/specification/adr/adr-278.md)
+        // D2, [ADR-278](../../docs/specification/adr/adr-278.md) D16 and
+        // D3). What comes out of a reached **method** is the call's own
+        // result rather than a view of the receiver, so this half needs
+        // no representation and is whole.
+        //
+        // Asked of the `mutates` column and only where **every**
+        // candidate for the name agrees, which is the rule `NK1138`
+        // uses one construct over: a name this compiler cannot resolve
+        // is claimed nothing about, and the reach lowers exactly as it
+        // did (Part III C.4).
+        let candidates: Vec<_> = self
+            .own
+            .candidates(&name)
+            .into_iter()
+            .chain(self.library.candidates(&name))
+            .collect();
+        // **A map's read is lent already** (0.0.246): it answers a
+        // view of the value the map holds, and lending that again made
+        // each element a view of a view - `m[k]?.clone()` copied the
+        // reference and not the list, and `rustc` refused the `??`
+        // after it. The receiver of a `?.` that is an index can only be
+        // a map's, since a list's element is not a `T?` (`NK1121`).
+        // **Nor is a nullable view** (issue #171): an
+        // `Option<&str>` is a copy already, and lending it made the
+        // reached value a `&&str`, whose `.to_owned()` is the `&str`.
+        let lent = !candidates.is_empty()
+            && candidates.iter().all(|(_, c)| !c.mutates)
+            && !matches!(receiver, Expr::Index { .. })
+            && !inner.is_a_view();
+        if lent {
+            self.checked.lent_reaches.insert((span.at(), name.clone()));
+        }
+        // **And a copy of a view is text of its own** (ADR-293 D24),
+        // reached or not: `b?.clone()` for a `b: ref String?` is a
+        // `String?`, which `.clone()` of the `&str` inside is not.
+        if inner.is_a_view() && name == "clone" && args.is_empty() {
+            self.checked
+                .owned_copies
+                .insert((span.at(), argument_shape(receiver)));
+        }
+        let reached = self.call_on(*inner, *method, args, &written, span);
+        // **A view out of a temporary needs something to point into**
+        // (ADR-278 D21): the receiver is held for the rest of the block.
+        let a_view = match &reached {
+            Ty::Nullable(inner) => inner.is_a_view(),
+            other => other.is_a_view(),
+        };
+        if lent && a_view && !roots_in_a_binding(receiver) {
+            self.checked.held_reaches.insert((span.at(), name.clone()));
+        }
+        match reached {
+            // The `and_then` case, recorded by name for the emitter
+            // exactly as a nullable field is (ADR-288: the emitter has
+            // no types and this is a question about one).
+            Ty::Nullable(result) => {
+                self.checked.flattened_reaches.insert((span.at(), name));
+                Ty::Nullable(result)
+            }
+            Ty::Unknown => Ty::Unknown,
+            plain => Ty::Nullable(Box::new(plain)),
+        }
+    }
+
+    /// **`x?.field` over a `T?`** (Part I 3.5): the result is a `U?` -
+    /// flattened, because a field that is *itself* nullable would otherwise
+    /// give a nullable of a nullable. Asked from the field read's own walk once
+    /// the receiver's type is known.
+    fn a_safe_field(
+        &mut self,
+        inner: &Ty,
+        base: &Expr,
+        field: String,
+        expr: &Expr,
+        span: &Span,
+    ) -> Ty {
+        let Ty::Named { name: ty, .. } = inner else {
+            return Ty::Unknown;
+        };
+        // **A boxed field is read through its box here too**
+        // ([ADR-246](../../docs/specification/adr/adr-246.md) D2).
+        if self
+            .checked
+            .boxed_members
+            .get(ty)
+            .is_some_and(|members| members.contains(&field))
+        {
+            self.checked
+                .boxed_reads
+                .insert((span.at(), argument_shape(expr)));
+        }
+        let Some(fields) = self.fields_of(ty) else {
+            return Ty::Unknown;
+        };
+        match fields.iter().find(|f| f.name == field) {
+            Some(found) => {
+                let (ty, declared) = (ty.clone(), found.clone());
+                self.field_is_reachable(&ty, &declared, span);
+                // **The `and_then` case is the field that is already a
+                // `T?`**, and the emitter is told which by name: `map`
+                // over one would make an `Option<Option<T>>`, and that
+                // is a question about the declared type, which this
+                // module answers and the emitter cannot (ADR-288).
+                // **A view is taken of a place and never of a
+                // temporary** ([ADR-278](../../docs/specification/adr/adr-278.md)
+                // D1). Measured: the view of a temporary dies at the
+                // `;`, and binding it is `rustc`'s *temporary value
+                // dropped while borrowed* about a file nobody wrote
+                // (Part III C.1). A temporary has no next line to stay
+                // usable on, so leaving it owned keeps
+                // [ADR-278](../../docs/specification/adr/adr-278.md)
+                // D1's promise where it means anything.
+                let place = roots_in_a_binding(base);
+                match &declared.ty {
+                    // A field that is itself a `T?` flattens, and a
+                    // view of one is taken the same way one shape down.
+                    Ty::Nullable(inner) if place && crate::contracts::keeps::moves(inner) => {
+                        self.checked
+                            .viewed_reaches
+                            .insert((span.at(), field.clone()), viewed_as(inner));
+                        self.checked.flattened_reaches.insert((span.at(), field));
+                        Ty::Nullable(Box::new(inner.as_a_view()))
+                    }
+                    Ty::Nullable(_) => {
+                        self.checked.flattened_reaches.insert((span.at(), field));
+                        declared.ty
+                    }
+                    // **A member that copies comes out of a view**
+                    // ([ADR-278](../../docs/specification/adr/adr-278.md)
+                    // D1, [ADR-278](../../docs/specification/adr/adr-278.md)
+                    // D1 and D2). A number, a `bool` and a `char` are
+                    // read through the receiver and copied, so the
+                    // reach leaves the receiver where it was and the
+                    // result's type is what it always was.
+                    //
+                    // **The other half is not here**, and it is the
+                    // representation rather than this walk: a member
+                    // that does **not** copy comes out as a *view* of
+                    // the receiver (D2) - which is not a **state**:
+                    // three of the four shapes a `?.` has are Borrowed
+                    // and the fourth is `NK2303`'s
+                    // ([ADR-278](../../docs/specification/adr/adr-278.md)
+                    // D1). What it waits on is one question about `??`,
+                    // on `docs/open-decisions.md`. So that reach lowers
+                    // exactly as it did, moving the receiver, and
+                    // [ADR-278](../../docs/specification/adr/adr-278.md)
+                    // D8's translation stays for it alone.
+                    plain if !crate::contracts::keeps::moves(plain) => {
+                        self.checked.copied_reaches.insert((span.at(), field));
+                        Ty::Nullable(Box::new(plain.clone()))
+                    }
+                    // **And a member that does not copy comes out as a
+                    // view of the receiver**, which is
+                    // [ADR-278](../../docs/specification/adr/adr-278.md)
+                    // D2 and [ADR-278](../../docs/specification/adr/adr-278.md)
+                    // D1. Borrowed and not Tethered: the view points
+                    // into a place that outlives the statement, which
+                    // is what [ADR-283](../../docs/specification/adr/adr-283.md)
+                    // D2 calls the free case.
+                    plain if place => {
+                        let viewed = viewed_as(plain);
+                        self.checked
+                            .viewed_reaches
+                            .insert((span.at(), field.clone()), viewed);
+                        self.checked.copied_reaches.insert((span.at(), field));
+                        Ty::Nullable(Box::new(plain.as_a_view()))
+                    }
+                    plain => Ty::Nullable(Box::new(plain.clone())),
+                }
+            }
+            None => {
+                let ty = ty.clone();
+                self.no_such_field(&ty, &field, &fields, span);
+                Ty::Unknown
+            }
+        }
+    }
+
     /// Part I 3.5: `?.` is for a value that may be absent.
     ///
     /// `"Ada"?.len` reaches through something that cannot be missing, and the
@@ -6865,7 +7094,20 @@ impl<'a> Checker<'a> {
     /// `member` is the field or the method, and `Member` says which: the way out
     /// is the plain `.`, and a reader is owed it in the spelling they wrote
     /// ([ADR-278](../../../docs/specification/adr/adr-278.md)).
-    fn reaches_through_a_plain_value(&mut self, on: &Ty, member: Reached<'_>, span: &Span) {
+    ///
+    /// **A warning, `NK1217`, and the plain `.`**
+    /// ([ADR-279](../../../docs/specification/adr/adr-279.md) D13): a callee
+    /// that narrowed `-> User?` to `-> User` does not break the `?.` its callers
+    /// wrote. **Except through a list's index**, which stays `NK1121`: the line
+    /// promises a guard against a read past the end that it does not give.
+    fn reaches_through_a_plain_value(
+        &mut self,
+        on: &Ty,
+        receiver: &Expr,
+        member: Reached<'_>,
+        reach: &Expr,
+        span: &Span,
+    ) {
         if on.is_unknown() {
             return;
         }
@@ -6873,15 +7115,39 @@ impl<'a> Checker<'a> {
             Reached::Field(name) => ("field", format!(".{name}")),
             Reached::Method(name) => ("method", format!(".{name}(…)")),
         };
+        if let Expr::Index { base, index } = receiver {
+            self.checked.findings.push(Finding {
+                severity: Severity::Error,
+                span: *span,
+                code: "NK1121",
+                message: format!(
+                    "`{}` always has a value, so `?.` guards nothing.",
+                    written(self.parsed, receiver)
+                ),
+                notes: vec![
+                    "A list read never comes back empty: an index that does not fit stops \
+                     the program, and `?.` only passes over a `null`."
+                        .to_string(),
+                ],
+                help: Some(format!(
+                    "Check the length first: `if {} < {}.len()`, then write `{plain}`.",
+                    written(self.parsed, index),
+                    written(self.parsed, base)
+                )),
+                labels: Vec::new(),
+            });
+            return;
+        }
+        self.checked.plain_reaches.insert(value_node(reach));
         self.checked.findings.push(Finding {
-            severity: Severity::Error,
+            severity: Severity::Warning,
             span: *span,
-            code: "NK1121",
+            code: "NK1217",
             message: format!("You don't need `?.` here: a `{on}` is never absent."),
             notes: vec![format!(
                 "`?.` is for a value that may be missing: it reaches the {what} when \
                  there's something there and gives `null` otherwise. A type without `?` \
-                 always has a value."
+                 always has a value, so this is the plain `{plain}`."
             )],
             help: Some(format!("Write `{plain}`.")),
             labels: Vec::new(),
@@ -6981,21 +7247,39 @@ impl<'a> Checker<'a> {
     /// `T?`, and `??` after it replaces a `null` element. **Only where the left
     /// side's type is known** (C.4): a type this checker could not work out, or
     /// a type variable, is left alone.
-    fn nothing_to_fall_back_from(&mut self, value: &Expr, left: &Ty, span: &Span) {
+    ///
+    /// **A warning, `NK1216`, where the left side is not a list's index**
+    /// ([ADR-279](../../docs/specification/adr/adr-279.md) D13): the answer is
+    /// the left side and the fallback never runs, so a callee that narrowed
+    /// `-> User?` to `-> User` does not break its callers. Whether it was one,
+    /// and so the line is its left side alone.
+    fn nothing_to_fall_back_from(
+        &mut self,
+        value: &Expr,
+        left: &Ty,
+        coalesce: &Expr,
+        span: &Span,
+    ) -> bool {
         let never_absent = match left.unseen() {
             Ty::Named { name, .. } => crate::contracts::ty::base(&name) != "Option",
             Ty::Tuple(_) => true,
             _ => false,
         };
         if !never_absent {
-            return;
+            return false;
         }
         let shown = written(self.parsed, value);
         let index = matches!(value, Expr::Index { .. });
+        if !index {
+            self.checked.plain_reaches.insert(value_node(coalesce));
+        }
         self.checked.findings.push(Finding {
-            severity: Severity::Error,
+            severity: match index {
+                true => Severity::Error,
+                false => Severity::Warning,
+            },
             span: *span,
-            code: "NK1211",
+            code: if index { "NK1211" } else { "NK1216" },
             message: format!("`{shown}` always has a value, so `??` has nothing to replace."),
             notes: vec![match index {
                 true => "A list read never comes back empty: an index that does not fit \
@@ -7017,6 +7301,7 @@ impl<'a> Checker<'a> {
             }),
             labels: Vec::new(),
         });
+        !index
     }
 
     /// **Part I 2.3: a `T?` is a type of its own, and `.` is not one of its
@@ -11715,6 +12000,12 @@ impl<'a> Checker<'a> {
                 method,
                 args,
                 config,
+            }
+            | Expr::SafeMethod {
+                receiver,
+                method,
+                args,
+                config,
             } => {
                 // **`after:` on a `set` is a witness and not an option**
                 // ([ADR-281](../../docs/specification/adr/adr-281.md) D26): it
@@ -11787,6 +12078,36 @@ impl<'a> Checker<'a> {
                     }
                     _ => on,
                 };
+                // **`x?.m(…)`** (Part I 3.5): over a `T?` the call is made on
+                // what is inside; over a type nothing worked out it says
+                // nothing; over a plain value it is the plain call, with
+                // `NK1217` ([ADR-279](../../docs/specification/adr/adr-279.md)
+                // D13).
+                if matches!(expr, Expr::SafeMethod { .. }) {
+                    let name = self.parsed.text(*method).to_string();
+                    match on {
+                        Ty::Nullable(inner) => {
+                            return self
+                                .a_safe_call(inner, receiver, method, args, config, witness, span);
+                        }
+                        Ty::Unknown => {
+                            args.iter().for_each(|a| {
+                                self.expr(a, span);
+                            });
+                            if let Some(at) = witness {
+                                self.expr(&config[at].value, span);
+                            }
+                            return Ty::Unknown;
+                        }
+                        _ => self.reaches_through_a_plain_value(
+                            &on,
+                            receiver,
+                            Reached::Method(&name),
+                            expr,
+                            span,
+                        ),
+                    }
+                }
                 // **A length `std` counts**: of a list, a run, text or a map,
                 // whose `len()` reads the value and changes nothing - what
                 // `crate::bounds` may take as a number of a proof (ADR-306 D4).
@@ -12293,143 +12614,28 @@ impl<'a> Checker<'a> {
                 }
             }
 
-            // Part I 3.5: `x?.m(…)`. The receiver must be a `T?`, the call
-            // happens only where there is something to call it on, and the
-            // result is flattened for [`Expr::SafeField`]'s reason - a method
-            // that hands back a `T?` would otherwise give a nullable of a
-            // nullable ([ADR-278](../../../docs/specification/adr/adr-278.md)).
-            Expr::SafeMethod {
-                receiver,
-                method,
-                args,
-                config,
-            } => {
-                // **The witness is held back here too**
-                // ([ADR-281](../../docs/specification/adr/adr-281.md) D26), for
-                // the reason a `?.` is one arm and not two: it decides
-                // *whether* the call happens and never *what* a call is. A
-                // `SharedMut[i64]?` reached with `?.set(neu; after: stand)` is
-                // the same door, and the witness that stayed an option here
-                // would have been **dropped in the lowering** rather than
-                // compared — a silent wrong value, which is worse than
-                // anything a refusal costs.
-                let witness = match self.parsed.text(*method) == "set" {
-                    true => config
-                        .iter()
-                        .position(|a| self.parsed.text(a.name) == "after"),
-                    false => None,
-                };
-                config.iter().enumerate().for_each(|(at, a)| {
-                    if Some(at) != witness {
-                        self.expr(&a.value, span);
-                    }
-                });
-                let on = self.expr(receiver, span);
-                let name = self.parsed.text(*method).to_string();
-                let Ty::Nullable(inner) = on else {
-                    self.reaches_through_a_plain_value(&on, Reached::Method(&name), span);
-                    // The arguments are still walked: a mistake inside one is
-                    // a mistake whatever is wrong with the receiver, and a
-                    // reader owed two messages should get two.
-                    args.iter().for_each(|a| {
-                        self.expr(a, span);
-                    });
-                    if let Some(at) = witness {
-                        self.expr(&config[at].value, span);
-                    }
-                    return Ty::Unknown;
-                };
-                // **The same call, on the value inside.** Everything a method
-                // call is checked for - what it may throw, whether it pauses,
-                // what its arguments have to be, what the receiver's own type
-                // binds - is unchanged by the reach: a `?.` decides *whether*
-                // the call happens and never *what* a call is. The door is one
-                // of those things, so it is resolved here exactly as it is
-                // there, off the type **inside** the `T?`.
-                let door = witness
-                    .filter(|_| locked_content_of(&inner).is_some())
-                    .map(|at| &config[at].value);
-                if let (Some(at), None) = (witness, door) {
-                    self.expr(&config[at].value, span);
-                }
-                let given: Vec<Expr>;
-                let (args, written) = match door {
-                    Some(seen) => {
-                        self.the_witness_takes_no_reference(seen, span);
-                        self.checked.witnessed_sets.insert(span.at());
-                        given = args.iter().chain([seen]).cloned().collect();
-                        (&given[..], "set(after)".to_string())
-                    }
-                    None => (&args[..], self.parsed.text(*method).to_string()),
-                };
-                // **The receiver is lent to the call where the call changes
-                // nothing** ([ADR-278](../../docs/specification/adr/adr-278.md)
-                // D2, [ADR-278](../../docs/specification/adr/adr-278.md) D16 and
-                // D3). What comes out of a reached **method** is the call's own
-                // result rather than a view of the receiver, so this half needs
-                // no representation and is whole.
-                //
-                // Asked of the `mutates` column and only where **every**
-                // candidate for the name agrees, which is the rule `NK1138`
-                // uses one construct over: a name this compiler cannot resolve
-                // is claimed nothing about, and the reach lowers exactly as it
-                // did (Part III C.4).
-                let candidates: Vec<_> = self
-                    .own
-                    .candidates(&name)
-                    .into_iter()
-                    .chain(self.library.candidates(&name))
-                    .collect();
-                // **A map's read is lent already** (0.0.246): it answers a
-                // view of the value the map holds, and lending that again made
-                // each element a view of a view - `m[k]?.clone()` copied the
-                // reference and not the list, and `rustc` refused the `??`
-                // after it. The receiver of a `?.` that is an index can only be
-                // a map's, since a list's element is not a `T?` (`NK1121`).
-                // **Nor is a nullable view** (issue #171): an
-                // `Option<&str>` is a copy already, and lending it made the
-                // reached value a `&&str`, whose `.to_owned()` is the `&str`.
-                let lent = !candidates.is_empty()
-                    && candidates.iter().all(|(_, c)| !c.mutates)
-                    && !matches!(receiver.as_ref(), Expr::Index { .. })
-                    && !inner.is_a_view();
-                if lent {
-                    self.checked.lent_reaches.insert((span.at(), name.clone()));
-                }
-                // **And a copy of a view is text of its own** (ADR-293 D24),
-                // reached or not: `b?.clone()` for a `b: ref String?` is a
-                // `String?`, which `.clone()` of the `&str` inside is not.
-                if inner.is_a_view() && name == "clone" && args.is_empty() {
-                    self.checked
-                        .owned_copies
-                        .insert((span.at(), argument_shape(receiver)));
-                }
-                let reached = self.call_on(*inner, *method, args, &written, span);
-                // **A view out of a temporary needs something to point into**
-                // (ADR-278 D21): the receiver is held for the rest of the block.
-                let a_view = match &reached {
-                    Ty::Nullable(inner) => inner.is_a_view(),
-                    other => other.is_a_view(),
-                };
-                if lent && a_view && !roots_in_a_binding(receiver) {
-                    self.checked.held_reaches.insert((span.at(), name.clone()));
-                }
-                match reached {
-                    // The `and_then` case, recorded by name for the emitter
-                    // exactly as a nullable field is (ADR-288: the emitter has
-                    // no types and this is a question about one).
-                    Ty::Nullable(result) => {
-                        self.checked.flattened_reaches.insert((span.at(), name));
-                        Ty::Nullable(result)
-                    }
-                    Ty::Unknown => Ty::Unknown,
-                    plain => Ty::Nullable(Box::new(plain)),
-                }
-            }
-
-            Expr::Field { base, name } => {
+            Expr::Field { base, name } | Expr::SafeField { base, name } => {
                 let on = self.expr(base, span);
                 let field = self.parsed.text(*name).to_string();
+                // **`x?.field`** (Part I 3.5): over a `T?` the field of what is
+                // inside, as a `T?`; over a plain value the plain read, with
+                // `NK1217` ([ADR-279](../../docs/specification/adr/adr-279.md)
+                // D13).
+                if matches!(expr, Expr::SafeField { .. }) {
+                    match &on {
+                        Ty::Nullable(inner) => {
+                            return self.a_safe_field(inner, base, field, expr, span);
+                        }
+                        Ty::Unknown => return Ty::Unknown,
+                        _ => self.reaches_through_a_plain_value(
+                            &on,
+                            base,
+                            Reached::Field(&field),
+                            expr,
+                            span,
+                        ),
+                    }
+                }
                 self.a_read_of_a_part(base, expr, &field, span);
                 if let Ty::Nullable(_) = &on {
                     self.reaches_into_a_nullable(&on, Reached::Field(&field), span);
@@ -12514,120 +12720,6 @@ impl<'a> Checker<'a> {
                         // as a method's receiver binds its signature's
                         // (ADR-288, and ADR-295 D2 for a `.nika` declaration).
                         ty::substitute(&declared.ty, &self.arguments_of(&on))
-                    }
-                    None => {
-                        let ty = ty.clone();
-                        self.no_such_field(&ty, &field, &fields, span);
-                        Ty::Unknown
-                    }
-                }
-            }
-
-            // Part I 3.5: `x?.field`. The receiver must be a `T?` and the
-            // result is a `U?` - flattened, because a field that is *itself*
-            // nullable would otherwise give a nullable of a nullable.
-            Expr::SafeField { base, name } => {
-                let on = self.expr(base, span);
-                let field = self.parsed.text(*name).to_string();
-                let Ty::Nullable(inner) = &on else {
-                    self.reaches_through_a_plain_value(&on, Reached::Field(&field), span);
-                    return Ty::Unknown;
-                };
-                let Ty::Named { name: ty, .. } = inner.as_ref() else {
-                    return Ty::Unknown;
-                };
-                // **A boxed field is read through its box here too**
-                // ([ADR-246](../../docs/specification/adr/adr-246.md) D2).
-                if self
-                    .checked
-                    .boxed_members
-                    .get(ty)
-                    .is_some_and(|members| members.contains(&field))
-                {
-                    self.checked
-                        .boxed_reads
-                        .insert((span.at(), argument_shape(expr)));
-                }
-                let Some(fields) = self.fields_of(ty) else {
-                    return Ty::Unknown;
-                };
-                match fields.iter().find(|f| f.name == field) {
-                    Some(found) => {
-                        let (ty, declared) = (ty.clone(), found.clone());
-                        self.field_is_reachable(&ty, &declared, span);
-                        // **The `and_then` case is the field that is already a
-                        // `T?`**, and the emitter is told which by name: `map`
-                        // over one would make an `Option<Option<T>>`, and that
-                        // is a question about the declared type, which this
-                        // module answers and the emitter cannot (ADR-288).
-                        // **A view is taken of a place and never of a
-                        // temporary** ([ADR-278](../../docs/specification/adr/adr-278.md)
-                        // D1). Measured: the view of a temporary dies at the
-                        // `;`, and binding it is `rustc`'s *temporary value
-                        // dropped while borrowed* about a file nobody wrote
-                        // (Part III C.1). A temporary has no next line to stay
-                        // usable on, so leaving it owned keeps
-                        // [ADR-278](../../docs/specification/adr/adr-278.md)
-                        // D1's promise where it means anything.
-                        let place = roots_in_a_binding(base);
-                        match &declared.ty {
-                            // A field that is itself a `T?` flattens, and a
-                            // view of one is taken the same way one shape down.
-                            Ty::Nullable(inner)
-                                if place && crate::contracts::keeps::moves(inner) =>
-                            {
-                                self.checked
-                                    .viewed_reaches
-                                    .insert((span.at(), field.clone()), viewed_as(inner));
-                                self.checked.flattened_reaches.insert((span.at(), field));
-                                Ty::Nullable(Box::new(inner.as_a_view()))
-                            }
-                            Ty::Nullable(_) => {
-                                self.checked.flattened_reaches.insert((span.at(), field));
-                                declared.ty
-                            }
-                            // **A member that copies comes out of a view**
-                            // ([ADR-278](../../docs/specification/adr/adr-278.md)
-                            // D1, [ADR-278](../../docs/specification/adr/adr-278.md)
-                            // D1 and D2). A number, a `bool` and a `char` are
-                            // read through the receiver and copied, so the
-                            // reach leaves the receiver where it was and the
-                            // result's type is what it always was.
-                            //
-                            // **The other half is not here**, and it is the
-                            // representation rather than this walk: a member
-                            // that does **not** copy comes out as a *view* of
-                            // the receiver (D2) - which is not a **state**:
-                            // three of the four shapes a `?.` has are Borrowed
-                            // and the fourth is `NK2303`'s
-                            // ([ADR-278](../../docs/specification/adr/adr-278.md)
-                            // D1). What it waits on is one question about `??`,
-                            // on `docs/open-decisions.md`. So that reach lowers
-                            // exactly as it did, moving the receiver, and
-                            // [ADR-278](../../docs/specification/adr/adr-278.md)
-                            // D8's translation stays for it alone.
-                            plain if !crate::contracts::keeps::moves(plain) => {
-                                self.checked.copied_reaches.insert((span.at(), field));
-                                Ty::Nullable(Box::new(plain.clone()))
-                            }
-                            // **And a member that does not copy comes out as a
-                            // view of the receiver**, which is
-                            // [ADR-278](../../docs/specification/adr/adr-278.md)
-                            // D2 and [ADR-278](../../docs/specification/adr/adr-278.md)
-                            // D1. Borrowed and not Tethered: the view points
-                            // into a place that outlives the statement, which
-                            // is what [ADR-283](../../docs/specification/adr/adr-283.md)
-                            // D2 calls the free case.
-                            plain if place => {
-                                let viewed = viewed_as(plain);
-                                self.checked
-                                    .viewed_reaches
-                                    .insert((span.at(), field.clone()), viewed);
-                                self.checked.copied_reaches.insert((span.at(), field));
-                                Ty::Nullable(Box::new(plain.as_a_view()))
-                            }
-                            plain => Ty::Nullable(Box::new(plain.clone())),
-                        }
                     }
                     None => {
                         let ty = ty.clone();
@@ -13310,7 +13402,15 @@ impl<'a> Checker<'a> {
                 let outer = std::mem::replace(&mut self.read_a_map, false);
                 let left = self.expr(value, span);
                 let read_now = std::mem::replace(&mut self.read_a_map, outer);
-                self.nothing_to_fall_back_from(value, &left, span);
+                // **The left side alone** (D13): the fallback is still checked,
+                // and what it would take is not taken, because it never runs.
+                if self.nothing_to_fall_back_from(value, &left, expr, span) {
+                    let from = self.taken_so_far();
+                    self.expr(fallback, span);
+                    self.walked.truncate(from.0);
+                    self.handed.truncate(from.1);
+                    return left;
+                }
                 // **A map read, or a name a `let` bound to one** (#297): the
                 // left side is a view of what the map keeps either way.
                 let from_a_map = match &**value {

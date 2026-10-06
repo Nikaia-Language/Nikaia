@@ -350,13 +350,13 @@ fn main() {
     );
 }
 
-/// **`?.` through something that cannot be absent is `NK1121`.**
+/// **`?.` through something that cannot be absent is the warning `NK1217`**
+/// ([ADR-279](../../../docs/specification/adr/adr-279.md) D13, #476).
 ///
-/// The language below has no `map` on a plain struct, so this was `rustc`'s
-/// refusal about the generated file. The way out is the plain `.`, which is
-/// what the program meant.
+/// The language below has no `map` on a plain struct, so it is lowered as the
+/// plain `.`, which is what the program meant, and the help says to write it.
 #[test]
-fn reaching_through_a_plain_value_is_refused() {
+fn reaching_through_a_plain_value_warns_and_is_the_plain_read() {
     let source = "\
 struct User { name: String }
 fn main() {
@@ -369,15 +369,52 @@ fn main() {
     let own = Ledger::infer(&parsed);
     let library = Ledger::parse(STD).expect("std's shipped ledger parses");
     let findings = check::check(&parsed, &own, &library).findings;
-    let it = findings
-        .iter()
-        .find(|f| f.code == "NK1121")
-        .unwrap_or_else(|| panic!("no NK1121: {findings:#?}"));
+    assert_eq!(findings.len(), 1, "{findings:#?}");
+    let it = &findings[0];
+    assert_eq!((it.code, it.severity), ("NK1217", check::Severity::Warning));
     assert!(it.message.contains("`User`"), "{it:#?}");
     assert!(
         it.help.as_deref() == Some("Write `.name`."),
-        "every error names a way out (Part III C.2): {it:#?}"
+        "every finding names a way out (Part III C.2): {it:#?}"
     );
+    let rust = lowered(source);
+    assert!(rust.contains("let n = u.name;"), "{rust}");
+}
+
+/// **Through a list's index it stays `NK1121`** (D13): the line promises a
+/// guard against a read past the end that it does not give.
+#[test]
+fn reaching_through_a_list_index_is_refused() {
+    let found = findings(
+        "struct User { name: String }\n\
+         fn first(users: ref Vec[User]) -> String {\n    return users[2]?.name ?? \"-\".clone()\n}\n\
+         fn main() {}\n",
+    );
+    let it = found
+        .iter()
+        .find(|f| f.code == "NK1121")
+        .unwrap_or_else(|| panic!("no NK1121: {found:#?}"));
+    assert_eq!(it.severity, check::Severity::Error);
+    assert!(
+        it.help
+            .as_deref()
+            .is_some_and(|h| h.contains("if 2 < users.len()")),
+        "{it:#?}"
+    );
+}
+
+/// **A method through a plain value runs as the plain call** (D13): `s?.len()`
+/// on a `String` is `s.len()`.
+#[test]
+fn a_reached_method_on_a_plain_text_runs_as_the_plain_call() {
+    let source = "fn main() {\n    let s: String = \"abc\".clone()\n    let n = s?.len()\n    println(f\"{n}\")\n}\n";
+    let codes: Vec<&str> = findings(source).iter().map(|f| f.code).collect();
+    assert_eq!(codes, vec!["NK1217"]);
+    let parsed = parse_to_ast(source).expect("the source parses");
+    let rust = emit_program(&parsed, Build::default())
+        .expect("the source lowers")
+        .rust;
+    assert!(!rust.contains(".map("), "{rust}");
 }
 
 /// And a receiver this checker could not work out says nothing: refusing there
@@ -607,11 +644,11 @@ fn main() {
     assert_eq!(printed.trim(), "Alexandra | none");
 }
 
-/// **`?.` onto a method of something that cannot be absent is `NK1121`**, the
-/// same refusal the field gets — and the way out is spelled as a *call*, which
+/// **`?.` onto a method of something that cannot be absent is `NK1217`**, the
+/// same warning the field gets — and the way out is spelled as a *call*, which
 /// is the one place the two members differ.
 #[test]
-fn a_reached_method_on_a_plain_value_is_refused_in_the_spelling_it_was_written() {
+fn a_reached_method_on_a_plain_value_warns_in_the_spelling_it_was_written() {
     let found = findings(
         "\
 struct U { name: String }
@@ -624,8 +661,8 @@ fn main() {
     );
     let one = found
         .iter()
-        .find(|f| f.code == "NK1121")
-        .expect("a reach through a plain value is refused");
+        .find(|f| f.code == "NK1217")
+        .expect("a reach through a plain value warns");
     assert!(one.message.contains("`U`"), "{:?}", one.message);
     let help = one.help.clone().unwrap_or_default();
     assert!(help.contains(".n(…)"), "a call, not a field: {help}");

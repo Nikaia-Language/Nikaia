@@ -1,7 +1,8 @@
-//! **`??` needs a left side that can be `null`** (#342, ADR-279 D12): after a
-//! value that always has one it is `NK1211`, with the length check as the help
-//! after a list's index; after an index into a list of `T?` it replaces a
-//! `null` element, and an index past the end still stops.
+//! **`??` after a left side that cannot be `null`** (#342, ADR-279 D12, D13,
+//! #476): after a list's index it is `NK1211`, with the length check as the
+//! help; after any other value it is the warning `NK1216` and the line is its
+//! left side; after an index into a list of `T?` it replaces a `null` element,
+//! and an index past the end still stops.
 
 mod common;
 
@@ -18,7 +19,11 @@ fn findings(source: &str) -> Vec<nikaia::check::Finding> {
 }
 
 fn run(purpose: &str, source: &str) -> (bool, String, String) {
-    assert!(findings(source).is_empty(), "{:#?}", findings(source));
+    let errors: Vec<_> = findings(source)
+        .into_iter()
+        .filter(|f| f.severity == nikaia::check::Severity::Error)
+        .collect();
+    assert!(errors.is_empty(), "{errors:#?}");
     let parsed = parse_to_ast(source).expect("the source parses");
     let rust = emit_program(&parsed, Build::default())
         .expect("the source lowers")
@@ -62,11 +67,38 @@ fn a_list_index_of_a_value_is_refused_with_the_length_help() {
     );
 }
 
+/// **A plain number builds, with one warning** (D13): the answer is the left
+/// side, and the fallback is not written.
 #[test]
-fn a_plain_number_is_refused() {
+fn a_plain_number_warns_and_is_its_left_side() {
     let source = "fn main() {\n    let x: i64 = 5\n    let y = x ?? 0\n    println(f\"{y}\")\n}\n";
+    let found = findings(source);
+    let codes: Vec<(&str, bool)> = found
+        .iter()
+        .map(|f| (f.code, f.severity == nikaia::check::Severity::Warning))
+        .collect();
+    assert_eq!(codes, vec![("NK1216", true)], "{found:#?}");
+    let (ran, out, _) = run("coalesce-plain", source);
+    assert!(ran);
+    assert_eq!(out, "5\n");
+}
+
+/// **A callee that narrowed `-> User?` to `-> User`** (D13): its callers'
+/// `??` and `?.` build, with one warning each.
+#[test]
+fn a_narrowed_callee_does_not_break_its_callers() {
+    let source = "struct User {\n    name: String,\n}\n\n\
+         fn find(id: i64) -> User {\n    return User { name: f\"u{id}\" }\n}\n\n\
+         fn main() {\n\
+         \x20   let a = find(1) ?? User { name: \"-\".clone() }\n\
+         \x20   let b = find(2)?.name\n\
+         \x20   println(f\"{a.name} {b}\")\n\
+         }\n";
     let codes: Vec<&str> = findings(source).iter().map(|f| f.code).collect();
-    assert_eq!(codes, vec!["NK1211"]);
+    assert_eq!(codes, vec!["NK1216", "NK1217"]);
+    let (ran, out, _) = run("coalesce-narrowed", source);
+    assert!(ran);
+    assert_eq!(out, "u1 u2\n");
 }
 
 #[test]

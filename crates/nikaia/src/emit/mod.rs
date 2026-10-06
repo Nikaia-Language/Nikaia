@@ -1312,6 +1312,9 @@ struct Emitter<'p> {
     text_as_is: std::collections::BTreeSet<(usize, String)>,
     /// `??`s that lend their left side, and how it is opened (ADR-279 D5).
     lent_coalesces: std::collections::BTreeMap<(usize, String), &'static str>,
+    /// `check::Checked::plain_reaches`: a `??` or a `?.` after a value that
+    /// cannot be absent, written as its left side alone or the plain `.`.
+    plain_reaches: std::collections::BTreeSet<usize>,
     /// A number, `bool` or `char` a `let` reads past a jump, copied (#456).
     copied_jump_reads: std::collections::BTreeSet<(usize, String)>,
     /// **`std`'s count of a sequence**, by statement and receiver shape, which
@@ -2714,6 +2717,7 @@ impl<'p> Emitter<'p> {
             owned_copies: propagation.owned_copies,
             text_as_is: propagation.text_as_is,
             lent_coalesces: propagation.lent_coalesces,
+            plain_reaches: propagation.plain_reaches,
             copied_jump_reads: propagation.copied_jump_reads,
             counted: propagation.counted,
             lent_bindings: propagation.lent_bindings,
@@ -8051,12 +8055,22 @@ impl<'p> Emitter<'p> {
                 Tail::Value,
             )?,
             Expr::Call { func, args, config } => self.call(out, func, args, config, depth, flow)?,
+            // **A `?.` after a value that cannot be absent is the plain call**
+            // (ADR-279 D13, `check::Checked::plain_reaches`).
             Expr::MethodCall {
                 receiver,
                 method,
                 args,
                 config,
-            } => {
+            }
+            | Expr::SafeMethod {
+                receiver,
+                method,
+                args,
+                config,
+            } if matches!(expr, Expr::MethodCall { .. })
+                || self.plain_reaches.contains(&crate::check::value_node(expr)) =>
+            {
                 // **`field.of(value)` is the field read a program would have
                 // written by hand** ([ADR-304](../../docs/specification/adr/adr-304.md)
                 // D2, D5's *at run time: nothing*): `value.name`, with no
@@ -8419,7 +8433,10 @@ impl<'p> Emitter<'p> {
                 }
                 out.push("]");
             }
-            Expr::Field { base, name } => {
+            Expr::Field { base, name } | Expr::SafeField { base, name }
+                if matches!(expr, Expr::Field { .. })
+                    || self.plain_reaches.contains(&crate::check::value_node(expr)) =>
+            {
                 // **`field.name` is the field's own name as text**
                 // ([ADR-304](../../docs/specification/adr/adr-304.md) D2): a
                 // literal, because the turn this copy stands at is known.
@@ -9168,6 +9185,13 @@ impl<'p> Emitter<'p> {
             // `match` written inside the outer closure put the `continue` in a
             // closure all the same - `rustc`'s E0267 (found moving
             // `contracts::locks` into Nikaia).
+            // **A `??` after a value that cannot be absent is its left side**
+            // (ADR-279 D13): the fallback never runs and is not written.
+            Expr::Coalesce { value, .. }
+                if self.plain_reaches.contains(&crate::check::value_node(expr)) =>
+            {
+                self.expr(out, value, depth, flow)?;
+            }
             Expr::Coalesce { value, fallback }
                 if jumps_at_the_end(fallback) || self.never_returns(fallback) =>
             {
