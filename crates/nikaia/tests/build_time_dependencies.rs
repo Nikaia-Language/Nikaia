@@ -104,3 +104,152 @@ fn a_dependency_that_reaches_c_is_refused_at_build_time() {
     assert!(!out.status.success(), "{}", said(&out));
     assert!(said(&out).contains("NK1152"), "{}", said(&out));
 }
+
+fn has(tool: &str) -> bool {
+    Command::new(tool)
+        .arg("--version")
+        .output()
+        .is_ok_and(|o| o.status.success())
+}
+
+/// **D14: the build-time program holds no foreign code, not even linked.**
+/// `lib` declares a C function from a library whose constructor writes a
+/// marker file when it is loaded, and offers a pure function too. A
+/// `comptime` calls the pure one: the build succeeds and the marker does not
+/// exist. The program, which calls the C function when it runs, does link the
+/// library, and running it writes the marker.
+#[test]
+fn the_build_time_program_links_no_c_library() {
+    if !has("pkg-config") || !has("cc") || !has("ar") {
+        eprintln!("skipped: needs pkg-config, cc and ar");
+        return;
+    }
+    let root = projects(
+        "build-time-no-c",
+        "extern(library: \"nikaia_test_marker\") {\n    fn marker_value(n: i32) -> i32\n}\n\n\
+         pub fn tripled(n: i64) -> i64 sync {\n    return n * 3\n}\n\n\
+         pub fn marked(n: i32) -> i32 {\n    return unsafe { marker_value(n) }\n}\n",
+        "use lib\n\ncomptime N: i64 = lib::tripled(14)\n\n\
+         fn main() {\n    println(f\"{N} {lib::marked(1)}\")\n}\n",
+    );
+    std::fs::write(
+        root.join("lib/nikaia.toml"),
+        "[package]\nname = \"lib\"\nversion = \"0.1.0\"\n\n\
+         [library.nikaia_test_marker]\npkg-config = \"nikaia_test_marker\"\n",
+    )
+    .expect("the manifest");
+    // The C library: a constructor that leaves a marker where it is told to.
+    let c = root.join("c");
+    std::fs::create_dir_all(&c).expect("the C directory");
+    std::fs::write(
+        c.join("marker.c"),
+        "#include <stdio.h>\n#include <stdlib.h>\n\
+         __attribute__((constructor)) static void mark(void) {\n\
+         \x20   const char *p = getenv(\"NIKAIA_TEST_MARKER\");\n\
+         \x20   if (p) { FILE *f = fopen(p, \"w\"); if (f) { fputs(\"loaded\\n\", f); fclose(f); } }\n\
+         }\n\
+         int marker_value(int n) { return n + 1; }\n",
+    )
+    .expect("the C source");
+    let compiled = Command::new("cc")
+        .current_dir(&c)
+        .args(["-c", "-fPIC", "marker.c", "-o", "marker.o"])
+        .status()
+        .expect("cc runs");
+    assert!(compiled.success());
+    let archived = Command::new("ar")
+        .current_dir(&c)
+        .args(["rcs", "libnikaia_test_marker.a", "marker.o"])
+        .status()
+        .expect("ar runs");
+    assert!(archived.success());
+    std::fs::write(
+        c.join("nikaia_test_marker.pc"),
+        format!(
+            "Name: m\nDescription: m\nVersion: 1\nLibs: -L{} -lnikaia_test_marker\n",
+            c.display()
+        ),
+    )
+    .expect("the .pc file");
+    let marker = root.join("MARKER");
+    let nikaia = |verb: &str| {
+        Command::new(env!("CARGO_BIN_EXE_nikaia"))
+            .current_dir(root.join("app"))
+            .args([verb, "--no-cache"])
+            .env_remove("CARGO_TARGET_DIR")
+            .env("PKG_CONFIG_PATH", &c)
+            .env("NIKAIA_TEST_MARKER", &marker)
+            .output()
+            .expect("the nikaia binary runs")
+    };
+    let built = nikaia("build");
+    let after_the_build = marker.exists();
+    // **What the build-time program loads** (D14, step 5): the system's C
+    // runtime and the toolchain's `std`, with the library build-time code
+    // links against - and nothing of the package's C.
+    let loaded: Vec<String> = build_time_binaries(&root.join("app/target"))
+        .iter()
+        .filter_map(|binary| Command::new("ldd").arg(binary).output().ok())
+        .flat_map(|out| {
+            String::from_utf8_lossy(&out.stdout)
+                .lines()
+                .map(|line| line.trim().to_string())
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    const ALLOWED: [&str; 11] = [
+        "linux-vdso",
+        "libnikaia_bundle",
+        "libstd-",
+        "libgcc_s",
+        "libc.",
+        "libm.",
+        "librt.",
+        "libpthread.",
+        "libdl.",
+        "libutil.",
+        "/lib",
+    ];
+    let foreign: Vec<&String> = loaded
+        .iter()
+        .filter(|line| !ALLOWED.iter().any(|ok| line.starts_with(ok)))
+        .collect();
+    let ran = nikaia("run");
+    let after_the_run = marker.exists();
+    let _ = std::fs::remove_dir_all(&root);
+    assert!(built.status.success(), "{}", said(&built));
+    assert!(
+        !after_the_build,
+        "the C library's constructor ran while the program was built"
+    );
+    assert!(
+        has("ldd") && !loaded.is_empty() || !has("ldd"),
+        "no build-time program was found to ask `ldd` about"
+    );
+    assert!(
+        foreign.is_empty(),
+        "the build-time program loads {foreign:#?}"
+    );
+    assert!(ran.status.success(), "{}", said(&ran));
+    assert_eq!(String::from_utf8_lossy(&ran.stdout).trim(), "42 2");
+    assert!(after_the_run, "the program did not link the C library");
+}
+
+/// The programs a build compiled to run its `comptime`s.
+fn build_time_binaries(dir: &Path) -> Vec<PathBuf> {
+    let mut found = Vec::new();
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return found;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            found.extend(build_time_binaries(&path));
+        } else if path.file_name().is_some_and(|n| n == "run")
+            && path.components().any(|c| c.as_os_str() == "comptime")
+        {
+            found.push(path);
+        }
+    }
+    found
+}

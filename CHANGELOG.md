@@ -4,6 +4,19 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.591] — 2026-10-06
+
+**The build-time program holds no C, not even linked: tested** (ADR-321 D14,
+#479).
+- A dependency declares a C function from a library whose constructor writes
+  a marker when it is loaded; a `comptime` calls the dependency's pure
+  function. After `nikaia build` the marker does not exist, and `ldd` on the
+  build-time program names only the system's C runtime, the toolchain's `std`
+  and `libnikaia_bundle`. The program, which calls the C function, links the
+  library and writes the marker when it runs.
+- Test: `build_time_dependencies.rs::the_build_time_program_links_no_c_library`
+  (skipped without `pkg-config`, `cc` and `ar`).
+
 ## [0.0.590] — 2026-10-06
 
 **Build-time code calls its package's Nikaia dependencies** (ADR-321 D13,
