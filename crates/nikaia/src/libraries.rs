@@ -141,14 +141,19 @@ pub fn filtered(package: &str, found_by: &str, said: &str) -> Result<Vec<String>
     Ok(out)
 }
 
-/// **The flags as `rustc` takes them**: `-l name` stays, `-L dir` becomes
-/// `-L native=dir`, and `-pthread` and a framework go to the linker as they are.
+/// **The flags as `rustc` takes them**: `-L dir` becomes `-L native=dir`,
+/// and `-l name`, `-pthread` and a framework go to the linker as they are.
+///
+/// **`-l` as a linker argument**, because `rustc` writes those after every
+/// crate (#499): a library a dependency package names is called from that
+/// package's crate, and a linker that reads a static archive once, in order -
+/// GNU `ld`, the default on `aarch64` - found nothing calling it yet where
+/// `rustc` puts its own `-l`, before the crates.
 pub fn as_rustc_args(flags: &[String]) -> Vec<String> {
     let mut out = Vec::new();
     for flag in flags {
-        if let Some(name) = flag.strip_prefix("-l") {
-            out.push("-l".to_string());
-            out.push(name.to_string());
+        if flag.starts_with("-l") {
+            out.push(format!("-Clink-arg={flag}"));
         } else if let Some(dir) = flag.strip_prefix("-L") {
             out.push("-L".to_string());
             out.push(format!("native={dir}"));
@@ -186,7 +191,12 @@ mod tests {
         let args = as_rustc_args(&["-L/opt/x/lib".into(), "-lx".into(), "-pthread".into()]);
         assert_eq!(
             args,
-            ["-L", "native=/opt/x/lib", "-l", "x", "-Clink-arg=-pthread"]
+            [
+                "-L",
+                "native=/opt/x/lib",
+                "-Clink-arg=-lx",
+                "-Clink-arg=-pthread"
+            ]
         );
     }
 }

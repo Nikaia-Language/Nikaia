@@ -4,6 +4,18 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.601] — 2026-10-06
+
+**A static C library a dependency package names links with GNU `ld`**
+(#499).
+- The program got a library's `-l` as `rustc`'s own, which `rustc` writes
+  before the crates; a function a dependency package calls was not yet
+  called there, and GNU `ld` - the default on `aarch64` - left it undefined
+  (`rust-lld` on `x86_64` does not mind the order). `-l` now goes to the
+  linker as a linker argument, which `rustc` writes after every crate.
+- Test: `build_time_dependencies.rs::the_build_time_program_links_no_c_library`
+  on `arm64`, and on `x86_64` with `-C link-arg=-fuse-ld=bfd`.
+
 ## [0.0.600] — 2026-10-06
 
 **A run reads the defaults the program's ledger computed** (ADR-321 D1,
