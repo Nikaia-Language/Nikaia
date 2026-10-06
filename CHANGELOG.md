@@ -4,6 +4,22 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.538] — 2026-10-06
+
+**`std::fs` asks for a file's name** (ADR-319 D2, #449 step 3, first half).
+- `fs::create`, `map`, `read`, `read_to_string`, `walk`, `exists` and `write`
+  take `path: ref fs::Path` instead of `path: ?`.
+- Text stands there and is borrowed as a view without a copy:
+  `fs::read_to_string(std::path::Path::new(&(name)), …)`. An `fs::Path` is
+  lent.
+- `fs::write` only reads the file's name, so `fs::write(self.path, …)` no
+  longer reports `self.path` as handed over (`NK2106`); the data it keeps
+  still is.
+- The bench and example lowerings change only by this wrap around the name.
+- `walk` still returns text. Returning `Vec[fs::Path]` waits for the path
+  operations (step 4) and `f"…"` by use (step 5): `std`'s own `sources.nika`
+  calls `ends_with` on a walked name and puts it into an `f"…"`.
+
 ## [0.0.537] — 2026-10-06
 
 **A number literal where no number is declared is refused** (#471).

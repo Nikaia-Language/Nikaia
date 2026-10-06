@@ -118,3 +118,45 @@ fn a_number_is_not_a_file_name() {
     let found = common::checked(&parsed, &common::infer(&parsed), &library()).findings;
     assert!(found.iter().any(|f| f.code == "NK1103"), "{found:#?}");
 }
+
+/// **`std::fs` asks for a file's name** (ADR-319 D2, step 3): text and a
+/// `fs::Path` both stand there, and neither is copied - text is borrowed as a
+/// view, and a `Path` is lent.
+#[test]
+fn std_fs_takes_a_file_name_and_text_stands_there() {
+    let source = "use std::fs\n\
+         \n\
+         fn main() {\n\
+         \x20   let dir = \".\"\n\
+         \x20   let name: String = \"x.txt\"\n\
+         \x20   let p: fs::Path = \"x.txt\"\n\
+         \x20   let a = fs::exists(name, fs::Root::Anywhere) catch { return }\n\
+         \x20   let b = fs::exists(f\"{dir}/x.txt\", fs::Root::Anywhere) catch { return }\n\
+         \x20   let c = fs::exists(p, fs::Root::Anywhere) catch { return }\n\
+         \x20   println(f\"{a} {b} {c}\")\n\
+         }\n";
+    let parsed = parse_to_ast(source).expect("the source parses");
+    let found = common::checked(&parsed, &common::infer(&parsed), &library()).findings;
+    assert!(
+        found
+            .iter()
+            .all(|f| f.severity != nikaia::check::Severity::Error),
+        "{found:#?}"
+    );
+    let rust = lowered(source);
+    assert!(
+        rust.contains("fs::exists(std::path::Path::new(&(name)), &fs::Root::Anywhere)"),
+        "{rust}"
+    );
+    assert!(
+        rust.contains(
+            "fs::exists(std::path::Path::new(&(format!(\"{}/x.txt\", dir))), &fs::Root::Anywhere)"
+        ),
+        "{rust}"
+    );
+    assert!(
+        rust.contains("fs::exists(&p, &fs::Root::Anywhere)"),
+        "{rust}"
+    );
+    assert!(!rust.contains("PathBuf::from(name)"), "{rust}");
+}

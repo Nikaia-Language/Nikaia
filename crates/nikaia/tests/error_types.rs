@@ -391,7 +391,9 @@ fn a_librarys_error_travels_in_an_envelope() {
     // **The root gets its own `&` from the compiler** (ADR-094 D1): the entry only
     // reads it, so the declaration is `&Root` and the call writes no reference.
     assert!(
-        rust.contains("fs::read_to_string(&path, &fs::Root::Anywhere).await?"),
+        rust.contains(
+            "fs::read_to_string(std::path::Path::new(&(&path)), &fs::Root::Anywhere).await?"
+        ),
         "{rust}"
     );
 }

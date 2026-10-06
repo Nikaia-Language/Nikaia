@@ -16128,9 +16128,9 @@ pub enum SolverTerm {
 
 pub async fn rust_sources(src: &str) -> Result<collections::BTreeMap<String, String>, nikaia_std::error::Thrown<io::IoError>> {
     let mut out = collections::BTreeMap::new();
-    for name in fs::walk(src, &fs::Root::Anywhere).await? {
+    for name in fs::walk(std::path::Path::new(&(src)), &fs::Root::Anywhere).await? {
         if !name.ends_with(".rs") { continue; }
-        let text = fs::read_to_string(format!("{}/{}", src, name), &fs::Root::Anywhere).await?;
+        let text = fs::read_to_string(std::path::Path::new(&(format!("{}/{}", src, name))), &fs::Root::Anywhere).await?;
         out.insert(format!("src/{}", name), text);
     }
     Ok(out)

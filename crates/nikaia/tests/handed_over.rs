@@ -477,15 +477,16 @@ fn a_part_of_a_loan_is_not_handed_over() {
 }
 
 /// **The part is named once**: an argument of a `std` call is walked more than
-/// once, and each walk extended the read, so the message said `self.path.path`
-/// and its help wrote a copy of a field that does not exist.
+/// once, and each walk extended the read, so the message said `self.body.body`
+/// and its help wrote a copy of a field that does not exist. The data is what
+/// `fs::write` keeps; the file's name it only reads (ADR-319 D2).
 #[test]
 fn a_part_handed_to_std_is_named_once() {
     let source = "use std::fs\n\n\
-                  struct Log {\n    path: String,\n}\n\n\
+                  struct Log {\n    path: String,\n    body: String,\n}\n\n\
                   impl Log {\n\
                   \x20   fn save(ref self) throws {\n\
-                  \x20       fs::write(self.path, fs::Root::Anywhere, \"x\")\n\
+                  \x20       fs::write(self.path, fs::Root::Anywhere, self.body)\n\
                   \x20   }\n\
                   }\n\
                   fn main() {}\n";
@@ -495,12 +496,12 @@ fn a_part_handed_to_std_is_named_once() {
     assert!(
         part[0]
             .message
-            .starts_with("`self.path` is passed to `fs::write`, which keeps it"),
+            .starts_with("`self.body` is passed to `fs::write`, which keeps it"),
         "{found:#?}"
     );
     assert_eq!(
         part[0].help.as_deref(),
-        Some("Hand over a copy: `self.path.clone()`.")
+        Some("Hand over a copy: `self.body.clone()`.")
     );
 }
 

@@ -397,14 +397,18 @@ fn a_library_option_is_filled_in_from_the_shipped_ledger() {
     assert!(
         // The root gets the `&` the compiler writes for a parameter the callee
         // only reads (ADR-094 D1); the options are filled in behind it.
-        rust.contains(r#"fs::write("o", &fs::Root::Anywhere, "x", true, true)"#),
+        rust.contains(
+            r#"fs::write(std::path::Path::new(&("o")), &fs::Root::Anywhere, "x", true, true)"#
+        ),
         "{rust}"
     );
 
     let rust =
         emit("use std::fs\n\nfn main() throws { fs::write(\"o\", fs::Root::Anywhere, \"x\") }");
     assert!(
-        rust.contains(r#"fs::write("o", &fs::Root::Anywhere, "x", false, true)"#),
+        rust.contains(
+            r#"fs::write(std::path::Path::new(&("o")), &fs::Root::Anywhere, "x", false, true)"#
+        ),
         "{rust}"
     );
 }

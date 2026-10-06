@@ -190,7 +190,7 @@ signature = "(text: ?)"
 pub = true
 touches = ["file(path) write"]
 throws = ["io::IoError"]
-signature = "(path: ?, root: ref fs::Root) -> Writer"
+signature = "(path: ref fs::Path, root: ref fs::Root) -> Writer"
 
 # A file being written, through a buffer.
 [type."fs::Writer"]
@@ -258,7 +258,7 @@ pub = true
 touches = ["file(path) read"]
 throws = ["io::IoError"]
 provenance = "trusted"
-signature = "(path: ?, root: ref fs::Root) -> Mapped"
+signature = "(path: ref fs::Path, root: ref fs::Root) -> Mapped"
 
 # The mapped file, as text.
 #
@@ -284,7 +284,7 @@ pub = true
 touches = ["file(path) read"]
 throws = ["io::IoError"]
 provenance = "trusted"
-signature = "(path: ?, root: ref fs::Root) -> Bytes"
+signature = "(path: ref fs::Path, root: ref fs::Root) -> Bytes"
 
 # The whole of a file, as text.
 #
@@ -296,7 +296,7 @@ pub = true
 touches = ["file(path) read"]
 throws = ["io::IoError"]
 provenance = "trusted"
-signature = "(path: ?, root: ref fs::Root) -> String"
+signature = "(path: ref fs::Path, root: ref fs::Root) -> String"
 
 # Every file under a directory, as names relative to it with `/` between the
 # parts, in sorted order. Directories are not listed, and each is visited once.
@@ -311,7 +311,7 @@ pub = true
 touches = ["file(path) read"]
 throws = ["io::IoError"]
 provenance = "trusted"
-signature = "(path: ?, root: ref fs::Root) -> Vec[String]"
+signature = "(path: ref fs::Path, root: ref fs::Root) -> Vec[String]"
 
 # Whether a file or directory is there (Part III 17.1). The root comes first
 # (ADR-108 D1): a name that leaves an `fs::Root::Dir` throws `Outside` rather
@@ -321,7 +321,7 @@ pub = true
 sync = true
 touches = ["file(path) read"]
 throws = ["io::IoError"]
-signature = "(path: ?, root: ref fs::Root) -> bool"
+signature = "(path: ref fs::Path, root: ref fs::Root) -> bool"
 
 # **A test's own directory, as a root** (ADR-247 D5). `sync`: making one
 # directory is one system call, the same size of blocking as `cli::args`'s read.
@@ -348,7 +348,7 @@ signature = "() -> fs::Root"
 pub = true
 touches = ["file(path) write"]
 throws = ["io::IoError"]
-signature = "(path: ?, root: ref fs::Root, data: ?; append: bool = false, create: bool = true)"
+signature = "(path: ref fs::Path, root: ref fs::Root, data: ?; append: bool = false, create: bool = true)"
 
 # Claim that `cond` holds whenever this line is reached.
 #

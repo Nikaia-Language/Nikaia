@@ -326,7 +326,7 @@ fn a_task_is_an_async_block_and_never_a_closure() {
     // The pausing call inside the task takes its `.await`, which is the thing a
     // closure could not have held.
     assert!(
-        rust.contains("read_to_string(\"x\", &fs::Root::Anywhere).await"),
+        rust.contains("read_to_string(std::path::Path::new(&(\"x\")), &fs::Root::Anywhere).await"),
         "{rust}"
     );
     assert!(!rust.contains("start(|| "), "{rust}");
