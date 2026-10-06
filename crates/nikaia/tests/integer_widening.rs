@@ -300,3 +300,68 @@ fn a_type_variable_is_not_widened_to_agree() {
         "1\n",
     );
 }
+
+/// **An open number's type is decided before any widening** (#439 step 6):
+/// `let n = 5` used as an `i64` and as a `u32` is two uses that disagree, and
+/// stays `NK1200` - widening the `u32` use would be a second solution.
+#[test]
+fn an_open_number_is_decided_before_any_widening() {
+    let found = codes(
+        "fn wide(x: i64) -> i64 {\n    x\n}\n\n\
+         fn narrow(x: u32) -> u32 {\n    x\n}\n\n\
+         fn main() {\n    let n = 5\n    println(f\"{wide(n)} {narrow(n)}\")\n}\n",
+    );
+    assert!(found.contains(&"NK1200"), "{found:?}");
+}
+
+/// **A stated type reaches the operands** (#439 step 7): `x * y` over two
+/// `i32`s, returned as an `i64`, is computed in `i64` and does not stop where
+/// an `i32` would. A literal among the operands is an `i64` too.
+#[test]
+fn a_stated_type_reaches_the_operands() {
+    let source = "fn area(x: i32, y: i32) -> i64 {\n    x * y\n}\n\n\
+                  fn scaled(x: i32) -> i64 {\n    return -(x * 3) + 1\n}\n\n\
+                  fn main() {\n    let s: i64 = 50000 \n    let a: i32 = 50000\n    \
+                  let t: i64 = a * a\n    \
+                  println(f\"{area(50000, 50000)} {scaled(1000000000)} {t} {s}\")\n}\n";
+    runs("reach", source, "2500000000 -2999999999 2500000000 50000\n");
+}
+
+/// **It does not reach into a name**: `let p = x * y` is computed in `i32`,
+/// as written, and stops at the overflow.
+#[test]
+fn a_name_keeps_the_type_it_was_computed_in() {
+    let source = "fn area(x: i32, y: i32) -> i64 {\n    let p = x * y\n    p\n}\n\n\
+                  fn main() {\n    println(f\"{area(50000, 50000)}\")\n}\n";
+    let parsed = parse_to_ast(source).expect("the source parses");
+    let rust = emit_program(&parsed, Build::default())
+        .expect("it lowers")
+        .rust;
+    let dir = common::scratch_dir("widening-name");
+    let path = dir.join("program.rs");
+    std::fs::write(&path, &rust).expect("write the Rust");
+    let binary = dir.join("program");
+    let compiled = common::compile(
+        &path,
+        &[
+            "--crate-type",
+            "bin",
+            "-C",
+            "overflow-checks=on",
+            "-o",
+            &binary.to_string_lossy(),
+        ],
+    );
+    assert!(
+        compiled.status.success(),
+        "{}",
+        String::from_utf8_lossy(&compiled.stderr)
+    );
+    let out = Command::new(&binary).output().expect("run it");
+    assert!(
+        !out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}

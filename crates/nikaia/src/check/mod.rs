@@ -1468,6 +1468,8 @@ fn walked<'a>(
         open_numbers: BTreeMap::new(),
         open_comptimes: BTreeMap::new(),
         overflowed: BTreeSet::new(),
+        reaching: None,
+        reached: None,
         grown_text: BTreeSet::new(),
         opaque_methods: BTreeSet::new(),
         widening_casts: BTreeSet::new(),
@@ -3407,6 +3409,14 @@ struct Checker<'a> {
     /// **The statements an operation in has already overflowed**, by the byte
     /// they start at: one refusal for one cause (`an_operation_that_overflows`).
     overflowed: BTreeSet<usize>,
+    /// **The integer type a `let` states, on its way to the operands**
+    /// ([ADR-285](../../docs/specification/adr/adr-285.md) D32): taken by the
+    /// next expression walked, and handed on only through `+`, `-`, `*`, `/`,
+    /// `%` and a negation, so a constant operation is measured in the type it
+    /// is computed in (`an_operation_that_overflows`).
+    reaching: Option<&'static str>,
+    /// What the expression being walked was handed of [`Checker::reaching`].
+    reached: Option<&'static str>,
     /// The names this function's body gives text of its own later on, with
     /// `+` or an f-string ([`grown_text`]): a `let mut` of a literal under one
     /// of them holds owned text (0.0.232).
@@ -5309,7 +5319,9 @@ impl<'a> Checker<'a> {
                 _ => None,
             };
             // **A tail widens as a `return` does** (ADR-285 D32).
-            if let (Some(value), Some(into)) = (value, widened_into(&tail, expected)) {
+            if let (Some(value), Some(into)) = (value, widened_into(&tail, expected))
+                && !self.widen_operands(value, into)
+            {
                 self.checked
                     .wrapped
                     .insert(value as *const Expr as usize, Wrap::Widen(into));
@@ -8809,7 +8821,7 @@ impl<'a> Checker<'a> {
                 continue;
             };
             self.a_map_read_kept(found, want, given, span);
-            if let Some(how) = wrap_for(found, want, is_literal(given)) {
+            if let Some(how) = self.widened_slot(found, want, Some(given)) {
                 self.checked
                     .nullable_args
                     .entry((span.at(), written.clone(), at))
@@ -9342,6 +9354,75 @@ impl<'a> Checker<'a> {
     /// (Part III C.1).
     ///
     /// `null` is in neither, being a `T?` itself.
+    /// **What a slot is handed, and how it is wrapped**: [`wrap_for`], except
+    /// that a widening of an arithmetic expression is pushed to its operands
+    /// ([`Checker::widen_operands`]) and nothing is wrapped around it.
+    fn widened_slot(&mut self, found: &Ty, want: &Ty, value: Option<&Expr>) -> Option<Wrap> {
+        let how = wrap_for(found, want, value.is_some_and(is_literal))?;
+        if let (Wrap::Widen(into), Some(value)) = (how, value)
+            && self.widen_operands(value, into)
+        {
+            return None;
+        }
+        Some(how)
+    }
+
+    /// **A stated type reaches through `+`, `-`, `*`, `/`, `%` and a negation
+    /// to the operands** ([ADR-285](../../../docs/specification/adr/adr-285.md)
+    /// D32): `let t: i64 = x * y` over two `i32`s is `i64::from(x) *
+    /// i64::from(y)`, computed in `i64`. It stops at anything else - a name, a
+    /// call, an index, a bit operator - which is widened as it is. A literal
+    /// among the operands is of the stated type. Whether `value` was such an
+    /// operation, and so taken apart.
+    fn widen_operands(&mut self, value: &Expr, into: &'static str) -> bool {
+        match value {
+            Expr::Binary {
+                op: BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div | BinaryOp::Rem,
+                lhs,
+                rhs,
+                span: at,
+                ..
+            } => {
+                if let Some(named) = self.checked.arithmetic.get_mut(&at.at()) {
+                    *named = into.to_string();
+                }
+                for side in [lhs, rhs] {
+                    self.widen_operand(side, into);
+                }
+                true
+            }
+            Expr::Unary {
+                op: UnaryOp::Neg,
+                expr,
+            } => {
+                self.widen_operand(expr, into);
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// One operand of [`Checker::widen_operands`].
+    fn widen_operand(&mut self, side: &Expr, into: &'static str) {
+        if self.widen_operands(side, into) {
+            return;
+        }
+        match side {
+            Expr::LitInt { value, negative } => {
+                self.checked.unsigned_literals.insert(
+                    (value_node(side), crate::ast::int_value(*value, *negative)),
+                    into.to_string(),
+                );
+            }
+            _ if is_literal(side) => {}
+            _ => {
+                self.checked
+                    .wrapped
+                    .insert(side as *const Expr as usize, Wrap::Widen(into));
+            }
+        }
+    }
+
     /// **A list's elements widen into the element type a slot states**
     /// ([ADR-285](../../../docs/specification/adr/adr-285.md) D32): `let xs:
     /// Vec[i64] = [a, b]` over `u32` names holds `i64::from(a)`. The list is then
@@ -9372,16 +9453,18 @@ impl<'a> Checker<'a> {
         }
         let widened = widened_into(a.first()?, b.first()?)?;
         for item in items.iter().filter(|item| !is_literal(item)) {
-            self.checked
-                .wrapped
-                .insert(item as *const Expr as usize, Wrap::Widen(widened));
+            if !self.widen_operands(item, widened) {
+                self.checked
+                    .wrapped
+                    .insert(item as *const Expr as usize, Wrap::Widen(widened));
+            }
         }
         Some(want.clone())
     }
 
     fn wraps_into_nullable(&mut self, found: &Ty, want: &Ty, value: &Expr, span: &Span) {
         self.a_map_read_kept(found, want, value, span);
-        let Some(how) = wrap_for(found, want, is_literal(value)) else {
+        let Some(how) = self.widened_slot(found, want, Some(value)) else {
             return;
         };
         self.checked.nullable_sites.insert(span.at(), how);
@@ -9997,7 +10080,14 @@ impl<'a> Checker<'a> {
     /// **The innermost that overflows, once**: the operands are walked first,
     /// so one that overflowed has already said so for this statement, and the
     /// operation around it says nothing more.
-    fn an_operation_that_overflows(&mut self, op: BinaryOp, lhs: &Expr, rhs: &Expr, span: &Span) {
+    fn an_operation_that_overflows(
+        &mut self,
+        op: BinaryOp,
+        lhs: &Expr,
+        rhs: &Expr,
+        reach: Option<&'static str>,
+        span: &Span,
+    ) {
         if !matches!(
             op,
             BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div | BinaryOp::Rem
@@ -10051,6 +10141,12 @@ impl<'a> Checker<'a> {
         }
         let Some(ty) = left.pinned.clone().or(right.pinned.clone()) else {
             return;
+        };
+        // **Computed in the type a `let` states, where it holds the operands'**
+        // (D32): `let t: i64 = a * a` over an `i32` constant is an `i64`.
+        let ty = match reach.and_then(|into| common_integer(&ty, into)) {
+            Some(common) if Some(common) == reach => common.to_string(),
+            _ => ty,
         };
         let before = self.checked.findings.len();
         self.a_number_that_does_not_fit(&value, false, &ty, span, None);
@@ -10129,6 +10225,12 @@ impl<'a> Checker<'a> {
                 self.a_field_of_a_borrowed_subject(value, span, "bound");
                 self.a_mut_parameter_given_away(value, span, "bound");
                 let outer_read = std::mem::replace(&mut self.read_a_map, false);
+                self.reaching = ty.as_ref().and_then(|t| match Ty::from_ast(self.parsed, t) {
+                    Ty::Named { name, args, view: false } if args.is_empty() => {
+                        INTEGERS.iter().copied().find(|n| *n == name)
+                    }
+                    _ => None,
+                });
                 let found = self.expr(value, span);
                 // **A name bound to a map read is a view of the map** (#297):
                 // the read itself, not one somewhere inside the value.
@@ -10797,6 +10899,7 @@ impl<'a> Checker<'a> {
     // --- expressions --------------------------------------------------------
 
     fn expr(&mut self, expr: &Expr, span: &Span) -> Ty {
+        self.reached = self.reaching.take();
         let ty = self.value_of(expr, span);
         // **A call on a number written as its receiver is as open as the
         // number** (#417): `7.wrapping_add(1)` is whatever integer its use
@@ -12533,9 +12636,8 @@ impl<'a> Checker<'a> {
                                 continue;
                             }
                             let value = init.value.as_ref();
-                            let is_literal = value.is_some_and(is_literal);
                             let keeper = format!("`{owner}` keeps its `{field}` after this line");
-                            if let Some(how) = wrap_for(&found, &want, is_literal) {
+                            if let Some(how) = self.widened_slot(&found, &want, value) {
                                 self.checked
                                     .nullable_fields
                                     .entry((span.at(), owner.clone(), field.clone()))
@@ -12716,6 +12818,9 @@ impl<'a> Checker<'a> {
             }
 
             Expr::Unary { op, expr } => {
+                if matches!(op, UnaryOp::Neg) {
+                    self.reaching = self.reached.take();
+                }
                 // `&s` looks at a sequence without taking it (ADR-293 D19). Only
                 // a name directly under the `&`: `&f(s)` still hands `s` over.
                 let looks = matches!(op, UnaryOp::Ref) && matches!(&**expr, Expr::Variable(_));
@@ -12754,10 +12859,17 @@ impl<'a> Checker<'a> {
                 span: at,
                 ..
             } => {
+                let arithmetic = matches!(
+                    op,
+                    BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div | BinaryOp::Rem
+                );
+                let reach = self.reached.take().filter(|_| arithmetic);
+                self.reaching = reach;
                 let left = self.expr(lhs, span);
+                self.reaching = reach;
                 let right = self.expr(rhs, span);
                 self.divisor_is_not_zero(*op, rhs, span);
-                self.an_operation_that_overflows(*op, lhs, rhs, span);
+                self.an_operation_that_overflows(*op, lhs, rhs, reach, span);
                 // **The stamp sticks**
                 // ([ADR-281](../../docs/specification/adr/adr-281.md) D23):
                 // `stand + 100` is a `Seen[i64]` and `stand > 100` a
@@ -14937,7 +15049,7 @@ impl<'a> Checker<'a> {
                 }
                 // **A part that holds a `T?` takes a plain value as `Some`**,
                 // as a parameter does (Part I 2.3).
-                if let Some(how) = wrap_for(ty, want, is_literal(arg)) {
+                if let Some(how) = self.widened_slot(ty, want, Some(arg)) {
                     self.checked
                         .wrapped
                         .insert(arg as *const Expr as usize, how);
@@ -15512,11 +15624,10 @@ impl<'a> Checker<'a> {
                     .insert((span.at(), argument_shape(given)), vec![true]);
                 continue;
             }
-            let is_literal = given.get(at).is_some_and(is_literal);
             if let Some(value) = given.get(at) {
                 self.a_map_read_kept(found, want, value, span);
             }
-            if let Some(how) = wrap_for(found, want, is_literal) {
+            if let Some(how) = self.widened_slot(found, want, given.get(at)) {
                 self.checked
                     .nullable_args
                     .entry((span.at(), written.to_string(), at))
@@ -23907,7 +24018,7 @@ impl<'a> Checker<'a> {
             match in_an_expression {
                 false => self.wraps_into_nullable(&found, &expected, value, span),
                 true => {
-                    if let Some(how) = wrap_for(&found, &expected, is_literal(value)) {
+                    if let Some(how) = self.widened_slot(&found, &expected, Some(value)) {
                         self.checked
                             .wrapped
                             .insert(value as *const Expr as usize, how);

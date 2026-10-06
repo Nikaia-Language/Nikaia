@@ -4,6 +4,22 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.547] — 2026-10-06
+
+**A stated type reaches the operands** (ADR-285 D32, #439 steps 6 and 7).
+- `x * y` over two `i32`s, put where an `i64` is stated, is now computed in
+  `i64`: `i64::from(x) * i64::from(y)`. So `area(50000, 50000)` prints
+  `2500000000` instead of stopping at the overflow. The stated type reaches
+  through `+`, `-`, `*`, `/`, `%` and a negation. A literal among the operands
+  is of the stated type. A name, a call or a bit operator is widened as it is.
+- `let t: i64 = a * a` over an `i32` constant is folded in `i64`, and no
+  longer `NK1116`.
+- `let p = x * y` is still computed in `i32`, as written.
+- Step 6: a test that `let n = 5` used as an `i64` and as a `u32` stays
+  `NK1200`. Widening takes no part in inference.
+
+Every bench and example lowers byte for byte as before.
+
 ## [0.0.546] — 2026-10-06
 
 **Every pair of integer types compares as numbers, and a type variable is not
