@@ -253,3 +253,29 @@ fn build_time_binaries(dir: &Path) -> Vec<PathBuf> {
     }
     found
 }
+
+/// **A helper in another file of the program's own package** (D13): a
+/// package's files are one namespace (Part I 9.1), at build time too.
+#[test]
+fn a_grammar_action_calls_another_file_of_its_package() {
+    let root = projects(
+        "build-time-other-file",
+        LIB,
+        "use lib\n\n\
+         grammar Num {\n    entry rule n -> i64 = d:dec[i64](digit+) { lib::tripled(plus_one(d)) }\n}\n\n\
+         comptime N: i64 = Num::n(\"13\")\n\n\
+         fn main() {\n    println(f\"{N}\")\n}\n",
+    );
+    std::fs::write(
+        root.join("app/src/helpers.nika"),
+        "pub fn plus_one(n: i64) -> i64 sync {\n    return n + 1\n}\n",
+    )
+    .expect("a second file");
+    let out = run(&root);
+    let generated =
+        std::fs::read_to_string(root.join("app/target/nikaia/gen/app/app.rs")).unwrap_or_default();
+    let _ = std::fs::remove_dir_all(&root);
+    assert!(out.status.success(), "{}", said(&out));
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "42");
+    assert!(generated.contains("const N: i64 = 42;"), "{generated}");
+}

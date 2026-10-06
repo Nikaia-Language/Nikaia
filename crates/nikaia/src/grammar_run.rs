@@ -319,6 +319,49 @@ fn driver(parsed: &Parsed, ask: &Ask<'_>) -> Result<String, Wall> {
         .to_string();
 
     let mut out = body;
+    // **The package's other files** (ADR-321 D13): a package is one
+    // namespace (Part I 9.1), so an action may call a function a file beside
+    // the grammar's declares. Each without its `main` and its `comptime`s, as
+    // the grammar's own file is.
+    let beside: Vec<Parsed> = ask
+        .units
+        .iter()
+        .copied()
+        .filter(|u| u.package == parsed.package && !std::ptr::eq(*u, parsed))
+        .map(|u| {
+            u.keeping(|item| match item {
+                Item::Fn { name, .. } => name.map(|n| u.text(n) != "main").unwrap_or(true),
+                Item::Comptime { .. } => false,
+                _ => true,
+            })
+            .growing()
+        })
+        .collect();
+    if !beside.is_empty() {
+        use crate::contracts::LedgerOps;
+        let mut all: Vec<&Parsed> = vec![&items];
+        all.extend(beside.iter());
+        let ledger = crate::contracts::Ledger::infer_package(&all, crate::contracts::std_ledger());
+        let provenance =
+            crate::contracts::trust::analyse(parsed, crate::contracts::std_ledger()).provenance;
+        for unit in &beside {
+            let body = crate::emit::emit_module_body_at(
+                unit,
+                &all,
+                crate::emit::Build::default(),
+                provenance,
+                &ledger,
+                &crate::contracts::Ledger::blank(),
+                false,
+                &crate::assets::Reads::none(),
+            )
+            .map_err(|error| Wall::DidNotBuild {
+                detail: format!("lowering a file beside the grammar: {error:#}"),
+            })?;
+            out.push_str(&body.rust);
+            out.push('\n');
+        }
+    }
     // **A dependency's functions, for the actions that call them** (D13).
     // The grammar's own package is the program here, and the program's own
     // files are not visible from a dependency's grammar.

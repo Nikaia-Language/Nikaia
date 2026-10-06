@@ -4,6 +4,17 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.592] — 2026-10-06
+
+**A grammar's build-time project holds the package's other files** (ADR-321
+D13, #479).
+- A grammar action that called a function from another file of its own
+  package failed in the sub-project with *cannot find function*: only the
+  grammar's file was lowered there. The package's other files (without
+  `main` and their `comptime`s) are now lowered beside it, against a ledger
+  derived from them.
+- Test: `build_time_dependencies.rs::a_grammar_action_calls_another_file_of_its_package`.
+
 ## [0.0.591] — 2026-10-06
 
 **The build-time program holds no C, not even linked: tested** (ADR-321 D14,
