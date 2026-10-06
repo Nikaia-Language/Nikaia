@@ -334,7 +334,10 @@ fn a_crates_io_dependency_never_reaches_the_wrapper() {
 
     let trace = std::fs::read_to_string(&trace).expect("the wrapper wrote a trace");
     assert!(
-        trace.lines().any(|line| line == "fetcher lowered"),
+        // The program's crate is named for its project as well (#495).
+        trace
+            .lines()
+            .any(|line| line.starts_with("fetcher_") && line.ends_with(" lowered")),
         "the project's own crate went through the Nikaia pipeline:\n{trace}"
     );
     assert!(
@@ -3334,4 +3337,56 @@ fn a_type_holding_one_from_another_file_compares() {
     assert!(run.status.success(), "{}", said(&run));
     assert_eq!(String::from_utf8_lossy(&run.stdout), "true false\n");
     std::fs::remove_dir_all(&dir).ok();
+}
+
+/// **Two projects of one name, built at the same time, each run their own
+/// program** (#495). Both build into the shared directory, where the binary
+/// is `<target>/debug/app` for either; each takes its program out under a
+/// lock, so neither runs the other's.
+#[test]
+fn two_projects_of_one_name_run_their_own_programs() {
+    let roots: Vec<PathBuf> = ["one", "two"]
+        .iter()
+        .map(|word| {
+            let root = common::scratch_dir(&format!("same-name-{word}"));
+            std::fs::create_dir_all(root.join("src")).expect("src");
+            std::fs::write(
+                root.join("nikaia.toml"),
+                "[package]\nname = \"app\"\nversion = \"0.1.0\"\n",
+            )
+            .expect("manifest");
+            std::fs::write(
+                root.join("src/main.nika"),
+                format!("fn main() {{\n    println(\"{word}\")\n}}\n"),
+            )
+            .expect("source");
+            root
+        })
+        .collect();
+    let outputs: Vec<std::process::Output> = std::thread::scope(|scope| {
+        let running: Vec<_> = roots
+            .iter()
+            .map(|root| {
+                scope.spawn(move || {
+                    Command::new(env!("CARGO_BIN_EXE_nikaia"))
+                        .current_dir(root)
+                        .args(["run", "--no-cache"])
+                        .env_remove("CARGO_TARGET_DIR")
+                        .output()
+                        .expect("the nikaia binary runs")
+                })
+            })
+            .collect();
+        running
+            .into_iter()
+            .map(|t| t.join().expect("joined"))
+            .collect()
+    });
+    for root in &roots {
+        let _ = std::fs::remove_dir_all(root);
+    }
+    for (out, word) in outputs.iter().zip(["one", "two"]) {
+        assert!(out.status.success(), "{}", said(out));
+        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), word);
+    }
 }

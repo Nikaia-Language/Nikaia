@@ -4,6 +4,19 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.597] — 2026-10-06
+
+**Two projects of one name, built at the same time, each run their own
+program** (#495).
+- Cargo builds every project into the shared directory in the user's cache,
+  where a program was `<target>/debug/<name>` for every project of that name:
+  between one build and its run another could replace it, and the first ran
+  the second's program. There the program is now named for its project as
+  well, and taken out as the project's own `target/nikaia/bin/<name>`, which
+  `run`, `test` and `build` use. With `CARGO_TARGET_DIR` set nothing changes.
+- Part III 13.2.
+- Test: `project.rs::two_projects_of_one_name_run_their_own_programs`.
+
 ## [0.0.596] — 2026-10-06
 
 **Part III 15.2's `image` example says what the rule above it says** (#487,

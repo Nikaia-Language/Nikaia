@@ -65,6 +65,9 @@ const REFUTED_VAR: &str = "NIKAIA_REFUTED_CLAIMS";
 /// ([ADR-269](../../docs/specification/adr/adr-269.md) D1).
 const TESTS_VAR: &str = "NIKAIA_TESTS";
 const GEN_DIR_VAR: &str = "NIKAIA_GEN_DIR";
+/// What the program's crate name carries beyond its package's in the shared
+/// target directory (#495), for the wrapper to take off again.
+const PROGRAM_TAG_VAR: &str = "NIKAIA_PROGRAM_TAG";
 const NO_CACHE_VAR: &str = "NIKAIA_NO_CACHE";
 
 /// How `--allow-read-from-list` reaches the `rustc` wrapper
@@ -2324,8 +2327,13 @@ impl Project {
             kind,
             // A `[lib] name` has to be an identifier; a package name does not.
             // Cargo does this same replacement for a lib it names itself.
+            //
+            // **A program in the shared directory is named for its project as
+            // well** (#495): Cargo puts it at `<target>/debug/<name>`, and two
+            // projects of one name built there at once would replace each
+            // other's. [`Self::own_copy`] gives it its own name back.
             bin_name: match kind {
-                CrateKind::Bin => member.name.clone(),
+                CrateKind::Bin => self.program_name(&member.name),
                 CrateKind::Lib => member.name.replace('-', "_"),
             },
             bin_path: member.entry.clone(),
@@ -2608,6 +2616,14 @@ impl Project {
         let mut env = self.settings.as_env();
         env.push((WRAPPER_MARKER.to_string(), OsString::from("1")));
         env.push((GEN_DIR_VAR.to_string(), self.gen_dir().into_os_string()));
+        // The program's crate is named for its project in the shared directory
+        // (#495), and its generated file keeps its package's name.
+        if std::env::var_os("CARGO_TARGET_DIR").is_none() {
+            env.push((
+                PROGRAM_TAG_VAR.to_string(),
+                OsString::from(format!("_{}", self.root_tag())),
+            ));
+        }
         env.push((
             LINK_VAR.to_string(),
             OsString::from(link_flags.join("\u{1f}")),
@@ -2656,9 +2672,13 @@ impl Project {
         // So a `nikaia run` is a build and then a run, and the run is a no-op
         // rebuild. That is the same shape the lowering already has (above): the
         // work happens once, and the decision is made where it can be reported.
+        //
         let (mut code, messages) = cargo.messages("build", &target_args)?;
         self.report(&messages, allowlist)?;
-        let binary = executable_in(&messages);
+        let binary = match (executable_in(&messages), &cargo.target_dir) {
+            (Some(built), Some(_)) => Some(self.own_copy(&built)?),
+            (built, _) => built,
+        };
 
         // Cargo has resolved by now, and only now: the versions do not exist
         // before it ran. A build that failed resolved nothing worth recording.
@@ -2697,8 +2717,8 @@ impl Project {
             //
             // Where there is no such line the old path is taken, so this can
             // only remove a duplicate and never lose a run.
-            code = match executable_in(&messages) {
-                Some(binary) => run_directly(&binary, program_args)?,
+            code = match &binary {
+                Some(binary) => run_directly(binary, program_args)?,
                 None => cargo.run("run", &target_args, program_args)?,
             };
         }
@@ -2852,6 +2872,43 @@ impl Project {
         }
         lock.dependencies = resolved;
         lock.save(&lock_path)
+    }
+}
+
+impl Project {
+    /// The program's name for Cargo: in the shared directory its package's
+    /// name and [`Self::root_tag`], elsewhere the package's name (#495).
+    fn program_name(&self, package: &str) -> String {
+        match std::env::var_os("CARGO_TARGET_DIR") {
+            Some(_) => package.to_string(),
+            None => format!("{package}-{}", self.root_tag()),
+        }
+    }
+
+    /// What sets this project's program apart in the shared directory: the
+    /// start of the hash of where the project is (#495).
+    fn root_tag(&self) -> String {
+        orchestrator::cache::sha256_hex(self.root.to_string_lossy().as_bytes())[..16].to_string()
+    }
+
+    /// The program a build in the shared directory produced, under the
+    /// project's own name in its own `target/nikaia/bin/` (#495): a hard link
+    /// where the file system allows one, a copy where not.
+    fn own_copy(&self, built: &Path) -> Result<PathBuf> {
+        let dir = self.root.join("target").join("nikaia").join("bin");
+        std::fs::create_dir_all(&dir)?;
+        let name = built
+            .file_name()
+            .context("a program has a file name")?
+            .to_string_lossy()
+            .replacen(&format!("-{}", self.root_tag()), "", 1);
+        let own = dir.join(name);
+        let _ = std::fs::remove_file(&own);
+        if std::fs::hard_link(built, &own).is_err() {
+            std::fs::copy(built, &own)
+                .with_context(|| format!("copying {} to {}", built.display(), own.display()))?;
+        }
+        Ok(own)
     }
 }
 
@@ -3513,6 +3570,13 @@ pub fn wrapper_main() -> Result<i32> {
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_else(|| "main".to_string())
     });
+    let name = match std::env::var_os(PROGRAM_TAG_VAR) {
+        Some(tag) => name
+            .strip_suffix(tag.to_string_lossy().as_ref())
+            .map(str::to_string)
+            .unwrap_or(name),
+        None => name,
+    };
     let gen_dir = match std::env::var_os(GEN_DIR_VAR) {
         Some(dir) => PathBuf::from(dir),
         None => std::env::temp_dir().join("nikaia-gen"),
