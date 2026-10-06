@@ -1217,7 +1217,10 @@ fn a_source_is_found_inside_a_nested_block() {
 fn the_provenance_chooses_the_map() {
     use nikaia::emit::{Build, emit_program_with_trust};
 
-    let source = "use std::collections\n\nfn main() { let m: collections::HashMap[ref String, i64] = collections::HashMap() }";
+    // **Keyed by a parameter**, which nothing follows (#431): in an untrusted
+    // program this map is the keyed one. A map nothing is put into would keep
+    // the fast hash there too - no key in it was chosen by anybody.
+    let source = "use std::collections\n\nfn fill(k: ref String) {\n    let mut m: collections::HashMap[ref String, i64] = collections::HashMap()\n    m.insert(k, 1)\n}\n\nfn main() { fill(\"a\") }";
     let parsed = parse_to_ast(source).expect("parses");
 
     let trusted = emit_program_with_trust(&parsed, Build::default(), Provenance::Trusted)

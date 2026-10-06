@@ -4,6 +4,31 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.559] — 2026-10-06
+
+**A map's trust is the map's** (ADR-010 D1, #431).
+- In a program that reads an untrusted source, a map that is filled only from
+  trusted sources now keeps the fast hash. Before, one socket anywhere in the
+  program gave every map the keyed one.
+- A map qualifies where all of this is seen
+  (`contracts::trust::trusted_maps`):
+  - a `let` makes it (`let m = collections::HashMap()`);
+  - it never leaves its function: every use is a method call other than
+    `clone`, an index, or a `for`;
+  - everything handed to it is made of literals and of what a trusted source
+    returned.
+- Names are followed lexically, binding by binding, so two loops that both
+  call their variable `w` are told apart.
+- Whatever this does not follow is untrusted: a parameter, a function of the
+  program's own, a method that `std` names as a source anywhere, a lambda,
+  a `match` or a `catch` in the function.
+- A program with no untrusted source keeps every map fast, as before.
+- `trust.rs` no longer argues from "one input buffer".
+- **Side finding #489** (to be decided): `Bytes` has no way to text in the
+  ledger.
+
+Every bench and example lowers byte for byte as before.
+
 ## [0.0.558] — 2026-10-06
 
 **`docs/open-decisions.md` is retired; a question for the owner is an issue

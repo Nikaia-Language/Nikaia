@@ -1764,6 +1764,12 @@ struct Emitter<'p> {
     /// ADR-010: nobody outside the program chose the bytes its maps are keyed
     /// by, so a map may have the fast hash.
     trusted_input: bool,
+    /// **The `let`s whose map keeps the fast hash in a program that reads
+    /// untrusted input** (ADR-010 D1, #431), by statement:
+    /// [`crate::contracts::trust::trusted_maps`].
+    trusted_lets: std::collections::BTreeSet<usize>,
+    /// Set while one of those is written.
+    trusting: std::cell::Cell<bool>,
     /// ADR-296 D5: the functions that accept a DSL's deferred parameters, by
     /// name. A `;` at a call means options everywhere else, and this is what
     /// says which calls mean the other thing.
@@ -2682,6 +2688,13 @@ impl<'p> Emitter<'p> {
             is_std: false,
             fails,
             trusted_input: provenance == crate::contracts::Provenance::Trusted,
+            trusted_lets: match provenance {
+                crate::contracts::Provenance::Trusted => std::collections::BTreeSet::new(),
+                crate::contracts::Provenance::Untrusted => {
+                    crate::contracts::trust::trusted_maps(parsed, library)
+                }
+            },
+            trusting: std::cell::Cell::new(false),
             fallible_loops: propagation.loops,
             pausing_loops: propagation.pausing_loops,
             owned_loops: propagation.owned_loops,
@@ -5590,7 +5603,7 @@ impl<'p> Emitter<'p> {
     /// the map changes - same table, same API, same full-content equality - so
     /// this is a name and not a translation.
     fn map_name<'n>(&self, name: &'n str) -> &'n str {
-        match (name, self.trusted_input) {
+        match (name, self.trusted_input || self.trusting.get()) {
             ("HashMap", true) => "TrustedMap",
             ("HashSet", true) => "TrustedSet",
             _ => name,
@@ -6707,7 +6720,25 @@ impl<'p> Emitter<'p> {
         }
     }
 
+    /// A statement, and the map a `let` of [`Emitter::trusted_lets`] makes
+    /// under its fast hash (#431).
     fn stmt(
+        &self,
+        out: &mut Out,
+        stmt: &Stmt,
+        span: &Span,
+        depth: usize,
+        tail: Tail,
+        flow: Flow<'_>,
+    ) -> Result<()> {
+        let trusted = matches!(stmt, Stmt::Let { .. }) && self.trusted_lets.contains(&span.at());
+        let outer = self.trusting.replace(trusted);
+        let written = self.a_stmt(out, stmt, span, depth, tail, flow);
+        self.trusting.set(outer);
+        written
+    }
+
+    fn a_stmt(
         &self,
         out: &mut Out,
         stmt: &Stmt,
