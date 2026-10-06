@@ -4,6 +4,19 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.578] — 2026-10-06
+
+**ADR-314 D5, measured: the temperature's checks are proved and cost nothing;
+the two left are the accumulator's** (#421).
+- 1BRC, callgrind, 1 000 000 rows: Nikaia 300.2 instructions a row with
+  `remove-overflow-checks:on`, 298.1 with every overflow check off. The
+  difference is all in `sum += temp` and `count += 1`; `TENTHS`'s line counts
+  the same in both builds - LLVM had already folded its three checks, so
+  proving them changes no count. `benches/brc/README.md` says so and points the
+  2.1 a row at #432.
+- The cost: lowering the 23 standalone files counts +0.98 % instructions
+  against 0.0.571, `nikaia lower-std` +1.91 %; D5 allows +5 %.
+
 ## [0.0.577] — 2026-10-06
 
 **A view of what a function owns, or of a parameter, is handed back silently**

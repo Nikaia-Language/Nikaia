@@ -44,20 +44,22 @@ benches/brc/brc.sh 200000     # quicker
 
 ## The table
 
-Nikaia 0.0.459, rustc 1.97.0, Intel Xeon @ 2.10 GHz; callgrind, 1 000 000 rows,
+Nikaia 0.0.575, rustc 1.97.0, Intel Xeon @ 2.10 GHz; callgrind, 1 000 000 rows,
 per row:
 
 | | instructions | mispredictions | tokens |
 |---|---:|---:|---:|
-| Rust, `naive` | 860.6 | 8.62 | 486 |
+| Rust, `naive` | 860.5 | 8.62 | 486 |
 | Rust, `tuned` | 272.2 | 3.70 | 809 |
-| **Nikaia** | **300.1** | **1.58** | **618** |
-| Nikaia, overflow checks off | 298.2 | 1.58 | |
+| **Nikaia** | **300.2** | **1.58** | **618** |
+| Nikaia, overflow checks off | 298.1 | 1.59 | |
 
 Against `tuned`, Nikaia runs a tenth more instructions and less than half the
 mispredictions, from a quarter fewer tokens, with no `unsafe`, with UTF-8 and
-every overflow checked; the same file also runs on every core. The overflow
-checks cost 1.9 instructions a row. `naive` is the shortest program and the
+every overflow checked or proved; the same file also runs on every core. The
+overflow checks left cost 2.1 instructions a row, and they are the
+accumulator's two, `sum += temp` and `count += 1`: the temperature's are
+proved (ADR-314) and cost nothing in either build. `naive` is the shortest program and the
 slowest by far.
 
 ## Where Nikaia's instructions go
@@ -85,7 +87,7 @@ way.
 | what | where | issue |
 |---|---|---|
 | updating the stats: the `and_modify` / `or_insert_with` chain through the hash table | the lowering | [#420](https://github.com/Nikaia-Language/Nikaia/issues/420) |
-| what a grammar matched and what a callee promises, to prove the temperature's overflow checks away (at most 1.9 a row) | the prover | [#421](https://github.com/Nikaia-Language/Nikaia/issues/421) |
+| a count per row and a sum over the file, bounded by the input's size, to prove the accumulator's two overflow checks away (2.1 a row) | the prover | [#432](https://github.com/Nikaia-Language/Nikaia/issues/432) |
 | a grammar over bytes, with only what becomes text checked as UTF-8 | language, `winnow-grammar`, `std` | [#422](https://github.com/Nikaia-Language/Nikaia/issues/422) |
 
 ## What this does not claim
