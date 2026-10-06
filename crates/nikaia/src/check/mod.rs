@@ -16605,6 +16605,7 @@ impl<'a> Checker<'a> {
             &self.checked.std_lengths,
             &self.checked.sized_lengths,
             &self.checked.char_codes,
+            &[self.own, self.library],
             &self.checked.arithmetic,
             &nodes,
         );

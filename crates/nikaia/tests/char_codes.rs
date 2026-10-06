@@ -94,3 +94,42 @@ fn a_code_is_the_same_number_without_the_check() {
         "7 195 401408 -45"
     );
 }
+
+/// **D3: a callee's `ensures` is a fact at the call** - here `std`'s
+/// `text::digit_value`, whose ledger entry ensures `result == c - 48` (an
+/// expression function's, inferred from `text.nika`): with D2, a digit's value
+/// times ten fits an `i32`.
+const ACROSS: &str = "\
+use text
+
+fn tens(c: char) -> i32 {
+    return text::digit_value(c) * 10
+}
+
+fn main() {
+    println(f\"{tens('7')}\")
+}
+";
+
+#[test]
+fn a_callees_ensures_is_a_fact_at_the_call() {
+    let out = report(ACROSS);
+    assert!(line(&out, "* 10").ends_with("proved"), "{out}");
+}
+
+/// **An expression function publishes `ensures result == e`** (D3), where it
+/// is `sync` and the prover reads `e`.
+#[test]
+fn an_expression_function_publishes_what_it_returns() {
+    let parsed = parse_to_ast(
+        "fn code(c: char) -> i64 sync {\n    return c as i64 - 48\n}\n\n\
+         fn twice(n: i64) -> i64 sync {\n    return n * 2\n}\n\n\
+         fn square(n: i64) -> i64 sync {\n    return n * n\n}\n",
+    )
+    .expect("parses");
+    let ledger = Ledger::infer(&parsed);
+    assert_eq!(ledger.functions["code"].ensures, ["result == c - 48"]);
+    assert_eq!(ledger.functions["twice"].ensures, ["result == n * 2"]);
+    // Not linear: nothing the prover reads, nothing published.
+    assert!(ledger.functions["square"].ensures.is_empty());
+}

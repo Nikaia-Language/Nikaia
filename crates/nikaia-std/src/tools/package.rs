@@ -1994,7 +1994,15 @@ pub struct BoundsContext {
     pub arithmetic: collections::BTreeMap<i64, String>,
     pub nonnegative: collections::BTreeSet<i64>,
     pub char_codes: collections::BTreeSet<i64>,
+    pub ensured: collections::BTreeMap<String, Ensured>,
     pub around: Around,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Ensured {
+    pub params: Vec<String>,
+    pub chars: Vec<bool>,
+    pub conditions: Vec<Vec<SolverTerm>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2458,13 +2466,19 @@ fn bounding_lin(walk: &mut BoundsWalk, expr: &Expr, facts: &BoundsFacts, context
         Expr::Call { func, args, config } => {
             let func = nikaia_std::boxed::open(func);
             if config.is_empty() {
-                let callee = match bounding_variable(func, words) { Some(__nikaia_value) => __nikaia_value, None => return None };
+                let callee = match bounding_callee(func, words) { Some(__nikaia_value) => __nikaia_value, None => return None };
                 let mut given: Vec<i64> = vec![];
+                let mut every = true;
                 for arg in args.iter() {
-                    let term = match bounding_lin(walk, arg, facts, context, program, words, node_of) { Some(__nikaia_value) => __nikaia_value, None => return None };
-                    given.push(term);
+                    let term = bounding_lin(walk, arg, facts, context, program, words, node_of);
+                    if term.is_none() { every = false; } else { given.push(nikaia_std::index::or(term, || 0)); }
                 }
-                return bounding_called(walk, &callee, &given, 0, program, words);
+                if every {
+                    let inlined = bounding_called(walk, &callee, &given, 0, program, words);
+                    if inlined.is_some() { return inlined; }
+                }
+                let ensured = match *nikaia_std::index::get(&context.ensured, &callee) { Some(__nikaia_value) => __nikaia_value, None => return None };
+                return bounding_ensured(walk, ensured, args, facts, context, program, words, node_of);
             }
         },
         Expr::Binary { op, lhs, rhs, .. } => { let lhs = nikaia_std::boxed::open(lhs); let rhs = nikaia_std::boxed::open(rhs); return bounding_lin_of(walk, op, lhs, rhs, facts, context, program, words, node_of) },
@@ -2483,6 +2497,44 @@ fn bounding_code(walk: &mut BoundsWalk) -> i64 {
     let high = walk.arena.le(v, most);
     walk.axioms.insert(name, vec![low, high]);
     v
+}
+
+fn bounding_callee(func: &Expr, words: &winnow_grammar::InternerContext) -> Option<String> {
+    match func {
+        Expr::Variable(name) => { let name = *name; Some(words.resolve(name).to_owned()) },
+        Expr::Path(parts) => {
+            let mut out: String = String::from("");
+            for part in parts.iter() {
+                if !out.is_empty() { out.push_str("::"); }
+                out.push_str(words.resolve(*part));
+            }
+            Some(out)
+        },
+        _ => None,
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn bounding_ensured(walk: &mut BoundsWalk, ensured: &Ensured, args: &[Expr], facts: &BoundsFacts, context: &BoundsContext, program: &Program, words: &winnow_grammar::InternerContext, node_of: &impl Fn(&Expr) -> i64) -> Option<i64> {
+    if (args.len() as i64) != ensured.params.len() as i64 || ensured.conditions.is_empty() { return None; }
+    let mut given: collections::BTreeMap<String, i64> = collections::BTreeMap::new();
+    for k in 0..args.len() as i64 {
+        if *nikaia_std::index::get(&ensured.chars, (k) as usize) { given.insert((*nikaia_std::index::get(&ensured.params, (k) as usize)).to_owned(), bounding_code(walk)); } else {
+            let term = match bounding_lin(walk, nikaia_std::index::get(&args, (k) as usize), facts, context, program, words, node_of) { Some(__nikaia_value) => __nikaia_value, None => return None };
+            given.insert((*nikaia_std::index::get(&ensured.params, (k) as usize)).to_owned(), term);
+        }
+    }
+    let name = format!("result#{}", walk.codes);
+    walk.codes += 1;
+    let result = walk.arena.var(&name);
+    given.insert(String::from("result"), result);
+    let mut holds: Vec<i64> = vec![];
+    for nodes in ensured.conditions.iter() {
+        let read = walk.arena.adopt(nodes);
+        holds.push(walk.arena.substitute(read, &given));
+    }
+    walk.axioms.insert(name, holds);
+    Some(result)
 }
 
 fn bounding_variable(expr: &Expr, words: &winnow_grammar::InternerContext) -> Option<String> {
@@ -11523,6 +11575,11 @@ pub fn lin_term(expr: &Expr, words: &winnow_grammar::InternerContext, var: &impl
             if *op != UnaryOp::Neg { return None; }
             let a = match lin_term(expr, words, var, out) { Some(__nikaia_value) => __nikaia_value, None => return None };
             Some(built(SolverTerm::Neg(a), out))
+        },
+        Expr::Cast { expr, ty } => {
+            let expr = nikaia_std::boxed::open(expr);
+            if !ty.generics.is_empty() || !is_whole_number(words.resolve(ty.name)) { return None; }
+            lin_term(expr, words, var, out)
         },
         Expr::Binary { op, lhs, rhs, .. } => {
             let lhs = nikaia_std::boxed::open(lhs); let rhs = nikaia_std::boxed::open(rhs);
@@ -22387,7 +22444,7 @@ pub mod bounds_shape {
 }
 pub mod bounds_walk {
     #[allow(unused_imports)]
-    pub use super::{BoundsContext, BoundsProven, bounds_aggressive};
+    pub use super::{BoundsContext, Ensured, BoundsProven, bounds_aggressive};
 }
 pub mod buffers {
     #[allow(unused_imports)]

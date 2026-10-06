@@ -48,6 +48,16 @@ pub fn lin_term(expr: ref Expr, words: ref winnow_grammar::InternerContext, var:
             let a = lin_term(expr, words, var, out) ?? return null
             built(SolverTerm::Neg(a), out)
         },
+        // **A conversion into a whole number keeps the value or stops the
+        // program** (Part III A.2), so where it goes on the number is the one
+        // converted: `c as i32` over a name `var` admits is that name
+        // (ADR-314 D3's `result == c as i32 - 48`).
+        Expr::Cast { expr, ty } => {
+            if !ty.generics.is_empty() || !is_whole_number(words.resolve(ty.name)) {
+                return null
+            }
+            lin_term(expr, words, var, out)
+        },
         Expr::Binary { op, lhs, rhs, .. } => {
             let l = lin_term(lhs, words, var, out) ?? return null
             let r = lin_term(rhs, words, var, out) ?? return null

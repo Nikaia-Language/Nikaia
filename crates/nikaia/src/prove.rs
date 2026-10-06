@@ -203,10 +203,16 @@ fn condition(arena: &mut TermArena, text: &str, names: &BTreeSet<String>) -> Opt
     )
 }
 
+/// Whether `text` reads back as a condition over `names`: what a ledger may
+/// publish of it (ADR-314 D3).
+pub(crate) fn reads_back(text: &str, names: &BTreeSet<String>) -> bool {
+    condition(&mut TermArena::empty(), text, names).is_some()
+}
+
 /// A condition read back on its own, for the walk to adopt
 /// (`TermArena::adopt`): its nodes, the root last; none where it does not
 /// read back.
-fn condition_nodes(text: &str, names: &BTreeSet<String>) -> Vec<SolverTerm> {
+pub(crate) fn condition_nodes(text: &str, names: &BTreeSet<String>) -> Vec<SolverTerm> {
     let mut arena = TermArena::empty();
     match condition(&mut arena, text, names) {
         Some(root) => {

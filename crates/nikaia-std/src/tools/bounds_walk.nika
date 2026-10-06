@@ -31,7 +31,20 @@ pub struct BoundsContext {
     /// The `char`s converted to a whole number, by node: each such
     /// conversion is a code in `0..=0x10FFFF` (ADR-314 D2).
     pub char_codes: collections::BTreeSet[i64],
+    /// What a callee's ledger entry ensures, by the name a call writes
+    /// (ADR-314 D3).
+    pub ensured: collections::BTreeMap[String, Ensured],
     pub around: Around,
+}
+
+/// **What a callee's ledger entry ensures** (ADR-314 D3): each condition read
+/// back over its parameters and `result`, for the walk to assume of a call.
+pub struct Ensured {
+    pub params: Vec[String],
+    /// Of `params`, those that are `char`s: each is handed the argument's
+    /// code (D2).
+    pub chars: Vec[bool],
+    pub conditions: Vec[Vec[SolverTerm]],
 }
 
 /// What the walk proved: index nodes (`node_of` of the indexed `base`) and
@@ -677,13 +690,25 @@ fn bounding_lin(mut walk: BoundsWalk, expr: ref Expr, facts: ref BoundsFacts, co
         },
         Expr::Call { func, args, config } => {
             if config.is_empty() {
-                let callee = bounding_variable(func, words) ?? return null
+                let callee = bounding_callee(func, words) ?? return null
                 let mut given: Vec[i64] = []
+                let mut every = true
                 for arg in args {
-                    let term = bounding_lin(walk, arg, facts, context, program, words, node_of) ?? return null
-                    given.push(term)
+                    let term = bounding_lin(walk, arg, facts, context, program, words, node_of)
+                    if term == null {
+                        every = false
+                    } else {
+                        given.push(term ?? 0)
+                    }
                 }
-                return bounding_called(walk, callee, given, 0, program, words)
+                if every {
+                    let inlined = bounding_called(walk, callee, given, 0, program, words)
+                    if inlined != null {
+                        return inlined
+                    }
+                }
+                let ensured = context.ensured[callee] ?? return null
+                return bounding_ensured(walk, ensured, args, facts, context, program, words, node_of)
             }
         },
         Expr::Binary { op, lhs, rhs, .. } => return bounding_lin_of(walk, op, lhs, rhs, facts, context, program, words, node_of),
@@ -705,6 +730,55 @@ fn bounding_code(mut walk: BoundsWalk) -> i64 {
     let high = walk.arena.le(v, most)
     walk.axioms.insert(name, [low, high])
     return v
+}
+
+/// The name a call writes for its callee: a bare one, or a path such as
+/// `text::digit_value`.
+fn bounding_callee(func: ref Expr, words: ref winnow_grammar::InternerContext) -> String? {
+    return match func {
+        Expr::Variable(name) => words.resolve(name).clone(),
+        Expr::Path(parts) => {
+            let mut out: String = ""
+            for part in parts {
+                if !out.is_empty() {
+                    out.push_str("::")
+                }
+                out.push_str(words.resolve(part))
+            }
+            out
+        },
+        else => null,
+    }
+}
+
+/// **A callee's `ensures` is a fact about the call's value** (ADR-314 D3):
+/// the value is a number of its own, and each condition the ledger states
+/// holds of it, with the arguments for the parameters - a `char` argument as
+/// its code. Every proof is handed them, as a length's bounds.
+fn bounding_ensured(mut walk: BoundsWalk, ensured: ref Ensured, args: ref Vec[Expr], facts: ref BoundsFacts, context: ref BoundsContext, program: ref Program, words: ref winnow_grammar::InternerContext, node_of: fn(ref Expr) -> i64 sync) -> i64? {
+    if args.len() != ensured.params.len() || ensured.conditions.is_empty() {
+        return null
+    }
+    let mut given: collections::BTreeMap[String, i64] = collections::BTreeMap()
+    for k in 0..<args.len() {
+        if ensured.chars[k] {
+            given.insert(ensured.params[k].clone(), bounding_code(walk))
+        } else {
+            let term = bounding_lin(walk, args[k], facts, context, program, words, node_of) ?? return null
+            given.insert(ensured.params[k].clone(), term)
+        }
+    }
+    let name = f"result#{walk.codes}"
+    walk.codes += 1
+    let result = walk.arena.var(name)
+    given.insert("result", result)
+    let mut holds: Vec[i64] = []
+    for nodes in ensured.conditions {
+        let read = walk.arena.adopt(nodes)
+        holds.push(walk.arena.substitute(read, given))
+    }
+    walk.axioms.insert(name, holds)
+    return result
 }
 
 /// The name `expr` is, where it is a bare one.

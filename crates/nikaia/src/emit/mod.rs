@@ -2646,6 +2646,7 @@ impl<'p> Emitter<'p> {
             &propagation.std_lengths,
             &propagation.sized_lengths,
             &propagation.char_codes,
+            &[&own_contracts, std_ledger()],
             &propagation.arithmetic,
             &std::collections::BTreeSet::new(),
         );

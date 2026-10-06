@@ -1118,9 +1118,23 @@ pub fn lower_reading(
             // publishes it.
             for (key, published) in &lowered.published {
                 if let Some(contract) = program.contracts.functions.get_mut(key) {
+                    // **An expression function's `ensures` stays** (ADR-314
+                    // D3): its body is one `return`, so it has no `assert` of
+                    // its own to publish one, only preconditions carried back.
+                    let expression = match published.ensures.is_empty() {
+                        true => std::mem::take(&mut contract.ensures)
+                            .into_iter()
+                            .zip(std::mem::take(&mut contract.from))
+                            .collect(),
+                        false => Vec::new(),
+                    };
                     contract.requires = published.requires.clone();
                     contract.ensures = published.ensures.clone();
                     contract.from = published.from.clone();
+                    for (ensures, from) in expression {
+                        contract.ensures.push(ensures);
+                        contract.from.push(from);
+                    }
                 }
             }
             let ledger = program.contracts.render();

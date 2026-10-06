@@ -42,7 +42,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use anyhow::{Result, anyhow};
 
-use crate::ast::{Expr, Item};
+use crate::ast::{Expr, Item, Stmt};
 use crate::contracts::ty::TyOps;
 use crate::emit::{borrowing_structs, holds_view, names_borrowing};
 use crate::parser::Parsed;
@@ -713,6 +713,9 @@ impl LedgerOps for Ledger {
             .collect();
 
         let noted = sync::infer(&mut ledger, units, library, &resolved);
+        // **An expression function's `ensures`** (ADR-314 D3): after `sync`,
+        // which it is only given for.
+        expression_ensures(&mut ledger, units);
         // Kap 7.1: `throws` in the source says *that* it fails; this says with
         // what (ADR-023 D1). After `sync`, because both read bodies and only
         // this one needs nothing from the other - and both are handed the same
@@ -1269,5 +1272,74 @@ pub fn literal_of(value: &crate::build_time::Value) -> Option<String> {
             Some(format!("{constructor}({})", written.join(", ")))
         }
         _ => None,
+    }
+}
+
+/// **A `sync` function whose body is one `return e` publishes
+/// `ensures result == e`** ([ADR-314](../../../docs/specification/adr/adr-314.md)
+/// D3): the expression is the function, as SPARK reads an expression function.
+/// Only a free function returning a whole number, and only where the prover
+/// reads the condition back - over the parameters and `result` - so a caller
+/// in another package can rely on what it says.
+fn expression_ensures(ledger: &mut Ledger, units: &[&Parsed]) {
+    const WHOLE: [&str; 5] = ["i32", "i64", "u8", "u32", "u64"];
+    for parsed in units.iter().copied() {
+        for item in &parsed.program.items {
+            let Item::Fn {
+                name: Some(name),
+                receiver: None,
+                args,
+                config,
+                ret_type: Some(ret),
+                body,
+                ..
+            } = &item.node
+            else {
+                continue;
+            };
+            if !config.is_empty()
+                || !ret.generics.is_empty()
+                || !WHOLE.contains(&parsed.text(ret.name))
+                || body.stmts.len() != 1
+            {
+                continue;
+            }
+            let Stmt::Return(Some(value)) = &body.stmts[0].node else {
+                continue;
+            };
+            let Some(contract) = ledger.functions.get_mut(parsed.text(*name)) else {
+                continue;
+            };
+
+            if !contract.sync_claim.is_sync() || !contract.ensures.is_empty() {
+                continue;
+            }
+            // **The prover's own text of `e`**, which is what a reader reads
+            // back - not the source's, which may abbreviate.
+            let names: BTreeSet<String> = args
+                .iter()
+                .map(|a| parsed.text(a.name).to_string())
+                .collect();
+            let mut nodes = Vec::new();
+            let Some(term) = nikaia_std::tools::prove_terms::lin_term(
+                value,
+                &parsed.interner,
+                &|name: &str| names.contains(name),
+                &mut nodes,
+            ) else {
+                continue;
+            };
+            let text = nikaia_std::tools::prove_text::term_ledger_text(term, &|at| {
+                nodes[at as usize].clone()
+            });
+            let condition = format!("result == {text}");
+            let mut readable = names;
+            readable.insert("result".to_string());
+            if !crate::prove::reads_back(&condition, &readable) {
+                continue;
+            }
+            contract.ensures = vec![condition];
+            contract.from = vec!["return".to_string()];
+        }
     }
 }

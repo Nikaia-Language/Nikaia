@@ -4,6 +4,23 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.573] — 2026-10-06
+
+**A callee's `ensures` is a fact at the call; an expression function
+publishes what it returns** (ADR-314 D3, #421).
+- A `sync` function whose body is one `return e`, with `e` a whole number the
+  prover reads, gets `ensures = ["result == e"]`, `from = ["return"]` in the
+  ledger. `text::digit_value` ensures `result == c - 48` (`std.contracts`);
+  Part III 13.5 says so.
+- The prover reads a conversion into a whole number as its value
+  (`prove_terms`), which is what lets `c as i32 - 48` be read.
+- The bounds walk reads a call to a function the ledgers describe - the
+  program's own, a dependency's, `std`'s, by a bare name or a path - as a
+  number of its own of which each `ensures` holds, a `char` argument as its
+  code. `text::digit_value(c) * 10` is proved to fit an `i32`.
+- `nikaia`'s `recursion_limit` is 256: the parser's combinators are now
+  instantiated along a longer path.
+
 ## [0.0.572] — 2026-10-06
 
 **A `char`'s code is a number of the proof** (ADR-314 D2, #421).

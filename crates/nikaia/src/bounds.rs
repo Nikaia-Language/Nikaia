@@ -36,7 +36,7 @@ use crate::parser::Parsed;
 use crate::prove::{SolverCopy, asked_of};
 use nikaia_std::tools::bounds_basic as nika;
 use nikaia_std::tools::bounds_shape::Around;
-use nikaia_std::tools::bounds_walk::{self as walk, BoundsContext};
+use nikaia_std::tools::bounds_walk::{self as walk, BoundsContext, Ensured};
 
 /// What happens to an index check the walk proved (ADR-306 D14): `on` writes
 /// it without its check, `off` (the default) keeps it. What is proved does not
@@ -109,6 +109,51 @@ pub struct Proven {
     pub nonnegative: HashSet<usize>,
 }
 
+/// **What each callee the ledgers describe ensures**
+/// ([ADR-314](../../docs/specification/adr/adr-314.md) D3), read back over its
+/// parameters and `result`, by the name a call writes. The first ledger that
+/// has an entry answers; a condition that does not read back is left out,
+/// which only ever proves less.
+fn ensured(ledgers: &[&crate::contracts::Ledger]) -> BTreeMap<String, Ensured> {
+    let mut out = BTreeMap::new();
+    for ledger in ledgers {
+        for (key, contract) in &ledger.functions {
+            if contract.ensures.is_empty() || out.contains_key(key) {
+                continue;
+            }
+            let Some(signature) = &contract.signature else {
+                continue;
+            };
+            let params: Vec<String> = signature.params.iter().map(|(n, _)| n.clone()).collect();
+            let chars = signature
+                .params
+                .iter()
+                .map(|(_, ty)| matches!(ty, crate::contracts::ty::Ty::Named { name, .. } if name == "char"))
+                .collect();
+            let mut names: BTreeSet<String> = params.iter().cloned().collect();
+            names.insert("result".to_string());
+            let conditions: Vec<_> = contract
+                .ensures
+                .iter()
+                .map(|text| crate::prove::condition_nodes(text, &names))
+                .filter(|nodes| !nodes.is_empty())
+                .collect();
+            if conditions.is_empty() {
+                continue;
+            }
+            out.insert(
+                key.clone(),
+                Ensured {
+                    params,
+                    chars,
+                    conditions,
+                },
+            );
+        }
+    }
+    out
+}
+
 /// **Every index and every operation the walk proves**, whatever a build does
 /// with them (ADR-306 D14): the shape D3 reads without a solver and every
 /// linear fact D4 decides with one. What is written without its check is the
@@ -125,6 +170,7 @@ pub fn proven(
     lengths: &BTreeSet<usize>,
     sized: &BTreeSet<usize>,
     char_codes: &BTreeSet<usize>,
+    ledgers: &[&crate::contracts::Ledger],
     arithmetic: &BTreeMap<usize, String>,
     nonnegative: &BTreeSet<usize>,
 ) -> Proven {
@@ -170,6 +216,7 @@ pub fn proven(
         lengths: lengths.iter().map(|n| *n as i64).collect(),
         sized: sized.iter().map(|n| *n as i64).collect(),
         char_codes: char_codes.iter().map(|n| *n as i64).collect(),
+        ensured: ensured(ledgers),
         arithmetic: arithmetic
             .iter()
             .map(|(at, ty)| (*at as i64, ty.clone()))

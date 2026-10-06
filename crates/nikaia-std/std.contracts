@@ -3086,6 +3086,8 @@ signature = "(self: ref String) -> Seq[ref(self) String] sync ends"
 pub = true
 sync = true
 touches = []
+ensures = ["result == c - 48"]
+from = ["return"]
 signature = "(c: char) -> i32"
 
 # The whole number this text writes, or nothing where it writes none.
