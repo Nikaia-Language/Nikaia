@@ -43,6 +43,10 @@ pub struct BoundsContext {
     /// (ADR-314 D5).
     pub negations: collections::BTreeMap[i64, String],
     pub classes: collections::BTreeMap[String, Range],
+    /// A text binding's length by name (`x:digit{1,2}` is `1..=2`), and the
+    /// code of each of its characters (`48..=57`).
+    pub text_lengths: collections::BTreeMap[String, Range],
+    pub text_classes: collections::BTreeMap[String, Range],
     pub around: Around,
 }
 
@@ -103,6 +107,9 @@ struct BoundsWalk {
     /// How many `char` codes the walk has read: each reading is a number of
     /// its own (ADR-314 D2).
     codes: i64,
+    /// The binding of a `for d in x.chars()` over a text binding, with the
+    /// code of `x`'s characters (ADR-314 D1).
+    loop_classes: collections::BTreeMap[String, Range],
     /// What the body is, read once before any pass.
     shape: BodyShape,
     /// The bounds on lists' values this pass may read (ADR-306 D7), by key:
@@ -179,6 +186,7 @@ pub fn bounds_aggressive(args: ref Vec[FnArg], body: ref Block, nonnegative: col
         pinned: pinned,
         nonnegative: nonnegative,
         codes: 0,
+        loop_classes: collections::BTreeMap(),
         shape: shape,
         assumed: collections::BTreeMap(),
         written: collections::BTreeMap(),
@@ -248,6 +256,12 @@ fn bounding_pass(mut walk: BoundsWalk, args: ref Vec[FnArg], body: ref Block, co
         if !walk.shape.bound.contains(name) {
             facts.ints.insert(name.clone())
             bounding_bounded(walk, facts, name, range)
+        }
+    }
+    // A text binding's length, which nothing changes.
+    for (name, range) in context.text_lengths {
+        if !walk.shape.bound.contains(name) {
+            bounding_bounded(walk, facts, length_of(name), range)
         }
     }
     bounding_block(walk, body, facts, context, program, words, node_of, ask)
@@ -758,10 +772,7 @@ fn bounding_code(mut walk: BoundsWalk) -> i64 {
 fn bounding_code_of(mut walk: BoundsWalk, expr: ref Expr, context: ref BoundsContext, words: ref winnow_grammar::InternerContext) -> i64 {
     let v = bounding_code(walk)
     let name = bounding_variable(expr, words) ?? return v
-    if walk.shape.bound.contains(name) {
-        return v
-    }
-    let class = context.classes[name] ?? return v
+    let class = bounding_class_of(walk, name, context) ?? return v
     let key = f"code#{walk.codes - 1}"
     let mut held: Vec[i64] = []
     if class.lo != null {
@@ -799,6 +810,31 @@ fn bounding_negation(mut walk: BoundsWalk, expr: ref Expr, facts: ref BoundsFact
     let goal = walk.arena.ge(term, k)
     if bounding_proves(walk, facts, goal, ask) {
         walk.proven.negations.insert(node)
+    }
+}
+
+/// The class of the `char` named `name`: a grammar binding's, or a loop's
+/// over a text binding's characters, where nothing binds the name again.
+fn bounding_class_of(walk: ref BoundsWalk, name: ref String, context: ref BoundsContext) -> Range? {
+    if walk.loop_classes.contains_key(name) && !walk.shape.twice.contains(name) {
+        return walk.loop_classes[name]
+    }
+    if walk.shape.bound.contains(name) {
+        return null
+    }
+    return context.classes[name]
+}
+
+/// `x` where `iter` is `x.chars()`.
+fn bounding_chars_of(iter: ref Expr, words: ref winnow_grammar::InternerContext) -> String? {
+    return match iter {
+        Expr::MethodCall { receiver, method, args, .. } => {
+            if !args.is_empty() || words.resolve(method) != "chars" {
+                return null
+            }
+            bounding_variable(receiver, words)
+        },
+        else => null,
     }
 }
 
@@ -1390,6 +1426,21 @@ fn bounding_for(mut walk: BoundsWalk, bindings: ref Vec[winnow_grammar::Symbol],
         bounding_forget(walk, inner, bound)
         inner.ints.remove(bound)
     }
+    // `for d in x.chars()` over a text binding: `d` is in its class
+    // (ADR-314 D1).
+    let mut classed: String? = null
+    if bindings.len() == 1 && !counted {
+        let over = bounding_chars_of(iter, words)
+        if over != null {
+            let text = over ?? ""
+            let class = context.text_classes[text]
+            if class != null && !walk.shape.bound.contains(text) {
+                let only = words.resolve(bindings[0]).clone()
+                walk.loop_classes.insert(only.clone(), class ?? Range::open())
+                classed = only
+            }
+        }
+    }
     // `for x in xs`, where what `xs` holds is bounded (ADR-306 D7).
     if bindings.len() == 1 && !counted {
         let key = elements_key(walk.shape, iter, words)
@@ -1423,6 +1474,9 @@ fn bounding_for(mut walk: BoundsWalk, bindings: ref Vec[winnow_grammar::Symbol],
         }
     }
     bounding_block(walk, body, inner, context, program, words, node_of, ask)
+    if classed != null {
+        walk.loop_classes.remove(classed ?? "")
+    }
     // **A loop that pushes once per turn adds its count to the length**
     // (ADR-306 D9).
     let mut filled: Vec[String] = []

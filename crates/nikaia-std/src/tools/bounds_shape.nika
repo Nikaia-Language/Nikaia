@@ -33,6 +33,8 @@ pub struct BodyShape {
     /// grammar binding of that name is not what the body reads everywhere
     /// (ADR-314 D1).
     pub bound: collections::BTreeSet[String],
+    /// Of `bound`, the names bound more than once.
+    pub twice: collections::BTreeSet[String],
 }
 
 /// **What the program around a body says about a call**: each free
@@ -72,6 +74,7 @@ pub fn shape_of(args: ref Vec[FnArg], body: ref Block, pinned: ref collections::
             roots: collections::BTreeSet(),
             aliases: collections::BTreeMap(),
             bound: collections::BTreeSet(),
+            twice: collections::BTreeSet(),
         },
         lost: collections::BTreeSet(),
     }
@@ -79,8 +82,11 @@ pub fn shape_of(args: ref Vec[FnArg], body: ref Block, pinned: ref collections::
         bind_name(words.resolve(arg.name), seen)
     }
     look_block(body, Look::Bound, false, around, words, seen)
-    for (name, _) in seen.bound {
+    for (name, times) in seen.bound {
         seen.shape.bound.insert(name.clone())
+        if times > 1 {
+            seen.shape.twice.insert(name.clone())
+        }
     }
     for arg in args {
         let name = words.resolve(arg.name).clone()

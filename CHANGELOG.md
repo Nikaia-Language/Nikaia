@@ -4,6 +4,18 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.579] — 2026-10-06
+
+**A text binding has its length and its class** (ADR-314 D1, #491).
+- The checker types a run of `digit` or `hex_digit` (`{m,n}`, `+`, `*`) as
+  text, `ref String`, as Part II 10.8 says.
+- The bounds walk starts an action from such a binding's length (`m..=n`, at
+  least one for `+`), and binds `d` of `for d in x.chars()` within the class:
+  `d as i32 - 48` fits, `x.len() * 2 * 10^18` fits for `digit{1,2}` and not
+  for `digit+`. `chars` and `bytes` leave a text's length alone.
+- Part III 13.3 says so. Tests: `facts_of_the_walk.rs`, `typecheck.rs`.
+- Found on the way: #492, an assignment of `m[k] ?? return …` reaches rustc.
+
 ## [0.0.578] — 2026-10-06
 
 **ADR-314 D5, measured: the temperature's checks are proved and cost nothing;

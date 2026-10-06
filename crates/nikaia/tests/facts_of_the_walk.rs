@@ -207,3 +207,63 @@ fn a_grammar_action_runs_the_same_without_its_proved_checks() {
     let _ = std::fs::remove_dir_all(&dir);
     assert_eq!(String::from_utf8_lossy(&ran.stdout).trim(), "-123 45 70 -3");
 }
+
+/// **D1, text bindings** (#491): `x:digit{1,2}` is text whose length is
+/// `1..=2` and whose characters are digits, so a loop over its characters
+/// reads each as `0..=9` and a number of at most two of them fits an `i32`;
+/// `digit+` says only that the length is at least one.
+const DIGITS: &str = "\
+grammar Digits {
+    entry rule two -> i32 =
+        x:digit{1,2}
+        {
+            let mut n: i32 = 0
+            for d in x.chars() {
+                n = n * 10 + (d as i32 - 48)
+            }
+            let most = x.len() * 2000000000000000000
+            n
+        }
+
+    entry rule many -> i64 =
+        x:digit+
+        {
+            x.len() * 2000000000000000000
+        }
+}
+
+fn main() throws {
+    println(f\"{Digits::two(\"42\")} {Digits::many(\"7\")}\")
+}
+";
+
+#[test]
+fn a_text_binding_has_its_length_and_its_class() {
+    let parsed = parse_to_ast(DIGITS).expect("the source parses");
+    let own = Ledger::infer(&parsed);
+    let library = Ledger::parse(STD).expect("std ships a ledger");
+    let checked = nikaia::check::check(&parsed, &own, &library);
+    assert!(
+        checked.findings.is_empty(),
+        "{:#?}",
+        checked
+            .findings
+            .iter()
+            .map(|f| &f.message)
+            .collect::<Vec<_>>()
+    );
+    let out = report(DIGITS);
+    // The character's code: `d as i32 - 48` is a digit's value.
+    assert!(line(&out, "  (…) - 48").ends_with("proved"), "{out}");
+    // `n * 10` grows with every turn, which the walk does not count.
+    assert!(line(&out, "n * 10 +").contains("checked"), "{out}");
+    // The length: at most two, so two times 2 * 10^18 fits an `i64`; `digit+`
+    // has no upper end, and the same product may not.
+    let products: Vec<&str> = out
+        .lines()
+        .filter(|l| l.contains("x.len() * 2000000000000000000"))
+        .collect();
+    assert_eq!(products.len(), 2, "{out}");
+    assert!(products[0].ends_with("proved"), "{out}");
+    assert!(products[1].contains("checked"), "{out}");
+}

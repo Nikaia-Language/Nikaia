@@ -5129,7 +5129,8 @@ impl<'a> Checker<'a> {
 
     /// Every `name:pattern` in a pattern: what the built-ins that say match
     /// ([ADR-314](../../docs/specification/adr/adr-314.md) D1) - `dec[T](…)` a
-    /// `T`, `digit` and `hex_digit` a `char` (Part II 10.8), where `rules` (the
+    /// `T`, `digit` and `hex_digit` a `char` and a run of them text (Part II
+    /// 10.8), where `rules` (the
     /// grammar's own) has no rule of that name - and `?` otherwise.
     fn bindings_of(&self, pattern: &ast::Pattern, rules: &BTreeSet<&str>, out: &mut Vec<Local>) {
         match pattern {
@@ -5143,6 +5144,28 @@ impl<'a> Checker<'a> {
                         rep: ast::Repeat::Optional,
                         ..
                     } => Ty::Nullable(Box::new(Ty::Unknown)),
+                    // **A run of a character class is text** (Part II 10.8):
+                    // `digit{1,2}`, `digit+`, `hex_digit*`.
+                    ast::Pattern::Repeat {
+                        pat: run,
+                        rep:
+                            ast::Repeat::Plus
+                            | ast::Repeat::Star
+                            | ast::Repeat::Exactly(_)
+                            | ast::Repeat::AtLeast(_)
+                            | ast::Repeat::Between(..),
+                    } if matches!(&run.node, ast::Pattern::Ref { name: called, generics, args }
+                        if generics.is_empty()
+                            && args.is_empty()
+                            && matches!(self.parsed.text(*called), "digit" | "hex_digit")
+                            && !rules.contains(self.parsed.text(*called))) =>
+                    {
+                        Ty::Named {
+                            name: "String".to_string(),
+                            args: Vec::new(),
+                            view: true,
+                        }
+                    }
                     ast::Pattern::Ref {
                         name: called,
                         generics,

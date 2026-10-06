@@ -283,6 +283,21 @@ fn a_grammar_action_is_checked_against_its_rule() {
     assert_eq!(message, "`Reading` has no field called `nmae`.");
 }
 
+/// **A run of digits is text** (Part II 10.8, #491): what `x:digit+` binds is
+/// a `ref String`, and an action that hands it back where the rule says `i32`
+/// is told so.
+#[test]
+fn a_run_of_digits_binds_text() {
+    let (code, message) = one("grammar Numbers {\n\
+         \x20   rule N -> i32 = x:digit+ { x }\n\
+         }");
+    assert_eq!(code, "NK1104");
+    assert_eq!(
+        message,
+        "This action builds `ref String`, but its rule returns `i32`."
+    );
+}
+
 /// …and an action that builds something else entirely.
 #[test]
 fn a_grammar_action_of_the_wrong_type_is_reported() {

@@ -112,6 +112,16 @@ pub struct Proven {
     pub negations: HashSet<usize>,
 }
 
+/// What [`matched`] found of an alternative's bindings, as the walk's context
+/// holds it.
+#[derive(Default)]
+struct Matched {
+    given: BTreeMap<String, nikaia_std::tools::bounds_interval::Range>,
+    classes: BTreeMap<String, nikaia_std::tools::bounds_interval::Range>,
+    text_lengths: BTreeMap<String, nikaia_std::tools::bounds_interval::Range>,
+    text_classes: BTreeMap<String, nikaia_std::tools::bounds_interval::Range>,
+}
+
 /// **What a pattern's bindings matched** (ADR-314 D1), through sequences and
 /// groups: `x:dec[T](digit{m,n})` (or one `digit`) is a whole number in
 /// `0..=10^n - 1`, `c:digit` a `char` whose code is `48..=57` (`hex_digit`
@@ -121,8 +131,7 @@ fn matched(
     parsed: &Parsed,
     rules: &BTreeSet<&str>,
     pattern: &crate::ast::Pattern,
-    given: &mut BTreeMap<String, nikaia_std::tools::bounds_interval::Range>,
-    classes: &mut BTreeMap<String, nikaia_std::tools::bounds_interval::Range>,
+    found: &mut Matched,
 ) {
     use crate::ast::{Pattern, Repeat};
     use nikaia_std::tools::bounds_interval::Range;
@@ -153,14 +162,33 @@ fn matched(
     match pattern {
         Pattern::Seq(parts) => {
             for part in parts {
-                matched(parsed, rules, &part.node, given, classes);
+                matched(parsed, rules, &part.node, found);
             }
         }
-        Pattern::Group(inner) => matched(parsed, rules, &inner.node, given, classes),
+        Pattern::Group(inner) => matched(parsed, rules, &inner.node, found),
         Pattern::Bind { name, pat } => {
             let name = parsed.text(*name).to_string();
             if let Some(code) = class(&pat.node) {
-                classes.insert(name, code);
+                found.classes.insert(name, code);
+                return;
+            }
+            // **A run of a class is text**: its length is what the run
+            // counts, and each of its characters is in the class.
+            if let Pattern::Repeat { pat: run, rep } = &pat.node
+                && let Some(code) = class(&run.node)
+            {
+                let (lo, hi) = match rep {
+                    Repeat::Plus => (1, None),
+                    Repeat::Star => (0, None),
+                    Repeat::Exactly(n) => (*n as i64, Some(*n as i64)),
+                    Repeat::AtLeast(n) => (*n as i64, None),
+                    Repeat::Between(m, n) => (*m as i64, Some(*n as i64)),
+                    Repeat::Optional => return,
+                };
+                found
+                    .text_lengths
+                    .insert(name.clone(), Range { lo: Some(lo), hi });
+                found.text_classes.insert(name, code);
                 return;
             }
             let Pattern::Ref {
@@ -192,7 +220,7 @@ fn matched(
             if digits > 18 {
                 return;
             }
-            given.insert(name, range(0, 10i64.pow(digits) - 1));
+            found.given.insert(name, range(0, 10i64.pow(digits) - 1));
         }
         _ => {}
     }
@@ -351,6 +379,8 @@ pub fn proven(
             .map(|(at, ty)| (*at as i64, ty.clone()))
             .collect(),
         classes: BTreeMap::new(),
+        text_lengths: BTreeMap::new(),
+        text_classes: BTreeMap::new(),
         around,
     };
     let mut bodies: Vec<&Spanned<Item>> = Vec::new();
@@ -418,12 +448,13 @@ pub fn proven(
                 let Some(action) = &alt.action else {
                     continue;
                 };
-                let mut given = BTreeMap::new();
-                let mut classes = BTreeMap::new();
-                matched(parsed, &rules, &alt.pattern.node, &mut given, &mut classes);
+                let mut found = Matched::default();
+                matched(parsed, &rules, &alt.pattern.node, &mut found);
                 let context = BoundsContext {
-                    given,
-                    classes,
+                    given: found.given,
+                    classes: found.classes,
+                    text_lengths: found.text_lengths,
+                    text_classes: found.text_classes,
                     ..context.clone()
                 };
                 let copy = std::cell::RefCell::new(SolverCopy::default());
