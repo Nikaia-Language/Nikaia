@@ -5091,7 +5091,7 @@ impl<'p> Emitter<'p> {
             // **The keeps a statement needs are declared before it**
             // (ADR-283), and before the `Ok(` a tail is wrapped in: a `let`
             // inside it would not be Rust.
-            self.write_keep_prelude(out, key, &stmt.node, stmt.span.at(), depth + 1);
+            self.write_keep_prelude(out, key, stmt.span.at(), depth + 1);
             out.from(&stmt.span, |out| {
                 match (wrap, binds) {
                     (true, true) => out.push(&format!("let {ARM_VALUE} = ")),
@@ -6842,7 +6842,7 @@ impl<'p> Emitter<'p> {
         // expression, a nested block, a `catch` handler - sees the statement it
         // is actually in.
         let flow = flow.at(span.at());
-        self.write_keep_prelude(out, flow.function, stmt, span.at(), depth);
+        self.write_keep_prelude(out, flow.function, span.at(), depth);
         self.hold_temporaries(out, stmt, span, depth, tail, flow)?;
         match stmt {
             Stmt::Let {
@@ -13547,11 +13547,8 @@ impl<'p> Emitter<'p> {
             if pointer.is_none() {
                 if change {
                     out.push("&mut ");
-                } else if lend
-                    && self.kept_argument(flow.statement, callee, i, arg)
-                    && self.preluded.borrow().contains(&flow.statement)
-                {
-                    out.push(&format!("{ARGUMENT_KEEP}{}.put(", flow.statement));
+                } else if lend && let Some(keep) = self.argument_keep(flow, callee, i) {
+                    out.push(&format!("({keep}).put("));
                     kept_here = true;
                 } else if lend
                     // **A part an expression arm binds as a view** is one
@@ -14977,9 +14974,6 @@ const KEEP_PARAM: &str = "__keep";
 const HELD_READ: &str = ".map(|held| held.get())";
 /// The keep declared first in a function's body (D2).
 const KEEP_FRAME: &str = "__keep_frame";
-/// The keep a statement's arguments made in a call go into (ADR-283 D24),
-/// with the statement's place after it.
-const ARGUMENT_KEEP: &str = "__keep_args_";
 /// The keep a function's tasks share (D3).
 const KEEP_TASK: &str = "__keep_task";
 
@@ -15051,25 +15045,11 @@ impl Emitter<'_> {
     }
 
     /// Declare the keeps a statement needs, once.
-    fn write_keep_prelude(
-        &self,
-        out: &mut Out,
-        function: &str,
-        stmt: &Stmt,
-        at: usize,
-        depth: usize,
-    ) {
+    fn write_keep_prelude(&self, out: &mut Out, function: &str, at: usize, depth: usize) {
         if self.preluded.borrow().contains(&at) {
             return;
         }
-        let arguments = self
-            .argument_keep_needed(stmt, at)
-            .then(|| format!("let {ARGUMENT_KEEP}{at} = nikaia_std::tether::Keep::new();"));
-        let prelude = match (self.keep_prelude(function, at), arguments) {
-            (Some(plan), Some(arguments)) => Some(format!("{plan} {arguments}")),
-            (plan, arguments) => plan.or(arguments),
-        };
-        if let Some(prelude) = prelude {
+        if let Some(prelude) = self.keep_prelude(function, at) {
             self.preluded.borrow_mut().insert(at);
             out.push(&prelude);
             out.push("\n");
@@ -15077,76 +15057,19 @@ impl Emitter<'_> {
         }
     }
 
-    /// **An argument made in the call, lent to a callee that hands back a
-    /// view** ([ADR-283](../../docs/specification/adr/adr-283.md) D24): the
-    /// view may point into it, so it is moved into a keep of the caller's,
-    /// declared before the statement, rather than dropped at its end.
-    fn kept_argument(&self, statement: usize, callee: &str, i: usize, arg: &Expr) -> bool {
-        let made_here = !matches!(
-            arg,
-            Expr::Variable(_)
-                | Expr::Field { .. }
-                | Expr::SafeField { .. }
-                | Expr::Index { .. }
-                | Expr::Path(_)
-                | Expr::LitStr { .. }
-                | Expr::LitInt { .. }
-                | Expr::LitFloat { .. }
-                | Expr::LitBool(_)
-                | Expr::LitNull
-        );
-        made_here
-            && self
-                .lent_args
-                .get(&(statement, callee.to_string(), i))
-                .is_some_and(|shapes| shapes.contains(&crate::check::argument_shape(arg)))
-            && !self
-                .keep_plans
-                .get(callee)
-                .is_some_and(|plan| plan.takes_keep)
-            && self
-                .own_contracts
-                .functions
-                .get(callee)
-                .is_some_and(|contract| {
-                    contract
-                        .signature
-                        .as_ref()
-                        .and_then(|s| s.result.as_ref())
-                        .is_some_and(|result| result.is_a_view())
-                })
-    }
-
-    /// Whether a statement calls a function with an argument
-    /// [`Emitter::kept_argument`] keeps.
-    fn argument_keep_needed(&self, stmt: &Stmt, at: usize) -> bool {
-        let mut needed = false;
-        crate::contracts::sync::visit_stmt(self.parsed, stmt, &mut |expr| {
-            if let Expr::Call { func, args, .. } = expr
-                && let Some(callee) = self.written_callee(func)
-            {
-                needed |= args
-                    .iter()
-                    .enumerate()
-                    .any(|(i, arg)| self.kept_argument(at, &callee, i, arg));
-            }
-        });
-        needed
-    }
-
-    /// The callee a call writes, as its arguments are keyed.
-    fn written_callee(&self, func: &Expr) -> Option<String> {
-        match func {
-            Expr::Variable(name) => Some(self.text(*name).to_string()),
-            Expr::Path(parts) => Some(
-                parts
-                    .iter()
-                    .map(|p| self.text(*p))
-                    .collect::<Vec<_>>()
-                    .join("::"),
-            ),
-            _ => None,
-        }
+    /// **The keep an argument made in the call goes into**
+    /// ([ADR-283](../../docs/specification/adr/adr-283.md) D24), where the
+    /// keep plan gave it one: a value the argument makes, lent to a callee
+    /// that hands back a view, which may point into it. Beside the call, or
+    /// the keep this function is given where the view leaves through its
+    /// result (`contracts::keep::Source::Argument`).
+    fn argument_keep(&self, flow: Flow<'_>, callee: &str, i: usize) -> Option<String> {
+        let plan = self.keep_plan(flow.function)?;
+        let keep = plan
+            .calls
+            .get(&(flow.statement, format!("{callee}#{i}")))
+            .copied()?;
+        Some(Self::keep_expr(keep, true))
     }
 
     /// The keep a call to `callee` is given in this statement, where the

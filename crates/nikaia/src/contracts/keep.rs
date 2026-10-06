@@ -130,12 +130,24 @@ pub enum Source {
         callee: String,
         span: Span,
     },
+    /// An argument made in the call, lent to a callee that hands back a view
+    /// ([ADR-283](../../../../docs/specification/adr/adr-283.md) D24): the
+    /// view may point into it. Its keep is found as the call's, by the
+    /// callee's name with `#` and the argument's place.
+    Argument {
+        at: usize,
+        callee: String,
+        index: usize,
+        span: Span,
+    },
 }
 
 impl Source {
     pub fn at(&self) -> usize {
         match self {
-            Source::Buffer { at, .. } | Source::Call { at, .. } => *at,
+            Source::Buffer { at, .. } | Source::Call { at, .. } | Source::Argument { at, .. } => {
+                *at
+            }
         }
     }
 
@@ -144,6 +156,9 @@ impl Source {
         match self {
             Source::Buffer { name, ty, .. } => format!("`{name}` (a `{ty}` this body reads)"),
             Source::Call { callee, .. } => format!("what `{callee}` returns"),
+            Source::Argument { callee, index, .. } => {
+                format!("the argument {} made in the call to `{callee}`", index + 1)
+            }
         }
     }
 }
@@ -324,6 +339,17 @@ fn source_from(source: nikaia_std::tools::buffers::Source) -> Source {
         Nika::Call { at, callee, span } => Source::Call {
             at: place(at),
             callee,
+            span,
+        },
+        Nika::Argument {
+            at,
+            callee,
+            index,
+            span,
+        } => Source::Argument {
+            at: place(at),
+            callee,
+            index: place(index),
             span,
         },
     }

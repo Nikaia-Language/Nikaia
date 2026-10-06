@@ -3765,6 +3765,7 @@ pub enum Escape {
 pub enum Source {
     Buffer { at: i64, name: String, ty: String, span: Span },
     Call { at: i64, callee: String, span: Span },
+    Argument { at: i64, callee: String, index: i64, span: Span },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -4597,9 +4598,11 @@ fn call_origins(func: &Expr, args: &[Expr], ask: &BufferAsk<'_>, holes_of: &impl
         if ask.own.functions.contains_key(&named) {
             let contract = match *nikaia_std::index::get(&ask.own.functions, &named) { Some(__nikaia_value) => __nikaia_value, None => return by_args };
             owned = answered_by(contract, &named, args, ask, &mut out, walk);
+            made_arguments(contract, &named, args, ask, &mut out, walk);
         } else if ask.library.functions.contains_key(&named) {
             let contract = match *nikaia_std::index::get(&ask.library.functions, &named) { Some(__nikaia_value) => __nikaia_value, None => return by_args };
             owned = answered_by(contract, &named, args, ask, &mut out, walk);
+            made_arguments(contract, &named, args, ask, &mut out, walk);
         }
         if owned { return out; }
     }
@@ -4628,6 +4631,25 @@ fn answered_by(contract: &FnContract, named: &str, args: &[Expr], ask: &BufferAs
     let result = match signature.result.as_ref() { Some(__nikaia_value) => __nikaia_value, None => return false };
     !a_ledger_type_with_a_view(result)
 }
+
+fn made_arguments(contract: &FnContract, named: &str, args: &[Expr], ask: &BufferAsk<'_>, out: &mut collections::BTreeSet<(i64, String)>, walk: &mut BufferWalk) {
+    if takes_a_keep(contract) { return; }
+    let signature = match contract.signature.as_ref() { Some(__nikaia_value) => __nikaia_value, None => return };
+    let result = match signature.result.as_ref() { Some(__nikaia_value) => __nikaia_value, None => return };
+    if !result.is_a_view() { return; }
+    let copying: Vec<&Ledger> = vec![ask.own, ask.library];
+    for k in 0..args.len() as i64 {
+        if !made_in_the_call(nikaia_std::index::get(&args, nikaia_std::index::at(k))) || !lends_in(contract, k, &copying) { continue; }
+        let id = (walk.statement, format!("{}#{}", named, k));
+        if !walk.sources.contains_key(&id) {
+            let source = Source::Argument { at: walk.statement, callee: named.to_owned(), index: k, span: Span { start: u32::try_from(walk.statement).unwrap_or_else(|_| panic!("the value does not fit in an `u32`")), end: u32::try_from(walk.statement).unwrap_or_else(|_| panic!("the value does not fit in an `u32`")) } };
+            walk.sources.insert(id.clone(), Sourced { source, path: walk.path.to_owned() });
+        }
+        out.insert(id);
+    }
+}
+
+fn made_in_the_call(arg: &Expr) -> bool { !matches!(arg, Expr::Variable(_) | Expr::Field { .. } | Expr::SafeField { .. } | Expr::Index { .. } | Expr::Path(_) | Expr::LitStr { .. } | Expr::LitInt { .. } | Expr::LitFloat { .. } | Expr::LitBool(_) | Expr::LitNull) }
 
 fn parameter_index(contract: &FnContract, position: &str) -> i64 {
     let signature = match contract.signature.as_ref() { Some(__nikaia_value) => __nikaia_value, None => return -1 };
@@ -4774,6 +4796,11 @@ fn decide_source(id: &(i64, String), source: &Source, path: &[(i64, bool)], walk
                 keep = KeepAt::Local(at.clone());
                 plan.local_keeps.insert(at.clone());
             },
+            Source::Argument { at, .. } => {
+                let at = *at;
+                keep = KeepAt::Local(at.clone());
+                plan.local_keeps.insert(at.clone());
+            },
         }
     }
     match source {
@@ -4784,6 +4811,10 @@ fn decide_source(id: &(i64, String), source: &Source, path: &[(i64, bool)], walk
         Source::Call { at, callee, .. } => {
             let at = *at;
             plan.calls.insert((at.clone(), callee.to_owned()), keep.clone());
+        },
+        Source::Argument { at, callee, index, .. } => {
+            let at = *at; let index = *index;
+            plan.calls.insert((at.clone(), format!("{}#{}", callee, index)), keep.clone());
         },
     }
     if task { for (name, held) in walk.captured.iter() { if held.1.contains(&id) { plan.tethered.insert(name.to_owned(), held.0); } } }
@@ -4811,6 +4842,7 @@ fn source_at(source: &Source) -> i64 {
     match source {
         Source::Buffer { at, .. } => { let at = *at; at.clone() },
         Source::Call { at, .. } => { let at = *at; at.clone() },
+        Source::Argument { at, .. } => { let at = *at; at.clone() },
     }
 }
 
@@ -4848,6 +4880,7 @@ fn source_named(source: &Source) -> String {
     match source {
         Source::Buffer { name, ty, .. } => format!("`{}` (a `{}` this body reads)", name, ty),
         Source::Call { callee, .. } => format!("what `{}` returns", callee),
+        Source::Argument { callee, index, .. } => { let index = *index; format!("the argument {} made in the call to `{}`", index + 1, callee) },
     }
 }
 
@@ -4855,6 +4888,7 @@ fn source_refusal(source: &Source, what: &str, why: &str, help: &str) -> Finding
     let span = match source {
         Source::Buffer { span, .. } => span.clone(),
         Source::Call { span, .. } => span.clone(),
+        Source::Argument { span, .. } => span.clone(),
     };
     let named = capitalised(&source_named(source));
     refusal("NK2304", span, format!("{} {}", named, what), vec![why.to_owned()], help.to_owned())

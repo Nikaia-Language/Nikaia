@@ -36,6 +36,9 @@ pub enum Escape {
 pub enum Source {
     Buffer { at: i64, name: String, ty: String, span: Span },
     Call { at: i64, callee: String, span: Span },
+    /// An argument made in the call, lent to a callee that hands back a view
+    /// (ADR-283 D24): the view may point into it.
+    Argument { at: i64, callee: String, index: i64, span: Span },
 }
 
 /// Who owns the keep a buffer, or a call's buffers, go into: the keep this
@@ -1103,9 +1106,11 @@ fn call_origins(func: ref Expr, args: ref Vec[Expr], ask: ref BufferAsk, holes_o
         if ask.own.functions.contains_key(named) {
             let contract = ask.own.functions[named] ?? return by_args
             owned = answered_by(contract, named, args, ask, out, walk)
+            made_arguments(contract, named, args, ask, out, walk)
         } else if ask.library.functions.contains_key(named) {
             let contract = ask.library.functions[named] ?? return by_args
             owned = answered_by(contract, named, args, ask, out, walk)
+            made_arguments(contract, named, args, ask, out, walk)
         }
         if owned {
             return out
@@ -1142,6 +1147,51 @@ fn answered_by(contract: ref FnContract, named: ref String, args: ref Vec[Expr],
     let signature = contract.signature ?? return false
     let result = signature.result ?? return false
     return !a_ledger_type_with_a_view(result)
+}
+
+// **An argument made in the call** (ADR-283 D24): lent to a callee that hands
+// back a view and takes no keep of its own, the view may point into it, so it
+// is a source - kept beside the call, or in the keep this function is given
+// where the view leaves through its result.
+fn made_arguments(contract: ref FnContract, named: ref String, args: ref Vec[Expr], ask: ref BufferAsk, mut out: collections::BTreeSet[(i64, String)], mut walk: BufferWalk) {
+    if takes_a_keep(contract) {
+        return
+    }
+    let signature = contract.signature ?? return
+    let result = signature.result ?? return
+    if !result.is_a_view() {
+        return
+    }
+    let copying: Vec[ref Ledger] = [ask.own, ask.library]
+    for k in 0..<args.len() {
+        if !made_in_the_call(args[k]) || !lends_in(contract, k, copying) {
+            continue
+        }
+        let id = (walk.statement, f"{named}#{k}")
+        if !walk.sources.contains_key(id) {
+            let source = Source::Argument { at: walk.statement, callee: named.clone(), index: k, span: Span { start: walk.statement as u32, end: walk.statement as u32 } }
+            walk.sources.insert(id.clone(), Sourced { source: source, path: walk.path.clone() })
+        }
+        out.insert(id)
+    }
+}
+
+// A value the argument itself makes: not a name, a part or an element of one,
+// and not a literal, which is a view already.
+fn made_in_the_call(arg: ref Expr) -> bool {
+    return match arg {
+        Expr::Variable(_) => false,
+        Expr::Field { .. } => false,
+        Expr::SafeField { .. } => false,
+        Expr::Index { .. } => false,
+        Expr::Path(_) => false,
+        Expr::LitStr { .. } => false,
+        Expr::LitInt { .. } => false,
+        Expr::LitFloat { .. } => false,
+        Expr::LitBool(_) => false,
+        Expr::LitNull => false,
+        else => true,
+    }
 }
 
 fn parameter_index(contract: ref FnContract, position: ref String) -> i64 {
@@ -1340,6 +1390,10 @@ fn decide_source(id: (i64, String), source: ref Source, path: ref Vec[(i64, bool
                 keep = KeepAt::Local(at.clone())
                 plan.local_keeps.insert(at.clone())
             }
+            Source::Argument { at, .. } => {
+                keep = KeepAt::Local(at.clone())
+                plan.local_keeps.insert(at.clone())
+            }
         }
     }
     match source {
@@ -1348,6 +1402,9 @@ fn decide_source(id: (i64, String), source: ref Source, path: ref Vec[(i64, bool
         }
         Source::Call { at, callee, .. } => {
             plan.calls.insert((at.clone(), callee.clone()), keep.clone())
+        }
+        Source::Argument { at, callee, index, .. } => {
+            plan.calls.insert((at.clone(), f"{callee}#{index}"), keep.clone())
         }
     }
     if task {
@@ -1390,6 +1447,7 @@ fn source_at(source: ref Source) -> i64 {
     return match source {
         Source::Buffer { at, .. } => at.clone(),
         Source::Call { at, .. } => at.clone(),
+        Source::Argument { at, .. } => at.clone(),
     }
 }
 
@@ -1433,6 +1491,7 @@ fn source_named(source: ref Source) -> String {
     return match source {
         Source::Buffer { name, ty, .. } => f"`{name}` (a `{ty}` this body reads)",
         Source::Call { callee, .. } => f"what `{callee}` returns",
+        Source::Argument { callee, index, .. } => f"the argument {index + 1} made in the call to `{callee}`",
     }
 }
 
@@ -1440,6 +1499,7 @@ fn source_refusal(source: ref Source, what: ref String, why: ref String, help: r
     let span = match source {
         Source::Buffer { span, .. } => span.clone(),
         Source::Call { span, .. } => span.clone(),
+        Source::Argument { span, .. } => span.clone(),
     }
     let named = capitalised(source_named(source))
     return refusal("NK2304", span, f"{named} {what}", [why.clone()], help.clone())

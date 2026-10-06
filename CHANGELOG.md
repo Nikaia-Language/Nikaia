@@ -4,6 +4,22 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.584] — 2026-10-06
+
+**An argument made in the call is a source of the keep plan** (ADR-283 D24,
+#493).
+- The keep plan (`tools/buffers.nika`) takes an argument a call makes - lent
+  to a callee that hands back a view and takes no keep - as a source of its
+  own (`Source::Argument`). It is kept beside the call, or, where the view
+  leaves through the function's result, in the keep the function is given:
+  `return e("y".clone())` makes `g` take a keep from its caller, and `main`
+  declares it. It was *cannot return value referencing local variable*.
+- The emitter writes `(keep).put(…)` from the plan, which replaces the
+  statement keep of 0.0.583.
+- `--tethers` says *argument 1 made in the call to `e` lives in `main`'s keep:
+  handed back by `g`*.
+- Test: `views_handed_back.rs`.
+
 ## [0.0.583] — 2026-10-06
 
 **A view handed back is handed back silently** (ADR-283 D23-D24, #442).

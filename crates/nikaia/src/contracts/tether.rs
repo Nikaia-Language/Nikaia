@@ -297,7 +297,7 @@ pub fn report(parsed: &Parsed, ledger: &Ledger) -> String {
     let handed: BTreeMap<String, Vec<String>> = plans
         .iter()
         .map(|plan| {
-            let names = plan
+            let mut names: Vec<String> = plan
                 .puts
                 .iter()
                 .filter(|(_, keep)| **keep == super::keep::KeepAt::Param)
@@ -310,6 +310,15 @@ pub fn report(parsed: &Parsed, ledger: &Ledger) -> String {
                     })
                 })
                 .collect();
+            // **An argument it made in a call** (D24) is there too.
+            names.extend(
+                plan.calls
+                    .iter()
+                    .filter(|((_, callee), keep)| {
+                        callee.contains('#') && **keep == super::keep::KeepAt::Param
+                    })
+                    .map(|((_, callee), _)| an_argument(callee)),
+            );
             (plan.key.clone(), names)
         })
         .collect();
@@ -334,6 +343,14 @@ pub fn report(parsed: &Parsed, ledger: &Ledger) -> String {
             ));
         }
         for ((_, callee), keep) in &plan.calls {
+            if callee.contains('#') {
+                said.push(format!(
+                    "    {} lives {}\n",
+                    an_argument(callee),
+                    super::keep::describe(*keep)
+                ));
+                continue;
+            }
             // **Named, where the callee says what it puts there** (D23): `s`
             // lives in `main`'s keep, handed back by `d`.
             let names = handed.get(callee).filter(|names| !names.is_empty());
@@ -376,6 +393,18 @@ pub fn report(parsed: &Parsed, ledger: &Ledger) -> String {
         // gives: a report is about one file.
         true => "no view in a signature here, so there is no state to solve.\n".to_string(),
         false => lines.concat(),
+    }
+}
+
+/// How `--tethers` names an argument made in a call (ADR-283 D24), from the
+/// key the keep plan files it under: `e#0` is *the argument made for `e`*.
+fn an_argument(key: &str) -> String {
+    match key.split_once('#') {
+        Some((callee, at)) => {
+            let place = at.parse::<usize>().map(|n| n + 1).unwrap_or(1);
+            format!("argument {place} made in the call to `{callee}`")
+        }
+        None => format!("what `{key}` reads"),
     }
 }
 

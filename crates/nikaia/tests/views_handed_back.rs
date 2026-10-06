@@ -198,3 +198,39 @@ fn main() {
     let followed = refused.replace("return t", "return ref t");
     assert_eq!(output("handed-back-help", &followed), "y");
 }
+
+/// **An argument made in the call whose view is handed on** (#493): the view
+/// leaves `g` through its result, so the argument goes into the keep `g` is
+/// given and `main` declares it beside the call - it was *cannot return value
+/// referencing local variable*.
+#[test]
+fn an_argument_made_in_the_call_handed_on_lives_in_the_callers_keep() {
+    let source = "\
+fn e(t: String) -> ref String {
+    return ref t
+}
+
+fn g() -> ref String {
+    return e(\"y\".clone())
+}
+
+fn main() {
+    println(g())
+}
+";
+    assert_eq!(output("handed-on-made-in-the-call", source), "y");
+    let parsed = parse_to_ast(source).expect("the source parses");
+    let report = nikaia::contracts::tether::report(&parsed, &Ledger::infer(&parsed));
+    assert!(
+        report.contains(
+            "argument 1 made in the call to `e` lives in the caller's keep, because views of it leave this function"
+        ),
+        "{report}"
+    );
+    assert!(
+        report.contains(
+            "argument 1 made in the call to `e` lives in `main`'s keep: handed back by `g`"
+        ),
+        "{report}"
+    );
+}
