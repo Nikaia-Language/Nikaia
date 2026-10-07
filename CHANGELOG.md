@@ -4,6 +4,17 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.615] — 2026-10-07
+
+**A function named as a value has its declaration's type** (#502, #507 steps 2 and 4).
+- `double`, a type's name for its anonymous constructor (`Summary`), and a
+  method (`Summary::merge`, the receiver first) are `fn(…) -> …`. A declared
+  function passed to a parameter that runs it is passed as it is, not as the
+  `&*` a kept closure gets, which did not compile.
+- `html::escape` is `-> ref String` in the ledger, where it was `?`.
+
+**A tuple position it does not have is `NK1107`** (#515): `t.2` on a pair.
+
 ## [0.0.614] — 2026-10-07
 
 **`a` or `an` by the word a message names** (#511).

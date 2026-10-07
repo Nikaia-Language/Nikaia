@@ -11811,6 +11811,12 @@ impl<'a> Checker<'a> {
                         );
                         Ty::Unknown
                     }
+                    // **A function or a type's constructor named as a value**
+                    // (#502, #507): `xs.map(double)`, `par_fold(M, Summary, …)`
+                    // - what its declaration says it takes and gives.
+                    None if self.function_as_a_value(name).is_some() => {
+                        self.function_as_a_value(name).unwrap_or(Ty::Unknown)
+                    }
                     None => {
                         // **The specific message wins.** A free `a`, `b` or `c`
                         // is the mistake a reader of the old specification
@@ -11839,6 +11845,16 @@ impl<'a> Checker<'a> {
                 self.a_constructor_written_as_new(&names.join("::"), span);
                 match names.as_slice() {
                     [ty, variant] if self.is_variant(ty, variant) => Ty::named(*ty),
+                    // **A method named as a value** is a function whose first
+                    // parameter is the receiver (#507): `Summary::merge`.
+                    [ty, method]
+                        if self
+                            .function_as_a_value(&format!("{ty}::{method}"))
+                            .is_some() =>
+                    {
+                        self.function_as_a_value(&format!("{ty}::{method}"))
+                            .unwrap_or(Ty::Unknown)
+                    }
                     // **A `std` enum's case is a value of that enum** (#507):
                     // `fs::Root::Anywhere` is an `fs::Root`, from the ledger's
                     // `variants` column, as `Op::Times` is an `Op` from the
@@ -12978,6 +12994,29 @@ impl<'a> Checker<'a> {
                 // file - found moving the compiler's `views` into Nikaia
                 // (#125).
                 if let Ty::Tuple(parts) = &on {
+                    // **A position the tuple does not have is `NK1107`** (#515):
+                    // `t.2` on a pair reached `rustc` as *no field `2`*.
+                    if let Ok(at) = field.parse::<usize>()
+                        && at >= parts.len()
+                    {
+                        let last = parts.len().saturating_sub(1);
+                        self.checked.findings.push(Finding {
+                            severity: Severity::Error,
+                            span: *span,
+                            code: "NK1107",
+                            message: format!("This tuple has no part `.{at}`."),
+                            notes: vec![format!(
+                                "A tuple's parts are counted from 0, and this one has {}.",
+                                parts.len()
+                            )],
+                            help: Some(match parts.is_empty() {
+                                true => "There's nothing in it to read.".to_string(),
+                                false => format!("Use one of `.0` to `.{last}`."),
+                            }),
+                            labels: Vec::new(),
+                        });
+                        return Ty::Unknown;
+                    }
                     return field
                         .parse::<usize>()
                         .ok()
@@ -23732,6 +23771,11 @@ impl<'a> Checker<'a> {
                         && matches!(found, Ty::Fn { .. })
                         && self.runs_the_parameter(callee, at)
                         && !self.a_run_parameter(arg)
+                        // A declared function named here is no kept value: it
+                        // is passed as it is (#502).
+                        && !matches!(arg, Expr::Path(_))
+                        && !matches!(arg, Expr::Variable(name)
+                            if self.binding(self.parsed.text(*name)).is_none())
                     {
                         self.checked
                             .kept_args
@@ -25246,6 +25290,32 @@ impl<'a> Checker<'a> {
             ledger.types.iter().any(|(key, contract)| {
                 (key == name || key.ends_with(&suffix)) && contract.iterates_fallibly
             })
+        })
+    }
+
+    /// **The type of a function named as a value** (#502, #507): its
+    /// declaration's parameters and result. A type's name stands for its
+    /// anonymous constructor, which the ledger keys `T::new` (ADR-140 D2).
+    /// Only a declaration with a signature; anything else claims nothing.
+    fn function_as_a_value(&self, name: &str) -> Option<Ty> {
+        let key = match self.structs.contains_key(name) || self.own.types.contains_key(name) {
+            true => format!("{name}::new"),
+            false => name.to_string(),
+        };
+        let contract = self
+            .own
+            .functions
+            .get(&key)
+            .or_else(|| self.library.functions.get(&key))?;
+        let signature = contract.signature.as_ref()?;
+        Some(Ty::Fn {
+            params: signature.params.iter().map(|(_, ty)| ty.clone()).collect(),
+            result: Box::new(signature.result.clone()),
+            is_sync: matches!(
+                contract.sync_claim,
+                crate::contracts::Sync::Inferred | crate::contracts::Sync::Asserted
+            ),
+            can_throw: !contract.fails_with.is_empty(),
         })
     }
 

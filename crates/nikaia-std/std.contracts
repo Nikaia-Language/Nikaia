@@ -388,7 +388,7 @@ pub = true
 sync = true
 touches = []
 returns = "ref(text)"
-signature = "(text: ref String) -> ?"
+signature = "(text: ref String) -> ref String"
 
 # Promise that `markup` is already HTML: the one constructor of `html::Raw`,
 # and the one line to review, because everything downstream of it trusts this
