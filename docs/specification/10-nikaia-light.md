@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part I: The Language Core**
-**Version:** 0.0.610 (Draft)
+**Version:** 0.0.611 (Draft)
 **Date:** 2026-10-07
 
 ---
@@ -1025,9 +1025,9 @@ missing: the variants, or `else`. A guarded arm covers nothing, so a `match`
 whose only catch-all carries an `if` is refused with `NK1151`.
 
 An arm's body is an expression or a block. The expression may be a `throw`, a
-`return`, a `break` or a `continue`. Their type is **never**, so an arm that
-throws sits beside an arm that hands back a value, and the `match` is that
-value's type:
+`return`, a `break`, a `continue` or a `panic(…)`. Their type is **never**, so
+an arm that throws sits beside an arm that hands back a value, and the `match`
+is that value's type:
 
 ```nika
 match step {

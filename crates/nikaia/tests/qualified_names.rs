@@ -311,3 +311,91 @@ fn a_std_module_is_a_head_whatever_stands_after_it() {
         "`io` is a head `std` declares: {found:#?}"
     );
 }
+
+/// **A call through a head nothing declares is refused as a value is**
+/// ([ADR-286](../../../docs/specification/adr/adr-286.md) D31, #488), and the
+/// help offers the `use` (D33).
+#[test]
+fn a_call_through_a_head_nothing_declares_is_refused() {
+    let found = findings("fn main() {\n    let t = nowhere::wobble(1)\n    println(f\"{t}\")\n}");
+    let head = found
+        .iter()
+        .find(|f| f.code == "NK1181")
+        .unwrap_or_else(|| panic!("{found:#?}"));
+    assert!(
+        head.message.contains(
+            "`nowhere::wobble` is written under `nowhere`, but `nowhere` isn't declared anywhere"
+        ),
+        "{head:#?}"
+    );
+    let help = head.help.as_deref().unwrap_or("");
+    assert!(help.contains("use nowhere"), "{head:#?}");
+}
+
+/// **A known head one edit away is named first** (ADR-286 D33): `fx::` beside
+/// `std::fs`, with the `use` line where it is not written yet.
+#[test]
+fn a_head_one_edit_from_a_std_module_is_named() {
+    for (source, said) in [
+        (
+            "use std::fs\nfn main() {\n    let t = fx::read_to_string(\"a\", fs::Root::Anywhere) catch { \"\" }\n    println(t)\n}",
+            "Did you mean `fs`?",
+        ),
+        (
+            "fn main() {\n    let t = fx::wobble(1)\n    println(f\"{t}\")\n}",
+            "Did you mean `fs`? Write `use std::fs`",
+        ),
+    ] {
+        let found = findings(source);
+        let head = found
+            .iter()
+            .find(|f| f.code == "NK1181")
+            .unwrap_or_else(|| panic!("{source}: {found:#?}"));
+        assert!(
+            head.help.as_deref().unwrap_or("").contains(said),
+            "{source}: {head:#?}"
+        );
+    }
+}
+
+/// **What a call's head may legally be still passes**: a `std` module, a
+/// type's associated function, `Self`, and a built-in type.
+#[test]
+fn a_call_through_a_head_this_compiler_has_read_is_not_refused() {
+    let source = "use std::fs\n\
+         struct Point { x: i64 }\n\
+         \n\
+         impl Point {\n\
+         \x20   fn origin() -> Point { return Point { x: 0 } }\n\
+         \x20   fn again() -> Point { return Self::origin() }\n\
+         }\n\
+         \n\
+         fn main() {\n\
+         \x20   let p = Point::origin()\n\
+         \x20   let q = Point::again()\n\
+         \x20   let t = fs::read_to_string(\"a\", fs::Root::Anywhere) catch { \"\" }\n\
+         \x20   println(f\"{p.x} {q.x} {t}\")\n\
+         }";
+    let found = findings(source);
+    assert!(found.iter().all(|f| f.code != "NK1181"), "{found:#?}");
+}
+
+/// **A `std` enum's case is a value of that enum** (#507): `fs::Root::Anywhere`
+/// is an `fs::Root`, read from the ledger's `variants`, so it passes where a
+/// root is asked for and a `let` that says something else is told so.
+#[test]
+fn a_std_enum_case_is_a_value_of_its_enum() {
+    let fine = "use std::fs\nfn main() {\n    \
+         let t = fs::read_to_string(\"a\", fs::Root::Anywhere) catch { \"\" }\n    \
+         println(t)\n}";
+    assert!(findings(fine).is_empty(), "{:#?}", findings(fine));
+    let wrong = "use std::fs\nfn main() {\n    \
+         let r: i64 = fs::Root::Anywhere\n    println(f\"{r}\")\n}";
+    let found = findings(wrong);
+    assert!(
+        found
+            .iter()
+            .any(|f| f.code == "NK1103" && f.message.contains("`fs::Root`")),
+        "{found:#?}"
+    );
+}

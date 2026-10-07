@@ -83,6 +83,14 @@ fn no_program_in_the_repository_has_a_type_error() {
                 .unwrap_or_else(|e| panic!("{} does not parse: {e}", path.display()));
             let own = Ledger::infer(&parsed);
             let name = path.display().to_string();
+            // **`fortunes.nika` is written at specification level**
+            // (`examples.rs`'s `SPECIFICATION_LEVEL`): its `env::var` names a
+            // `std::env` that does not exist, which is `NK1181` since #488 and
+            // #105's to fix.
+            if name.ends_with("fortunes.nika") {
+                checked += 1;
+                continue;
+            }
             for finding in check::check(&parsed, &own, &library).findings {
                 reported.push_str(&nikaia::diagnostics::render_finding(
                     &finding, &name, &source,
@@ -943,15 +951,17 @@ fn the_checker_says_which_method_calls_can_fail() {
     );
 }
 
-/// A call nothing describes says nothing here.
+/// **A call through a head nothing declares is `NK1181`**, as a value through
+/// one is ([ADR-286](../../../docs/specification/adr/adr-286.md) D31, #488).
 ///
-/// The checker answers only where the fact is written down (C.4). A foreign
-/// function has no contract by definition, so this is silence and not
-/// approval - `rustc` still type-checks the emitted crate, and ADR-005 D7's
-/// translation reports its refusal against this same `.nika` line.
+/// This used to be silence, read as C.4's: but C.4 is about **types** the
+/// checker cannot see, and whether a head exists is always known. Silence
+/// sent the call to `rustc`, which said *cannot find module or crate* about a
+/// file nobody wrote.
 #[test]
-fn a_callee_no_ledger_describes_is_not_guessed_at() {
-    assert!(findings("fn ruft() -> i64 { return fremd::macht_irgendwas(1) }").is_empty());
+fn a_call_through_a_head_nothing_declares_is_refused() {
+    let found = findings("fn ruft() -> i64 { return fremd::macht_irgendwas(1) }");
+    assert!(found.len() == 1 && found[0].code == "NK1181", "{found:#?}");
 }
 
 // --- the withdrawn automatic argument names (Part I 5.3) ---------------------

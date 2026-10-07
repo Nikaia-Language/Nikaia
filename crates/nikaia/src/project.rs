@@ -1268,6 +1268,13 @@ pub struct Foreign {
     /// Two descriptions cannot disagree about a name without disagreeing about
     /// whose it is.
     pub descriptions: Ledger,
+    /// **The Rust crates the Nikaia packages beneath this one declare**
+    /// ([ADR-286](../../docs/specification/adr/adr-286.md) D31, #488). A
+    /// package's files are checked in this build, and `shim::plus_one` in a
+    /// dependency names a head that dependency's manifest declares; this build's
+    /// own manifest does not. Only a head: what the crate's items are is the
+    /// dependency's description, and nothing here reads it.
+    pub beneath: BTreeSet<String>,
 }
 
 impl Default for Foreign {
@@ -1277,7 +1284,31 @@ impl Default for Foreign {
             described: BTreeSet::new(),
             moved: BTreeMap::new(),
             descriptions: Ledger::blank(),
+            beneath: BTreeSet::new(),
         }
+    }
+}
+
+/// The Rust crates every path dependency of `root` declares, and theirs in
+/// turn. A manifest that cannot be read adds nothing: the build reads it
+/// itself and says so.
+fn crates_beneath(root: &Path, seen: &mut BTreeSet<PathBuf>, out: &mut BTreeSet<String>) {
+    let Ok(manifest) = Manifest::read(&root.join("nikaia.toml")) else {
+        return;
+    };
+    for value in manifest.dependencies().values() {
+        let Dependency::Path(path) = value else {
+            continue;
+        };
+        let at = root.join(path);
+        let at = at.canonicalize().unwrap_or(at);
+        if !seen.insert(at.clone()) {
+            continue;
+        }
+        if let Ok(theirs) = Manifest::read(&at.join("nikaia.toml")) {
+            out.extend(theirs.foreign_crates());
+        }
+        crates_beneath(&at, seen, out);
     }
 }
 
@@ -1308,11 +1339,14 @@ impl Foreign {
             // nothing to put in front of them.
             descriptions.absorb(None, ledger);
         }
+        let mut beneath = BTreeSet::new();
+        crates_beneath(root, &mut BTreeSet::new(), &mut beneath);
         Foreign {
             declared,
             described,
             descriptions,
             moved,
+            beneath,
         }
     }
 
@@ -1357,6 +1391,10 @@ impl Foreign {
     pub fn packages(&self, modules: &BTreeSet<String>) -> BTreeSet<String> {
         let mut out = modules.clone();
         out.extend(self.described.iter().cloned());
+        // **A crate the manifest declares is a head** (ADR-286 D31), described
+        // or not: an undescribed one is `NK2504`'s to refuse, with its way out.
+        out.extend(self.declared.iter().cloned());
+        out.extend(self.beneath.iter().cloned());
         out
     }
 }

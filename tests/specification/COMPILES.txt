@@ -31,7 +31,6 @@
 10-nikaia-light.md #56 compiles
 10-nikaia-light.md #57 compiles
 10-nikaia-light.md #58 compiles
-10-nikaia-light.md #61 refused
 10-nikaia-light.md #64 compiles
 10-nikaia-light.md #65 compiles
 10-nikaia-light.md #66 compiles
@@ -44,7 +43,6 @@
 10-nikaia-light.md #85 compiles
 10-nikaia-light.md #87 refused
 10-nikaia-light.md #88 compiles
-20-nikaia-advance.md #3 refused
 20-nikaia-advance.md #4 compiles
 20-nikaia-advance.md #5 compiles
 20-nikaia-advance.md #8 refused

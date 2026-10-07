@@ -277,3 +277,28 @@ fn text_outside_ascii_is_scanned_by_character() {
         "<p title=\"été\">ééééééééé </p><!-- ü --><a href=\"\">".len()
     );
 }
+
+/// **A `dsl html` block is a `String` to the checker** (#505): it is the text
+/// the template writes, so `return dsl html { … } eod` from a `-> String`
+/// checks, and a `let` that says something else is told so.
+#[test]
+fn an_html_block_is_text_to_the_checker() {
+    use nikaia::contracts::{Ledger, LedgerOps, STD};
+    let findings = |source: &str| {
+        let parsed = parse_to_ast(source).expect("the source parses");
+        let own = Ledger::infer(&parsed);
+        let library = Ledger::parse(STD).expect("std's shipped ledger parses");
+        nikaia::check::check(&parsed, &own, &library).findings
+    };
+    let fine = template("<p>{name}</p>");
+    assert!(findings(&fine).is_empty(), "{:#?}", findings(&fine));
+    let wrong = "use std::html\nfn page(name: ref String) -> i64 {\n    \
+         let n: i64 = dsl html { <p>{name}</p> } eod\n    return n\n}";
+    let found = findings(wrong);
+    assert!(
+        found
+            .iter()
+            .any(|f| f.code == "NK1103" && f.message.contains("`String`")),
+        "{found:#?}"
+    );
+}

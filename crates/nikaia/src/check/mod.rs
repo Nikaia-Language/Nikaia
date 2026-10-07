@@ -1665,45 +1665,64 @@ pub enum Narrowing {
 /// that is a question about the expression rather than about a type. A block
 /// counts where its last statement is one of the four, which is the shape an
 /// arm written `=> { throw NotFound }` still has.
-/// Whether an expression **leaves the function** on every path through it -
-/// a `return` or a `throw` - which `leaves` says and more: a `break` and a
-/// `continue` leave a branch and not the function, so what was taken before
-/// them is still taken after the loop (ADR-293 D30).
-fn exits(expr: &Expr) -> bool {
-    match expr {
-        Expr::Throw(_) | Expr::Return(_) => true,
-        Expr::Block(block) => block_exits(block),
-        _ => false,
+impl Checker<'_> {
+    /// Whether an expression **leaves the function** on every path through
+    /// it - a `return`, a `throw` or a `panic(…)` - which `leaves` says and
+    /// more: a `break` and a `continue` leave a branch and not the function,
+    /// so what was taken before them is still taken after the loop (ADR-293
+    /// D30).
+    fn exits(&self, expr: &Expr) -> bool {
+        match expr {
+            Expr::Throw(_) | Expr::Return(_) => true,
+            Expr::Block(block) => self.block_exits(block),
+            _ => self.a_panic(expr),
+        }
     }
-}
 
-/// The same question about a block: its last statement leaves the function.
-fn block_exits(block: &Block) -> bool {
-    match block.stmts.last().map(|s| &s.node) {
-        Some(Stmt::Return(_)) => true,
-        Some(Stmt::Expr(inner)) => exits(inner),
-        _ => false,
+    /// The same question about a block: its last statement leaves the function.
+    fn block_exits(&self, block: &Block) -> bool {
+        match block.stmts.last().map(|s| &s.node) {
+            Some(Stmt::Return(_)) => true,
+            Some(Stmt::Expr(inner)) => self.exits(inner),
+            _ => false,
+        }
     }
-}
 
-fn leaves(expr: &Expr) -> bool {
-    match expr {
-        Expr::Throw(_) | Expr::Return(_) | Expr::Break | Expr::Continue => true,
-        Expr::Block(block) => block_leaves(block),
-        _ => false,
+    fn leaves(&self, expr: &Expr) -> bool {
+        self.jumps(expr) || matches!(expr, Expr::Block(block) if self.block_leaves(block))
     }
-}
 
-/// The same question about a **block**, which is what a `select` arm's body is
-/// ([ADR-292](../../docs/specification/adr/adr-292.md) D12).
-///
-/// Part II 12.4's own example has two arms and both of them jump, so this is
-/// what decides that the `select` around them carries no value.
-fn block_leaves(block: &Block) -> bool {
-    match block.stmts.last().map(|s| &s.node) {
-        Some(Stmt::Return(_)) | Some(Stmt::Break) | Some(Stmt::Continue) => true,
-        Some(Stmt::Expr(inner)) => leaves(inner),
-        _ => false,
+    /// The same question about a **block**, which is what a `select` arm's body is
+    /// ([ADR-292](../../docs/specification/adr/adr-292.md) D12).
+    ///
+    /// Part II 12.4's own example has two arms and both of them jump, so this is
+    /// what decides that the `select` around them carries no value.
+    fn block_leaves(&self, block: &Block) -> bool {
+        match block.stmts.last().map(|s| &s.node) {
+            Some(Stmt::Return(_)) | Some(Stmt::Break) | Some(Stmt::Continue) => true,
+            Some(Stmt::Expr(inner)) => self.leaves(inner),
+            _ => false,
+        }
+    }
+
+    /// One of the five jumps written where a value stands, not a block
+    /// ending in one: `?? return`, `?? panic(…)`.
+    fn jumps(&self, expr: &Expr) -> bool {
+        matches!(
+            expr,
+            Expr::Throw(_) | Expr::Return(_) | Expr::Break | Expr::Continue
+        ) || self.a_panic(expr)
+    }
+
+    /// **`panic(…)` never comes back** (#506), so its type is *never* as a
+    /// `return`'s is: `m[k] ?? panic(…)` is what the map holds, and an arm
+    /// that panics is not one of the answers that have to agree. The
+    /// prelude's `panic`, not a function or a binding of that name.
+    fn a_panic(&self, expr: &Expr) -> bool {
+        matches!(expr, Expr::Call { func, .. }
+            if matches!(&**func, Expr::Variable(name) if self.parsed.text(*name) == "panic"))
+            && self.lookup("panic").is_none()
+            && !self.own.functions.contains_key("panic")
     }
 }
 
@@ -3677,6 +3696,9 @@ struct Guarded {
     /// Something this compiler could not look up, or a nested `catch` - either
     /// way, no answer, and the refusal stays quiet.
     unanswered: bool,
+    /// The error types the described calls say they throw, which is what the
+    /// handler's `error` is when there is one of them (#501).
+    thrown: BTreeSet<String>,
 }
 
 /// Whether a body's last statement is a loop no jump leaves
@@ -6937,10 +6959,36 @@ impl<'a> Checker<'a> {
             || under(&self.own.functions, &prefix)
             || under(&self.own.types, &prefix)
             || under(&self.library.functions, &prefix)
-            || under(&self.library.types, &prefix);
+            || under(&self.library.types, &prefix)
+            // **A package `use` introduces** (D13): `use http` makes `http` a
+            // head whether or not this unit was handed the package, as the
+            // name a `use` writes last, or its alias.
+            || self.parsed.program.items.iter().any(|item| {
+                matches!(&item.node, Item::Import { path, alias }
+                    if alias.map_or_else(
+                        || path.last().is_some_and(|last| self.parsed.text(*last) == head),
+                        |alias| self.parsed.text(alias) == head,
+                    ))
+            });
         if declared {
             return;
         }
+        let heads: Vec<&str> = self
+            .std_modules
+            .iter()
+            .chain(&self.modules)
+            .chain(self.structs.keys())
+            .chain(self.enums.keys())
+            .map(String::as_str)
+            .collect();
+        // **One edit away** (D33): `fx` beside `fs`, which the general
+        // spelling rule is too careful to offer for a name of two letters.
+        let near = heads
+            .iter()
+            .copied()
+            .find(|known| nikaia_std::tools::spelling::distance(head, known) == 1)
+            .or_else(|| nearest(head, &heads))
+            .map(str::to_string);
         self.checked.findings.push(Finding {
             severity: Severity::Error,
             span: *span,
@@ -6956,13 +7004,24 @@ impl<'a> Checker<'a> {
                     .to_string(),
             ],
             // **A `use`, never a file** (ADR-286 D33): a `.nika` file beside this
-            // one joins the package's one namespace and makes no head.
-            help: Some(format!(
-                "If `{head}` is a package or a `std` module, write `use {head}` at the top \
-                 of the file - for a package, also add it to `[dependencies]` in \
-                 `nikaia.toml`; for a Rust crate, run `nikaia describe {head}`. If it is \
-                 a type, declare it in this package."
-            )),
+            // one joins the package's one namespace and makes no head. A known
+            // head one edit away is named first: `fx::read` beside `std::fs`.
+            help: Some(match near {
+                Some(near)
+                    if self.std_modules.contains(&near) && !self.std_in_scope.contains(&near) =>
+                {
+                    format!(
+                        "Did you mean `{near}`? Write `use std::{near}` at the top of the file."
+                    )
+                }
+                Some(near) => format!("Did you mean `{near}`?"),
+                None => format!(
+                    "If `{head}` is a package or a `std` module, write `use {head}` at the top \
+                     of the file - for a package, also add it to `[dependencies]` in \
+                     `nikaia.toml`; for a Rust crate, run `nikaia describe {head}`. If it is \
+                     a type, declare it in this package."
+                ),
+            }),
             labels: Vec::new(),
         });
     }
@@ -7780,6 +7839,9 @@ impl<'a> Checker<'a> {
             .is_some_and(|c| !c.fails_with.is_empty());
         if fallible && let Some(guarded) = &mut self.guarded {
             guarded.fallible = true;
+            guarded
+                .thrown
+                .extend(self.own.functions[key].fails_with.iter().cloned());
         }
         self.own
             .functions
@@ -10046,10 +10108,8 @@ impl<'a> Checker<'a> {
         else {
             return;
         };
-        if !matches!(
-            **fallback,
-            Expr::Return(_) | Expr::Throw(_) | Expr::Continue | Expr::Break
-        ) || !self.map_read_sites.contains(&address(read))
+        if !self.jumps(fallback)
+            || !self.map_read_sites.contains(&address(read))
             || into.is_a_view()
             || into.is_unknown()
         {
@@ -11080,7 +11140,7 @@ impl<'a> Checker<'a> {
                 // view below whatever its type says, as a `for` binding is.
                 let read_through_a_jump = matches!(value, Expr::Coalesce { value: read, fallback }
                     if matches!(**read, Expr::Index { .. })
-                        && matches!(**fallback, Expr::Return(_) | Expr::Continue | Expr::Break | Expr::Throw(_)));
+                        && self.jumps(fallback));
                 // **Unless what it reads is a number, a `bool` or a `char`**
                 // (#456): then the value is read out of the view where it is
                 // bound, as a loop binding's is, and the name is the value in
@@ -11093,7 +11153,7 @@ impl<'a> Checker<'a> {
                         if (matches!(**read, Expr::Index { .. })
                             || matches!(&**read, Expr::MethodCall { method, .. }
                                 if self.parsed.text(*method) == "get"))
-                            && leaves(fallback));
+                            && self.leaves(fallback));
                 if copied_read {
                     self.checked
                         .copied_jump_reads
@@ -11614,7 +11674,12 @@ impl<'a> Checker<'a> {
             // A bare number fits every numeric type, exactly as it does in the
             // language below. Committing it to one here would make `add(3)`
             // wrong wherever the parameter is not that one.
-            Expr::LitInt { .. } | Expr::LitFloat(_) => Ty::Unknown,
+            Expr::LitInt { .. } => Ty::Unknown,
+            // **A float literal is an `f64`** (#503): it is the only float type
+            // (Part I 2.2), so there is nothing to choose between and nothing
+            // a use could decide. `let mut px = 0.0` is an `f64`, and so is
+            // everything computed from it.
+            Expr::LitFloat(_) => Ty::named("f64"),
             // Part I 2.4 calls a string literal a `String`; Stage 0 emits a
             // Rust string literal, which is a view of static text. The checker
             // says what is emitted - see ADR-024 D5.
@@ -11730,6 +11795,22 @@ impl<'a> Checker<'a> {
                 self.a_constructor_written_as_new(&names.join("::"), span);
                 match names.as_slice() {
                     [ty, variant] if self.is_variant(ty, variant) => Ty::named(*ty),
+                    // **A `std` enum's case is a value of that enum** (#507):
+                    // `fs::Root::Anywhere` is an `fs::Root`, from the ledger's
+                    // `variants` column, as `Op::Times` is an `Op` from the
+                    // declaration. Only a case that holds nothing: one that
+                    // holds something is its constructor.
+                    [module, ty, variant] => {
+                        let owner = self.parsed.unaliased(&format!("{module}::{ty}"));
+                        match self.library.types.get(&owner).is_some_and(|t| {
+                            t.variants
+                                .iter()
+                                .any(|v| v.name == *variant && v.holds.is_empty())
+                        }) {
+                            true => Ty::named(owner),
+                            false => Ty::Unknown,
+                        }
+                    }
                     // **`T::fields` is a list of the type's fields**
                     // ([ADR-304](../../docs/specification/adr/adr-304.md) D2,
                     // built by [ADR-304](../../docs/specification/adr/adr-304.md)).
@@ -11839,7 +11920,7 @@ impl<'a> Checker<'a> {
                     self.scope.push(frame);
                     let ty = self.past_a_boundary("`select` arm", |me| me.block(&arm.body));
                     self.scope.pop();
-                    if block_leaves(&arm.body) {
+                    if self.block_leaves(&arm.body) {
                         continue;
                     }
                     match &result {
@@ -11882,7 +11963,7 @@ impl<'a> Checker<'a> {
                 // counts the hand-over itself.
                 self.a_branch_that_leaves(
                     from,
-                    block_exits(then_branch) || block_leaves(then_branch),
+                    self.block_exits(then_branch) || self.block_leaves(then_branch),
                     span,
                 );
                 self.branch.pop();
@@ -11893,7 +11974,7 @@ impl<'a> Checker<'a> {
                         let other = self.block(otherwise);
                         self.a_branch_that_leaves(
                             from,
-                            block_exits(otherwise) || block_leaves(otherwise),
+                            self.block_exits(otherwise) || self.block_leaves(otherwise),
                             span,
                         );
                         self.branch.pop();
@@ -11902,7 +11983,8 @@ impl<'a> Checker<'a> {
                         // **An arm that leaves gives no value** (#375):
                         // `let t = if c { name } else { return }` is the other
                         // arm's type, as a `match` arm that returns is.
-                        let leaves = |block: &Block| block_exits(block) || block_leaves(block);
+                        let leaves =
+                            |block: &Block| self.block_exits(block) || self.block_leaves(block);
                         if then == other || (leaves(otherwise) && !leaves(then_branch)) {
                             then
                         } else if leaves(then_branch) && !leaves(otherwise) {
@@ -12143,7 +12225,7 @@ impl<'a> Checker<'a> {
                         from,
                         changed_from,
                     );
-                    self.a_branch_that_leaves(from, exits(&arm.body), span);
+                    self.a_branch_that_leaves(from, self.exits(&arm.body), span);
                     self.branch.pop();
                     self.scope.pop();
                     // **An arm that jumps is not one of the types that have to
@@ -12153,7 +12235,7 @@ impl<'a> Checker<'a> {
                     // beside an arm that hands back a `&str` and the `match` is
                     // a `&str`. The language below reads the jumping arm as the
                     // `!` it is and agrees by construction.
-                    if leaves(&arm.body) {
+                    if self.leaves(&arm.body) {
                         continue;
                     }
                     answered.push((Some(&arm.body), ty.clone()));
@@ -13649,7 +13731,7 @@ impl<'a> Checker<'a> {
                 // Nikaia, #125). A block that ends in a jump is one (#457).
                 let from = self.taken_so_far();
                 let other = self.expr(fallback, span);
-                self.a_branch_that_leaves(from, leaves(fallback), span);
+                self.a_branch_that_leaves(from, self.leaves(fallback), span);
                 // **A name on the left of `??` is taken where the answer is
                 // kept and lent where it is only read** (ADR-279 D5), which is
                 // the rule an argument follows (ADR-094 D1). Which one is known
@@ -13671,10 +13753,7 @@ impl<'a> Checker<'a> {
                 // view of the left side wherever it stands - a `let` binds a
                 // view, as `let found = m[k]` does.
                 let lent_and_jumps = matches!(&**value, Expr::Variable(_) | Expr::Field { .. })
-                    && matches!(
-                        &**fallback,
-                        Expr::Return(_) | Expr::Throw(_) | Expr::Continue | Expr::Break
-                    )
+                    && self.jumps(fallback)
                     && matches!(&left, Ty::Nullable(inner) if self.takes_away(&inner.unseen()))
                     && self
                         .rooted_at(value)
@@ -14041,9 +14120,22 @@ impl<'a> Checker<'a> {
                 if let (Some(handed), Some(was)) = (&mut self.handed_over, lambda_outer) {
                     handed.caught = was;
                 }
-                self.nothing_here_can_fail(guarded.unwrap_or_default(), span);
+                let guarded = guarded.unwrap_or_default();
+                // **`error` is what the guarded calls throw** (Part I 7.1,
+                // #501): `fs::read_to_string(…) catch { … {error} … }` binds an
+                // `io::IoError`, as the ledger records the call. One type, and
+                // every call looked up; several are a sum the handler tells
+                // apart with `match`, and claim nothing here.
+                let caught = match (
+                    guarded.unanswered,
+                    guarded.thrown.iter().collect::<Vec<_>>().as_slice(),
+                ) {
+                    (false, [one]) if *one != "?" => Ty::named(one.as_str()),
+                    _ => Ty::Unknown,
+                };
+                self.nothing_here_can_fail(guarded, span);
                 self.scope
-                    .push(vec![Local::free("error".to_string(), Ty::Unknown)]);
+                    .push(vec![Local::free("error".to_string(), caught)]);
                 let arriving = self.several_arrive(expr);
                 let one = self.the_one_error(expr);
                 let several = std::mem::replace(&mut self.caught_several, arriving);
@@ -14056,7 +14148,7 @@ impl<'a> Checker<'a> {
                 // positions): `read() catch { "" }`.
                 let literal =
                     tail_of(handler).and_then(|tail| self.text_literal(&answers, tail, true));
-                self.a_branch_that_leaves(from, block_exits(handler), span);
+                self.a_branch_that_leaves(from, self.block_exits(handler), span);
                 self.caught_several = several;
                 self.caught_one = single;
                 self.scope.pop();
@@ -14069,7 +14161,7 @@ impl<'a> Checker<'a> {
                 // `NK1125`. A handler whose value is known to be something
                 // else keeps the old answer, which claims nothing.
                 let handled = literal.unwrap_or(handled);
-                match block_leaves(handler) || handled.is_unknown() || handled.fits(&answers) {
+                match self.block_leaves(handler) || handled.is_unknown() || handled.fits(&answers) {
                     true => answers,
                     false => Ty::Unknown,
                 }
@@ -14156,7 +14248,23 @@ impl<'a> Checker<'a> {
                 // can fail is not this walk's to answer.
                 self.guard_has_no_answer();
                 self.holes(expr, span);
-                Ty::Unknown
+                // **`dsl html` builds a `String`** (#505): the compiler is that
+                // template's grammar, and what it writes is text of its own. A
+                // block for a grammar that is not this compiler's is the
+                // grammar's to type (its entry rule, or a statement's row).
+                match expr {
+                    Expr::Dsl {
+                        target,
+                        package: None,
+                        context: None,
+                        content,
+                    } if self.parsed.text(*target) == "html"
+                        && !crate::dsl::is_deferred("html", content) =>
+                    {
+                        Ty::named(ty::TEXT)
+                    }
+                    _ => Ty::Unknown,
+                }
             }
 
             // A grammar and an `asm` block: what these produce is the business
@@ -15793,6 +15901,26 @@ impl<'a> Checker<'a> {
         // without it, and a module used without being introduced.
         self.a_std_name_without_its_module(&name, span);
         self.a_module_used_before_it_is_introduced(&name, span);
+        // **The head of a call path is one of five things, as a value's is**
+        // ([ADR-286](../../docs/specification/adr/adr-286.md) D31, #488):
+        // `nowhere::wobble(1)` lowered, and the language below said *cannot
+        // find module or crate* about a file nobody wrote. Whether a head
+        // exists is always known, so this is no guess (C.4 is about types).
+        // `Self` and a built-in type name a type that is always there.
+        if let Expr::Path(segments) = func
+            && let [head, _, ..] = segments.as_slice()
+        {
+            let head = self.parsed.text(*head);
+            if head != "Self" && !OFFERED.contains(&head) {
+                let head = head.to_string();
+                let written = segments
+                    .iter()
+                    .map(|s| self.parsed.text(*s))
+                    .collect::<Vec<_>>()
+                    .join("::");
+                self.a_head_nothing_declares(&head, &written, span);
+            }
+        }
         self.a_prelude_name_with_a_module_in_front(&name, span);
         self.a_constructor_nothing_describes(&name, args, span);
 
@@ -17035,6 +17163,7 @@ impl<'a> Checker<'a> {
         if !contract.fails_with.is_empty() {
             if let Some(guarded) = &mut self.guarded {
                 guarded.fallible = true;
+                guarded.thrown.extend(contract.fails_with.iter().cloned());
             }
             self.newly_reaches_a_handler(key, span);
             // **And the lambda this may be inside**

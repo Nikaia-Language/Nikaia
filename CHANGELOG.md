@@ -4,6 +4,42 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.611] — 2026-10-07
+
+**`panic(…)` has the type never** (ADR-276 D27, #506).
+- `let t = if c { "x" } else { panic("no") }` is the first arm's type, and so is
+  a `match` with an arm `else => panic(…)`: a wrong use of `t` below is
+  `NK1103` where it was silent.
+- `m[k] ?? panic(…)` reads the map as `?? return` does, and a `panic` leaves a
+  branch for what it took, as a `throw` does. A function of the program's own
+  named `panic` is an ordinary call.
+
+**A call through a head nothing declares is `NK1181`** (ADR-286 D31, D33, #488).
+- `nowhere::wobble(1)` used to pass the checker, and `rustc` answered *cannot
+  find module or crate*. It is refused as `nowhere::wobble` written as a value
+  is, in a loose file as in a project. `Self` and the built-in types are heads.
+- A known head one edit away is named first: `fx::read_to_string(…)` says
+  *Did you mean `fs`?*, with the `use std::fs` line where it is missing.
+
+**A handler's `error` has the type the guarded calls throw** (Part I 7.1, #501).
+- `fs::read_to_string(…) catch { … error … }` binds an `io::IoError`, and a
+  program's own function binds the error type its body throws. A wrong use of
+  `error` is refused here (`NK1103`), where it reached `rustc`. Several error
+  types arriving at one handler claim nothing yet (#512).
+
+**A float literal is an `f64`** (#503).
+- `f64` is the only float type, so `let mut px = 0.0` is one, as is everything
+  computed from it and a list `[1.0, 2.5]`'s elements. `let n: i64 = px` is
+  `NK1103` and `px + n` is `NK1199` here, where they reached `rustc`.
+
+**A `dsl html` block is a `String`, and a `std` enum's case is a value of its
+enum** (#505 step 1 for `html`, #507 step 1).
+- `return dsl html { … } eod` is text to the checker. A block for any other
+  grammar still claims nothing.
+- `fs::Root::Anywhere` is an `fs::Root`, read from the ledger's `variants`
+  column, as `Op::Times` is an `Op`. A case that holds something is its
+  constructor and is not covered here.
+
 ## [0.0.610] — 2026-10-07
 
 **Arrays, tuples, `scalar`, views and shared handles have a kind** (ADR-330 D3, #121).

@@ -57,8 +57,8 @@
 10-nikaia-light.md #57 lowered (a body) [about-a-refusal]  let prefix = "Log: "
 10-nikaia-light.md #58 lowered (as written)  struct Button { label: String, on_click: fn(i64) -> i64…
 10-nikaia-light.md #59 fragment (as written) [sketch]  fn serve(db: ref Connection) { … }
-10-nikaia-light.md #60 refused (a body) [sketch NK1117]  let db = SharedMut(postgres::connect("…"))
-10-nikaia-light.md #61 lowered (a body) [sketch]  let db = Shared(postgres::connect("…"))
+10-nikaia-light.md #60 refused (a body) [sketch NK1117,NK1181]  let db = SharedMut(postgres::connect("…"))
+10-nikaia-light.md #61 refused (a body) [sketch NK1181]  let db = Shared(postgres::connect("…"))
 10-nikaia-light.md #62 fragment (as written)  keep(Shared(connect(url)))                      // an a…
 10-nikaia-light.md #63 fragment (as written) [sketch]  let kasse: SharedMut[i32] = ...
 10-nikaia-light.md #64 lowered (as written) [sketch]  struct FileHandle {
@@ -71,14 +71,14 @@
 10-nikaia-light.md #71 refused (a body) [NK1117]  let mut users = load_users()
 10-nikaia-light.md #72 lowered (as written)  use std::fs
 10-nikaia-light.md #73 lowered (as written)  enum ConfigError {
-10-nikaia-light.md #74 refused (a body) [NK1117,NK2605]  if !fs::exists(path, fs::Root::Anywhere) {
+10-nikaia-light.md #74 refused (a body) [NK1117,NK1181,NK2605]  if !fs::exists(path, fs::Root::Anywhere) {
 10-nikaia-light.md #75 refused (a body) [NK1117]  let user = find(id) ?? throw NotFound(id)
 10-nikaia-light.md #76 refused (as written) [NK1117,NK1135]  fn load() -> Config throws {
 10-nikaia-light.md #77 refused (a body) [NK1117]  let config = load() catch {
 10-nikaia-light.md #78 refused (a body) [NK1117,NK1181]  let config = load() catch {
 10-nikaia-light.md #79 refused (a body) [NK1117]  eprintln(f"{error}")           // the message, and noth…
 10-nikaia-light.md #80 refused (as written) [NK1117]  use std::panic
-10-nikaia-light.md #81 refused (a body) [NK1117]  let (user, rights, prefs) = overlap {
+10-nikaia-light.md #81 refused (a body) [NK1117,NK1181]  let (user, rights, prefs) = overlap {
 10-nikaia-light.md #82 lowered (a body)  spawn fn { println("I am running in the background!") }
 10-nikaia-light.md #83 lowered (a body) [about-a-refusal]  let message = "Hello"
 10-nikaia-light.md #84 lowered (a body)  let message = "Hello"
@@ -86,9 +86,9 @@
 10-nikaia-light.md #86 refused (as written) [NK1117,NK1135]  // file: src/main.nika
 10-nikaia-light.md #87 lowered (as written)  use http
 10-nikaia-light.md #88 lowered (as written)  // file: network.nika
-20-nikaia-advance.md #1 refused (as written) [NK1117,NK1135]  grammar Json {
-20-nikaia-advance.md #2 refused (as written) [NK1175]  // The compiler runs the Json grammar at build time.
-20-nikaia-advance.md #3 lowered (as written)  fn parse_input(input: String) throws {
+20-nikaia-advance.md #1 refused (as written) [NK1117,NK1135,NK1181]  grammar Json {
+20-nikaia-advance.md #2 refused (as written) [NK1175,NK1181]  // The compiler runs the Json grammar at build time.
+20-nikaia-advance.md #3 refused (as written) [NK1181]  fn parse_input(input: String) throws {
 20-nikaia-advance.md #4 lowered (as written)  comptime ROUTES: Fixed[ref String, i64] = [("get", 1), …
 20-nikaia-advance.md #5 lowered (as written)  fn describe[T: Struct](value: T) {
 20-nikaia-advance.md #6 fragment (as written)  fn schema[T](T) -> String {
@@ -98,7 +98,7 @@
 20-nikaia-advance.md #10 fragment (as written)  // If parsing fails inside the block, skip ahead to the…
 20-nikaia-advance.md #11 fragment (as written)  // Up to ";" - or to the end of the frame, whichever co…
 20-nikaia-advance.md #12 fragment (as written)  entry rule file -> Summary =
-20-nikaia-advance.md #13 refused (a body) [NK1117,NK2605]  let data = fs::map(path, fs::Root::Anywhere)
+20-nikaia-advance.md #13 refused (a body) [NK1117,NK1181,NK2605]  let data = fs::map(path, fs::Root::Anywhere)
 20-nikaia-advance.md #14 fragment (as written) [about-a-refusal sketch]  fn process_image(path: String) -> Image { ... }
 20-nikaia-advance.md #15 refused (items, then a body) [about-a-refusal NK1117,NK1135]  use std::fs
 20-nikaia-advance.md #16 refused (as written) [NK1135]  fn bonus(score: i32) -> i32 { score * 2 + 1 }   // no `…
@@ -111,7 +111,7 @@
 20-nikaia-advance.md #23 refused (items, then a body) [NK1117,NK1181]  use std::time
 20-nikaia-advance.md #24 lowered (items, then a body)  use std::channel
 20-nikaia-advance.md #25 lowered (a body)  let pixels = [/* 1 million pixels */]
-20-nikaia-advance.md #26 refused (a body) [NK1201]  let data = [1, 2, 3]
+20-nikaia-advance.md #26 refused (a body) [NK1181,NK1201]  let data = [1, 2, 3]
 20-nikaia-advance.md #27 fragment (as written) [sketch]  use std::supervisor
 30-nikaia-tooling.md #1 lowered (as written)  extern(library: "sqlite3") {
 30-nikaia-tooling.md #2 refused (as written) [NK1117]  test "a blank line is counted" {
@@ -131,9 +131,9 @@
 30-nikaia-tooling.md #16 refused (a body) [NK1117]  print(f"{name}: ")
 30-nikaia-tooling.md #17 lowered (as written)  use std::time
 30-nikaia-tooling.md #18 lowered (as written)  use http
-30-nikaia-tooling.md #19 refused (a body) [NK1117]  http::Server()
+30-nikaia-tooling.md #19 refused (a body) [NK1117,NK1181]  http::Server()
 30-nikaia-tooling.md #20 lowered (as written)  use std::fs
-30-nikaia-tooling.md #21 refused (a body) [NK1117]  // The request chose this name; the call says which dir…
+30-nikaia-tooling.md #21 refused (a body) [NK1117,NK1181]  // The request chose this name; the call says which dir…
 30-nikaia-tooling.md #22 fragment (as written)  pub fn escape(text: ref String) -> String        // for…
 30-nikaia-tooling.md #23 lowered (as written)  fn row(name: ref String, shade: ref String) -> String {
 30-nikaia-tooling.md #24 fragment (as written)  <table>
