@@ -4,6 +4,13 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.612] — 2026-10-07
+
+**Full names stay out** (ADR-330 §6, #121).
+- A full name would have to settle a generic type's arguments, two versions of
+  one package and types without a name, and nothing needs one yet. `T::name`
+  is the name the declaration writes.
+
 ## [0.0.611] — 2026-10-07
 
 **`panic(…)` has the type never** (ADR-276 D27, #506).
