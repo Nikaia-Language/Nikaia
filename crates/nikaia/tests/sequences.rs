@@ -42,7 +42,7 @@ fn the_words_round_trip() {
     for written in [
         "Seq[$K] sync",
         "Seq[String] throws",
-        "Seq[char] sync throws",
+        "Seq[scalar] sync throws",
         "Seq[$T]",
         "Par[$T] sync",
         "Seq[HashMap[$K, $V]] sync",

@@ -283,43 +283,40 @@ fn nothing_in_the_corpus_needs_a_tether() {
 
 // --- The word above a struct ---
 
-/// **`@borrowed` is gone, and no attribute stands above a `struct`**
-/// ([ADR-283](../../../docs/specification/adr/adr-283.md) D4).
+/// **`@borrowed` is gone** ([ADR-283](../../../docs/specification/adr/adr-283.md)
+/// D4): no word says where a struct's views live.
 ///
-/// Removed rather than left parsing, which is the decision and not a tidy-up: a
-/// word whose presence and absence look identical on the page is one a reader
-/// cannot check, and leaving it parsing would leave that in place for whoever
-/// reads a program written before today.
+/// Since [ADR-331](../../../docs/specification/adr/adr-331.md) an `@` line is
+/// an attribute, a value of a struct `@meta::Attribute` marks, so the line
+/// parses and is refused by what it names: no struct called `borrowed` exists
+/// (`NK1135`), and nothing the refusal says offers the word back as one of the
+/// language's.
 #[test]
 fn no_attribute_stands_above_a_struct() {
-    let refused = parse_to_ast("@borrowed\nstruct Reading { name: ref String }\n")
-        .expect_err("the word is not in the grammar");
-    let said = format!("{refused:#}");
-    assert!(
-        said.contains("Didn't expect `@` here"),
-        "the parser stops at the `@`: {said}"
-    );
-    // **And nothing the error says offers the word that left.** The parse error
-    // no longer lists every alternative; what it does say - its headline, notes
-    // and help - is asked of here rather than of the rendered file, because a
-    // rendering quotes the source and the source is the thing that wrote the word.
-    let finding =
-        nikaia::diagnostics::refused_finding(&refused).expect("a parse error carries its finding");
-    let mut everything = vec![finding.message.clone()];
-    everything.extend(finding.notes.iter().cloned());
-    everything.extend(finding.help.iter().cloned());
-    let everything = everything.join("\n");
-    assert!(!everything.contains("borrowed"), "{everything}");
+    let found = findings("@borrowed\nstruct Reading { name: ref String }\n");
+    let codes: Vec<&str> = found.iter().map(|f| f.code).collect();
+    assert_eq!(codes, vec!["NK1135"], "{found:#?}");
+    let help = found[0].help.clone().unwrap_or_default();
+    assert!(!help.contains("borrowed"), "{help}");
 }
 
 /// **No word is needed for a tether**
 /// ([ADR-283](../../../docs/specification/adr/adr-283.md) D4, withdrawing
 /// [ADR-283](../../../docs/specification/adr/adr-283.md) D4): where a buffer
 /// lives is the compiler's decision, shown by `--tethers` and the ledger, and
-/// `@tethers` is not a word of this language.
+/// `@tethers` is not a word of this language - an attribute naming nothing.
 #[test]
 fn no_word_is_written_for_a_tether() {
-    assert!(parse_to_ast("@tethers\nstruct Token { text: ref String }\n").is_err());
+    let found = findings("@tethers\nstruct Token { text: ref String }\n");
+    let codes: Vec<&str> = found.iter().map(|f| f.code).collect();
+    assert_eq!(codes, vec!["NK1135"], "{found:#?}");
+}
+
+fn findings(source: &str) -> Vec<nikaia::check::Finding> {
+    let parsed = parse_to_ast(source).expect("an `@` line parses (ADR-331)");
+    let own = Ledger::infer(&parsed);
+    let library = Ledger::parse(STD).expect("std's shipped ledger parses");
+    nikaia::check::check(&parsed, &own, &library).findings
 }
 
 /// **A view of a buffer the body owns is tethered, not refused**, with no word

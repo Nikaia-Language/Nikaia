@@ -40,10 +40,11 @@ fn all_samples_parse() {
 fn trailing_input_is_rejected() {
     // Input the grammar cannot consume must be an error, not a silently
     // truncated parse.
-    let err = parse_to_ast("fn main() {}\n@@@").expect_err("should reject trailing garbage");
+    // `%`, because `@` starts an attribute since ADR-331 and is read as one.
+    let err = parse_to_ast("fn main() {}\n%%%").expect_err("should reject trailing garbage");
     let msg = err.to_string();
     assert!(
-        msg.contains("Didn't expect `@` here."),
+        msg.contains("Didn't expect `%` here."),
         "unexpected error: {msg}"
     );
     assert!(

@@ -4,6 +4,18 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.639] — 2026-10-07
+
+**`develop` is green again**: three tests still expected what 0.0.630 and
+0.0.638 changed.
+- `tethers`: `@borrowed` and `@tethers` above a struct are no longer parse
+  errors. Since ADR-331 an `@` line is an attribute. They are refused as
+  attributes naming nothing (`NK1135`), and the help does not offer the word
+  back (ADR-283 D4 stands).
+- `samples`: the trailing input that must be refused is `%%%`, since `@`
+  starts an attribute.
+- `sequences`: `Seq[char]` writes itself back as `Seq[scalar]`.
+
 ## [0.0.638] — 2026-10-07
 
 **`scalar` is a type, and `char` is read as it** (#453 step 1's first half,
