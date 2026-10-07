@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part I: The Language Core**
-**Version:** 0.0.607 (Draft)
+**Version:** 0.0.608 (Draft)
 **Date:** 2026-10-07
 
 ---
@@ -1408,7 +1408,9 @@ fn hand[T](x: T) -> T {
 A type parameter is written, never inferred. **Inside the body it is a type**:
 `x` is a `T`, and a `T` is not an `i64`, because the caller picks what `T` is.
 **At the call it is filled in from the arguments**: `hand(n)` where `n` is an
-`i64` hands back an `i64`, and `Box { item: n }` is a `Box[i64]`.
+`i64` hands back an `i64`, and `Box { item: n }` is a `Box[i64]`. A parameter
+list may hold the type itself, `fn schema[T](T)`; the call then writes a type
+there, `schema(User)`, and the function needs no value of it (Part II 10.3).
 
 A `T` on its own has no members:
 

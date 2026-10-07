@@ -91,27 +91,28 @@
 20-nikaia-advance.md #3 lowered (as written)  fn parse_input(input: String) throws {
 20-nikaia-advance.md #4 lowered (as written)  comptime ROUTES: Fixed[ref String, i64] = [("get", 1), …
 20-nikaia-advance.md #5 lowered (as written)  fn describe[T: Struct](value: T) {
-20-nikaia-advance.md #6 fragment (as written)  use sqlite                                // a driver p…
-20-nikaia-advance.md #7 lowered (as written)  impl Template {
-20-nikaia-advance.md #8 fragment (as written)  rule expr -> Expr # "expression" =
-20-nikaia-advance.md #9 fragment (as written)  // If parsing fails inside the block, skip ahead to the…
-20-nikaia-advance.md #10 fragment (as written)  // Up to ";" - or to the end of the frame, whichever co…
-20-nikaia-advance.md #11 fragment (as written)  entry rule file -> Summary =
-20-nikaia-advance.md #12 refused (a body) [NK1117,NK2605]  let data = fs::map(path, fs::Root::Anywhere)
-20-nikaia-advance.md #13 fragment (as written) [about-a-refusal sketch]  fn process_image(path: String) -> Image { ... }
-20-nikaia-advance.md #14 refused (items, then a body) [about-a-refusal NK1117,NK1135]  use std::fs
-20-nikaia-advance.md #15 refused (as written) [NK1135]  fn bonus(score: i32) -> i32 { score * 2 + 1 }   // no `…
-20-nikaia-advance.md #16 refused (a body) [NK1117]  counter.access fn(n) { n + xs.sort_by_key fn(x) { x } }…
-20-nikaia-advance.md #17 refused (a body) [NK1117,NK2605]  counter.access fn(n) { xs.map fn(x) { fs::read("log", f…
-20-nikaia-advance.md #18 lowered (as written)  fn apply(f: fn(i64) -> i64, x: i64) -> i64 sync(f) {
-20-nikaia-advance.md #19 lowered (as written)  fn charge(kasse: SharedMut[i64], wieviel: i64) throws {
-20-nikaia-advance.md #20 lowered (a body) [about-a-refusal]  let counter = SharedMut(0)
-20-nikaia-advance.md #21 fragment (as written) [about-a-refusal sketch]  let account_a = SharedMut(Account(…))
-20-nikaia-advance.md #22 refused (items, then a body) [NK1117,NK1181]  use std::time
-20-nikaia-advance.md #23 lowered (items, then a body)  use std::channel
-20-nikaia-advance.md #24 lowered (a body)  let pixels = [/* 1 million pixels */]
-20-nikaia-advance.md #25 refused (a body) [NK1201]  let data = [1, 2, 3]
-20-nikaia-advance.md #26 fragment (as written) [sketch]  use std::supervisor
+20-nikaia-advance.md #6 fragment (as written)  fn schema[T](T) -> String {
+20-nikaia-advance.md #7 fragment (as written)  use sqlite                                // a driver p…
+20-nikaia-advance.md #8 lowered (as written)  impl Template {
+20-nikaia-advance.md #9 fragment (as written)  rule expr -> Expr # "expression" =
+20-nikaia-advance.md #10 fragment (as written)  // If parsing fails inside the block, skip ahead to the…
+20-nikaia-advance.md #11 fragment (as written)  // Up to ";" - or to the end of the frame, whichever co…
+20-nikaia-advance.md #12 fragment (as written)  entry rule file -> Summary =
+20-nikaia-advance.md #13 refused (a body) [NK1117,NK2605]  let data = fs::map(path, fs::Root::Anywhere)
+20-nikaia-advance.md #14 fragment (as written) [about-a-refusal sketch]  fn process_image(path: String) -> Image { ... }
+20-nikaia-advance.md #15 refused (items, then a body) [about-a-refusal NK1117,NK1135]  use std::fs
+20-nikaia-advance.md #16 refused (as written) [NK1135]  fn bonus(score: i32) -> i32 { score * 2 + 1 }   // no `…
+20-nikaia-advance.md #17 refused (a body) [NK1117]  counter.access fn(n) { n + xs.sort_by_key fn(x) { x } }…
+20-nikaia-advance.md #18 refused (a body) [NK1117,NK2605]  counter.access fn(n) { xs.map fn(x) { fs::read("log", f…
+20-nikaia-advance.md #19 lowered (as written)  fn apply(f: fn(i64) -> i64, x: i64) -> i64 sync(f) {
+20-nikaia-advance.md #20 lowered (as written)  fn charge(kasse: SharedMut[i64], wieviel: i64) throws {
+20-nikaia-advance.md #21 lowered (a body) [about-a-refusal]  let counter = SharedMut(0)
+20-nikaia-advance.md #22 fragment (as written) [about-a-refusal sketch]  let account_a = SharedMut(Account(…))
+20-nikaia-advance.md #23 refused (items, then a body) [NK1117,NK1181]  use std::time
+20-nikaia-advance.md #24 lowered (items, then a body)  use std::channel
+20-nikaia-advance.md #25 lowered (a body)  let pixels = [/* 1 million pixels */]
+20-nikaia-advance.md #26 refused (a body) [NK1201]  let data = [1, 2, 3]
+20-nikaia-advance.md #27 fragment (as written) [sketch]  use std::supervisor
 30-nikaia-tooling.md #1 lowered (as written)  extern(library: "sqlite3") {
 30-nikaia-tooling.md #2 refused (as written) [NK1117]  test "a blank line is counted" {
 30-nikaia-tooling.md #3 lowered (as written)  fn divide(a: i64, b: i64) -> i64 sync {

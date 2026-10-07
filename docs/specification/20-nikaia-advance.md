@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part II: Advanced Features & Metaprogramming**
-**Version:** 0.0.607 (Draft)
+**Version:** 0.0.608 (Draft)
 **Date:** 2026-10-07
 
 ---
@@ -237,16 +237,62 @@ error: `println` cannot format a `Vec[u8]`
 ```
 
 A reflected field answers `.name`, its name as text, `.of(value)`, what it
-holds on that value, `.ty`, its type as a `meta::Type`, and `.doc`, the `///`
-lines before it as text ([ADR-329](adr/adr-329.md)). `.name`, `.ty` and `.doc`
-are constants of each unrolled turn. A field of a struct type is a `Record` of
-that struct's fields, described the same way; a type already being described
-further up, and an `enum`, is `Named`. `.doc` is empty where there is none and
-where the build has no source of the type's package. A reflected variant answers `.name` and `.is(value)`,
+holds on that value, `.ty`, its type, and `.doc`, the `///` lines before it as
+text ([ADR-329](adr/adr-329.md), [ADR-330](adr/adr-330.md)). `.name`, `.ty` and
+`.doc` are constants of each unrolled turn. `.doc` is empty where there is none
+and where the build has no source of the type's package. A reflected variant answers `.name` and `.is(value)`,
 whether the value is that variant; what a variant carries is read with a
 `match`. Any other member is refused with `NK1180`. `T::fields` without a
 `Struct` bound, or `T::variants` without an `Enum` bound, is refused with
 `NK1171`.
+
+**A type is passed where the parameter list holds one** ([ADR-330](adr/adr-330.md)).
+A function that describes a type needs no value of it:
+
+```nika
+fn schema[T](T) -> String {
+    match T::kind {
+        Text      => "\"string\"",
+        List(it)  => f"[{schema(it)}]",
+        Struct(s) => {
+            let mut out = "{"
+            for field in s::fields { out += f"\"{field.name}\": {schema(field.ty)}" }
+            out + "}"
+        }
+    }
+}
+
+schema(CreateUser)
+```
+
+The argument is a type the call names or one the body holds: a parameter,
+`field.ty`, a type a `match` arm binds. A value there, or a type where a value
+belongs, is refused with `NK1230`. The function is emitted once per type, as
+any shape walk is.
+
+A type answers `T::kind`, its kind; `T::fields` and `T::variants`; `T::doc`,
+the `///` lines before its declaration; and `T::name`, its name as the
+declaration writes it. `T::kind` is a `meta::Type`, whose parts are types:
+
+| `T` | `T::kind` |
+| :--- | :--- |
+| `i64`, `i32`, `u8`, `u64`, `u32`, `f64`, `bool` | `I64`, `I32`, `U8`, `U64`, `U32`, `F64`, `Bool` |
+| `String`, `Bytes` | `Text`, `Bytes` |
+| `A?`, `Vec[A]`, `HashMap[K, V]` | `Maybe(A)`, `List(A)`, `Map(K, V)` |
+| a `struct`, an `enum` | `Struct(T)`, `Enum(T)` |
+| a type whose inside the program does not see | `Opaque(T)` |
+
+A type of `std` has the kind of what it is; it is `Opaque` only where `std`
+keeps its inside its own. A type of a Rust crate and a C `opaque type` are
+`Opaque`. `T::kind` of an array, a tuple, `scalar`, a `ref`, `Shared` or
+`SharedMut` is refused with `NK1232`.
+
+**A `match` on a kind checks each arm under the kind its pattern names.** In
+`Struct(s)`, `s` is a type bound by `Struct`, so `s::fields` is reached; in
+`List(it)`, `it` is the element type. No arm is checked against a type it cannot
+be taken for, and every arm is checked. Each type's copy holds only the arm it
+takes. A `meta::Type` exists only while the program is built: one that would
+reach the running program is refused with `NK1231`.
 
 **What cannot be read is printed.** `--comptime` (on `nikaia build` and `nikaia lower`) prints what was
 unrolled, once for the program, for the types actually used, as `--overlaps`,
@@ -284,7 +330,7 @@ The `dsl` keyword embeds **foreign syntax** in a Nikaia file: SQL, HTML, regex, 
 | `meta::parameter(name, type)` | runtime, as a named argument | SQL placeholders — anything the statement should be *reusable* over |
 | `meta::column(name, type)` | build time, declared by the grammar | the statement's **result**: one field per column, so a row is a type |
 
-`meta::column(name, type)` gives a grammar control over the statement's result type. The compiler builds the row type from the declared columns, one typed field per column, as it builds the parameter type from the holes. The `type` of `meta::column` and of `meta::parameter` is a `std::meta::Type`, a type described as data: `I64`, `I32`, `U8`, `U64`, `U32`, `F64`, `Bool`, `Text`, `Bytes`, `Maybe(t)` for `t?`, `List(t)` for `Vec[t]`, `Record(fields)` for a struct the compiler writes, and `Named("Mode")` for a type the program declares, resolved where the block stands (`NK1135` if nothing declares it) ([ADR-323](adr/adr-323.md)). A message about a field of a type the compiler wrote names the block and the grammar that declared it, and `--comptime` prints the type of each block.
+`meta::column(name, type)` gives a grammar control over the statement's result type. The compiler builds the row type from the declared columns, one typed field per column, as it builds the parameter type from the holes. The `type` of `meta::column` and of `meta::parameter` is a `std::meta::Type` (10.3): `Text`, `Maybe(String)` for `String?`, `List(i64)` for `Vec[i64]`, any kind whose parts the grammar can name, `Record(fields)` for a struct the compiler writes, and `Named("Mode")` for a type of the program the grammar's package cannot see, resolved where the block stands (`NK1135` if nothing declares it) ([ADR-323](adr/adr-323.md), [ADR-330](adr/adr-330.md) D6). A type crosses out of the grammar run as its full name. A message about a field of a type the compiler wrote names the block and the grammar that declared it, and `--comptime` prints the type of each block.
 
 **A grammar from a package is named with its package** ([ADR-299](adr/adr-299.md) D20): `dsl sqlite::Sql { … } eod`, as every name from a package is (Part I 9.2), with no short form. A grammar the program declares is named bare: `dsl Json { … } eod`. A block that names a package where a grammar stands is `NK1228`.
 

@@ -4,6 +4,23 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.608] — 2026-10-07
+
+**A type is passed where a function asks for one, and answers its kind** (ADR-330, #121).
+- `fn schema[T](T)` is called `schema(CreateUser)`: a type described without a
+  value of it. `f[T]()` is not decided.
+- A type answers `::kind`, `::fields`, `::variants`, `::doc` and `::name`.
+  `::kind` is a `meta::Type` whose parts are types: `Maybe(A)`, `List(A)`,
+  `Map(K, V)`, `Struct(T)`, `Enum(T)`, `Opaque(T)`. A `std` type is `Opaque`
+  only where `std` keeps its inside its own.
+- A `match` on a kind checks each arm under the kind it names and emits the arm
+  the type takes.
+- `.ty` is the field's type (changes ADR-329 D1); `meta::Type`'s parts are types
+  and it exists only at build time (changes ADR-323 D1); a grammar keeps
+  `Record` and `Named`.
+- New codes `NK1230`-`NK1232`. Open: arrays, tuples, `scalar`, `ref`, `Shared`;
+  full names and aliases.
+
 ## [0.0.607] — 2026-10-07
 
 **`benches/envelope` builds again** (fixes `develop`, red since 0.0.604).

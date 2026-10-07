@@ -185,6 +185,7 @@ implementation.
 | [315](adr-315.md) | Arithmetic and a conversion that may not fit can be asked whether they do: `checked_add`, `_sub`, `_mul`, `_div`, `_rem`, `_neg`, `_abs` and `checked_i32()` … `checked_u64()` answer `T?`, `null` where there is no answer (a division by zero included); no `checked_shl`/`_shr`. | Accepted | yes |
 | [277](adr-277.md) | A lambda is `fn(name) { … }` and takes the arguments it names, and a parameter that is code has the type `fn(A) -> R`, lowered by that type and by whether the body keeps it. | Accepted | yes |
 | [329](adr-329.md) | A reflected field also answers `.ty`, its type as a `meta::Type` (a struct as a `Record` of its fields), and `.doc`, its `///` text: an API description is built from what the program says; a route's facts are its options; annotations are #496's. | Accepted | no |
+| [330](adr-330.md) | A type is passed where a function's parameter list holds one (`schema(CreateUser)`); it answers `::kind`, a `meta::Type` whose parts are types (`List(A)`, `Struct(T)`, `Opaque(T)`), and `::doc`, `::name`; a `match` on a kind checks each arm under the kind it names; `.ty` is the field's type. | Accepted | no |
 | [328](adr-328.md) | Supervision: `supervisor::run` runs until it gives up; children in dependency order; `OneForOne`, `OneForAll`, `RestForOne`; restarts by an exchangeable `Restart` policy with a fixed-size history; a child keeps no changeable state across a restart; `join` on a crashed task throws `task::Crashed`. | Accepted | no |
 | [327](adr-327.md) | A value a crashed task left is never read: a door to it panics, and a `SharedMut::supervised` value is rebuilt. Direction: Nikaia allocates its own memory, every task and shared value from a block that is its budget, sized by a strategy; an owned `Vec` toward Rust is a copy. | Accepted | no |
 | [326](adr-326.md) | `net::serve` accepts connections, a task each, below every protocol; no connection count is configured, an exchangeable `net::Admission` strategy decides beside the hot path; a panic ends only its task, at both settings. Timers: `head_timeout` 10 s, `body_bytes_per_second` 500, keep-alive with `idle_timeout` 75 s, closed early only after a response (D6-D9). | Accepted | no |
@@ -245,6 +246,9 @@ either finds the other. Records replaced as a whole are not here: they are in
 
 | Changed | By | What holds now |
 | :--- | :--- | :--- |
+| [329](adr-329.md) D1 | [330](adr-330.md) D5 | `.ty` is the field's type, not a `meta::Type` |
+| [323](adr-323.md) D1 | [330](adr-330.md) D3 | a `meta::Type`'s parts are types; it exists only at build time |
+| [304](adr-304.md) D6 | [330](adr-330.md) D1 | a shape walk's type may come from the call |
 | [100](adr-100.md) D3 | [251](adr-251.md) D1 | the source hashes live in `nikaia.derived` beside the ledger, not in its header; the ledger is believed while they match |
 | [094](adr-094.md) D2 | [184](adr-184.md) D1 | the assertion that a parameter is a view is spelled `ref T` |
 | [002](adr-002.md) D2 | [177](adr-177.md) D1 | a grammar that runs while the program is built is compiled from the parser it generates; other `comptime` code is evaluated in the compiler's process |
