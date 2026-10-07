@@ -186,8 +186,10 @@ pub(crate) fn unit_without_its_constants(
 /// the value cannot reach a reader of a constant it is computing, and a
 /// program that had such a reader did not build before, so a word shared by
 /// accident drops nothing from a program that built. The value function and
-/// `main` are always kept.
-pub(crate) fn without_readers(units: &mut [Parsed], absent: BTreeSet<String>) {
+/// `main` are always kept, and what went is handed back: a value function
+/// that names it reaches a constant not worked out yet, which is for the
+/// interpreter to answer, not this run.
+pub(crate) fn without_readers(units: &mut [Parsed], absent: BTreeSet<String>) -> BTreeSet<String> {
     let mut gone = absent;
     loop {
         let before = gone.len();
@@ -217,7 +219,7 @@ pub(crate) fn without_readers(units: &mut [Parsed], absent: BTreeSet<String>) {
             gone.extend(dropped);
         }
         if gone.len() == before {
-            return;
+            return gone;
         }
     }
 }
@@ -520,7 +522,29 @@ fn computed(
         .into_iter()
         .filter(|name| !carried.contains(name))
         .collect();
-    without_readers(&mut units, absent);
+    let gone = without_readers(&mut units, absent);
+    // A value that reaches what went - a function reading a constant not worked
+    // out yet - is not this run's: the interpreter answers it from the body's
+    // own file, as it did before anything was left out.
+    if units[here]
+        .program
+        .items
+        .iter()
+        .any(|item| match &item.node {
+            Item::Fn {
+                name: Some(name),
+                body,
+                ..
+            } if units[here].text(*name) == VALUE_FN => {
+                let mut named = BTreeSet::new();
+                nikaia_std::tools::names::names_in_block(body, &units[here].interner, &mut named);
+                named.iter().any(|name| gone.contains(name))
+            }
+            _ => false,
+        })
+    {
+        return Computed::NotHere;
+    }
     // **A dependency's functions are the program's to call** (ADR-321 D13):
     // each package's units are derived on their own, and the program's
     // against `std` and those entries, under the package's name - as the

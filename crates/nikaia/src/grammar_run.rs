@@ -340,7 +340,7 @@ fn driver(parsed: &Parsed, ask: &Ask<'_>) -> Result<String, Wall> {
     // **And without what reads a constant** (#528): a function or a test that
     // names one would name what this program does not declare.
     let constants = crate::comptime_run::constants_of(std::iter::once(parsed).chain(package));
-    crate::comptime_run::without_readers(&mut all, constants);
+    let _ = crate::comptime_run::without_readers(&mut all, constants);
     let beside = all.split_off(1);
     let items = all.pop().expect("the grammar's own file");
     let lowered = crate::emit::emit_program(&items, crate::emit::Build::default())
