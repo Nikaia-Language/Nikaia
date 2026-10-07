@@ -673,7 +673,7 @@ pub fn variant_of(written: ref String) -> VariantContract {
         let mut holds: Vec[FieldContract] = []
         let mut at = 0
         for part in split_args(inside) {
-            holds.push(FieldContract { name: f"{at}", ty: parse(part), public: true })
+            holds.push(FieldContract { name: f"{at}", ty: parse(part), public: true, default: "" })
             at += 1
         }
         return VariantContract { name: named.trim().clone(), holds: holds, positional: true }
@@ -689,7 +689,7 @@ pub fn variant_of(written: ref String) -> VariantContract {
             let colon = find(p, 0, ':')
             if colon >= 0 {
                 let field = slice(p, 0, colon)
-                holds.push(FieldContract { name: field.trim().clone(), ty: parse(slice(p, colon + 1, p.len())), public: true })
+                holds.push(FieldContract { name: field.trim().clone(), ty: parse(slice(p, colon + 1, p.len())), public: true, default: "" })
             }
         }
         return VariantContract { name: named.trim().clone(), holds: holds, positional: false }
@@ -712,10 +712,17 @@ fn field_of(written: ref String) -> FieldContract {
     let c: Vec[char] = field.chars().collect()
     let colon = find(c, 0, ':')
     if colon < 0 {
-        return FieldContract { name: field.clone(), ty: Ty::Unknown, public: public }
+        return FieldContract { name: field.clone(), ty: Ty::Unknown, public: public, default: "" }
     }
     let name = slice(c, 0, colon)
-    return FieldContract { name: name.trim().clone(), ty: parse(slice(c, colon + 1, c.len())), public: public }
+    // `pub size: i64 = 50`: a type never holds `=`, so the first one after
+    // the colon starts the default (ADR-331 D8).
+    let equals = find(c, colon + 1, '=')
+    if equals >= 0 {
+        let default = slice(c, equals + 1, c.len())
+        return FieldContract { name: name.trim().clone(), ty: parse(slice(c, colon + 1, equals)), public: public, default: default.trim().clone() }
+    }
+    return FieldContract { name: name.trim().clone(), ty: parse(slice(c, colon + 1, c.len())), public: public, default: "" }
 }
 
 /// **A signature read back from the compiler's text**: `[T: Trait](a: A, mut

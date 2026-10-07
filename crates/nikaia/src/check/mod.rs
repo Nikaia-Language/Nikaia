@@ -1851,6 +1851,26 @@ pub(crate) fn kept_function_call(parsed: &Parsed, name: Ident, arity: usize) -> 
     (names, call)
 }
 
+/// The fields of a literal's struct it left out that have no default, as
+/// the way out spells them.
+fn left_out_text(missing: &[String]) -> String {
+    missing
+        .iter()
+        .map(|f| format!("`{f}`"))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// A field's default as the checker keeps it (ADR-331 D5): a literal's text,
+/// or a mark that one is there, which is all a literal leaving the field out
+/// asks. The value a computed one has is the ledger's.
+fn default_written(default: &ast::FieldDefault) -> String {
+    match crate::contracts::a_literal(&default.value) {
+        true => nikaia_std::tools::declared::default_text(&default.value),
+        false => "computed".to_string(),
+    }
+}
+
 pub fn argument_shape(expr: &Expr) -> String {
     format!("{expr:?}")
 }
@@ -4003,6 +4023,7 @@ impl<'a> Checker<'a> {
                                         name: other.text(f.name).to_string(),
                                         ty: Ty::from_ast(other, &f.ty),
                                         public: true,
+                                        default: String::new(),
                                     })
                                     .collect();
                                 self.variant_owner.insert(key.clone(), owner.clone());
@@ -4041,6 +4062,7 @@ impl<'a> Checker<'a> {
                         name: other.text(f.name).to_string(),
                         ty: Ty::from_ast(other, &f.ty).parameterise(&parameters),
                         public: f.is_public,
+                        default: f.default.as_ref().map(default_written).unwrap_or_default(),
                     })
                     .collect();
                 let named = other.text(*name).to_string();
@@ -4075,6 +4097,7 @@ impl<'a> Checker<'a> {
                             name: self.parsed.text(f.name).to_string(),
                             ty: self.declared(&f.ty, &f.span).parameterise(&parameters),
                             public: f.is_public,
+                            default: f.default.as_ref().map(default_written).unwrap_or_default(),
                         })
                         .collect();
                     let own = self.parsed.text(*name).to_string();
@@ -4122,6 +4145,7 @@ impl<'a> Checker<'a> {
                                 name: self.parsed.text(f.name).to_string(),
                                 ty: self.declared(&f.ty, &f.span),
                                 public: true,
+                                default: String::new(),
                             })
                             .collect();
                         let key = format!("{own}::{}", self.parsed.text(variant.name));
@@ -4674,6 +4698,11 @@ impl<'a> Checker<'a> {
                     });
                 }
                 Item::Fn { .. } => self.function(&item.node, None),
+                Item::Struct { fields, .. } => {
+                    for field in fields {
+                        self.a_field_default(field);
+                    }
+                }
                 Item::Impl {
                     target,
                     methods,
@@ -7391,13 +7420,88 @@ impl<'a> Checker<'a> {
     /// those, is what the ledger records; a list as a default is not built
     /// yet, and is said to be rather than handed to the language below empty.
     fn a_computed_default(&mut self, option: &ast::ConfigParam) {
-        let span = option.default_span;
-        if crate::contracts::a_literal(&option.default) {
+        let name = self.parsed.text(option.name).to_string();
+        self.computed_default(
+            &name,
+            &option.ty,
+            &option.default,
+            option.default_span,
+            false,
+        );
+    }
+
+    /// **`NK1234`: a struct literal leaves out a field that has no default**
+    /// (ADR-331 D5, Part I 4.1).
+    fn fields_left_out(&mut self, owner: &str, missing: &[String], span: &Span) {
+        let listed = left_out_text(missing);
+        let (one, them, has) = match missing.len() {
+            1 => ("field", "it", "has"),
+            _ => ("fields", "them", "have"),
+        };
+        self.checked.findings.push(Finding {
+            code: "NK1234",
+            severity: Severity::Error,
+            span: *span,
+            message: format!(
+                "This `{owner}` literal leaves out the {one} {listed}, which {has} no default."
+            ),
+            notes: vec![
+                "A literal may leave out only a field declared with a default \
+                 (`size: i64 = 50`)."
+                    .to_string(),
+            ],
+            help: Some(format!(
+                "Give {them} in the literal, or declare a default for {them} in `{owner}`."
+            )),
+            labels: Vec::new(),
+        });
+    }
+
+    /// **A field's default** (ADR-331 D5): a literal is checked against the
+    /// field's type as a literal's value is, and anything else is computed as
+    /// an option's default is, under the same codes.
+    fn a_field_default(&mut self, field: &ast::FieldDef) {
+        let Some(default) = &field.default else {
+            return;
+        };
+        let name = self.parsed.text(field.name).to_string();
+        if !crate::contracts::a_literal(&default.value) {
+            self.computed_default(&name, &field.ty, &default.value, default.span, true);
             return;
         }
-        let name = self.parsed.text(option.name).to_string();
+        let found = self.expr(&default.value, &default.span);
+        let declared = Ty::from_ast(self.parsed, &field.ty);
+        let want = match (&declared, &default.value) {
+            (_, Expr::LitNull) => return,
+            (Ty::Nullable(inner), _) => (**inner).clone(),
+            _ => declared,
+        };
+        // Text written for an owned `String` is one, as an option's default
+        // is (#498): the field gets text of its own.
+        if matches!(&default.value, Expr::LitStr { .. })
+            && matches!(&want, Ty::Named { name, .. } if name == "String")
+        {
+            return;
+        }
+        self.expect(&found, &want, default.span, "const", move |found, want| {
+            format!("`{name}` holds `{want}`, but its default is `{found}`.")
+        });
+    }
+
+    fn computed_default(
+        &mut self,
+        name: &str,
+        ty: &ast::Type,
+        default: &Expr,
+        span: Span,
+        field: bool,
+    ) {
+        if crate::contracts::a_literal(default) {
+            return;
+        }
+        let name = name.to_string();
         let walked_from = self.checked.findings.len();
-        self.expr(&option.default, &span);
+        self.expr(default, &span);
         if self.checked.findings[walked_from..]
             .iter()
             .any(|f| f.severity == Severity::Error)
@@ -7405,11 +7509,11 @@ impl<'a> Checker<'a> {
             return;
         }
         self.computing_default = true;
-        let declared_ty = crate::comptime_run::as_built(Ty::from_ast(self.parsed, &option.ty));
+        let declared_ty = crate::comptime_run::as_built(Ty::from_ast(self.parsed, ty));
         let (value, said) =
-            match self.compiled_build_time_value(&option.default, &declared_ty, &name, &span) {
+            match self.compiled_build_time_value(default, &declared_ty, &name, &span) {
                 Some(outcome) => outcome,
-                None => self.build_time_value(&option.default, &name, &span),
+                None => self.build_time_value(default, &name, &span),
             };
         self.computing_default = false;
         if said {
@@ -7418,7 +7522,7 @@ impl<'a> Checker<'a> {
         // **A list a `Vec` option would own is `NK1167`** (ADR-318 D4, D7):
         // refused for what it is, as a `comptime` is, with the length the
         // build computed in the way out.
-        let declared = Ty::from_ast(self.parsed, &option.ty);
+        let declared = Ty::from_ast(self.parsed, ty);
         // **A view of a list takes one** (D4): `xs: ref Vec[i64] = [4, 5]`
         // crosses as the `&[4, 5]` the parameter is below. Only one it owns
         // is refused.
@@ -7454,14 +7558,28 @@ impl<'a> Checker<'a> {
             span,
             message,
             notes: vec![
-                "An option's default is computed once, where the function is declared, as a \
-                 `comptime` is."
-                    .to_string(),
+                match field {
+                    true => {
+                        "A field's default is computed once, where the struct is declared, \
+                             as a `comptime` is."
+                    }
+                    false => {
+                        "An option's default is computed once, where the function is \
+                              declared, as a `comptime` is."
+                    }
+                }
+                .to_string(),
             ],
-            help: Some(format!(
-                "Give `{name}` a default the build can compute, or make it a `T?` and decide \
-                 in the body."
-            )),
+            help: Some(match field {
+                true => format!(
+                    "Give `{name}` a default the build can compute, or leave the default out \
+                     and give the field in each literal."
+                ),
+                false => format!(
+                    "Give `{name}` a default the build can compute, or make it a `T?` and \
+                     decide in the body."
+                ),
+            }),
             labels: Vec::new(),
         });
     }
@@ -13211,6 +13329,7 @@ impl<'a> Checker<'a> {
                 // D1 restates the literal's rule): `Point { x: 1, x: 2 }` used
                 // to lower, and `rustc` answered about the generated file.
                 let mut seen: BTreeSet<String> = BTreeSet::new();
+                let mut misspelled = false;
                 for init in fields {
                     let field = self.parsed.text(init.name).to_string();
                     if !seen.insert(field.clone()) {
@@ -13380,7 +13499,24 @@ impl<'a> Checker<'a> {
                                 },
                             );
                         }
-                        None => self.no_such_field(&name, &field, declared, span),
+                        None => {
+                            misspelled = true;
+                            self.no_such_field(&name, &field, declared, span)
+                        }
+                    }
+                }
+                // **A field left out takes its default, and one without a
+                // default may not be left out** (ADR-331 D5, `NK1234`).
+                // Not after a field it does not have: that is most likely the
+                // one it misspelled, and said once.
+                if let Some(declared) = declared.as_ref().filter(|_| !misspelled) {
+                    let missing: Vec<String> = declared
+                        .iter()
+                        .filter(|f| f.default.is_empty() && !seen.contains(&f.name))
+                        .map(|f| f.name.clone())
+                        .collect();
+                    if !missing.is_empty() {
+                        self.fields_left_out(&name, &missing, span);
                     }
                 }
                 // **A variant's literal is its `enum`** and not the variant:
@@ -23155,6 +23291,7 @@ impl<'a> Checker<'a> {
                         name: variant.clone(),
                         ty: Ty::named(ty::VARIANT),
                         public: true,
+                        default: String::new(),
                     })
                     .collect(),
             );

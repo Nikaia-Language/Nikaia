@@ -916,6 +916,9 @@ pub struct FieldContract {
     pub name: String,
     pub ty: Ty,
     pub public: bool,
+    /// The default's value as a literal (ADR-331 D5, D8), written after the
+    /// type with ` = `; empty where the field has none.
+    pub default: String,
 }
 
 /// A variant of an `enum` a ledger describes, and what it holds.

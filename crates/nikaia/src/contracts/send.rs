@@ -207,6 +207,7 @@ fn field(name: &str, ty: super::ty::Ty) -> super::FieldContract {
         name: name.to_string(),
         ty,
         public: true,
+        default: String::new(),
     }
 }
 

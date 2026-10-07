@@ -295,6 +295,13 @@ pub struct FieldDef {
     pub ty: Type,
     pub is_public: bool,
     pub span: Span,
+    pub default: Option<FieldDefault>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct FieldDefault {
+    pub value: Expr,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -9164,7 +9171,7 @@ pub fn variant_of(written: &str) -> VariantContract {
         let mut holds: Vec<FieldContract> = vec![];
         let mut at = 0;
         for part in split_args(&inside) {
-            holds.push(FieldContract { name: format!("{}", at), ty: parse(&part), public: true });
+            holds.push(FieldContract { name: format!("{}", at), ty: parse(&part), public: true, default: String::from("") });
             at += 1;
         }
         return VariantContract { name: named.trim().to_owned(), holds, positional: true };
@@ -9180,7 +9187,7 @@ pub fn variant_of(written: &str) -> VariantContract {
             let colon = find(&p, 0, ':');
             if colon >= 0 {
                 let field = __keep_frame.put(slice(&p, 0, colon));
-                holds.push(FieldContract { name: field.trim().to_owned(), ty: parse(&slice(&p, colon + 1, p.len() as i64)), public: true });
+                holds.push(FieldContract { name: field.trim().to_owned(), ty: parse(&slice(&p, colon + 1, p.len() as i64)), public: true, default: String::from("") });
             }
         }
         return VariantContract { name: named.trim().to_owned(), holds, positional: false };
@@ -9200,9 +9207,14 @@ fn field_of(written: &str) -> FieldContract {
     }
     let c: Vec<char> = nikaia_std::list::chars(field.chars());
     let colon = find(&c, 0, ':');
-    if colon < 0 { return FieldContract { name: field.to_owned(), ty: Ty::Unknown, public }; }
+    if colon < 0 { return FieldContract { name: field.to_owned(), ty: Ty::Unknown, public, default: String::from("") }; }
     let name = slice(&c, 0, colon);
-    FieldContract { name: name.trim().to_owned(), ty: parse(&slice(&c, colon + 1, c.len() as i64)), public }
+    let equals = find(&c, colon + 1, '=');
+    if equals >= 0 {
+        let default = slice(&c, equals + 1, c.len() as i64);
+        return FieldContract { name: name.trim().to_owned(), ty: parse(&slice(&c, colon + 1, equals)), public, default: default.trim().to_owned() };
+    }
+    FieldContract { name: name.trim().to_owned(), ty: parse(&slice(&c, colon + 1, c.len() as i64)), public, default: String::from("") }
 }
 
 pub fn signature_of(written: &str) -> Result<Signature, nikaia_std::error::Thrown<Refused>> {
@@ -10128,7 +10140,8 @@ fn type_text(contract: &TypeContract) -> String {
         let mut fields: Vec<String> = vec![];
         for field in contract.fields.iter() {
             let word = if field.public { "pub " } else { "" };
-            fields.push(format!("{}{}: {}", word, field.name, field.ty.text()));
+            let default = if !field.default.is_empty() { format!(" = {}", field.default) } else { String::from("") };
+            fields.push(ledger_escaped(&format!("{}{}: {}{}", word, field.name, field.ty.text(), default)));
         }
         out.push_str(&format!("fields = [{}]\n", quoted_all(&fields)));
     }
@@ -20623,6 +20636,7 @@ pub struct FieldContract {
     pub name: String,
     pub ty: Ty,
     pub public: bool,
+    pub default: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -22618,7 +22632,7 @@ pub mod assets {
 }
 pub mod ast {
     #[allow(unused_imports)]
-    pub use super::{Span, Spanned, Program, Item, Block, Stmt, Expr, FPart, Type, ExternMember, OpaqueType, Code, EnumVariant, VariantFields, SelectArm, MatchArm, MatchPattern, GenericParam, TraitMethod, FnArg, ConfigArg, ConfigParam, FieldDef, AsmBinding, FieldInit, UnaryOp, BinaryOp, GrammarDef, GrammarRule, FrameAttr, GrammarAlt, Pattern, Repeat, FoldSpec, Receiver, FnParams, ConfigZone, LONGEST_SOURCE, offset};
+    pub use super::{Span, Spanned, Program, Item, Block, Stmt, Expr, FPart, Type, ExternMember, OpaqueType, Code, EnumVariant, VariantFields, SelectArm, MatchArm, MatchPattern, GenericParam, TraitMethod, FnArg, ConfigArg, ConfigParam, FieldDef, FieldDefault, AsmBinding, FieldInit, UnaryOp, BinaryOp, GrammarDef, GrammarRule, FrameAttr, GrammarAlt, Pattern, Repeat, FoldSpec, Receiver, FnParams, ConfigZone, LONGEST_SOURCE, offset};
 }
 pub mod boundaries {
     #[allow(unused_imports)]

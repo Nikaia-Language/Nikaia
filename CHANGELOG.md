@@ -4,6 +4,23 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.629] — 2026-10-07
+
+**A struct's field may have a default** (#496 step 1, ADR-331 D5, D8). The
+default is written after the type: `size: i64 = 50`. A literal that leaves the
+field out takes the value:
+- the value is a literal, or computed once at build time as an option's
+  default is (ADR-318);
+- a literal that leaves out a field without a default is `NK1234`, said once
+  beside a misspelled field;
+- a default of the wrong type is `NK1166`;
+- a variant's field takes no default, and the parse says so;
+- the ledger writes the value after the field's type (`pub size: i64 = 50`)
+  and reads it back, so a dependency that adds a defaulted field breaks no
+  consumer's literal.
+
+Part I 4.1's `Page` example now lowers and compiles (`tests/specification`).
+
 ## [0.0.628] — 2026-10-07
 
 **An edited `nikaia.proofs` is a new build** (#448): the build cache key

@@ -281,7 +281,10 @@ fn type_text(contract: ref TypeContract) -> String {
         let mut fields: Vec[String] = []
         for field in contract.fields {
             let word = if field.public { "pub " } else { "" }
-            fields.push(f"{word}{field.name}: {field.ty.text()}")
+            // `= value` after the type, where the field has a default
+            // (ADR-331 D8): escaped, as text in a signature is.
+            let default = if field.default.len() > 0 { f" = {field.default}" } else { "" }
+            fields.push(ledger_escaped(f"{word}{field.name}: {field.ty.text()}{default}"))
         }
         out.push_str(f"fields = [{quoted_all(fields)}]\n")
     }

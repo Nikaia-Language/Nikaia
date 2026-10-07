@@ -8954,6 +8954,42 @@ impl<'p> Emitter<'p> {
                         }
                     }
                 }
+                // **A field left out takes its default** (ADR-331 D5): the
+                // value the ledger recorded, written as an option's is.
+                let written: Vec<&str> = fields.iter().map(|f| self.text(f.name)).collect();
+                let mut after_one = !fields.is_empty();
+                for (field, default, ty) in self.field_defaults(&owner) {
+                    if written.contains(&field.as_str()) {
+                        continue;
+                    }
+                    if after_one {
+                        out.push(", ");
+                    }
+                    after_one = true;
+                    let value = match &ty {
+                        crate::contracts::ty::Ty::Named {
+                            name, view: false, ..
+                        } if name == "String" && default.starts_with('"') => {
+                            format!("String::from({default})")
+                        }
+                        crate::contracts::ty::Ty::Nullable(inner) if default != "None" => {
+                            match &**inner {
+                                crate::contracts::ty::Ty::Named {
+                                    name, view: false, ..
+                                } if name == "String" && default.starts_with('"') => {
+                                    format!("Some(String::from({default}))")
+                                }
+                                _ => format!("Some({default})"),
+                            }
+                        }
+                        _ => default.clone(),
+                    };
+                    let value = match self.is_boxed_field(&owner, &field) {
+                        true => format!("Box::new({value})"),
+                        false => value,
+                    };
+                    out.push(&format!("{}: {value}", escaped(&field)));
+                }
                 out.push(" }");
                 if cleaned {
                     out.push(")");
@@ -11994,6 +12030,28 @@ impl<'p> Emitter<'p> {
     /// resolution here uses. `None` where the callee has none, and where the
     /// callee cannot be resolved at all: an unresolvable call has no options to
     /// fill in, and the type checker is what says so in Nikaia's words.
+    /// **The fields of `owner` that have a default** (ADR-331 D5): name,
+    /// value and type, from this package's ledger or a dependency's.
+    fn field_defaults(&self, owner: &str) -> Vec<(String, String, crate::contracts::ty::Ty)> {
+        let suffix = format!("::{owner}");
+        let contract = self.own_contracts.types.get(owner).or_else(|| {
+            self.library
+                .types
+                .iter()
+                .find(|(key, _)| *key == owner || key.ends_with(&suffix))
+                .map(|(_, contract)| contract)
+        });
+        contract
+            .map(|c| {
+                c.fields
+                    .iter()
+                    .filter(|f| !f.default.is_empty())
+                    .map(|f| (f.name.clone(), f.default.clone(), f.ty.clone()))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
     fn options_of(&self, func: &Expr) -> Option<&[crate::contracts::ConfigContract]> {
         let name = match func {
             Expr::Variable(name) => self.text(*name).to_string(),

@@ -517,6 +517,7 @@ impl LedgerOps for Ledger {
                                             name: at.to_string(),
                                             ty: ty::Ty::from_ast(parsed, ty),
                                             public: true,
+                                            default: String::new(),
                                         })
                                         .collect(),
                                     crate::ast::VariantFields::Named(fields) => fields
@@ -528,6 +529,7 @@ impl LedgerOps for Ledger {
                                             // so its fields are as reachable as the
                                             // `enum` is (Part I 9.2).
                                             public: true,
+                                            default: String::new(),
                                         })
                                         .collect(),
                                 },
@@ -579,12 +581,35 @@ impl LedgerOps for Ledger {
                             .filter(|f| holds_view(&f.ty) || names_borrowing(&f.ty, &borrowing))
                             .map(|f| parsed.text(f.name).to_string())
                             .collect();
+                        let key = parsed.text(*name).to_string();
                         let field_types = fields
                             .iter()
-                            .map(|f| FieldContract {
+                            .enumerate()
+                            .map(|(at, f)| FieldContract {
                                 name: parsed.text(f.name).to_string(),
                                 ty: ty::Ty::from_ast(parsed, &f.ty).parameterise(&parameters),
                                 public: f.is_public,
+                                // A literal is its own text; anything else is
+                                // computed with the options' defaults below
+                                // (ADR-331 D5, ADR-318 D1-D3).
+                                default: match &f.default {
+                                    Some(d) if a_literal(&d.value) => {
+                                        nikaia_std::tools::declared::default_text(&d.value)
+                                    }
+                                    Some(d) => {
+                                        defaults.push(Computed {
+                                            key: key.clone(),
+                                            at,
+                                            parsed,
+                                            default: &d.value,
+                                            option: parsed.text(f.name).to_string(),
+                                            ty: &f.ty,
+                                            field: true,
+                                        });
+                                        String::new()
+                                    }
+                                    None => String::new(),
+                                },
                             })
                             .collect();
                         ledger.types.insert(
@@ -1117,6 +1142,26 @@ struct Computed<'a> {
     /// The option's name and declared type, which a compiled run needs.
     option: String,
     ty: &'a crate::ast::Type,
+    /// A struct's field rather than a function's option (ADR-331 D5): `key`
+    /// is the type and `at` the field's place.
+    field: bool,
+}
+
+/// Where a computed default's text goes in the ledger.
+fn default_slot<'l>(ledger: &'l mut Ledger, computed: &Computed<'_>) -> Option<&'l mut String> {
+    match computed.field {
+        true => ledger
+            .types
+            .get_mut(&computed.key)
+            .and_then(|t| t.fields.get_mut(computed.at))
+            .map(|f| &mut f.default),
+        false => ledger
+            .functions
+            .get_mut(&computed.key)
+            .and_then(|c| c.signature.as_mut())
+            .and_then(|s| s.config.get_mut(computed.at))
+            .map(|option| &mut option.default),
+    }
 }
 
 /// The options of `item` whose default is an expression to evaluate.
@@ -1138,6 +1183,7 @@ fn computed_defaults<'a>(
                 default: &option.default,
                 option: parsed.text(option.name).to_string(),
                 ty: &option.ty,
+                field: false,
             });
         }
     }
@@ -1187,14 +1233,11 @@ fn evaluate_defaults(
             computed.parsed.package.as_deref(),
             &computed.key,
             computed.at,
-        ) {
-            if let Some(option) = ledger
-                .functions
-                .get_mut(&computed.key)
-                .and_then(|c| c.signature.as_mut())
-                .and_then(|s| s.config.get_mut(computed.at))
-            {
-                option.default = text;
+        )
+        .filter(|_| !computed.field)
+        {
+            if let Some(slot) = default_slot(ledger, computed) {
+                *slot = text;
             }
             continue;
         }
@@ -1237,13 +1280,8 @@ fn evaluate_defaults(
         let Some(text) = value.and_then(|v| literal_of(&v)) else {
             continue;
         };
-        if let Some(option) = ledger
-            .functions
-            .get_mut(&computed.key)
-            .and_then(|c| c.signature.as_mut())
-            .and_then(|s| s.config.get_mut(computed.at))
-        {
-            option.default = text;
+        if let Some(slot) = default_slot(ledger, computed) {
+            *slot = text;
         }
     }
 }

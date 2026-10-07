@@ -2132,7 +2132,7 @@ grammar! {
             name:NAME "(" types:type_refs ")" -> {
                 EnumVariant { name, fields: VariantFields::Tuple(types) }
             }
-          | name:NAME "{" fields:field_defs "}" -> {
+          | name:NAME "{" fields:variant_field_defs "}" -> {
                 EnumVariant { name, fields: VariantFields::Named(fields) }
             }
           | name:NAME -> {
@@ -2155,8 +2155,34 @@ grammar! {
         // field, and the nearest span the walk around it has is a statement's
         // (ADR-298 D4).
         rule field_def -> FieldDef @=
-            vis:kw_pub? name:NAME ":" ty:type_ref -> {
-                FieldDef { name, ty, is_public: vis.is_some(), span: Span::from(_span) }
+            vis:kw_pub? name:NAME ":" ty:type_ref default:field_default? -> {
+                FieldDef { name, ty, is_public: vis.is_some(), span: Span::from(_span), default }
+            }
+
+        // `size: i64 = 50` (ADR-331 D5): the default and where it is written,
+        // for the reason an option's has its span (ADR-318 D7).
+        rule field_default -> FieldDefault =
+            "=" default:option_default -> { FieldDefault { value: default.0, span: default.1 } }
+
+        // A variant's fields take no default: a variant is built whole.
+        rule variant_field_defs -> Vec<FieldDef> =
+            head:variant_field_def tail:variant_field_def_tail* ","? -> {
+                let mut fields = vec![head];
+                fields.extend(tail);
+                fields
+            }
+
+        rule variant_field_def_tail -> FieldDef = "," f:variant_field_def -> { f }
+
+        rule variant_field_def -> FieldDef @=
+            name:NAME ":" ty:type_ref "=" fail(
+                "A variant's field has no default; only a struct's field may have one \
+                 (Part I 4.1). Remove the `= …`."
+            ) -> {
+                FieldDef { name, ty, is_public: false, span: Span::from(_span), default: None }
+            }
+          | vis:kw_pub? name:NAME ":" ty:type_ref -> {
+                FieldDef { name, ty, is_public: vis.is_some(), span: Span::from(_span), default: None }
             }
 
         // --- Argumente & Typen ---

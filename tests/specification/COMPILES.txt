@@ -15,6 +15,7 @@
 10-nikaia-light.md #29 compiles
 10-nikaia-light.md #30 compiles
 10-nikaia-light.md #33 compiles
+10-nikaia-light.md #34 compiles
 10-nikaia-light.md #37 refused
 10-nikaia-light.md #38 refused
 10-nikaia-light.md #39 compiles
