@@ -16777,7 +16777,7 @@ pub struct Surface {
 
 pub fn empty() -> Surface { Surface { functions: collections::BTreeMap::new(), offers: collections::BTreeSet::new(), fields: collections::BTreeMap::new(), types: collections::BTreeSet::new(), derives: collections::BTreeMap::new(), modules: collections::BTreeMap::new(), reachable: collections::BTreeMap::new(), exports: vec![], promises: vec![] } }
 
-pub fn read_items(surface: &mut Surface, relative: &str, items: &[RustItem]) {
+pub fn read_items(surface: &mut Surface, relative: &str, items: &[RustItem<'_>]) {
     let found = module_of(relative);
     if found.is_none() { return; }
     let at = nikaia_std::index::or(found, || "".into());
@@ -16856,7 +16856,7 @@ pub fn candidates(export: &Export, name: &str) -> Vec<String> {
     out
 }
 
-pub fn imported(items: &[RustItem], out: &mut collections::BTreeMap<String, String>) {
+pub fn imported(items: &[RustItem<'_>], out: &mut collections::BTreeMap<String, String>) {
     for item in items.iter() {
         match item {
             RustItem::Used(text) => { let text = *text; imports_of(text, out) },
@@ -16878,7 +16878,7 @@ fn imports_of(text: &str, out: &mut collections::BTreeMap<String, String>) {
     }
 }
 
-fn walk(surface: &mut Surface, items: &[RustItem], at: &str, imports: &collections::BTreeMap<String, String>) {
+fn walk(surface: &mut Surface, items: &[RustItem<'_>], at: &str, imports: &collections::BTreeMap<String, String>) {
     for item in items.iter() {
         match item {
             RustItem::Fun(f) => {
