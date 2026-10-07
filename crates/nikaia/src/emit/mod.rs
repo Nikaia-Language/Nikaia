@@ -1502,6 +1502,8 @@ struct Emitter<'p> {
     /// `async` closure rather than a boxed future
     /// (`check::Checked::run_lambdas`).
     run_lambdas: std::collections::BTreeSet<(usize, usize)>,
+    /// `check::Checked::sync_functions_run_async` (#516).
+    sync_functions_run_async: std::collections::BTreeMap<(usize, usize), usize>,
     /// **The functions whose body is a settle point's**, and whether the settle
     /// point can fail each ([ADR-297](../../docs/specification/adr/adr-297.md)
     /// D2, D3).
@@ -2784,6 +2786,7 @@ impl<'p> Emitter<'p> {
             witnessed_sets: propagation.witnessed_sets,
             future_lambdas: propagation.future_lambdas,
             run_lambdas: propagation.run_lambdas,
+            sync_functions_run_async: propagation.sync_functions_run_async,
             settle_fns: propagation.settle_fns,
             settle_lets: propagation.settle_lets,
             cleaned_types: own_contracts
@@ -13703,6 +13706,32 @@ impl<'p> Emitter<'p> {
                             {
                                 out.push("*");
                                 self.postfix_base(out, arg, depth, inside)?
+                            } else if let Some(arity) = self
+                                .sync_functions_run_async
+                                .get(&(flow.statement, i))
+                                .copied()
+                                .filter(|_| {
+                                    let key = match arg {
+                                        Expr::Variable(name) => self.text(*name).to_string(),
+                                        Expr::Path(parts) => parts
+                                            .iter()
+                                            .map(|p| self.text(*p))
+                                            .collect::<Vec<_>>()
+                                            .join("::"),
+                                        _ => return false,
+                                    };
+                                    !self.pauses(&key) && self.library_pauses(&key).is_none()
+                                })
+                            {
+                                // **A function that never pauses, run where a
+                                // pause may happen** (#516): an `async` closure
+                                // around the call, which is the `AsyncFn` the
+                                // parameter is.
+                                let names: Vec<String> =
+                                    (0..arity).map(|n| format!("__nikaia_a{n}")).collect();
+                                out.push(&format!("async |{}| ", names.join(", ")));
+                                self.expr(out, arg, depth, inside)?;
+                                out.push(&format!("({})", names.join(", ")));
                             } else {
                                 self.expr(out, arg, depth, inside)?
                             }

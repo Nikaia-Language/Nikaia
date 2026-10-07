@@ -680,6 +680,12 @@ pub struct Checked {
     /// *the same analysis that decides whether a value is a view or kept, asked
     /// of a parameter that is code*. Nothing new is derived for it.
     pub run_lambdas: BTreeSet<(usize, usize)>,
+    /// **A declared function named where a parameter that may pause runs it**
+    /// (#516), with its number of parameters: `apply(double, 5)` for `f:
+    /// fn(i64) -> i64`. The parameter is an `AsyncFn`, which a function that
+    /// never pauses is not, so the emitter - which knows which functions pause
+    /// - hands such a one over inside an `async` closure.
+    pub sync_functions_run_async: BTreeMap<(usize, usize), usize>,
     /// **The lambdas that pause, handed to a `std` entry**, by the byte the
     /// statement starts at and the lambda's shape, with what the call is
     /// lowered to ([ADR-233](../../docs/specification/adr/adr-233.md) D1, D2).
@@ -2191,6 +2197,8 @@ pub struct Propagation {
     pub future_lambdas: BTreeSet<(usize, usize)>,
     /// [`Checked::run_lambdas`].
     pub run_lambdas: BTreeSet<(usize, usize)>,
+    /// [`Checked::sync_functions_run_async`].
+    pub sync_functions_run_async: BTreeMap<(usize, usize), usize>,
     /// [`Checked::pausing_lambdas`].
     pub pausing_lambdas: BTreeMap<(usize, String), PausingEntry>,
     /// [`Checked::narrowing_casts`].
@@ -2505,6 +2513,7 @@ fn propagation(
         witnessed_sets: checked.witnessed_sets,
         future_lambdas: checked.future_lambdas,
         run_lambdas: checked.run_lambdas,
+        sync_functions_run_async: checked.sync_functions_run_async,
         pausing_lambdas: checked.pausing_lambdas,
         narrowing: checked.narrowing_casts,
         nullable: checked.nullable_sites,
@@ -7773,6 +7782,29 @@ impl<'a> Checker<'a> {
         });
     }
 
+    /// **`NK1210` for `.collect()` on a list** (#517): a list's `map` and
+    /// `filter` hand back a list (Part I 5.3), so the `collect()` a reader of
+    /// another language writes after them has nothing to collect, and reached
+    /// `rustc` as *no method named `collect` found for `Vec`*.
+    fn a_list_collected(&mut self, name: &str, method: &str, args: &[Expr], span: &Span) {
+        if name != "Vec" || method != "collect" || !args.is_empty() {
+            return;
+        }
+        self.checked.findings.push(Finding {
+            severity: Severity::Error,
+            span: *span,
+            code: "NK1210",
+            message: "A list has no method called `collect`.".to_string(),
+            notes: vec![
+                "`map` and `filter` on a list hand back a list already; `collect` makes a \
+                 list of a sequence, such as `keys()` or `io::lines()`."
+                    .to_string(),
+            ],
+            help: Some("Leave out `.collect()`.".to_string()),
+            labels: Vec::new(),
+        });
+    }
+
     /// **`NK1131`: a field of a borrowed subject, handed out by value.**
     ///
     /// ```nika
@@ -9166,6 +9198,7 @@ impl<'a> Checker<'a> {
             // describe it and saying so now is the whole of `NK1126`.
             self.nothing_says_what_a_parameter_can_do(name, Reached::Method(entry), span);
             self.no_number_has_this_method(name, entry, span);
+            self.a_list_collected(name, entry, args, span);
             args.iter().for_each(|a| {
                 self.expr(a, span);
             });
@@ -23764,6 +23797,21 @@ impl<'a> Checker<'a> {
                         self.a_field_of_a_borrowed_subject(arg, span, "passed");
                     }
                     let found = self.expr(arg, span);
+                    // **A declared function, run by a parameter that may pause**
+                    // (#516): the emitter wraps the one that never does.
+                    let named = matches!(arg, Expr::Path(_))
+                        || matches!(arg, Expr::Variable(name)
+                            if self.binding(self.parsed.text(*name)).is_none());
+                    if declared_here
+                        && named
+                        && self.runs_the_parameter(callee, at)
+                        && matches!(expected.get(at), Some(Ty::Fn { is_sync: false, .. }))
+                        && let Ty::Fn { params, .. } = &found
+                    {
+                        self.checked
+                            .sync_functions_run_async
+                            .insert((span.at(), at), params.len());
+                    }
                     // **A kept value handed to a parameter that only runs
                     // it** is lent as the closure it holds.
                     if declared_here
@@ -25311,10 +25359,7 @@ impl<'a> Checker<'a> {
         Some(Ty::Fn {
             params: signature.params.iter().map(|(_, ty)| ty.clone()).collect(),
             result: Box::new(signature.result.clone()),
-            is_sync: matches!(
-                contract.sync_claim,
-                crate::contracts::Sync::Inferred | crate::contracts::Sync::Asserted
-            ),
+            is_sync: contract.sync_claim.is_sync(),
             can_throw: !contract.fails_with.is_empty(),
         })
     }

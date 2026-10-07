@@ -4,6 +4,16 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.616] — 2026-10-07
+
+**A parameter that may pause runs a declared function of either kind, and a
+list is not collected** (#516, #517).
+- `apply(slow, 5)` and `apply(double, 5)` for `f: fn(i64) -> i64` both run: a
+  function that never pauses is handed over inside an `async` closure, which
+  is the `AsyncFn` the parameter is. Both reached `rustc` before.
+- `[1, 2, 3].map(double).collect()` is `NK1210`, with the help to leave out
+  `.collect()`: a list's `map` and `filter` hand back a list already.
+
 ## [0.0.615] — 2026-10-07
 
 **A function named as a value has its declaration's type** (#502, #507 steps 2 and 4).

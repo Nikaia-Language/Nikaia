@@ -93,3 +93,49 @@ fn a_tuple_position_it_does_not_have_is_refused() {
             .contains("`.0` to `.1`")
     );
 }
+
+/// **`.collect()` after a list's `map` is `NK1210`** (#517): the `map` is a
+/// list already, and the call reached `rustc`.
+#[test]
+fn a_list_is_not_collected() {
+    let found = findings(
+        "fn double(n: i64) -> i64 sync { return n * 2 }\n\
+         fn main() {\n    let ys = [1, 2, 3].map(double).collect()\n    println(f\"{ys.len()}\")\n}\n",
+    );
+    let refused = found
+        .iter()
+        .find(|f| f.code == "NK1210")
+        .unwrap_or_else(|| panic!("{found:#?}"));
+    assert_eq!(refused.help.as_deref(), Some("Leave out `.collect()`."));
+}
+
+/// **A parameter that may pause runs a declared function either way** (#516):
+/// one that pauses (`slow`) and one that never does (`double`), which the
+/// lowering hands over inside an `async` closure.
+#[test]
+fn a_parameter_that_may_pause_runs_either_kind_of_function() {
+    let dir = common::scratch_dir("function-values-pause");
+    std::fs::write(
+        dir.join("either.nika"),
+        "use std::time\n\
+         \n\
+         fn slow(n: i64) -> i64 {\n    time::sleep(1.millis())\n    return n + 1\n}\n\
+         fn double(n: i64) -> i64 { return n * 2 }\n\
+         fn apply(f: fn(i64) -> i64, x: i64) -> i64 { return f(x) }\n\
+         fn main() {\n    println(f\"{apply(slow, 5)} {apply(double, 5)}\")\n}\n",
+    )
+    .expect("write the source");
+    let ran = Command::new(env!("CARGO_BIN_EXE_nikaia"))
+        .current_dir(&dir)
+        .args(["run", "--no-cache", "either.nika"])
+        .env_remove("CARGO_TARGET_DIR")
+        .output()
+        .expect("the nikaia binary runs");
+    std::fs::remove_dir_all(&dir).ok();
+    assert!(
+        ran.status.success(),
+        "{}",
+        String::from_utf8_lossy(&ran.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&ran.stdout).trim(), "6 10");
+}
