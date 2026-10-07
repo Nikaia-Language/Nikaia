@@ -4,6 +4,32 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.631] — 2026-10-07
+
+**A field's attributes and its default are read while the program is built**,
+and they cross into other packages (#496 steps 4-5, ADR-331 D5, D6, D8).
+- In a walk over `T::fields`, `field.attribute(X)` is the attribute's value on
+  that turn: an `X?`, `null` where the field has none.
+  `field.attributes(X)` is the list in written order, and `field.default` is
+  the default as a `T?`.
+- Reading a struct that is no attribute is `NK1235`. `NK1180`'s help lists
+  the five members.
+- The ledger writes a struct's mark (`attribute = "field, struct;
+  repeatable"`) and each field's attributes as the values they came to
+  (`field_attributes = ["created_at: Name { value: \"createdAt\", case:
+  Case::Snake }"]`).
+- A consumer reads both under its own names (`lib::Name`), the way a
+  dependency's option defaults are read. A dependency's field defaults are
+  qualified the same way.
+- An attribute's argument is a literal or a variant for now. A computed one is
+  `NK1127`, said rather than dropped.
+- **Fixed:** a walk over a dependency's type (`describe(lib::User { … })`)
+  named its copy `describe__lib::User`, which `rustc` refused. It is
+  `describe__lib__User` now.
+
+**Not built yet:** `T::attribute(X)` and a variant's `.attribute(X)`, and
+attributes of types and variants in the ledger.
+
 ## [0.0.630] — 2026-10-07
 
 **Attributes are written and checked** (#496 steps 2-3, ADR-331 D1-D4, Part

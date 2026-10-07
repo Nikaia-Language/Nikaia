@@ -8282,6 +8282,43 @@ impl<'p> Emitter<'p> {
                     out.push(&format!(", {on}::{} {{ .. }})", escaped(&variant)));
                     return Ok(());
                 }
+                // **`field.attribute(X)` is the value the attribute came to**
+                // (ADR-331 D6): a literal per turn, `Some(…)` or `None`;
+                // `.attributes(X)` the list of them in written order.
+                for wanted in ["attribute", "attributes"] {
+                    if let Some(field) = self.reflected(receiver, *method, wanted)
+                        && let Some((_, on)) = self.specialising.borrow().clone()
+                    {
+                        let asked = match args.first() {
+                            Some(Expr::Variable(name)) => self.text(*name).to_string(),
+                            Some(Expr::Path(segments)) => segments
+                                .iter()
+                                .map(|s| self.text(*s))
+                                .collect::<Vec<_>>()
+                                .join("::"),
+                            _ => String::new(),
+                        };
+                        let asked = self.parsed.unaliased(&asked);
+                        let values: Vec<String> = self
+                            .field_contract(&on, &field)
+                            .map(|f| f.attributes)
+                            .unwrap_or_default()
+                            .iter()
+                            .filter(|text| text.split(" { ").next() == Some(asked.as_str()))
+                            .map(|text| self.attribute_in_rust(text))
+                            .collect();
+                        // Typed where it is empty: nothing else on the line
+                        // says what it would hold.
+                        let written = match (wanted, values.is_empty()) {
+                            ("attribute", false) => format!("Some({})", values[0]),
+                            ("attribute", true) => format!("None::<{asked}>"),
+                            (_, false) => format!("vec![{}]", values.join(", ")),
+                            (_, true) => format!("Vec::<{asked}>::new()"),
+                        };
+                        out.push(&written);
+                        return Ok(());
+                    }
+                }
                 if let Some(field) = self.reflected(receiver, *method, "of")
                     && let Some(value) = args.first()
                 {
@@ -8594,6 +8631,21 @@ impl<'p> Emitter<'p> {
                 // literal, because the turn this copy stands at is known.
                 if let Some(field) = self.reflected(base, *name, "name") {
                     out.push(&format!("\"{}\"", field));
+                    return Ok(());
+                }
+                // **`field.default` is its default as a `T?`** (ADR-331 D5).
+                if let Some(field) = self.reflected(base, *name, "default")
+                    && let Some((_, on)) = self.specialising.borrow().clone()
+                {
+                    let written = match self.field_contract(&on, &field) {
+                        Some(f) if !f.default.is_empty() => held_literal(
+                            &f.default,
+                            &crate::contracts::ty::Ty::Nullable(Box::new(f.ty)),
+                        ),
+                        Some(f) => format!("None::<{}>", plain_rust_spelling(&f.ty)),
+                        None => "None".to_string(),
+                    };
+                    out.push(&written);
                     return Ok(());
                 }
                 // **A boxed field is read through its box**
@@ -8966,24 +9018,7 @@ impl<'p> Emitter<'p> {
                         out.push(", ");
                     }
                     after_one = true;
-                    let value = match &ty {
-                        crate::contracts::ty::Ty::Named {
-                            name, view: false, ..
-                        } if name == "String" && default.starts_with('"') => {
-                            format!("String::from({default})")
-                        }
-                        crate::contracts::ty::Ty::Nullable(inner) if default != "None" => {
-                            match &**inner {
-                                crate::contracts::ty::Ty::Named {
-                                    name, view: false, ..
-                                } if name == "String" && default.starts_with('"') => {
-                                    format!("Some(String::from({default}))")
-                                }
-                                _ => format!("Some({default})"),
-                            }
-                        }
-                        _ => default.clone(),
-                    };
+                    let value = held_literal(&default, &ty);
                     let value = match self.is_boxed_field(&owner, &field) {
                         true => format!("Box::new({value})"),
                         false => value,
@@ -12030,6 +12065,48 @@ impl<'p> Emitter<'p> {
     /// resolution here uses. `None` where the callee has none, and where the
     /// callee cannot be resolved at all: an unresolvable call has no options to
     /// fill in, and the type checker is what says so in Nikaia's words.
+    /// **A reflected field's contract**, from this package's ledger or a
+    /// dependency's: what `.attribute(X)` and `.default` read (ADR-331 D5-D6).
+    fn field_contract(&self, owner: &str, field: &str) -> Option<crate::contracts::FieldContract> {
+        let suffix = format!("::{owner}");
+        self.own_contracts
+            .types
+            .get(owner)
+            .or_else(|| {
+                self.library
+                    .types
+                    .iter()
+                    .find(|(key, _)| *key == owner || key.ends_with(&suffix))
+                    .map(|(_, contract)| contract)
+            })?
+            .fields
+            .iter()
+            .find(|f| f.name == field)
+            .cloned()
+    }
+
+    /// **An attribute's value in the language below** (ADR-331 D6):
+    /// `Name { value: "createdAt", case: Case::Camel }` with each field
+    /// written as its type holds it.
+    fn attribute_in_rust(&self, written: &str) -> String {
+        let (name, inside) = written
+            .split_once(" { ")
+            .map(|(name, rest)| (name, rest.strip_suffix(" }").unwrap_or(rest)))
+            .unwrap_or((written, ""));
+        let fields: Vec<String> = top_level_parts(inside)
+            .into_iter()
+            .filter_map(|part| {
+                let (field, value) = part.split_once(": ")?;
+                let ty = self
+                    .field_contract(name, field)
+                    .map(|f| f.ty)
+                    .unwrap_or(crate::contracts::ty::Ty::Unknown);
+                Some(format!("{}: {}", escaped(field), held_literal(value, &ty)))
+            })
+            .collect();
+        format!("{name} {{ {} }}", fields.join(", "))
+    }
+
     /// **The fields of `owner` that have a default** (ADR-331 D5): name,
     /// value and type, from this package's ledger or a dependency's.
     fn field_defaults(&self, owner: &str) -> Vec<(String, String, crate::contracts::ty::Ty)> {
@@ -15675,5 +15752,90 @@ pub(crate) fn dsl_name(parsed: &Parsed, package: Option<Symbol>, target: Symbol)
     match package {
         Some(package) => format!("{}::{}", parsed.text(package), parsed.text(target)),
         None => parsed.text(target).to_string(),
+    }
+}
+
+/// **A literal as a field of `ty` holds it** (ADR-331 D5-D6, ADR-318 D4):
+/// text for an owned `String` is one, and a value for a `T?` is wrapped.
+fn held_literal(literal: &str, ty: &crate::contracts::ty::Ty) -> String {
+    use crate::contracts::ty::Ty;
+    let owned_text =
+        |ty: &Ty| matches!(ty, Ty::Named { name, view: false, .. } if name == "String");
+    match ty {
+        _ if owned_text(ty) && literal.starts_with('"') => format!("String::from({literal})"),
+        Ty::Nullable(inner) if literal != "None" => {
+            match owned_text(inner) && literal.starts_with('"') {
+                true => format!("Some(String::from({literal}))"),
+                false => format!("Some({literal})"),
+            }
+        }
+        _ => literal.to_string(),
+    }
+}
+
+/// The parts of `a: 1, b: "x, y"` between its top-level commas: none inside
+/// text, braces or parentheses.
+fn top_level_parts(inside: &str) -> Vec<String> {
+    let (mut parts, mut current, mut depth, mut in_text, mut escaped_next) =
+        (Vec::new(), String::new(), 0i32, false, false);
+    for c in inside.chars() {
+        if in_text {
+            current.push(c);
+            match (escaped_next, c) {
+                (true, _) => escaped_next = false,
+                (false, '\\') => escaped_next = true,
+                (false, '"') => in_text = false,
+                _ => {}
+            }
+            continue;
+        }
+        match c {
+            '"' => in_text = true,
+            '{' | '(' | '[' => depth += 1,
+            '}' | ')' | ']' => depth -= 1,
+            ',' if depth == 0 => {
+                parts.push(current.trim().to_string());
+                current.clear();
+                continue;
+            }
+            _ => {}
+        }
+        current.push(c);
+    }
+    if !current.trim().is_empty() {
+        parts.push(current.trim().to_string());
+    }
+    parts
+}
+
+/// A field's type as the language below writes it, for a `None` nothing else
+/// types: the plain shapes, and `_` for the rest, which leaves it to `rustc`.
+fn plain_rust_spelling(ty: &crate::contracts::ty::Ty) -> String {
+    use crate::contracts::ty::Ty;
+    match ty {
+        Ty::Named { name, args, view } => {
+            let name = match name.as_str() {
+                "List" => "Vec",
+                other => other,
+            };
+            let inner = match args.is_empty() {
+                true => String::new(),
+                false => format!(
+                    "<{}>",
+                    args.iter()
+                        .map(plain_rust_spelling)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+            };
+            match (view, name) {
+                (true, "str" | "String") => "&str".to_string(),
+                (true, _) => "_".to_string(),
+                (false, "str") => "String".to_string(),
+                _ => format!("{name}{inner}"),
+            }
+        }
+        Ty::Nullable(inner) => format!("Option<{}>", plain_rust_spelling(inner)),
+        _ => "_".to_string(),
     }
 }

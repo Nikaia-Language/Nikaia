@@ -518,6 +518,7 @@ impl LedgerOps for Ledger {
                                             ty: ty::Ty::from_ast(parsed, ty),
                                             public: true,
                                             default: String::new(),
+                                            attributes: Vec::new(),
                                         })
                                         .collect(),
                                     crate::ast::VariantFields::Named(fields) => fields
@@ -530,6 +531,7 @@ impl LedgerOps for Ledger {
                                             // `enum` is (Part I 9.2).
                                             public: true,
                                             default: String::new(),
+                                            attributes: Vec::new(),
                                         })
                                         .collect(),
                                 },
@@ -562,6 +564,7 @@ impl LedgerOps for Ledger {
                                 tethered: Vec::new(),
                                 // A declared type is walked by its parts.
                                 constant: String::new(),
+                                mark: String::new(),
                             },
                         );
                     }
@@ -610,6 +613,9 @@ impl LedgerOps for Ledger {
                                     }
                                     None => String::new(),
                                 },
+                                // Filled once the defaults are known, which an
+                                // attribute's fields may have (`attribute_values`).
+                                attributes: Vec::new(),
                             })
                             .collect();
                         ledger.types.insert(
@@ -638,6 +644,18 @@ impl LedgerOps for Ledger {
                                 touches: Vec::new(),
                                 tethered,
                                 constant: String::new(),
+                                // **Its `@meta::Attribute(…)`, where it is an
+                                // attribute** (ADR-331 D8), so a package that
+                                // uses it reads it as this one does.
+                                mark: item
+                                    .attributes
+                                    .iter()
+                                    .find(|a| {
+                                        parsed.unaliased(parsed.text(a.name))
+                                            == crate::check::attributes::MARK
+                                    })
+                                    .map(|a| crate::check::attributes::mark_of(parsed, a).text())
+                                    .unwrap_or_default(),
                             },
                         );
                     }
@@ -804,6 +822,7 @@ impl LedgerOps for Ledger {
         // representation and only one of the three is built.
         tether::infer(&mut ledger, units, library);
         evaluate_defaults(&mut ledger, units, &defaults, library);
+        attribute_values(&mut ledger, units, library);
         (ledger, checked, noted)
     }
 
@@ -1186,6 +1205,120 @@ fn computed_defaults<'a>(
                 field: false,
             });
         }
+    }
+}
+
+/// **A field's attributes, as the values they come to** (ADR-331 D6, D8):
+/// each a struct literal of literals, every field of the attribute's struct
+/// given - from the argument, or from its default. An attribute whose
+/// arguments are not literals or variants is the checker's to refuse, and is
+/// left out here.
+fn attribute_values(ledger: &mut Ledger, units: &[&Parsed], library: &Ledger) {
+    let mut found: Vec<(String, usize, String)> = Vec::new();
+    for parsed in units.iter().copied() {
+        for item in &parsed.program.items {
+            let Item::Struct { name, fields, .. } = &item.node else {
+                continue;
+            };
+            for (at, field) in fields.iter().enumerate() {
+                for attribute in &field.attributes {
+                    let attribute_name = parsed.unaliased(parsed.text(attribute.name));
+                    if attribute_name == "meta::Attribute" {
+                        continue;
+                    }
+                    if let Some(text) =
+                        attribute_value(ledger, library, parsed, &attribute_name, attribute)
+                    {
+                        found.push((parsed.text(*name).to_string(), at, text));
+                    }
+                }
+            }
+        }
+    }
+    for (owner, at, text) in found {
+        if let Some(field) = ledger
+            .types
+            .get_mut(&owner)
+            .and_then(|t| t.fields.get_mut(at))
+        {
+            field.attributes.push(text);
+        }
+    }
+}
+
+/// The type contract a name reaches: this package's, or a dependency's by
+/// the name the program writes.
+fn type_named<'l>(ledger: &'l Ledger, library: &'l Ledger, name: &str) -> Option<&'l TypeContract> {
+    let suffix = format!("::{name}");
+    ledger.types.get(name).or_else(|| {
+        library
+            .types
+            .iter()
+            .find(|(key, _)| *key == name || key.ends_with(&suffix))
+            .map(|(_, c)| c)
+    })
+}
+
+/// One attribute as `Name { value: "createdAt", case: Case::Camel }`.
+fn attribute_value(
+    ledger: &Ledger,
+    library: &Ledger,
+    parsed: &Parsed,
+    name: &str,
+    attribute: &crate::ast::Attribute,
+) -> Option<String> {
+    let fields = &type_named(ledger, library, name)?.fields;
+    let mut positional = attribute.args.iter();
+    let mut written = Vec::with_capacity(fields.len());
+    for field in fields {
+        let value = match field.default.is_empty() {
+            true => argument_text(ledger, library, parsed, &field.ty, positional.next()?)?,
+            false => match attribute
+                .config
+                .iter()
+                .find(|option| parsed.text(option.name) == field.name)
+            {
+                Some(option) => argument_text(ledger, library, parsed, &field.ty, &option.value)?,
+                None => field.default.clone(),
+            },
+        };
+        written.push(format!("{}: {value}", field.name));
+    }
+    Some(format!("{name} {{ {} }}", written.join(", ")))
+}
+
+/// An attribute's argument as a literal: a literal's own text, a variant of
+/// the field's `enum` by its name alone (D3) or whole.
+fn argument_text(
+    ledger: &Ledger,
+    library: &Ledger,
+    parsed: &Parsed,
+    ty: &ty::Ty,
+    argument: &Expr,
+) -> Option<String> {
+    if a_literal(argument) {
+        return Some(nikaia_std::tools::declared::default_text(argument));
+    }
+    match argument {
+        Expr::Variable(word) => {
+            let ty::Ty::Named { name, .. } = ty else {
+                return None;
+            };
+            let word = parsed.text(*word);
+            let variant = type_named(ledger, library, name)?
+                .variants
+                .iter()
+                .find(|v| v.name.eq_ignore_ascii_case(word))?;
+            Some(format!("{name}::{}", variant.name))
+        }
+        Expr::Path(segments) => Some(
+            segments
+                .iter()
+                .map(|s| parsed.text(*s))
+                .collect::<Vec<_>>()
+                .join("::"),
+        ),
+        _ => None,
     }
 }
 

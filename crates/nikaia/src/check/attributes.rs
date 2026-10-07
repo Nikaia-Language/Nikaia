@@ -10,7 +10,7 @@
 use super::*;
 
 /// The mark itself, which `std` declares and nothing else may be.
-pub(super) const MARK: &str = "meta::Attribute";
+pub(crate) const MARK: &str = "meta::Attribute";
 
 /// Where an attribute may stand, as the mark's arguments spell them (D2).
 pub(super) const PLACES: [&str; 8] = [
@@ -27,9 +27,33 @@ pub(super) const PLACES: [&str; 8] = [
 /// What a struct's `@meta::Attribute(…)` says: the places, and whether it may
 /// stand twice.
 #[derive(Clone, Debug, Default)]
-pub(super) struct Mark {
+pub(crate) struct Mark {
     pub places: BTreeSet<String>,
     pub repeatable: bool,
+}
+
+impl Mark {
+    /// As the ledger writes it: `field, struct; repeatable` (ADR-331 D8).
+    pub(crate) fn text(&self) -> String {
+        let places = self.places.iter().cloned().collect::<Vec<_>>().join(", ");
+        match self.repeatable {
+            true => format!("{places}; repeatable"),
+            false => places,
+        }
+    }
+
+    /// Read back from the ledger's `attribute` column.
+    pub(crate) fn read(text: &str) -> Mark {
+        let (places, rest) = text.split_once(';').unwrap_or((text, ""));
+        Mark {
+            places: places
+                .split(',')
+                .map(|p| p.trim().to_string())
+                .filter(|p| !p.is_empty())
+                .collect(),
+            repeatable: rest.trim() == "repeatable",
+        }
+    }
 }
 
 impl Checker<'_> {
@@ -93,6 +117,13 @@ impl Checker<'_> {
     /// an attribute declared in one file is used in another.
     fn attribute_marks(&self) -> BTreeMap<String, Mark> {
         let mut marks = BTreeMap::new();
+        // **A dependency's, from its ledger** (D8), under the name the type
+        // has there and the name a program writes after its package.
+        for (key, contract) in self.library.types.iter().chain(&self.own.types) {
+            if !contract.mark.is_empty() {
+                marks.insert(key.clone(), Mark::read(&contract.mark));
+            }
+        }
         let units = std::iter::once(self.parsed).chain(self.beside.iter().copied());
         for unit in units {
             for item in &unit.program.items {
@@ -315,9 +346,30 @@ impl Checker<'_> {
         {
             return;
         }
+        // **A literal, or a variant**, for now: a value computed at build time
+        // has no form in the ledger's attribute yet, and is said to have none
+        // rather than dropped.
         if !crate::contracts::a_literal(arg) {
-            let label = format!("{owner}.{}", field.name);
-            self.computed_value(&label, &want, arg, span, true);
+            if matches!(arg, Expr::Path(_)) {
+                return;
+            }
+            self.checked.findings.push(Finding {
+                code: "NK1127",
+                severity: Severity::Error,
+                span,
+                message: format!(
+                    "`@{owner}`'s `{}` is computed, and an attribute's argument is a literal \
+                     or a variant for now.",
+                    field.name
+                ),
+                notes: vec![
+                    "An attribute is read while the program is built, from the value it came to; \
+                     a computed one is not recorded yet."
+                        .to_string(),
+                ],
+                help: Some("Write the value itself.".to_string()),
+                labels: Vec::new(),
+            });
             return;
         }
         let found = self.expr(arg, &span);
@@ -340,6 +392,41 @@ impl Checker<'_> {
         self.expect(&found, &want, span, "argument", move |found, want| {
             format!("`@{owner}`'s `{field_name}` is `{want}`, and this gives `{found}`.")
         });
+    }
+
+    /// **`field.attribute(X)`'s `X`** (ADR-331 D6): one type, an attribute.
+    /// `None` where it is refused.
+    pub(super) fn an_attribute_read(&mut self, args: &[Expr], span: &Span) -> Option<String> {
+        let written = match args {
+            [Expr::Variable(name)] => self.parsed.text(*name).to_string(),
+            [Expr::Path(segments)] => segments
+                .iter()
+                .map(|s| self.parsed.text(*s))
+                .collect::<Vec<_>>()
+                .join("::"),
+            _ => {
+                self.checked.findings.push(Finding {
+                    code: "NK1101",
+                    severity: Severity::Error,
+                    span: *span,
+                    message: "`.attribute(X)` takes one type, the attribute to read.".to_string(),
+                    notes: Vec::new(),
+                    help: Some("Write `field.attribute(json::Name)`.".to_string()),
+                    labels: Vec::new(),
+                });
+                return None;
+            }
+        };
+        let name = self.parsed.unaliased(&written);
+        if self.fields_of(&name).is_none() {
+            self.an_attribute_nothing_declares(&name, span);
+            return None;
+        }
+        if !self.attribute_marks().contains_key(&name) {
+            self.an_attribute_out_of_place(&name, "field", None, span);
+            return None;
+        }
+        Some(name)
     }
 
     /// The variants of an `enum` a field holds, written as the program
@@ -461,7 +548,7 @@ impl Checker<'_> {
 
 /// The places a mark names, read off its arguments; a word that is not one is
 /// refused where the mark is checked.
-fn mark_of(unit: &Parsed, mark: &ast::Attribute) -> Mark {
+pub(crate) fn mark_of(unit: &Parsed, mark: &ast::Attribute) -> Mark {
     let places = mark
         .args
         .iter()

@@ -141,3 +141,184 @@ fn an_attribute_changes_nothing_the_program_does() {
         String::from_utf8_lossy(&run.stderr)
     );
 }
+
+fn run_file(purpose: &str, source: &str) -> String {
+    let dir = common::scratch_dir(purpose);
+    let file = dir.join("main.nika");
+    std::fs::write(&file, source).expect("the source");
+    let run = std::process::Command::new(env!("CARGO_BIN_EXE_nikaia"))
+        .arg("run")
+        .arg(&file)
+        .output()
+        .expect("the nikaia binary runs");
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(
+        run.status.success(),
+        "{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    String::from_utf8_lossy(&run.stdout).to_string()
+}
+
+/// **D6: `field.attribute(X)` and `.attributes(X)`**, a constant per
+/// unrolled turn: the JSON-name generator #496 names.
+#[test]
+fn a_json_name_generator_reads_the_attributes() {
+    let source = format!(
+        "{JSON}\n\
+         struct User {{\n\
+         \x20   @Name(\"createdAt\")\n\
+         \x20   @Tag(\"a\")\n\
+         \x20   @Tag(\"b\")\n\
+         \x20   created_at: i64,\n\
+         \x20   name: String,\n\
+         }}\n\
+         \n\
+         fn wire[T: Struct](value: T) {{\n\
+         \x20   for field in T::fields {{\n\
+         \x20       let wire = field.attribute(Name)?.value ?? field.name\n\
+         \x20       let tags = field.attributes(Tag)\n\
+         \x20       println(f\"{{wire}} {{tags.len()}}\")\n\
+         \x20   }}\n\
+         }}\n\
+         \n\
+         fn main() {{\n\
+         \x20   wire(User {{ created_at: 1, name: \"x\" }})\n\
+         }}\n"
+    );
+    assert_eq!(
+        run_file("attributes-read", &source),
+        "createdAt 2\nname 0\n"
+    );
+}
+
+/// **D5: `field.default`**, its default as a `T?`.
+#[test]
+fn a_reflected_field_answers_its_default() {
+    let source = "struct Page {\n\
+         \x20   size: i64 = 50,\n\
+         \x20   step: i64,\n\
+         }\n\
+         \n\
+         fn defaults[T: Struct](value: T) {\n\
+         \x20   for field in T::fields {\n\
+         \x20       let d = field.default ?? 0\n\
+         \x20       println(f\"{field.name} {d}\")\n\
+         \x20   }\n\
+         }\n\
+         \n\
+         fn main() {\n\
+         \x20   defaults(Page { step: 2 })\n\
+         }\n";
+    assert_eq!(run_file("attributes-default", source), "size 50\nstep 0\n");
+}
+
+/// Reading something that is no attribute is `NK1235`; an argument computed
+/// rather than written is not recorded yet, and is said to be (`NK1127`).
+#[test]
+fn what_cannot_be_read_is_refused() {
+    let read = with(
+        "struct User {\n    name: String,\n}\n\n\
+         fn wire[T: Struct](value: T) {\n\
+         \x20   for field in T::fields {\n\
+         \x20       let p = field.attribute(Plain)\n\
+         \x20   }\n\
+         }",
+    );
+    assert_eq!(codes(&read), vec!["NK1235"]);
+    let computed = with("struct User {\n    @Name(\"a\" + \"b\")\n    name: String,\n}");
+    assert_eq!(codes(&computed), vec!["NK1127"]);
+}
+
+/// **D8: the ledger carries the mark and each field's attributes**, as the
+/// values they came to, and reads them back.
+#[test]
+fn the_ledger_carries_marks_and_attributes() {
+    let source = with(
+        "struct User {\n\
+         \x20   @Name(\"createdAt\"; case: snake)\n\
+         \x20   created_at: i64,\n\
+         }",
+    );
+    let parsed = parse_to_ast(&source).expect("the source parses");
+    let written = common::infer(&parsed).render();
+    assert!(
+        written.contains("attribute = \"field, struct; repeatable\""),
+        "{written}"
+    );
+    assert!(
+        written.contains(
+            "field_attributes = [\"created_at: Name { value: \\\"createdAt\\\", case: Case::Snake }\"]"
+        ),
+        "{written}"
+    );
+    let read = Ledger::parse(&written).expect("the ledger reads back");
+    assert_eq!(read.render(), written);
+}
+
+/// **Across packages** (D8, #496 step 5): an attribute a dependency declares
+/// is used here, and a dependency's type's attributes are read here - under
+/// the names the consumer writes, `lib::Name`.
+#[test]
+fn attributes_cross_into_another_package() {
+    let dir = common::scratch_dir("attributes-across");
+    let lib = "pub enum Case {\n\
+         \x20   Camel,\n\
+         \x20   Snake,\n\
+         }\n\
+         \n\
+         @meta::Attribute(field)\n\
+         pub struct Name {\n\
+         \x20   pub value: String,\n\
+         \x20   pub case: Case = Case::Camel,\n\
+         }\n\
+         \n\
+         pub struct User {\n\
+         \x20   @Name(\"createdAt\"; case: snake)\n\
+         \x20   pub created_at: i64,\n\
+         \x20   pub name: String,\n\
+         }\n\
+         \n\
+         fn main() {\n\
+         }\n";
+    let app = "struct Item {\n\
+         \x20   @lib::Name(\"itemId\")\n\
+         \x20   item_id: i64,\n\
+         }\n\
+         \n\
+         fn wire[T: Struct](value: T) {\n\
+         \x20   for field in T::fields {\n\
+         \x20       println(field.attribute(lib::Name)?.value ?? field.name)\n\
+         \x20   }\n\
+         }\n\
+         \n\
+         fn main() {\n\
+         \x20   wire(Item { item_id: 1 })\n\
+         \x20   wire(lib::User { created_at: 1, name: \"x\" })\n\
+         }\n";
+    for (package, source, manifest) in [
+        (
+            "lib",
+            lib,
+            "[package]\nname = \"lib\"\nversion = \"0.1.0\"\n",
+        ),
+        (
+            "app",
+            app,
+            "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n[dependencies]\nlib = { path = \"../lib\" }\n",
+        ),
+    ] {
+        std::fs::create_dir_all(dir.join(package).join("src")).expect("the package");
+        std::fs::write(dir.join(package).join("nikaia.toml"), manifest).expect("a manifest");
+        std::fs::write(dir.join(package).join("src/main.nika"), source).expect("a source");
+    }
+    let run = std::process::Command::new(env!("CARGO_BIN_EXE_nikaia"))
+        .current_dir(dir.join("app"))
+        .arg("run")
+        .output()
+        .expect("the nikaia binary runs");
+    let stdout = String::from_utf8_lossy(&run.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&run.stderr).to_string();
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(stdout, "itemId\ncreatedAt\nname\n", "{stderr}");
+}

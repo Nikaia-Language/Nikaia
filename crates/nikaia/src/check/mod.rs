@@ -25,7 +25,7 @@
 // expression-level spans are open work in the parser, and a caret on the right
 // line is worth more than none at all.
 
-mod attributes;
+pub(crate) mod attributes;
 use crate::contracts::LedgerOps;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -2701,8 +2701,11 @@ fn walks_the_fields_of(
 /// exists to prevent. A double underscore because a `.nika` name may hold one
 /// and this is not a name a program can collide with by accident: `describe__User`
 /// would have to be **written** to clash, and `NK1148` catches that.
+///
+/// **A dependency's type is named by its path**, `lib::User`, and `::` has no
+/// place in a function's name below: `describe__lib__User`.
 pub(crate) fn specialised(function: &str, on: &str) -> String {
-    format!("{function}__{on}")
+    format!("{function}__{}", on.replace("::", "__"))
 }
 
 /// The members Part II 10.3 writes: a `struct`'s fields under `[T: Struct]`,
@@ -4025,6 +4028,7 @@ impl<'a> Checker<'a> {
                                         ty: Ty::from_ast(other, &f.ty),
                                         public: true,
                                         default: String::new(),
+                                        attributes: Vec::new(),
                                     })
                                     .collect();
                                 self.variant_owner.insert(key.clone(), owner.clone());
@@ -4064,6 +4068,7 @@ impl<'a> Checker<'a> {
                         ty: Ty::from_ast(other, &f.ty).parameterise(&parameters),
                         public: f.is_public,
                         default: f.default.as_ref().map(default_written).unwrap_or_default(),
+                        attributes: Vec::new(),
                     })
                     .collect();
                 let named = other.text(*name).to_string();
@@ -4099,6 +4104,7 @@ impl<'a> Checker<'a> {
                             ty: self.declared(&f.ty, &f.span).parameterise(&parameters),
                             public: f.is_public,
                             default: f.default.as_ref().map(default_written).unwrap_or_default(),
+                            attributes: Vec::new(),
                         })
                         .collect();
                     let own = self.parsed.text(*name).to_string();
@@ -4147,6 +4153,7 @@ impl<'a> Checker<'a> {
                                 ty: self.declared(&f.ty, &f.span),
                                 public: true,
                                 default: String::new(),
+                                attributes: Vec::new(),
                             })
                             .collect();
                         let key = format!("{own}::{}", self.parsed.text(variant.name));
@@ -12823,6 +12830,23 @@ impl<'a> Checker<'a> {
                     return Ty::named("bool");
                 }
                 if matches!(&on, Ty::Named { name, .. } if name == ty::FIELD) {
+                    // **`field.attribute(X)` and `field.attributes(X)`**
+                    // (ADR-331 D6): `X` is a type, not a value, so it is not
+                    // walked as one.
+                    let named = self.parsed.text(*method).to_string();
+                    if matches!(named.as_str(), "attribute" | "attributes") {
+                        let Some(read) = self.an_attribute_read(args, span) else {
+                            return Ty::Unknown;
+                        };
+                        return match named.as_str() {
+                            "attribute" => Ty::Nullable(Box::new(Ty::named(&read))),
+                            _ => Ty::Named {
+                                name: "Vec".to_string(),
+                                args: vec![Ty::named(&read)],
+                                view: false,
+                            },
+                        };
+                    }
                     args.iter().for_each(|a| {
                         self.expr(a, span);
                     });
@@ -13292,6 +13316,14 @@ impl<'a> Checker<'a> {
                             name: "str".to_string(),
                             args: Vec::new(),
                             view: true,
+                        };
+                    }
+                    // **`field.default`, its default as a `T?`** (ADR-331
+                    // D5): `null` where it has none.
+                    if field == "default" {
+                        return match &self.unrolling {
+                            Some((_, field)) => Ty::Nullable(Box::new(field.ty.clone())),
+                            None => Ty::Unknown,
                         };
                     }
                     let held = field.clone();
@@ -23322,6 +23354,7 @@ impl<'a> Checker<'a> {
                         ty: Ty::named(ty::VARIANT),
                         public: true,
                         default: String::new(),
+                        attributes: Vec::new(),
                     })
                     .collect(),
             );
@@ -23504,11 +23537,15 @@ impl<'a> Checker<'a> {
             code: "NK1180",
             message: format!("A field from `T::fields` has no `{member}`."),
             notes: vec![
-                "A field from `T::fields` has `.name`, its name as text, and \
-                 `.of(value)`, what that field holds in a value."
+                "A field from `T::fields` has `.name`, its name as text, `.of(value)`, what \
+                 that field holds in a value, `.default`, its default as a `T?`, and \
+                 `.attribute(X)` and `.attributes(X)`, what its attributes say."
                     .to_string(),
             ],
-            help: Some("Use `.name` or `.of(value)`.".to_string()),
+            help: Some(
+                "Use `.name`, `.of(value)`, `.default`, `.attribute(X)` or `.attributes(X)`."
+                    .to_string(),
+            ),
             labels: Vec::new(),
         });
     }

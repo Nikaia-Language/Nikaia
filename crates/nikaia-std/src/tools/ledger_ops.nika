@@ -134,6 +134,16 @@ pub fn absorb_into(mut ledger: Ledger, module: ref String?, renames: ref collect
         for field in contract.fields {
             let mut changed = field.clone()
             changed.ty = qualified_ty(field.ty, prefix, qualified, declared, kept)
+            // A field's default and its attributes name the package's types
+            // as an option's default does (ADR-331 D8).
+            if qualified {
+                changed.default = qualified_default(field.default, prefix, declared)
+                let mut attributes: Vec[String] = []
+                for attribute in field.attributes {
+                    attributes.push(qualified_default(attribute, prefix, declared))
+                }
+                changed.attributes = attributes
+            }
             fields.push(changed)
         }
         entry.fields = fields

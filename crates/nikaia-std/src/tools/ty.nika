@@ -919,6 +919,10 @@ pub struct FieldContract {
     /// The default's value as a literal (ADR-331 D5, D8), written after the
     /// type with ` = `; empty where the field has none.
     pub default: String,
+    /// Its attributes' values, in written order, each a struct literal of
+    /// literals: `Name { value: "createdAt", case: Case::Camel }` (ADR-331
+    /// D6, D8).
+    pub attributes: Vec[String],
 }
 
 /// A variant of an `enum` a ledger describes, and what it holds.
@@ -1136,6 +1140,10 @@ pub struct TypeContract {
     /// ([ADR-318](../../../../docs/specification/adr/adr-318.md) D5). Empty
     /// where the type has none, and then it does not cross.
     pub constant: String,
+    /// **What its `@meta::Attribute(…)` says**, where it is an attribute
+    /// (ADR-331 D2, D8): the places, and `; repeatable` where it may stand
+    /// twice - `field, struct; repeatable`. Empty where it is none.
+    pub mark: String,
 }
 
 impl TypeContract {
@@ -1152,6 +1160,7 @@ impl TypeContract {
             touches: [],
             tethered: [],
             constant: "",
+            mark: "",
         }
     }
 }

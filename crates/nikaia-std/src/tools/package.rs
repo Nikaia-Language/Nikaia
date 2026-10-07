@@ -9055,7 +9055,7 @@ fn function_key(entry: &mut FnContract, name: &str, key: &str, value: &str, n: i
 }
 
 fn type_key(entry: &mut TypeContract, key: &str, value: &str, n: i64) -> Result<(), nikaia_std::error::Thrown<Refused>> {
-    if key == "pub" { entry.public = value == "true"; } else if key == "crosses" { if value == "true" { entry.crosses = Crosses::May; } else if value == "false" { entry.crosses = Crosses::MayNot; } else { return Err(nikaia_std::error::throwing(Refused::Because(format!("line {}: `crosses` is `true` or `false`, not `{}` - and leaving the line out is the third answer", n, value)), &"type_key")); } } else if key == "compares" { entry.compares = value.trim() == "true"; } else if key == "copies" { entry.copies = value.trim() == "true"; } else if key == "tethered" { entry.tethered = entries(value, n)?; } else if key == "constant" { entry.constant = unquoted(value, n)?; } else if key == "touches" { entry.touches = entries(value, n)?; } else if key == "iterates" {
+    if key == "pub" { entry.public = value == "true"; } else if key == "crosses" { if value == "true" { entry.crosses = Crosses::May; } else if value == "false" { entry.crosses = Crosses::MayNot; } else { return Err(nikaia_std::error::throwing(Refused::Because(format!("line {}: `crosses` is `true` or `false`, not `{}` - and leaving the line out is the third answer", n, value)), &"type_key")); } } else if key == "compares" { entry.compares = value.trim() == "true"; } else if key == "copies" { entry.copies = value.trim() == "true"; } else if key == "tethered" { entry.tethered = entries(value, n)?; } else if key == "attribute" { entry.mark = unquoted(value, n)?; } else if key == "constant" { entry.constant = unquoted(value, n)?; } else if key == "touches" { entry.touches = entries(value, n)?; } else if key == "iterates" {
         let said = unquoted(value, n)?;
         if said != "throws" { return Err(nikaia_std::error::throwing(Refused::Because(format!("line {}: `iterates` is `throws` and nothing else, not `{}` - a step that cannot fail says nothing", n, said)), &"type_key")); }
         entry.iterates_fallibly = true;
@@ -9067,6 +9067,22 @@ fn type_key(entry: &mut TypeContract, key: &str, value: &str, n: i64) -> Result<
         let mut fields: Vec<FieldContract> = vec![];
         for one in entries(value, n)? { fields.push(field_of(&one)); }
         entry.fields = fields;
+    } else if key == "field_attributes" {
+        for one in entries(value, n)? {
+            let c: Vec<char> = nikaia_std::list::chars(one.chars());
+            let colon = find(&c, 0, ':');
+            if colon < 0 { return Err(nikaia_std::error::throwing(Refused::Because(format!("line {}: a field's attribute is `field: Value {{ … }}`, not `{}`", n, one)), &"type_key")); }
+            let field = slice(&c, 0, colon);
+            let held = slice(&c, colon + 1, c.len() as i64);
+            let named = field.trim().to_owned();
+            let mut updated: Vec<FieldContract> = vec![];
+            for one_field in entry.fields.iter() {
+                let mut changed = one_field.clone();
+                if changed.name == named { changed.attributes.push(held.trim().to_owned()); }
+                updated.push(changed);
+            }
+            entry.fields = updated;
+        }
     } else { return Err(nikaia_std::error::throwing(Refused::Because(format!("line {}: unknown key `{}` on a type", n, key)), &"type_key")); }
     Ok(())
 }
@@ -9185,7 +9201,7 @@ pub fn variant_of(written: &str) -> VariantContract {
         let mut holds: Vec<FieldContract> = vec![];
         let mut at = 0;
         for part in split_args(&inside) {
-            holds.push(FieldContract { name: format!("{}", at), ty: parse(&part), public: true, default: String::from("") });
+            holds.push(FieldContract { name: format!("{}", at), ty: parse(&part), public: true, default: String::from(""), attributes: vec![] });
             at += 1;
         }
         return VariantContract { name: named.trim().to_owned(), holds, positional: true };
@@ -9201,7 +9217,7 @@ pub fn variant_of(written: &str) -> VariantContract {
             let colon = find(&p, 0, ':');
             if colon >= 0 {
                 let field = __keep_frame.put(slice(&p, 0, colon));
-                holds.push(FieldContract { name: field.trim().to_owned(), ty: parse(&slice(&p, colon + 1, p.len() as i64)), public: true, default: String::from("") });
+                holds.push(FieldContract { name: field.trim().to_owned(), ty: parse(&slice(&p, colon + 1, p.len() as i64)), public: true, default: String::from(""), attributes: vec![] });
             }
         }
         return VariantContract { name: named.trim().to_owned(), holds, positional: false };
@@ -9221,14 +9237,14 @@ fn field_of(written: &str) -> FieldContract {
     }
     let c: Vec<char> = nikaia_std::list::chars(field.chars());
     let colon = find(&c, 0, ':');
-    if colon < 0 { return FieldContract { name: field.to_owned(), ty: Ty::Unknown, public, default: String::from("") }; }
+    if colon < 0 { return FieldContract { name: field.to_owned(), ty: Ty::Unknown, public, default: String::from(""), attributes: vec![] }; }
     let name = slice(&c, 0, colon);
     let equals = find(&c, colon + 1, '=');
     if equals >= 0 {
         let default = slice(&c, equals + 1, c.len() as i64);
-        return FieldContract { name: name.trim().to_owned(), ty: parse(&slice(&c, colon + 1, equals)), public, default: default.trim().to_owned() };
+        return FieldContract { name: name.trim().to_owned(), ty: parse(&slice(&c, colon + 1, equals)), public, default: default.trim().to_owned(), attributes: vec![] };
     }
-    FieldContract { name: name.trim().to_owned(), ty: parse(&slice(&c, colon + 1, c.len() as i64)), public, default: String::from("") }
+    FieldContract { name: name.trim().to_owned(), ty: parse(&slice(&c, colon + 1, c.len() as i64)), public, default: String::from(""), attributes: vec![] }
 }
 
 pub fn signature_of(written: &str) -> Result<Signature, nikaia_std::error::Thrown<Refused>> {
@@ -9895,6 +9911,12 @@ pub fn absorb_into(ledger: &mut Ledger, module: Option<&str>, renames: &collecti
         for field in contract.fields.iter() {
             let mut changed = field.clone();
             changed.ty = qualified_ty(&field.ty, &prefix, qualified, &declared, &kept);
+            if qualified {
+                changed.default = qualified_default(&field.default, &prefix, &declared);
+                let mut attributes: Vec<String> = vec![];
+                for attribute in field.attributes.iter() { attributes.push(qualified_default(attribute, &prefix, &declared)); }
+                changed.attributes = attributes;
+            }
             fields.push(changed);
         }
         entry.fields = fields;
@@ -10158,6 +10180,9 @@ fn type_text(contract: &TypeContract) -> String {
             fields.push(ledger_escaped(&format!("{}{}: {}{}", word, field.name, field.ty.text(), default)));
         }
         out.push_str(&format!("fields = [{}]\n", quoted_all(&fields)));
+        let mut attributes: Vec<String> = vec![];
+        for field in contract.fields.iter() { for attribute in field.attributes.iter() { attributes.push(ledger_escaped(&format!("{}: {}", field.name, attribute))); } }
+        if !attributes.is_empty() { out.push_str(&format!("field_attributes = [{}]\n", quoted_all(&attributes))); }
     }
     if !contract.variants.is_empty() {
         let mut variants: Vec<String> = vec![];
@@ -10174,6 +10199,7 @@ fn type_text(contract: &TypeContract) -> String {
     if contract.iterates_fallibly { out.push_str("iterates = \"throws\"\n"); }
     if !contract.touches.is_empty() { out.push_str(&format!("touches = [{}]\n", quoted_all(&contract.touches))); }
     if !contract.tethered.is_empty() { out.push_str(&format!("tethered = [{}]\n", quoted_all(&contract.tethered))); }
+    if !contract.mark.is_empty() { out.push_str(&format!("attribute = \"{}\"\n", contract.mark)); }
     if !contract.constant.is_empty() { out.push_str(&format!("constant = \"{}\"\n", contract.constant)); }
     out
 }
@@ -20651,6 +20677,7 @@ pub struct FieldContract {
     pub ty: Ty,
     pub public: bool,
     pub default: String,
+    pub attributes: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -20780,10 +20807,11 @@ pub struct TypeContract {
     pub touches: Vec<String>,
     pub tethered: Vec<String>,
     pub constant: String,
+    pub mark: String,
 }
 
 impl TypeContract {
-    pub fn empty() -> TypeContract { TypeContract { public: false, fields: vec![], variants: vec![], crosses: Crosses::Undecided, iterates_fallibly: false, compares: false, copies: false, touches: vec![], tethered: vec![], constant: String::from("") } }
+    pub fn empty() -> TypeContract { TypeContract { public: false, fields: vec![], variants: vec![], crosses: Crosses::Undecided, iterates_fallibly: false, compares: false, copies: false, touches: vec![], tethered: vec![], constant: String::from(""), mark: String::from("") } }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

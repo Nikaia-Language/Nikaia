@@ -287,6 +287,17 @@ fn type_text(contract: ref TypeContract) -> String {
             fields.push(ledger_escaped(f"{word}{field.name}: {field.ty.text()}{default}"))
         }
         out.push_str(f"fields = [{quoted_all(fields)}]\n")
+        // **Each field's attributes**, as the values they came to
+        // (ADR-331 D8), under the field's name.
+        let mut attributes: Vec[String] = []
+        for field in contract.fields {
+            for attribute in field.attributes {
+                attributes.push(ledger_escaped(f"{field.name}: {attribute}"))
+            }
+        }
+        if attributes.len() > 0 {
+            out.push_str(f"field_attributes = [{quoted_all(attributes)}]\n")
+        }
     }
     // **The other shape of type**: an `enum`'s cases, which is what lets a
     // consumer's `match` be total (Part I 3.4).
@@ -318,6 +329,9 @@ fn type_text(contract: ref TypeContract) -> String {
     }
     if contract.tethered.len() > 0 {
         out.push_str(f"tethered = [{quoted_all(contract.tethered)}]\n")
+    }
+    if contract.mark.len() > 0 {
+        out.push_str(f"attribute = \"{contract.mark}\"\n")
     }
     if contract.constant.len() > 0 {
         out.push_str(f"constant = \"{contract.constant}\"\n")

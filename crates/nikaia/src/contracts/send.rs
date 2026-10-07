@@ -208,6 +208,7 @@ fn field(name: &str, ty: super::ty::Ty) -> super::FieldContract {
         ty,
         public: true,
         default: String::new(),
+        attributes: Vec::new(),
     }
 }
 
