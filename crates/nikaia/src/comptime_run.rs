@@ -57,18 +57,69 @@ pub(crate) fn sub_program(
         a_function(main, None, Vec::new()),
         Span::nowhere(),
     ));
+    let mut stmts = constants_as_lets(parsed, bound, known, &kept);
+    stmts.push(Spanned::new(
+        Stmt::Return(Some(value.clone())),
+        Span::nowhere(),
+    ));
     kept.program.items.push(Spanned::new(
-        a_function(
-            value_fn,
-            Some(returns),
-            vec![Spanned::new(
-                Stmt::Return(Some(value.clone())),
-                Span::nowhere(),
-            )],
-        ),
+        a_function(value_fn, Some(returns), stmts),
         Span::nowhere(),
     ));
     Some(kept)
+}
+
+/// **An earlier `comptime` that holds a `std` type's value**, as a `let` at
+/// the head of the value function (ADR-318 D5, #519): `let A:
+/// time::Duration = time::Duration::new(90, 0)`. Its constructor is not a
+/// program's to write and an item cannot hold it, but this run is the
+/// compiler's own, and a later `comptime` reads `A` here.
+fn constants_as_lets(
+    parsed: &Parsed,
+    bound: &str,
+    known: &dyn Fn(&str) -> Option<Value>,
+    kept: &Parsed,
+) -> Vec<Spanned<Stmt>> {
+    let name = |text: &str| kept.interner.intern_string(text);
+    parsed
+        .program
+        .items
+        .iter()
+        .filter_map(|item| {
+            let Item::Comptime {
+                name: bound_here,
+                ty,
+                ..
+            } = &item.node
+            else {
+                return None;
+            };
+            let named = parsed.text(*bound_here);
+            if named == bound {
+                return None;
+            }
+            let Some(Value::Constant { constructor, parts }) = known(named) else {
+                return None;
+            };
+            let args = parts
+                .iter()
+                .map(|part| literal_of(part, kept))
+                .collect::<Option<Vec<_>>>()?;
+            Some(Spanned::new(
+                Stmt::Let {
+                    names: vec![name(named)],
+                    mutable: false,
+                    ty: ty.clone(),
+                    value: Expr::Call {
+                        func: Box::new(Expr::Path(constructor.split("::").map(name).collect())),
+                        args,
+                        config: Vec::new(),
+                    },
+                },
+                Span::nowhere(),
+            ))
+        })
+        .collect()
 }
 
 /// **One file of the program as the sub-program carries it**: without its
@@ -106,6 +157,10 @@ pub(crate) fn unit_without_its_constants(
         let Some(held) = known(named) else {
             continue;
         };
+        // Carried by `constants_as_lets` (#519).
+        if matches!(held, Value::Constant { .. }) {
+            continue;
+        }
         kept.program.items.push(Spanned::new(
             Item::Comptime {
                 name: *name,
@@ -593,7 +648,8 @@ fn literal_of(value: &Value, parsed: &Parsed) -> Option<Expr> {
         }),
         Value::Tuple(parts) => Some(Expr::Tuple(all(parts)?)),
         // **A `std` type's constructor is not a program's to write**
-        // (ADR-318 D5): a later run that reads one is answered without it.
+        // (ADR-318 D5): an item cannot hold one, and the value function
+        // gets it as a `let` instead (`constants_as_lets`, #519).
         Value::Constant { .. } => None,
         Value::Struct { name: ty, fields } => Some(Expr::StructLit {
             name: name(ty),

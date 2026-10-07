@@ -693,9 +693,12 @@ impl<'a> BuildTime<'a> {
     fn no_method_here(&self, method: winnow_grammar::Symbol) -> Refusal {
         Refusal::NotHere {
             what: format!(".{}()", self.parsed.text(method)),
-            why: "at build time the compiler can only call methods your program \
-                  declares, and `len` and `push` on a list. Methods from `std` or a \
-                  package are compiled Rust, which it can't run",
+            // **Said as what happened** (#519): a `std` method does run at
+            // build time, in the compiled run (ADR-321); this answer is the
+            // one given where that run could not take the value.
+            why: "this value could not be compiled to run while the program is built, \
+                  and without that the compiler can only call methods your program \
+                  declares, and `len` and `push` on a list",
             // **Not *move it into a function***, which is the trap: the method
             // would be just as unreadable one function further in.
             way_out: "write what it does with arithmetic, `if`, `for` and calls to \

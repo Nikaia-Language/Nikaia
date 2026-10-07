@@ -4,6 +4,17 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.617] — 2026-10-07
+
+**A `comptime` reads an earlier one that holds a `std` type's value** (#519).
+- `comptime A: time::Duration = 90.seconds()` then `comptime B: i64 =
+  A.in_seconds()`: the run that computes `B` gets `A` as a `let` of its
+  `constant` constructor (ADR-318 D5), which an item may not write. It was
+  `NK1127`.
+- `NK1127`'s note no longer says `std`'s methods cannot run at build time.
+  They run in the compiled run (ADR-321). The note now says what happened:
+  the value could not be compiled to run.
+
 ## [0.0.616] — 2026-10-07
 
 **A parameter that may pause runs a declared function of either kind, and a

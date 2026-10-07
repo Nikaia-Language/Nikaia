@@ -417,6 +417,22 @@ fn a_duration_comptime_is_written_as_its_constructor() {
     assert_eq!(ran(source), "1 90\n");
 }
 
+/// **A later `comptime` reads an earlier one of the type** (#519): the run
+/// that computes `B` is handed `A` by its constructor, as a `let`, because an
+/// item may not write it.
+#[test]
+fn a_comptime_reads_an_earlier_duration() {
+    let source = "use std::time\n\
+         \n\
+         comptime A: time::Duration = 90.seconds()\n\
+         comptime B: i64 = A.in_seconds()\n\
+         \n\
+         fn main() {\n\
+         \x20   println(f\"{B}\")\n\
+         }\n";
+    assert_eq!(ran(source), "90\n");
+}
+
 /// **And an option's default of the type** (ADR-318 D3, D5): the ledger
 /// records the constructor, and a call that leaves the option out gets it.
 #[test]
