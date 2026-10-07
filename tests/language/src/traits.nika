@@ -1,0 +1,100 @@
+// Part I 4.7's `trait` declaration, and the bound it makes possible (ADR-295):
+// what a call through a trait or a bound computes. What the lowering writes,
+// and what is refused, stays in `crates/nikaia/tests/traits.rs`.
+
+trait TraitsSummarize {
+    fn summary(ref self) -> String
+}
+
+struct TraitsUser {
+    name: String,
+}
+
+impl TraitsSummarize for TraitsUser {
+    fn summary(ref self) -> String {
+        return f"User: {self.name}"
+    }
+}
+
+fn traits_shout[T: TraitsSummarize](x: T) -> String {
+    return x.summary()
+}
+
+// Part I 4.7's own program, declared and bound and run. D1 and D3 together:
+// the declaration parses, the bound resolves the call, and the program runs.
+test "a trait is declared bound and run" {
+    let u = TraitsUser { name: "Ada".to_string() }
+    let said = traits_shout(u)
+    assert(said == "User: Ada")
+}
+
+trait TraitsSource {
+    fn load(ref self) -> String throws
+    fn name(ref self) -> String sync
+}
+
+struct TraitsFixed {
+    text: String,
+}
+
+impl TraitsSource for TraitsFixed {
+    fn load(ref self) -> String throws {
+        return self.text.clone()
+    }
+    fn name(ref self) -> String sync { return "fixed".to_string() }
+}
+
+// `docs/language-review.md` §1.3's probe: a trait whose method may fail and
+// pause, refused as `NK1129` before ADR-288 and a program now.
+test "a trait over a file read is a program" {
+    let s = TraitsFixed { text: "loaded".to_string() }
+    let text = s.load() catch { "".to_string() }
+    let line = f"{s.name()}: {text}"
+    assert(line == "fixed: loaded")
+}
+
+trait TraitsSpeaks {
+    fn say(ref self) -> String sync
+}
+
+struct TraitsDog { name: String }
+
+impl TraitsSpeaks for TraitsDog {
+    fn say(ref self) -> String sync {
+        return "woof".clone()
+    }
+}
+
+fn traits_tell[T: TraitsSpeaks](x: T) -> String sync {
+    return x.say()
+}
+
+// The type that does implement a bound is not refused, and the call through
+// the bound runs: a bound that type-checks here and not below would be worth
+// nothing.
+test "the type that implements it passes and runs" {
+    let d = TraitsDog { name: "rex".clone() }
+    let said = traits_tell(d)
+    assert(said == "woof")
+}
+
+trait TraitsNamed {
+    fn name(ref self) -> String
+}
+
+struct TraitsP {
+    n: String,
+}
+
+impl TraitsNamed for TraitsP {
+    fn name(ref self) -> String {
+        return self.n.clone()
+    }
+}
+
+// A method that takes its `self` the way the trait declares (`NK1196`'s way
+// out) is a program that runs.
+test "a method takes self the way its trait declares" {
+    let said = TraitsP { n: "a" }.name()
+    assert(said == "a")
+}

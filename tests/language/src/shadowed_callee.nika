@@ -1,0 +1,18 @@
+// A binding in scope hides an item of its name (#451): a call through a
+// parameter of function type is the parameter, not a free function that
+// happens to share the name.
+
+fn shadowed_callee_twice(a: i64, b: i64, c: i64) -> i64 {
+    return a + b + c
+}
+
+fn shadowed_callee_apply(shadowed_callee_twice: fn(i64) -> i64 sync) -> i64 {
+    return shadowed_callee_twice(4)
+}
+
+test "a parameter hides a function of its name" {
+    let through = shadowed_callee_apply(fn(n) { n * 2 })
+    let direct = shadowed_callee_twice(1, 2, 3)
+    assert(through == 8)
+    assert(direct == 6)
+}

@@ -1,0 +1,58 @@
+// `spawn`, and what a task means (Part I 8.2 and 8.3, ADR-055 D5): what a
+// program with tasks computes, at both settings. Ordering, files, deadlines,
+// refusals and the lowering are `crates/nikaia/tests/tasks.rs`.
+
+fn tasks_work(n: i64) -> i64 {
+    return n * 2
+}
+
+// `.join()` is an `.await`, and it hands back the body's value (D5).
+test "a handle joins to the value the body came to" {
+    let handle = spawn fn { tasks_work(21) }
+    let answer = handle.join()
+    assert(answer == 42)
+}
+
+// What `NK2101` must not refuse, which is most of what a program writes. Four
+// cases, and each is a different reason: a value that was cloned first (Part I
+// 8.3's own way out), a number and a view (both copied, so the task takes a
+// copy and the name keeps working), and a name assigned again after the task -
+// which gives it a value, is accepted by Rust, and refusing it would refuse a
+// correct program (Part III, C.4). And it is not accepted by being
+// un-compilable: the whole of it runs.
+test "a copy a clone and a reassignment are not refused" {
+    let message = "Hello"
+    let copy = message.clone()
+    let a = spawn fn { copy }
+    assert(message == "Hello")
+
+    let n = 7
+    let b = spawn fn { n }
+    assert(n == 7)
+
+    let word = "Welt"
+    let c = spawn fn { word }
+    assert(word == "Welt")
+
+    let mut again = "eins"
+    let d = spawn fn { again }
+    again = "zwei"
+    assert(again == "zwei")
+
+    // Each task took its value when it was started, the last one before the
+    // name was given another.
+    let (copied, number, viewed, first) = (a.join(), b.join(), c.join(), d.join())
+    assert(copied == "Hello")
+    assert(number == 7)
+    assert(viewed == "Welt")
+    assert(first == "eins")
+}
+
+// The sources stay free of the runtime's words: `spawn` is Nikaia's word;
+// `async`, `await` and `Future` are not, and a task is where they would leak
+// in first.
+test "nothing a task needs is written in nikaia" {
+    let h = spawn fn { 1 }
+    let value = h.join()
+    assert(value == 1)
+}

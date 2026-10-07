@@ -1,0 +1,127 @@
+// What a sequence is as a whole (ADR-293): what a program that names, takes
+// and walks sequences computes, at both settings. The words, the refusals and
+// the lowering are `crates/nikaia/tests/sequence_shapes.rs`.
+
+use std::collections
+
+// The wall this package began with: a range in a name, walked twice.
+test "a range in a name is walked twice" {
+    let mut out: String = ""
+    let r = 0..<3
+    for i in r { out.push_str(f"{i}") }
+    for i in r { out.push_str(f"{i}") }
+    out.push_str(f" {r.count()} {r.count()}")
+    assert(out == "012012 3 3")
+}
+
+// And from the back, and in steps, with the bound an `i64` - which the
+// language below's own `Range<i64>` cannot walk backwards in steps, having no
+// length for a 64-bit range.
+test "a range goes backwards and in steps" {
+    let mut out: String = ""
+    let n = 10
+    for i in (0..<n).rev() { out.push_str(f"{i}") }
+    out.push_str("\n")
+    for i in (0..<n).step_by(3).rev() { out.push_str(f"{i}") }
+    out.push_str("\n")
+    // Inclusive on purpose: named first, so the `for` head stays `..<`-only.
+    let inclusive = (1..3).rev()
+    for i in inclusive { out.push_str(f"{i}") }
+    assert(out == "9876543210\n9630\n321")
+}
+
+// A named sequence in a `for` is handed over, not lent: `keys()` and
+// `drain()` in a name were *no method named `iter`* below.
+test "a named sequence is walked by value" {
+    let mut out: String = ""
+    let mut m: collections::HashMap[ref String, i64] = collections::HashMap()
+    m["a"] = 1
+    let ks = m.keys()
+    for k in ks { out.push_str(k) }
+    let xs = [3, 1, 2]
+    let d = xs.drain()
+    for x in d { out.push_str(f"{x}") }
+    assert(out == "a312")
+}
+
+// The whole pipeline, walked from the back, with a count held in an `i64` -
+// which the language below takes in `usize`, converted by entry.
+test "the pipeline runs" {
+    let xs = [1, 2, 3, 4, 5, 6, 7]
+    let n = 3
+    let back: Vec[i64] = xs.iter().map(fn(x) { x * 2 }).rev().collect()
+    let first = back[0]
+    let back_len = back.len()
+    assert(first == 14)
+    assert(back_len == 7)
+    let few: Vec[i64] = xs.iter().map(fn(x) { x + 1 }).take(n).rev().collect()
+    let few_first = few[0]
+    let few_len = few.len()
+    assert(few_first == 4)
+    assert(few_len == 3)
+    let mut pairs: String = ""
+    for (a, b) in xs.iter().zip(xs.iter().skip(n)).rev().take(2) { pairs.push_str(f"{a}{b} ") }
+    assert(pairs == "47 36 ")
+    let mut windows: String = ""
+    for w in xs.windows(n) { windows.push_str(f"{w.len()}") }
+    assert(windows == "33333")
+    let mut chunks: String = ""
+    for c in xs.chunks(n) { chunks.push_str(f"{c.len()}") }
+    assert(chunks == "331")
+    let nth = xs.iter().nth(n) ?? 0
+    assert(nth == 4)
+}
+
+struct SequenceShapesStock {
+    n: i64,
+}
+
+impl SequenceShapesStock {
+    fn take(self, k: i64) -> i64 { return self.n - k }
+}
+
+// A method of the program's own called `take` is not converted: the count is
+// named by the entry the call resolved to, not by the method's name.
+test "a programs own take keeps its i64" {
+    let s = SequenceShapesStock { n: 10 }
+    let k = 3
+    let left = s.take(k)
+    assert(left == 7)
+}
+
+fn sequence_shapes_total(xs: ref Array[i64]) -> i64 {
+    let mut t = 0
+    for x in xs {
+        t += x
+    }
+    return t
+}
+
+// A slice has a type (ADR-293 D23): a run of the list, `ref Array[T]`, which
+// is what a function writes to take one - and what `windows` hands out. Sliced
+// through a range written in the brackets or kept in a name, literal ends
+// included.
+test "a slice is a run a function can take" {
+    let xs = [1, 2, 3, 4, 5]
+    let part = ref xs[1..<3]
+    let q = 1..2
+    let named = ref xs[q]
+    let t = "hello"
+    let word = ref t[0..<1]
+    let shown = f"{sequence_shapes_total(part)} {sequence_shapes_total(named)} {sequence_shapes_total(xs)} {word}"
+    assert(shown == "5 5 15 h")
+    let mut sums: String = ""
+    for w in xs.windows(2) { sums.push_str(f"{sequence_shapes_total(w)} ") }
+    assert(sums == "3 5 7 9 ")
+}
+
+// `str::chars` is a sequence, as `String::chars` was: a view of text can be
+// walked from the back, and counted.
+test "the characters of a view are a sequence" {
+    let t = "héllo"
+    let back: Vec[char] = t.chars().rev().collect()
+    let count = t.chars().count()
+    let last = back[0]
+    assert(count == 5)
+    assert(last == 'o')
+}

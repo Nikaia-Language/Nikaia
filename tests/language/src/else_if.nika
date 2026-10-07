@@ -1,0 +1,26 @@
+// `else if` (ADR-132): an `else` whose block holds exactly one `if`, so the
+// chain is an `if` inside an `if` and every link answers for its own range.
+// How the chain is parsed and lowered is `crates/nikaia/tests/else_if.rs`.
+
+// **A three-link chain's value, run** (D1, and §5's third step).
+//
+// The value and not the shape: a chain whose branches carry the `let`'s value
+// is where *the branches agree on one type and the chain ends with an `else`*
+// has to hold, and the only way to say it held is to run the program.
+fn else_if_grade(score: i64) -> String {
+    let g: String = if score >= 90 {
+        "A"
+    } else if score >= 80 {
+        "B"
+    } else if score >= 70 {
+        "C"
+    } else {
+        "F"
+    }
+    return g
+}
+
+test "a three link chain answers at every link" {
+    let printed = f"{else_if_grade(95)}{else_if_grade(85)}{else_if_grade(75)}{else_if_grade(10)}"
+    assert(printed == "ABCF")
+}

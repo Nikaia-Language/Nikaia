@@ -2,9 +2,8 @@
 //! with no trait on a type the program does not declare is refused here
 //! (`NK1209`), not by `rustc` in words about generated code. And what was found
 //! on the way: a list of text asked about an owned text, and the type of an
-//! `if` whose other arm leaves.
-
-mod common;
+//! `if` whose other arm leaves. What that lookup answers is
+//! `tests/build-time/src/own_methods.nika`.
 
 use nikaia::contracts::{Ledger, LedgerOps, STD};
 use nikaia::emit::{Build, emit_program};
@@ -88,7 +87,8 @@ fn an_impl_of_the_programs_own_type_or_trait_is_not() {
 /// `comptime NAMES: Array[ref String, N]` and an owned `name` took a `&&str`
 /// below and was given a `String`; and a `let` from an `if` whose `else`
 /// returns had no type at all, so the call was not seen as a lookup. Both
-/// compile and answer now, and the function does not pause.
+/// compile and answer now (`tests/build-time/src/own_methods.nika`), and the
+/// function does not pause.
 #[test]
 fn an_owned_text_is_looked_up_in_an_array_of_views() {
     let source = "comptime NAMES: Array[ref String, 2] = [\"a\", \"b\"]\n\
@@ -105,17 +105,4 @@ fn an_owned_text_is_looked_up_in_an_array_of_views() {
     assert!(codes(source).is_empty(), "{:?}", codes(source));
     let rust = lowered(source);
     assert!(rust.contains("fn known(x: i64) -> bool"), "{rust}");
-    let dir = common::scratch_dir("own-methods-contains");
-    let file = dir.join("main.rs");
-    std::fs::write(&file, &rust).expect("write the Rust");
-    let binary = dir.join("program");
-    let out = common::compile(&file, &["-o", binary.to_str().expect("utf-8 path")]);
-    assert!(
-        out.status.success(),
-        "{}\n{rust}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    let ran = std::process::Command::new(&binary).output().expect("run");
-    assert_eq!(String::from_utf8_lossy(&ran.stdout), "true\nfalse\n");
-    let _ = std::fs::remove_dir_all(&dir);
 }

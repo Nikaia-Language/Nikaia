@@ -18,9 +18,11 @@
 //! [Part III C.1](../../../docs/specification/30-nikaia-tooling.md)'s class at
 //! its worst, because it names this compiler's own internal word for a map.
 //!
-//! These are run rather than read: whether the key type is pinned is a question
-//! only the language below can answer, and comparing the emitted string would
-//! say no more than that this compiler agrees with itself.
+//! The programs are run rather than read: whether the key type is pinned is a
+//! question only the language below can answer, and comparing the emitted
+//! string would say no more than that this compiler agrees with itself. They
+//! are `tests/language/src/indexing.nika`; this file keeps what the brackets
+//! lower to and the range that aborts.
 
 mod common;
 
@@ -42,54 +44,6 @@ fn lowered(purpose: &str, source: &str) -> String {
     emit_program(&parsed, Build::default())
         .expect("the source lowers")
         .rust
-}
-
-/// Compile and run, hand back what it printed.
-fn ran(purpose: &str, source: &str) -> String {
-    let rust = lowered(purpose, source);
-    let dir = common::scratch_dir(purpose);
-    let file = dir.join("main.rs");
-    std::fs::write(&file, &rust).expect("write the Rust");
-    let binary = dir.join("program");
-    let out = common::compile(&file, &["-o", binary.to_str().expect("utf-8 path")]);
-    assert!(
-        out.status.success(),
-        "the lowering of {purpose} does not compile:\n{}\n--- the Rust ---\n{rust}",
-        String::from_utf8_lossy(&out.stderr),
-    );
-    let ran = std::process::Command::new(&binary)
-        .output()
-        .expect("the program runs");
-    let printed = String::from_utf8_lossy(&ran.stdout).into_owned();
-    let _ = std::fs::remove_dir_all(&dir);
-    printed
-}
-
-/// Part I 4.5's own example, compiled and run.
-///
-/// **With the `??` the read now needs** ([ADR-293](../../../docs/specification/adr/adr-293.md)
-/// D1, built by [ADR-293](../../../docs/specification/adr/adr-293.md)): a map
-/// has a value only where the key is, so the bracket answers a `T?` and a
-/// program that knows better says so.
-#[test]
-fn a_map_written_through_the_brackets_compiles_and_runs() {
-    let printed = ran(
-        "a map written through the brackets",
-        r#"
-use std::collections
-
-
-fn main() {
-    let mut scores = collections::HashMap()
-    scores["Player1"] = 100
-    scores["Player2"] = 7
-    let one = scores["Player1"] ?? 0
-    let two = scores["Player2"] ?? 0
-    println(f"{one} {two}")
-}
-"#,
-    );
-    assert_eq!(printed.trim(), "100 7");
 }
 
 /// D2: the write is an `insert`, which takes the key **by value** and is what
@@ -139,27 +93,6 @@ fn main() {
     );
 }
 
-/// **A sequence is written the same way and means the same thing**, which is
-/// what makes this one rule rather than two: `Set` for a `Vec` *is* an indexed
-/// assignment, chosen by the language below on the container's type because this
-/// emitter does not know it (ADR-296 D17).
-#[test]
-fn a_sequence_written_through_the_brackets_still_works() {
-    let printed = ran(
-        "a sequence written through the brackets",
-        r#"
-fn main() {
-    let mut xs = Vec()
-    xs.push(10)
-    xs.push(20)
-    xs[0] = 99
-    println(f"{xs[0]} {xs[1]}")
-}
-"#,
-    );
-    assert_eq!(printed.trim(), "99 20");
-}
-
 /// **A compound write is left alone**, and that is the decision rather than an
 /// omission: `xs[0] += 1` reads the slot as well as writing it, so it is an
 /// `Index` either way — and saying what reading an absent key means is a
@@ -191,71 +124,6 @@ fn main() {
     );
 }
 
-/// And both together, run: the sequence, its compound write, and the map.
-#[test]
-fn a_sequence_and_a_map_in_one_program() {
-    let printed = ran(
-        "both containers",
-        r#"
-use std::collections
-
-
-fn main() {
-    let mut xs = Vec()
-    xs.push(10)
-    xs.push(20)
-    xs[0] = 99
-    xs[1] += 1
-
-    let mut scores = collections::HashMap()
-    scores["a"] = 1
-
-    let n = scores["a"] ?? 0
-    println(f"{xs[0]} {xs[1]} {n}")
-}
-"#,
-    );
-    assert_eq!(printed.trim(), "99 21 1");
-}
-
-/// **A field read on an element of a sequence**, which did not compile at all
-/// (0.0.125).
-///
-/// `rows[1].a` — for a `Vec` and for an `Array[T, N]` alike — lowered to
-/// `(*index::get(&rows, index::at(1))).a` and `rustc` answered *type
-/// annotations needed*: `at`'s `I` has nothing to infer itself from, and where
-/// the element is only printed an integer literal's late defaulting settles it,
-/// while a **field read on the element** needs the type before the defaulting
-/// happens.
-///
-/// The emitter already knew this — the paragraph beside the write branch says
-/// `at(0)` has nothing to infer `I` from and takes the literal out of the
-/// conversion — and the **read** branch had never had the same exception. So a
-/// `let` with an index in it was fine and the field after it was
-/// [Part III C.1](../../../docs/specification/30-nikaia-tooling.md)'s class:
-/// `rustc` speaking about the generated file, for an ordinary line.
-///
-/// **A nested index is the same absence one level out**, and it is here for
-/// that reason: `grid[1][0]` has an index where a base stands.
-#[test]
-fn a_field_of_an_indexed_element_compiles_and_runs() {
-    let printed = ran(
-        "a field through an index",
-        "struct Row { a: i64, b: i64 }\n\
-         \n\
-         fn main() {\n\
-         \x20   let rows: Array[Row, 2] = [Row { a: 1, b: 2 }, Row { a: 3, b: 4 }]\n\
-         \x20   println(f\"{rows[1].a}\")\n\
-         \x20   let mut held: Vec[Row] = []\n\
-         \x20   held.push(Row { a: 5, b: 6 })\n\
-         \x20   println(f\"{held[0].b}\")\n\
-         \x20   let grid: Array[Array[i64, 2], 2] = [[1, 2], [3, 4]]\n\
-         \x20   println(f\"{grid[1][0]}\")\n\
-         }\n",
-    );
-    assert_eq!(printed, "3\n6\n3\n");
-}
-
 /// …and **a range the program computes stays in the conversion**, which is
 /// where `index::at` earns its place over a slice.
 ///
@@ -268,18 +136,6 @@ fn a_field_of_an_indexed_element_compiles_and_runs() {
 /// D1's whole trade. `examples/k-nucleotide/src/main.nika` writes the second shape.
 #[test]
 fn a_slice_of_text_is_converted_where_the_range_is_computed() {
-    let printed = ran(
-        "a slice of text",
-        "fn main() {\n\
-         \x20   let text = \"hello\"\n\
-         \x20   let part = ref text[1..3]\n\
-         \x20   println(f\"{part}\")\n\
-         \x20   let at: i64 = 1\n\
-         \x20   println(f\"{text[at..<at + 3]}\")\n\
-         }\n",
-    );
-    assert_eq!(printed, "ell\nell\n");
-
     let rust = lowered(
         "a computed slice of text",
         "fn main() {\n\
@@ -294,51 +150,6 @@ fn a_slice_of_text_is_converted_where_the_range_is_computed() {
             && rust.contains("nikaia_std::index::get(&text, 1..=3)"),
         "the computed range converts and the written one does not: {rust}"
     );
-}
-
-/// **A slice of text read as a value did not lower**
-/// ([ADR-182](../../../docs/specification/adr/adr-182.md) D2, which closed
-/// issue #147's entry for it at 0.0.131).
-///
-/// The read wrapper writes a `*` around every bracket
-/// ([ADR-293](../../../docs/specification/adr/adr-293.md) D9), which is what
-/// makes `xs[0]` the element rather than a view of it. Over a **range** the
-/// read answers a `&str` already, and `*` over one is a `str`: *the size for
-/// values of type `str` cannot be known at compilation time*, about a noun
-/// nobody wrote ([Part III C.1](../../../docs/specification/30-nikaia-tooling.md)).
-///
-/// **Off the shape of what is in the brackets** and not off a type: a range is
-/// a run and a key is not, in this language and in the one below alike.
-#[test]
-fn a_slice_of_text_read_as_a_value_runs() {
-    let printed = ran(
-        "a bare slice of text",
-        "fn main() {\n\
-         \x20   let text = \"hello world\"\n\
-         \x20   println(f\"{text[1..3]}\")\n\
-         \x20   let part = ref text[1..3]\n\
-         \x20   println(f\"{part}\")\n\
-         \x20   println(f\"{text[0..<5]}\")\n\
-         }\n",
-    );
-    assert_eq!(printed, "ell\nell\nhello\n");
-}
-
-/// **And a run of a sequence is the same shape**, which is the half that says
-/// this is about the brackets rather than about text: `*&[i64]` is unsized for
-/// the reason `*&str` is.
-#[test]
-fn a_slice_of_a_sequence_read_as_a_value_runs() {
-    let printed = ran(
-        "a bare slice of a sequence",
-        "fn main() {\n\
-         \x20   let xs: Vec[i64] = [1, 2, 3, 4]\n\
-         \x20   println(f\"{xs[1..2].len()}\")\n\
-         \x20   let run = ref xs[1..2]\n\
-         \x20   println(f\"{run.len()}\")\n\
-         }\n",
-    );
-    assert_eq!(printed, "2\n2\n");
 }
 
 /// **A read at a number keeps its `*`**, which is the line the rule is drawn
@@ -422,5 +233,4 @@ fn main() {
 "#;
     let rust = lowered("element-field", source);
     assert!(!rust.contains("(*nikaia_std::index::get("), "{rust}");
-    assert_eq!(ran("element-field", source), "2 x\n");
 }

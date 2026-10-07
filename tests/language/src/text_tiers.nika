@@ -1,0 +1,17 @@
+// What a `String` field or result is below is decided by what flows into it
+// (ADR-282). What the program computes is here; the tier each lowers to, and
+// every program that reads a file, is `crates/nikaia/tests/text_tiers.rs`.
+
+// Text of its own only: nothing changes. The ordinary field is a `String`
+// below, and a literal in it is built where it stands (ADR-282 D4).
+struct TextTiersGreeting {
+    text: String,
+}
+
+test "a field only text of its own flows into stays a string" {
+    let who = "world"
+    let a = TextTiersGreeting { text: f"hello {who}" }
+    let b = TextTiersGreeting { text: "hi" }
+    let line = f"{a.text} {b.text}"
+    assert(line == "hello world hi")
+}

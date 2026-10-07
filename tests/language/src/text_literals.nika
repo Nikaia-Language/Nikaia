@@ -1,0 +1,97 @@
+// A text literal where a `String` is wanted is a `String` (ADR-282): what the
+// programs compute. What the literal is lowered to, the refusals, and the
+// callees that print what they read stay in `crates/nikaia/tests/text_literals.rs`.
+
+struct TextLiteralsPerson {
+    name: String,
+    nick: String?,
+}
+
+fn text_literals_keep(s: String) -> String { return s }
+
+fn text_literals_label() -> String { return "label" }
+
+// Every position that keeps what it is given, in one program that runs.
+test "a literal is a string wherever one is kept" {
+    let p = TextLiteralsPerson { name: "Ada", nick: "A" }
+    let s: String = "let"
+    let names: Vec[String] = ["a", "b", "c"]
+    let line = f"{p.name} {p.nick ?? "-"} {s} {names.len()} {text_literals_keep("kept")} {text_literals_label()}"
+    assert(line == "Ada A let 3 kept label")
+}
+
+// A literal nobody asked to own stays what it was: a `let` with no
+// annotation, a comparison.
+test "a literal nobody keeps stays a view" {
+    let s = "view"
+    let mut same = false
+    if s == "view" { same = true }
+    assert(same)
+}
+
+fn text_literals_names(n: ref String) -> Vec[String] {
+    let all: Vec[String] = ["a", n]
+    return all
+}
+
+// A list a view goes into is a list of views (ADR-282): the literal beside it
+// is a view of static text, so nothing is constructed and nothing copied - the
+// refusal this used to be is gone.
+test "a list with a view in it is a list of views" {
+    let count = text_literals_names("b").len()
+    assert(count == 2)
+}
+
+fn text_literals_name_or(c: bool, name: String) -> String {
+    if c { name } else { "anonymous" }
+}
+
+fn text_literals_pick(n: i64, name: String) -> String {
+    let s = match n {
+        0 => "zero"
+        1 => name
+        else => f"many {n}"
+    }
+    return s
+}
+
+// A literal takes its neighbours' text: in a list that already holds text of
+// its own, and in an `if` or a `match` whose other arms are `String`. A list
+// holds one type and a choice hands back one, so the literal has no other
+// answer - and nothing here is copied, because a literal is not text the
+// program had.
+test "a literal beside text of its own becomes it" {
+    let n = 3
+    let names = ["a", f"c{n}"]
+    let line = f"{names.len()} {text_literals_name_or(false, f"ada")} {text_literals_pick(0, f"ada")} {text_literals_pick(1, f"ada")} {text_literals_pick(5, f"ada")}"
+    assert(line == "2 anonymous zero ada many 5")
+}
+
+fn text_literals_look(s: ref String) -> i64 {
+    return s.len()
+}
+
+// An `if` or a `match` of literals is static text too (#441, ADR-282 D17),
+// and the rule holds in a program that writes `String` nowhere but in a
+// list's type: kept, each is declared `String`; only looked at, it stays a
+// view.
+fn text_literals_branches() -> String {
+    let k = 3
+    let mut xs: Vec[String] = Vec()
+    let n = "ada"
+    xs.push(n)
+    let q = if k > 1 { "x" } else { "y" }
+    xs.push(q)
+    let r = match k {
+        1 => "one",
+        else => "many",
+    }
+    xs.push(r)
+    let v = if k > 1 { "only" } else { "viewed" }
+    return f"{xs.len()} {xs[1]} {xs[2]} {text_literals_look(v)}"
+}
+
+test "a branch of literals kept is declared string and one looked at is not" {
+    let line = text_literals_branches()
+    assert(line == "3 x many 4")
+}

@@ -10,6 +10,9 @@
 //! That is what these tests are about, in both directions: what reaches the
 //! language below is the **folded value**, and what does not fold reaches the
 //! reader as `NK1127`.
+//!
+//! What a program reads from its `comptime` bindings while it runs is
+//! `tests/build-time/src/comptime.nika`.
 
 mod common;
 
@@ -17,7 +20,6 @@ use nikaia::check::Finding;
 use nikaia::contracts::{Ledger, LedgerOps, STD};
 use nikaia::emit;
 use nikaia::parser::parse_to_ast;
-use std::process::Command;
 
 fn findings(source: &str) -> Vec<Finding> {
     let parsed = parse_to_ast(source).expect("the source parses");
@@ -31,32 +33,6 @@ fn lower(source: &str) -> String {
     emit::emit_program_reading(&parsed, Default::default(), &common::reads())
         .expect("the source lowers")
         .rust
-}
-
-fn run(purpose: &str, source: &str) -> String {
-    let dir = common::scratch_dir(purpose);
-    let rust = lower(source);
-    let file = dir.join("main.rs");
-    std::fs::write(&file, &rust).expect("write the Rust");
-    let binary = dir.join("program");
-    let built = common::compile(&file, &["-o", &binary.to_string_lossy()]);
-    assert!(
-        built.status.success(),
-        "a `comptime` did not compile:\n{}\n--- emitted ---\n{rust}",
-        String::from_utf8_lossy(&built.stderr)
-    );
-    let ran = Command::new(&binary)
-        .current_dir(&dir)
-        .output()
-        .expect("run it");
-    assert!(
-        ran.status.success(),
-        "{}",
-        String::from_utf8_lossy(&ran.stderr)
-    );
-    let out = String::from_utf8_lossy(&ran.stdout).to_string();
-    std::fs::remove_dir_all(&dir).ok();
-    out
 }
 
 const FOUR: &str = "fn main() {\n\
@@ -99,13 +75,6 @@ fn the_type_is_written_or_the_first_one_that_holds_it() {
     ] {
         assert!(rust.contains(want), "missing `{want}`:\n{rust}");
     }
-}
-
-/// And it runs, which is the part no amount of reading the emitted file
-/// replaces.
-#[test]
-fn a_program_with_comptime_bindings_compiles_and_prints_them() {
-    assert_eq!(run("comptime-four", FOUR).trim(), "4096 3000000000 7 true");
 }
 
 /// **What does not fold is refused, not computed later** (D3, D5). The way out
@@ -231,19 +200,6 @@ const OPEN: &str = "fn big(n: i64) -> i64 {\n\
      \x20   let m = N\n\
      \x20   println(f\"{x} {m} {B} {W}\")\n\
      }\n";
-
-/// **Each use takes the value in the type it asks for**
-/// ([ADR-287](../../../docs/specification/adr/adr-287.md) D21): one function
-/// hands `A` to an `i32` and to an `i64` parameter, and `FIB_10` to an `i64`
-/// `let`, which `rustc` refused while the `const` was an `i32`.
-#[test]
-fn an_integer_comptime_takes_the_type_each_use_asks_for() {
-    assert!(findings(OPEN).is_empty(), "{:#?}", findings(OPEN));
-    assert_eq!(
-        run("comptime-open", OPEN),
-        "1000000000 1000000000 55 4096 1000000001\n1000000001 4096 3000000000 1000000000\n"
-    );
-}
 
 /// **Where no use asks, the type is the expression's** (D21): a call's result
 /// type, never one picked by the value, so `big(1)` and `big(3)` are both

@@ -1,0 +1,74 @@
+// A file's name is `fs::Path`, the platform's own bytes (ADR-319, #449): what
+// programs that make, compare and join names compute. The lowering, the
+// refusals and what is printed are `crates/nikaia/tests/file_paths.rs`.
+
+use std::fs
+
+// The type, in each position a value is put (D1, D2): a `let`, an argument, a
+// field and a variant's part take text, and a view of a name borrows the text.
+// And the program runs.
+enum FilePathsConfigError {
+    NotFound(fs::Path),
+    Invalid(String),
+}
+
+struct FilePathsJob {
+    at: fs::Path,
+}
+
+fn file_paths_owned(p: fs::Path) -> fs::Path {
+    return p
+}
+
+fn file_paths_viewed(_p: ref fs::Path) -> bool {
+    return true
+}
+
+fn file_paths_missing(e: ref FilePathsConfigError) -> String {
+    return match e {
+        FilePathsConfigError::NotFound(p) => f"{p.display()}",
+        FilePathsConfigError::Invalid(s) => s.clone(),
+    }
+}
+
+test "a program with file names compiles and runs" {
+    let p: fs::Path = "a.txt"
+    let name = "b.txt"
+    let q = file_paths_owned(name)
+    let job = FilePathsJob { at: "c.txt" }
+    let e = FilePathsConfigError::NotFound("d.txt")
+    let line = f"{file_paths_viewed("e.txt")} {file_paths_viewed(name)}"
+    assert(line == "true true")
+    let names = f"{p.display()} {q.display()} {job.at.display()} {file_paths_missing(e)} {file_paths_missing(FilePathsConfigError::Invalid("bad"))}"
+    assert(names == "a.txt b.txt c.txt d.txt bad")
+}
+
+// What a program does with a name, it does on the `Path` (ADR-319 D3), and
+// `==` is byte for byte, so `dir//data.csv` is another name.
+test "a file names operations run" {
+    let p: fs::Path = "dir/data.csv"
+    let q: fs::Path = "dir//data.csv"
+    let csv = p.ends_with(".csv")
+    let dir = p.starts_with("dir/")
+    let bak = p.with_extension("bak")
+    let up = p.parent() ?? "."
+    let joined = up.join("other.txt")
+    let name = p.file_name() ?? "-"
+    let ext = p.extension() ?? "-"
+    let first = f"{csv} {dir} {bak.display()} {joined.display()} {name.display()} {ext.display()}"
+    let second = f"{p == "dir/data.csv"} {p == q} {"x" != p}"
+    assert(first == "true true dir/data.bak dir/other.txt data.csv csv")
+    assert(second == "true false true")
+}
+
+// An `f"…"` with a file's name in it is a name (ADR-319 D4): the parts are
+// joined in the platform's encoding, the name by its bytes and the rest by its
+// text, where a `let` or an argument asks for a `Path`.
+test "an interpolated name is joined by its bytes" {
+    let p: fs::Path = "data.csv"
+    let n = 3
+    let bak: fs::Path = f"{p}.{n}.bak"
+    let there = fs::exists(f"{p}.bak", fs::Root::Anywhere)
+    let line = f"{bak.display()} {there}"
+    assert(line == "data.csv.3.bak false")
+}

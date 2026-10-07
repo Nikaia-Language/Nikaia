@@ -17,11 +17,12 @@
 //!
 //! **These are run rather than read.** Both defects are about what the language
 //! below accepts, and comparing the emitted string would say no more than that
-//! this compiler agrees with itself.
+//! this compiler agrees with itself. The programs run as tests of the language,
+//! in `tests/language/src/joining.nika`; here stay the `sync` column, the
+//! lowering, a failure that leaves `main`, and what `rustc` says.
 
 mod common;
 
-use nikaia::check;
 use nikaia::contracts::{Ledger, LedgerOps, STD};
 use nikaia::emit::{Build, emit_program};
 use nikaia::parser::parse_to_ast;
@@ -45,39 +46,6 @@ fn violations(source: &str) -> Vec<nikaia::contracts::sync::Violation> {
 fn is_sync(source: &str, of: &str) -> bool {
     let parsed = parse_to_ast(source).expect("the source parses");
     Ledger::infer(&parsed).functions[of].sync_claim.is_sync()
-}
-
-/// Lower it, compile it, run it, hand back what it printed — which is the only
-/// shape that holds C.1 closed.
-fn output(purpose: &str, source: &str) -> String {
-    let parsed = parse_to_ast(source).expect("the source parses");
-    let own = Ledger::infer(&parsed);
-    let library = Ledger::parse(STD).expect("std ships a ledger");
-    let found =
-        check::check_program(&parsed, &own, &library, &std::collections::BTreeSet::new()).findings;
-    assert!(
-        found.is_empty(),
-        "{purpose} is a correct program: {found:#?}"
-    );
-
-    let rust = lowered(source);
-    let dir = common::scratch_dir(purpose);
-    let file = dir.join("main.rs");
-    std::fs::write(&file, &rust).expect("write the Rust");
-    let binary = dir.join("program");
-    let out = common::compile(&file, &["-o", binary.to_str().expect("utf-8 path")]);
-    assert!(
-        out.status.success(),
-        "the lowering of {purpose} compiles:\n{}\n--- the Rust ---\n{rust}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    let ran = std::process::Command::new(&binary)
-        .current_dir(&dir)
-        .output()
-        .expect("the program runs");
-    let printed = String::from_utf8_lossy(&ran.stdout).trim().to_string();
-    let _ = std::fs::remove_dir_all(&dir);
-    printed
 }
 
 /// Two branches that cannot pause, which is the ten-line program that used to
@@ -147,7 +115,6 @@ fn an_overlap_of_branches_that_cannot_pause_is_a_pause() {
     // to have to point out.
     let rust = lowered(SYNC_OVERLAP);
     assert!(rust.contains("async fn __nikaia_main"), "{rust}");
-    assert_eq!(output("joining-overlap-sync", SYNC_OVERLAP), "6 8");
 }
 
 /// The same for a `select`, because it is the same mechanism: `task::race<n>`
@@ -157,10 +124,6 @@ fn a_select_of_arms_that_cannot_pause_is_a_pause() {
     assert!(!is_sync(SYNC_SELECT, "main"), "a `select` parks too");
     let rust = lowered(SYNC_SELECT);
     assert!(rust.contains("async fn __nikaia_main"), "{rust}");
-    // One of the two arms wins and the other is dropped; which one is the
-    // executor's to say, so this asserts that *an* arm answered.
-    let printed = output("joining-select-sync", SYNC_SELECT);
-    assert!(printed == "1" || printed == "2", "{printed}");
 }
 
 /// **A branch that can pause still makes the block one**, which is the case
@@ -244,7 +207,6 @@ fn a_branch_travels_in_the_functions_own_channel() {
         !rust.contains("Ok::<_, Box<dyn std::error::Error>>("),
         "the box is not this function's channel:\n{rust}"
     );
-    assert_eq!(output("joining-own-channel", &source), "c d");
 }
 
 /// **And a library's channel** — which travelled **bare** until
@@ -371,10 +333,6 @@ fn a_handler_on_the_block_gets_the_blocks_outcome() {
         !rust.contains("combine2(__nikaia_branch_0, __nikaia_branch_1)?"),
         "a handler on the block keeps the outcome:\n{rust}"
     );
-    assert_eq!(
-        output("joining-catch-on-the-block", &source),
-        "caught: a is missing"
-    );
 }
 
 /// **D2: and the handler binds what the *branches* threw.**
@@ -408,33 +366,6 @@ fn a_handler_on_the_block_matches_the_branches_variants() {
     );
     // The envelope is opened once at the binding, as ADR-280 D10 says.
     assert!(rust.contains(".split();"), "{rust}");
-    assert_eq!(
-        output("joining-match-on-the-block", &source),
-        "missing a",
-        "the first failure in written order is what the handler is handed"
-    );
-}
-
-/// **The same for a `select`**, whose arms take their failure apart themselves
-/// where the handler is on the block — a `?` there would leave the function.
-#[test]
-fn a_handler_on_a_select_gets_the_blocks_outcome() {
-    let source = format!(
-        "{OWN_ERROR}\n\
-         fn main() {{\n\
-         \x20   select {{\n\
-         \x20       x = load(\"a\") => {{ println(f\"a {{x}}\") }}\n\
-         \x20       y = load(\"b\") => {{ println(f\"b {{y}}\") }}\n\
-         \x20   }} catch {{\n\
-         \x20       println(f\"caught: {{error}}\")\n\
-         \x20   }}\n\
-         }}\n"
-    );
-    let printed = output("joining-catch-on-a-select", &source);
-    assert!(
-        printed == "caught: a is missing" || printed == "b b",
-        "whichever arm wins, the block answers: {printed}"
-    );
 }
 
 /// **D3: and `rustc` says nothing about any of it.**

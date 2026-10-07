@@ -1,0 +1,74 @@
+// A jump may carry its condition after it (ADR-276): `return 250 if speed >
+// 250` is `if speed > 250 { return 250 }`, and the same for `throw`, `break`
+// and `continue`. What the parser builds is `crates/nikaia/tests/jump_guards.rs`.
+
+fn jump_guards_limit(speed: i64) -> i64 {
+    return 250 if speed > 250
+    return speed
+}
+
+test "a return leaves only where its condition holds" {
+    let fast = jump_guards_limit(300)
+    let slow = jump_guards_limit(100)
+    assert(fast == 250)
+    assert(slow == 100)
+}
+
+fn jump_guards_greet(quiet: bool, mut said: Vec[String]) {
+    return if quiet
+    said.push("hello")
+}
+
+test "a bare return may carry its condition" {
+    let mut said: Vec[String] = []
+    jump_guards_greet(true, said)
+    jump_guards_greet(false, said)
+    assert(said == ["hello"])
+}
+
+test "break and continue carry theirs" {
+    let mut seen = 0
+    for n in 0..<10 {
+        continue if n % 2 != 0
+        break if n > 6
+        seen = seen + n
+    }
+    // 0 + 2 + 4 + 6; 8 breaks.
+    assert(seen == 12)
+}
+
+enum JumpGuardsSpeedError {
+    TooFast(i64),
+}
+
+impl Error for JumpGuardsSpeedError {
+    fn message(ref self) -> String {
+        match self {
+            JumpGuardsSpeedError::TooFast(n) => f"too fast: {n}"
+        }
+    }
+}
+
+fn jump_guards_check(speed: i64) -> i64 throws {
+    throw JumpGuardsSpeedError::TooFast(speed) if speed > 250
+    return speed
+}
+
+test "a throw carries its condition" {
+    let a = jump_guards_check(100) catch { 0 }
+    let b = jump_guards_check(300) catch { 0 - 1 }
+    assert(a == 100)
+    assert(b == -1)
+}
+
+// **D2: where a block follows the condition, the `if` is the value.**
+fn jump_guards_sign(n: i64) -> i64 {
+    return if n < 0 { 0 - 1 } else { 1 }
+}
+
+test "a return of an if expression is what it was" {
+    let negative = jump_guards_sign(0 - 5)
+    let positive = jump_guards_sign(5)
+    assert(negative == -1)
+    assert(positive == 1)
+}

@@ -1,0 +1,1214 @@
+// Programs that reached `rustc` as a file nobody wrote, or were refused though
+// correct, each found by running something and kept as the program that found
+// it. What the checker refuses, what is lowered as text and what reads files
+// stays in `crates/nikaia/tests/defects_found_running.rs`.
+
+use std::collections
+
+// issue #166: a `sync` function calls a parameter whose type says `sync`. The
+// caller is held to the word (`NK2206`), so the call keeps the promise; it was
+// refused as a call to something no ledger knows.
+pub fn defects_apply(f: fn(i64) -> i64 sync, x: i64) -> i64 sync {
+    return f(x)
+}
+
+test "a sync function calls a sync parameter" {
+    let line = f"{defects_apply(fn(n) { n * 2 }, 21)}"
+    assert(line == "42")
+}
+
+// issue #158: a `Shared` written into a variant takes the variant's count. The
+// part was declared with the atomic floor and the value built with the count
+// its position got, and `rustc` said *expected `Shared[E]`, found
+// `Shared[E]`*.
+enum DefectsE {
+    Leaf(i64),
+    Add(Shared[DefectsE], Shared[DefectsE]),
+}
+
+test "a shared value in a variant has the parts count" {
+    let e = DefectsE::Add(Shared(DefectsE::Leaf(2)), Shared(DefectsE::Leaf(3)))
+    let said = match e {
+        DefectsE::Add(_, _) => "add",
+        DefectsE::Leaf(n) => f"{n}",
+    }
+    assert(said == "add")
+}
+
+// issue #167: a `?.` chain through two nullable fields of a lent value. The
+// first step took `a.b` out of a lent `a`; a member that comes out as a view
+// needs its receiver lent, as one that copies did.
+struct DefectsC { v: i64 }
+struct DefectsB { c: DefectsC? }
+struct DefectsA { b: DefectsB? }
+
+fn defects_chain(a: ref DefectsA) -> i64 {
+    return a.b?.c?.v ?? -1
+}
+
+test "a chain through two nullable fields of a lent value" {
+    let a = DefectsA { b: DefectsB { c: DefectsC { v: 7 } } }
+    let none = DefectsA { b: null }
+    let half = DefectsA { b: DefectsB { c: null } }
+    let line = f"{defects_chain(a)} {defects_chain(none)} {defects_chain(half)} {defects_chain(a)}"
+    assert(line == "7 -1 -1 7")
+}
+
+// A `for` binding is a binding of its own (0.0.245): `for (k, v) in seen`
+// after an outer `k` was written into the map as a key read the loop's `k` as
+// the one handed over, and refused a correct program with `NK2105`.
+test "a loop binding is not the name it shadows" {
+    let mut seen: collections::HashMap[String, i64] = collections::HashMap()
+    let k = "b".clone()
+    seen[k] = 2
+    let mut kept: Vec[String] = []
+    for (k, v) in seen {
+        kept.push(f"{k}={v}")
+    }
+    assert(kept[0] == "b=2")
+}
+
+// A number, a `bool` or a `char` a `for` binds out of a place is the element
+// (0.0.245): the body opens by reading it through the view, so a field, a
+// comparison and a map's value take it as they take any number. A field was
+// `rustc`'s *expected `i64`, found `&i64`*. And a `for (k, v)` over a map or a
+// list of pairs binds the parts' types, where both were unknown.
+struct DefectsW { count: i64, first: bool }
+
+test "a number a loop binds is the number" {
+    let nums: Vec[i64] = [3, 4]
+    let mut out: Vec[DefectsW] = []
+    for n in nums {
+        out.push(DefectsW { count: n, first: n == 3 })
+    }
+    let mut seen: collections::HashMap[String, i64] = collections::HashMap()
+    seen["a".clone()] = 5
+    for (k, v) in seen {
+        out.push(DefectsW { count: v, first: k == "a" })
+    }
+    let pairs: Vec[(String, i64)] = [("x".clone(), 6)]
+    for (_, v) in pairs {
+        out.push(DefectsW { count: v, first: false })
+    }
+    let mut lines: Vec[String] = []
+    for w in out {
+        lines.push(f"{w.count} {w.first}")
+    }
+    let all = lines.join("|")
+    assert(all == "3 true|4 false|5 true|6 false")
+}
+
+// One key, read and written in one statement (0.0.245): the read lends it and
+// the write hands it over, and the read's form was the write's too.
+test "a key read and written in one statement" {
+    let mut seen: collections::HashMap[String, i64] = collections::HashMap()
+    for w in "a b a".split(" ") {
+        seen[w.clone()] = (seen[w.clone()] ?? 0) + 1
+    }
+    let a = seen["a".clone()] ?? 0
+    let line = f"{a} {seen.len()}"
+    assert(line == "2 2")
+}
+
+// `pop` is described (0.0.245): a call no ledger knew made every function that
+// popped `async`, and inside a generic type's own `pop` the list's `pop` was
+// read as the method calling itself.
+struct DefectsStack[T] { items: Vec[T] }
+
+impl DefectsStack[T] {
+    fn push(ref mut self, x: T) {
+        self.items.push(x)
+    }
+    fn pop(ref mut self) -> T? {
+        return self.items.pop()
+    }
+}
+
+test "a generic stack pops" {
+    let mut s = DefectsStack { items: [] }
+    s.push(1)
+    s.push(2)
+    let top = s.pop() ?? 0
+    let line = f"{top} {s.items.len()}"
+    assert(line == "2 1")
+}
+
+// A function type stands as a list's element (Part I 5.3, 0.0.245): a lambda
+// written in the list is kept as a named one is, and a parameter that is a
+// list of functions holds kept ones.
+fn defects_make_adder(n: i64) -> fn(i64) -> i64 {
+    return fn(x) { x + n }
+}
+
+fn defects_apply_all(fs: ref Vec[fn(i64) -> i64], x: i64) -> i64 {
+    let mut v = x
+    for f in fs {
+        v = f(v)
+    }
+    return v
+}
+
+test "a list of functions is run" {
+    let fs: Vec[fn(i64) -> i64] = [defects_make_adder(1), fn(x) { x * 2 }]
+    let line = f"{defects_apply_all(fs, 5)}"
+    assert(line == "12")
+}
+
+// `_` is the ignore pattern inside a pattern (ADR-291 D17, 0.0.246): a part is
+// a value that arrived, and `(0, _)` and `Shape::Circle(_)` were refused with
+// the catch-all arm's message - which itself says `_` stands in a tuple
+// position.
+enum DefectsShape {
+    Circle(f64),
+    Square(f64),
+}
+
+test "an ignored part of a pattern" {
+    let shapes = [DefectsShape::Circle(1.0), DefectsShape::Square(2.0), DefectsShape::Square(3.0)]
+    let mut squares = 0
+    for s in shapes {
+        match s {
+            DefectsShape::Square(_) => { squares += 1 }
+            DefectsShape::Circle(_) => {}
+        }
+    }
+    let where_ = match (0, 5) {
+        (0, _) => "on the y axis",
+        else => "elsewhere",
+    }
+    let line = f"{squares} {where_}"
+    assert(line == "2 on the y axis")
+}
+
+// A graph over a map of lists (0.0.246), which found four at once: a set asked
+// about an untyped number took the language below's default integer (`i32`); a
+// list had no `contains`; `m[k]?.clone()` lent the map's view a second time and
+// copied the reference rather than the list; and `m[k] ?? []` reached `rustc`.
+struct DefectsGraph { edges: collections::HashMap[i64, Vec[i64]] }
+
+impl DefectsGraph {
+    fn add(ref mut self, a: i64, b: i64) {
+        let mut list = self.edges[a]?.clone() ?? []
+        list.push(b)
+        self.edges[a] = list
+    }
+
+    fn reachable(ref self, start: i64) -> Vec[i64] {
+        let mut seen: Vec[i64] = []
+        let mut todo: Vec[i64] = [start]
+        while todo.len() > 0 {
+            let n = todo.pop() ?? 0
+            if seen.contains(n) {
+                continue
+            }
+            seen.push(n)
+            for m in self.edges[n]?.clone() ?? [] {
+                todo.push(m)
+            }
+        }
+        seen.sort()
+        return seen
+    }
+}
+
+test "a graph over a map of lists" {
+    let mut g = DefectsGraph { edges: collections::HashMap() }
+    g.add(1, 2)
+    g.add(2, 3)
+    g.add(3, 1)
+    g.add(4, 5)
+    let mut small: collections::HashSet[i64] = collections::HashSet()
+    small.insert(3)
+    let three = 3
+    let r = g.reachable(1)
+    let line = f"{r.len()} {small.contains(three)} {small.contains(4)}"
+    assert(line == "3 true false")
+}
+
+// `list(item, sep)` is a rule the backend is given (Part II 10.8, issue #165,
+// 0.0.249): the backend has no such element and read `list` as a rule of the
+// grammar's own, so the macro said *expected ident* about the generated file.
+// An empty item between two separators is an item, and an empty input is an
+// empty list.
+grammar DefectsCsv {
+    entry rule row -> Vec[ref String] = cells:list(CELL, ",") eof { cells }
+
+    rule CELL -> ref String = c:text(CELL_PIECE*) { c }
+    rule CELL_PIECE = not(",") any { }
+
+    entry rule numbers -> Vec[i64] = ns:list(number, ";") eof { ns }
+    rule number -> i64 = n:dec[i64](digit+) { n }
+}
+
+test "a grammar reads a list with a separator" {
+    let cells = DefectsCsv::row("a,,bc")
+    let first = f"{cells.len()} [{cells[0]}] [{cells[1]}] [{cells[2]}]"
+    assert(first == "3 [a] [] [bc]")
+    let ns = DefectsCsv::numbers("1;22;333")
+    let second = f"{ns.len()} {ns[2]}"
+    assert(second == "3 333")
+    let none = DefectsCsv::numbers("")
+    let third = f"{none.len()}"
+    assert(third == "0")
+}
+
+// What the lowering repeats, it says once (0.0.249): a `match` that only
+// answers `true` or `false` is a `matches!`, and `name: name` in a struct
+// literal is `name`. The lowered text is checked in the `.rs` file; this is
+// what the program computes.
+struct DefectsP { x: i64, y: i64 }
+
+fn defects_letter(c: char) -> bool {
+    return match c {
+        'a'..'z' | 'A'..'Z' => true,
+        else => false,
+    }
+}
+
+fn defects_not_small(n: i64) -> bool {
+    return match n {
+        0 | 1 | 2 => false,
+        else => true,
+    }
+}
+
+test "a yes or no match and a field named as its value" {
+    let x = 3
+    let y = 4
+    let p = DefectsP { x: x, y }
+    let line = f"{defects_letter('q')} {defects_letter('1')} {defects_not_small(1)} {defects_not_small(9)} {p.x + p.y}"
+    assert(line == "true false false true 7")
+}
+
+// A view a loop or an arm binds is the view (0.0.297): an element of a
+// `Vec[ref String]` and a variant's `ref String` part, reached through a lent
+// value, were a view of a view below - `w == "fn"` compared a `&&str` with a
+// `str` (found moving the ledger's reader onto a grammar).
+enum DefectsLine { Table { kind: ref String }, Blank }
+
+fn defects_kind_of(line: ref DefectsLine) -> String {
+    match line {
+        DefectsLine::Table { kind } => {
+            if kind == "fn" { return "a function" }
+            return kind.clone()
+        }
+        DefectsLine::Blank => { return "nothing" }
+    }
+}
+
+test "a view a loop or an arm binds is the view" {
+    let mut out: Vec[String] = []
+    let words: Vec[ref String] = ["fn", "let"]
+    for w in words {
+        if w == "fn" { out.push("first") }
+        out.push(defects_kind_of(DefectsLine::Table { kind: w }))
+    }
+    out.push(defects_kind_of(DefectsLine::Blank))
+    let all = out.join("|")
+    assert(all == "first|a function|let|nothing")
+}
+
+// A `match` on a field reached through a view matches the field in place
+// (0.0.320). `match item.shape` with `item: ref Item` moved the field out of
+// what the function was only lent - `rustc`'s E0507 - and what an arm binds is
+// a view of the field, with a copy part read as the copy (found moving the
+// trait check into Nikaia, where `match item.node` walks a lent tree).
+enum DefectsNamedShape { Named { name: String, sides: i64 }, Round }
+struct DefectsItem { shape: DefectsNamedShape }
+
+fn defects_describe(item: ref DefectsItem) -> String {
+    match item.shape {
+        DefectsNamedShape::Named { name, sides } => {
+            if sides == 3 { return f"{name}, a triangle" }
+            return name.clone()
+        }
+        DefectsNamedShape::Round => { return "round" }
+    }
+}
+
+test "a match on a field through a view matches it in place" {
+    let a = DefectsItem { shape: DefectsNamedShape::Named { name: "delta", sides: 3 } }
+    let b = DefectsItem { shape: DefectsNamedShape::Named { name: "square", sides: 4 } }
+    let first = defects_describe(a)
+    let second = defects_describe(b)
+    let third = defects_describe(DefectsItem { shape: DefectsNamedShape::Round })
+    let again = defects_describe(a)
+    assert(first == "delta, a triangle")
+    assert(second == "square")
+    assert(third == "round")
+    assert(again == "delta, a triangle")
+}
+
+// A `??` chain that ends in a jump jumps from the function it is written in
+// (0.0.322). `a ?? b ?? continue` is `a ?? (b ?? continue)`, and the inner
+// fallback was written inside the outer one's closure - `rustc`'s E0267, a
+// `continue` inside a closure. And a list written into a `for` is walked as an
+// array (found moving `contracts::locks` into Nikaia).
+fn defects_small(k: i64) -> i64? {
+    if k == 2 { return 7 }
+    return null
+}
+
+fn defects_middle(k: i64) -> i64? {
+    if k == 1 { return 5 }
+    return null
+}
+
+test "a chain of fallbacks that ends in a jump" {
+    let mut seen: Vec[i64] = []
+    let mut sum = 0
+    for k in [0, 1, 2, 3] {
+        let found = defects_small(k) ?? defects_middle(k) ?? continue
+        seen.push(found)
+        sum = sum + found
+    }
+    assert(seen.len() == 2)
+    assert(seen[0] == 5)
+    assert(seen[1] == 7)
+    assert(sum == 12)
+}
+
+// A list with a `null` in it holds its other elements as `Some` (#312,
+// 0.0.323): `[null, null, 7]` as a `Vec[i64?]` reached `rustc` as
+// `vec![None, None, 7]`. And `x ?? -1` over an element a loop binds - a view of
+// an `i64?` - reads the copy, where no `Or` took the view.
+struct DefectsPoint { x: i64 }
+
+test "a list of optional elements and a fallback on each" {
+    let xs: Vec[i64?] = [null, null, 7]
+    let mut seen: Vec[i64] = []
+    for x in xs {
+        seen.push(x ?? -1)
+    }
+    let ps: Vec[DefectsPoint?] = [DefectsPoint { x: 3 }, null]
+    assert(seen.len() == 3)
+    assert(seen[0] == -1)
+    assert(seen[1] == -1)
+    assert(seen[2] == 7)
+    assert(ps.len() == 2)
+}
+
+// A plain value in a nullable slot is wrapped where it stands (0.0.325):
+// `let h = half(k) ?? return 0` in an `i64?` function hands back `Some(0)` -
+// the wrap was keyed by the statement, so it landed on the `let`'s value and
+// the `return` handed back a bare `0` - and a part handed to a variant that
+// holds a `T?` is `Some` too, where it was not wrapped at all (both found
+// moving `sync::reached` into Nikaia).
+enum DefectsCall {
+    Op(String?),
+    Two(i64, i64?),
+}
+
+fn defects_show(c: ref DefectsCall) -> String {
+    return match c {
+        DefectsCall::Op(text) => text?.clone() ?? "nothing",
+        DefectsCall::Two(a, b) => f"{a} {b ?? -1}",
+    }
+}
+
+fn defects_half(k: i64) -> i64? {
+    if k % 2 == 0 { return k / 2 }
+    return null
+}
+
+fn defects_quarter(k: i64) -> i64? {
+    let h = defects_half(k) ?? return 0
+    return defects_half(h)
+}
+
+test "a return in a fallback and a variant part are wrapped" {
+    let s: String = "named"
+    let a = defects_show(DefectsCall::Op(s))
+    let b = defects_show(DefectsCall::Op(null))
+    let c = defects_show(DefectsCall::Two(1, 2))
+    let d = defects_show(DefectsCall::Two(1, null))
+    let e = defects_quarter(8) ?? -1
+    let f = defects_quarter(3) ?? -1
+    assert(a == "named")
+    assert(b == "nothing")
+    assert(c == "1 2")
+    assert(d == "1 -1")
+    assert(e == 2)
+    assert(f == 0)
+}
+
+// Three found moving `dsl` into Nikaia (#125), each a program the checker
+// accepted and `rustc` refused, or one that ran other than written:
+//
+// * `?? return` at the end of a line took the next line's statement as the
+//   value it returned, so the push below it never ran;
+// * `a ?? b` with a `b` that may be `null` too was read as a `T` and its
+//   fallback converted into one;
+// * a list of text asked whether it holds a `ref String` handed the list's own
+//   `contains` a `&str`.
+fn defects_first(xs: ref Vec[String]) -> String? {
+    if xs.len() > 0 {
+        return xs[0].clone()
+    }
+    return null
+}
+
+fn defects_either(a: ref Vec[String], b: ref Vec[String]) -> String? {
+    let found = defects_first(a) ?? defects_first(b)
+    return found
+}
+
+fn defects_keep(given: String?, mut into: Vec[String]) {
+    let one = given ?? return
+    into.push(one)
+}
+
+fn defects_holds(xs: ref Vec[String], name: ref String) -> bool {
+    return xs.contains(name)
+}
+
+test "a jump a fallback and a list of text" {
+    let none: Vec[String] = []
+    let some: Vec[String] = ["x"]
+    let a = defects_either(none, some) ?? "-"
+    let b = defects_either(none, none) ?? "-"
+    let mut kept: Vec[String] = []
+    defects_keep("a", kept)
+    defects_keep(null, kept)
+    let x = defects_holds(some, "x")
+    let y = defects_holds(some, "y")
+    assert(a == "x")
+    assert(b == "-")
+    assert(kept.len() == 1)
+    assert(x)
+    assert(!y)
+}
+
+// A read through the brackets that jumps where nothing is there binds a view
+// (#125): `let first = seen[name] ?? return …` is the `Some` of a `get` below, a
+// `&String` or a `&i64`, and comparing it with a value of its own reached
+// `rustc` as `&String == String`. It is read as a `for` binding is now.
+fn defects_same(seen: ref collections::BTreeMap[String, String], name: ref String) -> bool {
+    let kind: String = "fn"
+    let first = seen[name] ?? return false
+    return first == kind
+}
+
+fn defects_counted(counts: ref collections::BTreeMap[String, i64], name: ref String, n: i64) -> bool {
+    let count = counts[name] ?? return false
+    return count == n
+}
+
+test "a bracket read with a jump compares with a value" {
+    let mut seen: collections::BTreeMap[String, String] = collections::BTreeMap()
+    seen.insert("a", "fn")
+    let a = defects_same(seen, "a")
+    let b = defects_same(seen, "b")
+    let mut counts: collections::BTreeMap[String, i64] = collections::BTreeMap()
+    counts.insert("a", 3)
+    let c = defects_counted(counts, "a", 3)
+    assert(a)
+    assert(!b)
+    assert(c)
+}
+
+// A branch that ends in `continue` takes its takings with it (#125), as one
+// that ends in `return` does (ADR-293 D30): `kept.push(name)` then `continue`
+// was refused with `NK2105` for the read after the `if`, which no path that
+// pushed reaches.
+fn defects_keep_long(names: ref Vec[String], mut short: Vec[String]) -> i64 {
+    let mut kept: Vec[String] = []
+    for one in names {
+        let name = one.clone()
+        if name.len() > 3 {
+            kept.push(name)
+            continue
+        }
+        short.push(name.clone())
+    }
+    return kept.len()
+}
+
+test "a branch that continues takes its takings with it" {
+    let xs: Vec[String] = ["ab", "abcd"]
+    let mut short: Vec[String] = []
+    let n = defects_keep_long(xs, short)
+    assert(short.len() == 1)
+    assert(short[0] == "ab")
+    assert(n == 1)
+}
+
+// Found moving the compiler's `views` into Nikaia (#125), four programs the
+// checker accepted and `rustc` refused. A list grows at a position written as
+// an `i64` (`Vec::insert` had no entry, so nothing converted it); a part of a
+// tuple compares with a lent `String` (the part was untyped, so neither side
+// was known to be the value); a `match` over a name a `match` lent copies the
+// number it binds out (the name is a reference below); and a list of text is
+// joined without being taken to pause (`Vec::join` had no entry).
+enum DefectsExpr {
+    Name(i64),
+    Nothing,
+}
+
+enum DefectsStmt {
+    Set { target: DefectsExpr, value: i64 },
+    Skip,
+}
+
+fn defects_twice(n: i64) -> i64 {
+    return n * 2
+}
+
+fn defects_total(stmts: ref Vec[DefectsStmt]) -> i64 {
+    let mut sum = 0
+    for i in 0..<stmts.len() {
+        match stmts[i] {
+            DefectsStmt::Set { target, value } => {
+                match target {
+                    DefectsExpr::Name(n) => {
+                        sum = sum + defects_twice(n) + value
+                    }
+                    DefectsExpr::Nothing => {}
+                }
+            }
+            DefectsStmt::Skip => {}
+        }
+    }
+    return sum
+}
+
+fn defects_position(borrows: ref Vec[String], params: ref Vec[(String, i64)]) -> i64 {
+    for borrowed in borrows {
+        for i in 0..<params.len() {
+            if params[i].0 == borrowed {
+                return params[i].1
+            }
+        }
+    }
+    return -1
+}
+
+fn defects_ordered(found: ref Vec[i64]) -> Vec[i64] {
+    let mut out: Vec[i64] = []
+    for n in found {
+        let mut at = out.len()
+        while at > 0 && out[at - 1] > n {
+            at = at - 1
+        }
+        out.insert(at, n)
+    }
+    return out
+}
+
+fn defects_joined(parts: ref Vec[i64]) -> String sync {
+    let mut written: Vec[String] = []
+    for part in parts {
+        written.push(f"{part}")
+    }
+    return written.join(", ")
+}
+
+test "a position a tuple part a lent name and a join" {
+    let stmts: Vec[DefectsStmt] = [DefectsStmt::Set { target: DefectsExpr::Name(4), value: 1 }, DefectsStmt::Skip, DefectsStmt::Set { target: DefectsExpr::Nothing, value: 0 }]
+    let mut params: Vec[(String, i64)] = []
+    params.push(("a".clone(), 1))
+    params.push(("b".clone(), 2))
+    let borrows: Vec[String] = ["b"]
+    let line = f"{defects_total(stmts)} {defects_position(borrows, params)} {defects_joined(defects_ordered([3, 1, 2]))}"
+    assert(line == "9 2 1, 2, 3")
+}
+
+// `str::splitn` is described (found moving `NK2202`'s message into Nikaia,
+// #125): nothing was, so a function that split a name once was taken to pause,
+// and its count is an `i64` the lowering converts, as `chunks`' is (ADR-293
+// D20).
+fn defects_head(name: ref String, n: i64) -> String sync {
+    let parts: Vec[ref String] = name.splitn(n, "::").collect()
+    return parts[parts.len() - 1].clone()
+}
+
+test "splitting at most n times is sync" {
+    let name: String = "std::fs::read"
+    let head = defects_head(name, 2)
+    assert(head == "fs::read")
+}
+
+// `BTreeSet::remove` is described (found moving `contracts::send` into
+// Nikaia, #125): nothing was, so a walk that marks a name and takes the mark
+// off again was taken to pause and lowered `async`.
+fn defects_visit(mut seen: collections::BTreeSet[String], name: ref String) -> bool sync {
+    if !seen.insert(name.clone()) {
+        return false
+    }
+    let was = seen.remove(name)
+    return was
+}
+
+test "taking a value out of a set is sync" {
+    let mut seen: collections::BTreeSet[String] = collections::BTreeSet()
+    let name: String = "a"
+    let line = f"{defects_visit(seen, name)} {seen.len()}"
+    assert(line == "true 0")
+}
+
+// A fallback that jumps takes its takings with it (ADR-293 D30, found moving
+// `contracts::order`'s walk into Nikaia, #125): `?? return Refused(key)` hands
+// `key` over only on the path that leaves, so reading `key` on the next line is
+// no use after it. It was `NK2105`, as a branch that ends in `continue` was
+// before 0.0.354.
+enum DefectsAnswer {
+    Found(String),
+    Missing(String),
+}
+
+fn defects_halved(n: i64) -> i64? {
+    if n % 2 == 0 {
+        return n / 2
+    }
+    return null
+}
+
+fn defects_look(n: i64, key: String) -> DefectsAnswer {
+    let h = defects_halved(n) ?? return DefectsAnswer::Missing(key)
+    return DefectsAnswer::Found(f"{key}:{h}")
+}
+
+fn defects_said(answer: DefectsAnswer) -> String {
+    return match answer {
+        DefectsAnswer::Found(text) => text,
+        DefectsAnswer::Missing(text) => f"no {text}",
+    }
+}
+
+test "a fallback that returns takes its takings with it" {
+    let a = defects_said(defects_look(4, "a".clone()))
+    let b = defects_said(defects_look(3, "b".clone()))
+    assert(a == "a:2")
+    assert(b == "no b")
+}
+
+// A fallback block that ends in a jump is a fallback that jumps (#457, found
+// moving the prover's `Scope` into Nikaia, #436): `?? { s.insert(name) return
+// 0 }` hands `name` over only on the path that leaves. It was `NK2105` for the
+// read after it; that a block that does not leave still is stays in the `.rs`
+// file.
+fn defects_fallback_block(known: i64?, mut s: collections::BTreeSet[String]) -> i64 {
+    let name: String = "xy"
+    let n = known ?? {
+        s.insert(name)
+        return 0
+    }
+    return n + name.len()
+}
+
+test "a fallback block that returns takes its takings with it" {
+    let mut s: collections::BTreeSet[String] = collections::BTreeSet()
+    let line = f"{defects_fallback_block(3, s)} {defects_fallback_block(null, s)} {s.len()}"
+    assert(line == "5 0 1")
+}
+
+// A number read past a jump is the number (#456, found moving the prover's
+// terms into Nikaia, #436): `let v = m[k] ?? return null` over a
+// `BTreeMap[String, i64]` bound the map's view, and handing it to `insert` gave
+// the map a `&i64`, which `rustc` refused; so did a `get`. Read out of the view
+// where it is bound, as a loop binding is, it is the value everywhere below.
+fn defects_doubled(values: ref collections::BTreeMap[String, i64], names: ref Vec[String]) -> collections::BTreeMap[String, i64]? {
+    let mut out: collections::BTreeMap[String, i64] = collections::BTreeMap()
+    for name in names {
+        let v = values[name] ?? return null
+        let w = values.get(name) ?? return null
+        out.insert(name.clone(), v + w)
+        if v > 1 {
+            out.insert(f"{name}!", v)
+        }
+    }
+    return out
+}
+
+test "a number read past a jump is the number" {
+    let mut m: collections::BTreeMap[String, i64] = collections::BTreeMap()
+    m.insert("a", 2)
+    let found: Vec[String] = ["a"]
+    let missing: Vec[String] = ["a", "b"]
+    let r = defects_doubled(m, found) ?? collections::BTreeMap()
+    let first = f"{r.len()} {r["a"] ?? 0}"
+    let second = f"{defects_doubled(m, missing) == null}"
+    assert(first == "2 4")
+    assert(second == "true")
+}
+
+// A part an expression arm binds as a view is handed on as it is (#456, found
+// moving the prover's terms into Nikaia, #436): the arm only reads `name`, so it
+// is bound `ref`, and the call still wrote the compiler's `&` in front of it -
+// `given.get(&name)`, a `&&String` `rustc` refused. A block arm was already
+// right; an expression arm has no statements to find its arguments by.
+enum DefectsNode {
+    Var(String),
+    Int(i64),
+    Pair(String, String),
+}
+
+fn defects_lookup(nodes: ref Vec[DefectsNode], at: i64, given: ref collections::BTreeMap[String, i64]) -> i64 {
+    let node = nodes[at].clone()
+    return match node {
+        DefectsNode::Var(name) => given.get(name) ?? -1,
+        DefectsNode::Int(n) => n,
+        DefectsNode::Pair(a, b) => {
+            let x = given.get(a) ?? 0
+            let y = given.get(b) ?? 0
+            x + y
+        },
+    }
+}
+
+test "a part an expression arm lends is handed on as it is" {
+    let mut m: collections::BTreeMap[String, i64] = collections::BTreeMap()
+    m.insert("a", 2)
+    m.insert("b", 3)
+    let nodes: Vec[DefectsNode] = [DefectsNode::Var("a"), DefectsNode::Var("z"), DefectsNode::Int(7), DefectsNode::Pair("a", "b")]
+    let line = f"{defects_lookup(nodes, 0, m)} {defects_lookup(nodes, 1, m)} {defects_lookup(nodes, 2, m)} {defects_lookup(nodes, 3, m)}"
+    assert(line == "2 -1 7 5")
+}
+
+// A list a function value only reads is a slice (#458, found moving the
+// prover's solver questions into Nikaia, #436): a `ref Vec[i64]` parameter is a
+// `&[i64]`, and the function type that took one was a `Fn(&Vec<i64>)`, so
+// handing the one to the other was refused by `rustc`.
+fn defects_sum_of(xs: ref Vec[i64]) -> i64 {
+    let mut sum = 0
+    for x in xs {
+        sum += x
+    }
+    return sum
+}
+
+fn defects_through(xs: ref Vec[i64], read: fn(ref Vec[i64]) -> i64 sync) -> i64 {
+    return read(xs)
+}
+
+test "a list parameter is handed to a function value" {
+    let xs: Vec[i64] = [3, 4, 5]
+    let counted = defects_through(xs) fn(ys) { ys.len() }
+    let line = f"{defects_through(xs, defects_sum_of)} {counted}"
+    assert(line == "12 3")
+}
+
+// A function takes the parameters the program wrote (#459, found moving the
+// prover's `carry_back` into Nikaia, #436): eight parameters are written with
+// the `allow` for the language below's lint, seven without. The `allow` is
+// checked in the `.rs` file.
+fn defects_eight(a: i64, b: i64, c: i64, d: i64, e: i64, f: i64, g: i64, h: i64) -> i64 {
+    return a + b + c + d + e + f + g + h
+}
+
+fn defects_seven(a: i64, b: i64, c: i64, d: i64, e: i64, f: i64, g: i64) -> i64 {
+    return a + b + c + d + e + f + g
+}
+
+test "a long parameter list is allowed below" {
+    let line = f"{defects_eight(1, 2, 3, 4, 5, 6, 7, 8)} {defects_seven(1, 2, 3, 4, 5, 6, 7)}"
+    assert(line == "36 28")
+}
+
+// A method's number is its own (#460, found moving the prover's
+// `postconditions_of` into Nikaia, #436): `total += into.add(length)` gave the
+// sum the origins of `length`, a `String` the loop makes, so the buffer went
+// into the frame's keep and `known.contains(&length)` was a `&&String`, which
+// `rustc` refused. A method of this package whose result holds no view hands
+// back its own, as a function does.
+struct DefectsNames {
+    pub all: Vec[String],
+}
+
+impl DefectsNames {
+    fn add(ref mut self, name: ref String) -> i64 {
+        self.all.push(name.clone())
+        return self.all.len()
+    }
+}
+
+fn defects_length_named(name: ref String) -> String {
+    return f"{name}.len()"
+}
+
+fn defects_count(names: ref Vec[String], known: ref collections::BTreeSet[String], mut into: DefectsNames) -> i64 {
+    let mut total = 0
+    for name in names {
+        let length = defects_length_named(name)
+        if known.contains(length) {
+            total += into.add(length)
+        }
+    }
+    return total
+}
+
+test "a methods number keeps nothing alive" {
+    let names: Vec[String] = ["a", "b", "c"]
+    let mut known: collections::BTreeSet[String] = collections::BTreeSet()
+    known.insert("a.len()")
+    known.insert("c.len()")
+    let mut into = DefectsNames { all: [] }
+    let line = f"{defects_count(names, known, into)} {into.all.len()}"
+    assert(line == "3 2")
+}
+
+// A `let` over a list element is a view in a comparison (#461, found moving the
+// prover's `foreign_contract` into Nikaia, #436): `let held = xs[at]` binds the
+// element lent, and `made != held` compared a `String` with a `&String`, which
+// `rustc` refused. Two such views compared with each other stay as they are.
+fn defects_named(n: i64) -> String {
+    return f"x{n}"
+}
+
+fn defects_differs(xs: ref Vec[String], at: i64) -> bool {
+    let made = defects_named(at)
+    let held = xs[at]
+    return made != held
+}
+
+fn defects_same_ends(xs: ref Vec[String]) -> bool {
+    let first = xs[0]
+    let last = xs[xs.len() - 1]
+    return first == last
+}
+
+test "a let over an element is read in a comparison" {
+    let xs: Vec[String] = ["x0", "y", "x0"]
+    let line = f"{defects_differs(xs, 0)} {defects_differs(xs, 1)} {defects_same_ends(xs)}"
+    assert(line == "false true true")
+}
+
+// A method's nullable text parameter takes a `String?` inside its option (#462,
+// found moving the prover's `a_call` into Nikaia, #436): the call named only
+// the method, the rule that writes `x.as_deref()` looked the parameter up by
+// that name, and the argument went as `&x`, an `&Option<String>` where the
+// method takes an `Option<&str>`.
+struct DefectsWhere {
+    pub function: String?,
+}
+
+struct DefectsWalk {
+    pub seen: i64,
+}
+
+impl DefectsWalk {
+    fn named(ref self, function: ref String?) -> String {
+        let f = function ?? return "none"
+        return f.clone()
+    }
+
+    fn both(ref self, at: ref DefectsWhere) -> String {
+        let local: String? = "local"
+        return f"{self.named(at.function)} {self.named(local)}"
+    }
+}
+
+test "a methods nullable text parameter takes an option" {
+    let walk = DefectsWalk { seen: 0 }
+    let a = walk.both(DefectsWhere { function: "f" })
+    let b = walk.both(DefectsWhere { function: null })
+    assert(a == "f local")
+    assert(b == "none local")
+}
+
+// A function value a method took whole is lent on to code that only runs it
+// (#463, found moving the prover's `a_call` into Nikaia, #436): a method's code
+// parameter is an `impl Fn` by value, and handing it to another method inside
+// a loop moved it on the first turn.
+struct DefectsTally {
+    pub total: i64,
+}
+
+impl DefectsTally {
+    fn one(ref mut self, k: i64, ask: fn(i64) -> bool sync) {
+        if ask(k) {
+            self.total += k
+        }
+    }
+
+    fn all(ref mut self, n: i64, ask: fn(i64) -> bool sync) {
+        for k in 0..<n {
+            self.one(k, ask)
+        }
+    }
+}
+
+test "a methods function value is handed on in a loop" {
+    let mut walk = DefectsTally { total: 0 }
+    walk.all(6) fn(k) { k % 2 == 0 }
+    assert(walk.total == 6)
+}
+
+// A recursive method hands its function value on whole (#464, a regression
+// from #463's fix): lending it to a call of itself made each level a new type,
+// `&&&…F`, and `rustc` stopped at its recursion limit.
+struct DefectsDescent {
+    pub total: i64,
+}
+
+impl DefectsDescent {
+    fn down(ref mut self, n: i64, ask: fn(i64) -> bool sync) {
+        if n == 0 {
+            return
+        }
+        if ask(n) {
+            self.total += n
+        }
+        self.down(n - 1, ask)
+    }
+}
+
+test "a recursive method hands its function value on" {
+    let mut walk = DefectsDescent { total: 0 }
+    walk.down(6) fn(k) { k % 2 == 0 }
+    assert(walk.total == 12)
+}
+
+// A tuple taken apart out of a list, a list's position, and a part used as a
+// key (#465, found moving the prover's passes into Nikaia, #436):
+// `let (name, n) = pairs[1]` moved out of a borrowed element; `xs.remove(i)`
+// with an `i64` was handed to a `usize` (and, described by no ledger, made its
+// function pause); and `counts[first]` after `let (first, _) = key` over a lent
+// tuple was a `&&String`.
+test "tuples taken apart and list positions lower" {
+    let mut pairs: Vec[(String, i64)] = []
+    pairs.push((f"a", 1))
+    pairs.push((f"b", 2))
+    let (name, n) = pairs[1]
+    let mut seen: collections::BTreeMap[(String, String), i64] = collections::BTreeMap()
+    seen.insert((f"x", f"y"), 3)
+    let mut counts: collections::BTreeMap[String, i64] = collections::BTreeMap()
+    counts.insert("x", 5)
+    let mut lines: Vec[String] = []
+    for (key, value) in seen {
+        let (first, _) = key
+        let c = counts[first] ?? 0
+        lines.push(f"{first} {c} {value}")
+    }
+    let mut xs: Vec[i64] = [10, 20, 30, 40]
+    let i: i64 = 1
+    xs.remove(i)
+    xs.insert(i, 99)
+    xs.swap_remove(0)
+    xs.truncate(i + 1)
+    let last = f"{name} {n + 1} {xs.len()} {xs[0]} {xs[1]}"
+    assert(lines.len() == 1)
+    assert(lines[0] == "x 5 3")
+    assert(last == "b 3 2 40 99")
+}
+
+// A list of tuple literals builds each tuple's text (#466): `[("a", 1),
+// ("b", 2)]` for a `Vec[(String, i64)]` was `NK1103`, a list of `(ref String,
+// ?)`, where one tuple and a list of plain text were accepted.
+test "a list of tuple literals takes the declared type" {
+    let pairs: Vec[(String, i64)] = [("a", 1), ("b", 2)]
+    let (name, n) = pairs[1]
+    let line = f"{pairs.len()} {name} {n}"
+    assert(line == "2 b 2")
+}
+
+// Found by the solver's kernels (ADR-270 D8 step 1): an index into a `mut`
+// parameter, read and written. The parameter is a `&mut Vec<u32>` below, and
+// the write was `set(&mut out, …)` - a second borrow of a binding that is not
+// `mut` - and the read `get(&out, …)` on a `&&mut Vec<u32>`, which nothing
+// implemented.
+fn defects_fill(mut out: Vec[u32], n: i64) {
+    for _ in 0..<n {
+        out.push(0)
+    }
+    for i in 0..<n {
+        out[i] = (i * 3).truncating_u32() + out[i]
+    }
+    out[0] = out[n - 1] + 1
+}
+
+test "an index into a mut parameter" {
+    let mut xs: Vec[u32] = []
+    defects_fill(xs, 5)
+    let line = f"{xs[0]} {xs[4]}"
+    assert(line == "13 12")
+}
+
+// A literal in the brackets keeps the index's type: `xs[n - 1] + 1` over a
+// `Vec[u32]` types the second `1` as a `u32`, and the suffix was written on
+// every `1` of the statement - `n - 1u32`, an `i64` minus a `u32`.
+test "a literal in an index beside an unsigned one" {
+    let mut xs: Vec[u32] = [1, 2, 3]
+    let n = xs.len()
+    xs[0] = xs[n - 1] + 1
+    let y = xs[n - 1] + 1
+    let line = f"{xs[0]} {y}"
+    assert(line == "4 4")
+}
+
+// A number no use types is written with the type it has (Part I 2.4: the first
+// that holds it). Left unwritten, a number that reaches an index only through a
+// loop's binding gave the language below nothing to infer from: *type
+// annotations needed* about a file nobody wrote.
+test "a number no use types reaches an index through a loop" {
+    let variables = 2000
+    let state: u64 = 12345
+    let pick = (state % (2 * variables) as u64) as i64
+    let mut lists: Vec[Vec[i64]] = []
+    for _ in 0..<(2 * variables) {
+        lists.push([])
+    }
+    let mut seen = 0
+    for lit in 0..<(2 * variables) {
+        let list = lists[lit]
+        seen += list.len()
+    }
+    let line = f"{pick} {seen}"
+    assert(line == "345 0")
+}
+
+// A list of `u32` written with a literal no `i32` holds (0.0.373): the literal
+// took the widening of a number nothing asked - `4294967295i64` - inside a
+// `Vec<u32>`, and `rustc` refused the file. Found writing ADR-306's tests.
+test "a large literal in a list of u32 is a u32" {
+    let x: Vec[u32] = [4294967295, 7]
+    let line = f"{x[0]} {x[1]}"
+    assert(line == "4294967295 7")
+}
+
+// Text literals beside a `String?` call and `null` meet at `String?` (0.0.375):
+// the literal arms stayed views, the call's arm was text of its own, and `rustc`
+// said *`match` arms have incompatible types*; a `match` of literals and `null`
+// alone was refused as a view returned for a `String`. Found moving `sharing`
+// into Nikaia (#125).
+enum DefectsTerm {
+    Text(String),
+    Neg(DefectsTerm),
+    Other,
+}
+
+fn defects_kind(e: ref DefectsTerm) -> String? {
+    return match e {
+        DefectsTerm::Text(_) => "String",
+        DefectsTerm::Neg(inner) => defects_kind(inner),
+        DefectsTerm::Other => null,
+    }
+}
+
+fn defects_number_name(x: i64) -> String? {
+    return match x { 0 => "zero", 1 => "one", else => null }
+}
+
+test "text literals beside a nullable call in a match" {
+    let line = f"{defects_kind(DefectsTerm::Neg(DefectsTerm::Text("x"))) ?? "-"} {defects_kind(DefectsTerm::Other) ?? "-"} {defects_number_name(1) ?? "-"} {defects_number_name(2) ?? "-"}"
+    assert(line == "String - one -")
+}
+
+// A map read bound by `let`, a method's `ref String` parameter and a copy type
+// handed on (0.0.377), each found moving `sharing`'s classes into Nikaia
+// (#125): `found ?? 0` over `let found = m[k]` was typed a `ref i64` and
+// refused for an `-> i64` (`NK1104`); a `String` handed to `self.id(key)` for a
+// `key: ref String` was `NK1102`, where the same call to a free function is
+// lent; and `one.kind` of a `Kind?` taken from a lent `one` was refused as
+// taken out of a loan (`NK2106`) though `Kind` copies.
+enum DefectsKind { A, B }
+struct DefectsIds { index: collections::BTreeMap[String, i64] }
+impl DefectsIds {
+    fn id(ref mut self, key: ref String) -> i64 {
+        let found = self.index[key]
+        if found != null {
+            return found ?? 0
+        }
+        let fresh = self.index.len()
+        self.index.insert(key.clone(), fresh)
+        return fresh
+    }
+    fn of(ref mut self, a: ref String, b: ref String) -> i64 {
+        let key = f"{a}::{b}"
+        return self.id(key)
+    }
+}
+struct DefectsKindPair { kind: DefectsKind?, n: i64 }
+fn defects_keep_kinds(mut m: collections::BTreeMap[i64, DefectsKind?], pairs: ref Vec[DefectsKindPair]) {
+    for one in pairs {
+        m.insert(one.n, one.kind)
+    }
+}
+
+test "a map read a method view and a copy handed on" {
+    let mut ids = DefectsIds { index: collections::BTreeMap() }
+    let mut m: collections::BTreeMap[i64, DefectsKind?] = collections::BTreeMap()
+    defects_keep_kinds(m, [DefectsKindPair { kind: DefectsKind::A, n: 1 }, DefectsKindPair { kind: null, n: 2 }])
+    let line = f"{ids.of("x", "y")} {ids.of("x", "z")} {ids.of("x", "y")} {m.len()}"
+    assert(line == "0 1 0 2")
+}
+
+// A lent copy parameter compared with a value, a value into a map of `T?`, a
+// fallback that may be absent too, and a removal by a number (0.0.377), each
+// reaching `rustc` as a file nobody wrote: *can't compare `&Kind` with `Kind`*;
+// *mismatched types* for a `Some(…)` never written;
+// `*index::get(…).or_else(…)`, whose `*` took the whole chain; and
+// `remove(root)` with no `&`. Found moving `sharing`'s classes into Nikaia
+// (#125).
+fn defects_kind_named(k: DefectsKind, other: bool) -> String? {
+    if k != DefectsKind::A || !other {
+        return null
+    }
+    return "a"
+}
+
+fn defects_either_value(m: ref collections::BTreeMap[i64, i64], at: i64, maybe: i64?) -> i64? {
+    return m[at] ?? maybe
+}
+
+test "a lent copy a map of maybes and a removal" {
+    let mut kinds: collections::BTreeMap[i64, DefectsKind?] = collections::BTreeMap()
+    kinds.insert(1, DefectsKind::B)
+    kinds.insert(2, null)
+    let mut m: collections::BTreeMap[i64, i64] = collections::BTreeMap()
+    m.insert(2, 5)
+    m.insert(4, 6)
+    let gone: i64 = 4
+    m.remove(gone)
+    let line = f"{defects_kind_named(DefectsKind::A, true) ?? "-"} {defects_kind_named(DefectsKind::B, true) ?? "-"} {kinds.len()} {defects_either_value(m, 2, null) ?? 0} {defects_either_value(m, 3, 7) ?? 0} {defects_either_value(m, 4, null) ?? 0}"
+    assert(line == "a - 2 5 7 0")
+}
+
+// Text a call made, moved whole into a tuple or a list (0.0.379): the keep walk
+// counted `named.push((first, c))` as a view of `c` kept outside the loop, put
+// `c` into the frame's keep and handed the tuple a reference its `String`
+// refused - *mismatched types* about a file nobody wrote. A struct literal
+// already moved it. Found moving `modules`' `use` check into Nikaia (#125).
+fn defects_called(n: i64) -> String {
+    return f"n{n}"
+}
+
+test "text moved whole into a tuple or a list" {
+    let mut named: Vec[(String, String)] = []
+    let mut listed: Vec[Vec[String]] = []
+    for i in 0..<2 {
+        let first = f"f{i}"
+        let c = defects_called(i)
+        let d = defects_called(i + 10)
+        named.push((first, c))
+        listed.push([d])
+    }
+    let mut lines: Vec[String] = []
+    for (a, b) in named {
+        lines.push(f"{a} {b}")
+    }
+    let all = lines.join("|")
+    assert(all == "f0 n0|f1 n1")
+    assert(listed.len() == 2)
+}
+
+// A literal in an f-string's hole keeps the type its place gives it. What the
+// checker records against a node is keyed by the node's address, and the hole
+// was read as a copy by the checker and as another copy by the emitter: the two
+// met only where the allocator handed back the same address, so
+// `let s = f"{double(3000000000)}"` came out `3000000000i64` for a `u32`
+// parameter - and any other walk between the two moved the address (found
+// moving `sharing`'s walk into Nikaia, #125). The hole is read where it
+// stands, by both.
+fn defects_double(x: u32) -> u32 {
+    return x * 2
+}
+
+test "a literal in a hole keeps the type its place gives it" {
+    let a = f"{defects_double(7)}"
+    let s = f"{defects_double(2000000000)}"
+    let b = f"{defects_double(1500000000)}"
+    assert(a == "14")
+    assert(s == "4000000000")
+    assert(b == "3000000000")
+}

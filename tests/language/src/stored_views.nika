@@ -1,0 +1,78 @@
+// A view kept past the call that was given it, where the destination already
+// names the buffer: the program is lowered with that buffer written out, and
+// these are what such programs compute. The refusals (`NK2302`) and the
+// signatures written are `crates/nikaia/tests/stored_views.rs`.
+
+use std::collections
+
+// The defect, now lowered instead of refused: the subject already carries the
+// buffer, so the parameter is written as a view of *that* buffer. This is the
+// program `rustc` used to refuse with `E0621` about a line nobody wrote.
+struct StoredViewsLabel { label: ref String }
+impl StoredViewsLabel {
+    pub fn() -> StoredViewsLabel sync { return StoredViewsLabel { label: "none" } }
+    fn record(ref mut self, name: ref String) sync {
+        self.label = name
+    }
+}
+
+test "a view stored in the subject is lowered with the buffer named" {
+    let mut s = StoredViewsLabel()
+    s.record("Hamburg")
+    assert(s.label == "Hamburg")
+}
+
+// The same through a call the compiler cannot see the end of. `insert` may keep
+// what it is given and nothing written down says it does, so this used to be
+// refused in stage A and used to reach `rustc` before that.
+struct StoredViewsStations { stations: collections::HashMap[ref String, i32] }
+impl StoredViewsStations {
+    pub fn() -> StoredViewsStations sync { return StoredViewsStations { stations: collections::HashMap() } }
+    fn record(ref mut self, name: ref String, temp: i32) sync {
+        self.stations.insert(name, temp)
+    }
+    fn count(ref self) -> i64 sync { return self.stations.len() }
+}
+
+test "a view handed to a call on the subject is lowered too" {
+    let mut s = StoredViewsStations()
+    s.record("Hamburg", 12)
+    let n = s.count()
+    assert(n == 1)
+}
+
+// A read-only call on a field that holds views. The refusal in stage A covered
+// this, because nothing tells it from `insert`; naming the buffer covers it
+// instead, and costs the program nothing.
+struct StoredViewsLookup { stations: collections::HashMap[ref String, i32] }
+impl StoredViewsLookup {
+    pub fn() -> StoredViewsLookup sync { return StoredViewsLookup { stations: collections::HashMap() } }
+    fn has(ref self, name: ref String) -> bool sync {
+        return self.stations.contains_key(name)
+    }
+}
+
+test "a read only call on a view field is lowered rather than refused" {
+    let s = StoredViewsLookup()
+    let has = s.has("Hamburg")
+    assert(!has)
+}
+
+// A view that reaches the field through a local. The carrier is followed by
+// name, so the parameter is written with the buffer and the program lowers.
+struct StoredViewsCarried { stations: collections::HashMap[ref String, i32] }
+impl StoredViewsCarried {
+    pub fn() -> StoredViewsCarried sync { return StoredViewsCarried { stations: collections::HashMap() } }
+    fn record(ref mut self, name: ref String) sync {
+        let key = name
+        self.stations.insert(key, 1)
+    }
+    fn count(ref self) -> i64 sync { return self.stations.len() }
+}
+
+test "a view that reaches the field through a local is lowered too" {
+    let mut s = StoredViewsCarried()
+    s.record("Hamburg")
+    let n = s.count()
+    assert(n == 1)
+}

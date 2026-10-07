@@ -1,0 +1,265 @@
+// A type that holds itself holds itself through a box the compiler writes
+// (ADR-246): a program builds, matches and reads such types as the types it
+// declared. What the lowering writes, and what is refused, stays in
+// `crates/nikaia/tests/recursive_types.rs`.
+
+enum RecursiveTypesExpr {
+    Num(i64),
+    Add(RecursiveTypesExpr, RecursiveTypesExpr),
+    Mul(RecursiveTypesExpr, RecursiveTypesExpr),
+    Neg { inner: RecursiveTypesExpr },
+}
+
+fn recursive_types_eval(e: ref RecursiveTypesExpr) -> i64 {
+    return match e {
+        RecursiveTypesExpr::Num(n) => n,
+        RecursiveTypesExpr::Add(a, b) => recursive_types_eval(a) + recursive_types_eval(b),
+        RecursiveTypesExpr::Mul(a, b) => recursive_types_eval(a) * recursive_types_eval(b),
+        RecursiveTypesExpr::Neg { inner } => 0 - recursive_types_eval(inner),
+    }
+}
+
+fn recursive_types_show(e: ref RecursiveTypesExpr) -> String {
+    return match e {
+        RecursiveTypesExpr::Num(n) => f"{n}",
+        RecursiveTypesExpr::Add(a, b) => f"({recursive_types_show(a)} + {recursive_types_show(b)})",
+        RecursiveTypesExpr::Mul(a, b) => f"({recursive_types_show(a)} * {recursive_types_show(b)})",
+        RecursiveTypesExpr::Neg { inner } => f"-{recursive_types_show(inner)}",
+    }
+}
+
+fn recursive_types_left(e: RecursiveTypesExpr) -> RecursiveTypesExpr {
+    return match e {
+        RecursiveTypesExpr::Add(a, _b) => a,
+        else => RecursiveTypesExpr::Num(0),
+    }
+}
+
+// A syntax tree, as written (D1-D3): built with its constructors, walked by a
+// `match` over a lent value and over an owned one, and a variant written as a
+// struct. The number a leaf holds comes out of the lent `match` as the `i64`
+// its type says.
+test "an expression tree is built matched and taken apart" {
+    let tree = RecursiveTypesExpr::Add(RecursiveTypesExpr::Num(2), RecursiveTypesExpr::Mul(RecursiveTypesExpr::Num(3), RecursiveTypesExpr::Neg { inner: RecursiveTypesExpr::Num(4) }))
+    let whole = f"{recursive_types_show(tree)} = {recursive_types_eval(tree)}"
+    let l = recursive_types_left(tree)
+    let left = f"left = {recursive_types_show(l)}"
+    assert(whole == "(2 + (3 * -4)) = -10")
+    assert(left == "left = 2")
+}
+
+struct RecursiveTypesNode {
+    value: i64,
+    next: RecursiveTypesNode?,
+}
+
+fn recursive_types_two(n: ref RecursiveTypesNode) -> i64 {
+    return n.value + (n.next?.value ?? 0)
+}
+
+// A list linked by a nullable field (D1): `next: Node?` holds a `Node` inline
+// when it is there, so it is boxed too. Built with `null` and with a node,
+// read through `?.`, assigned, and copied with `with`.
+test "a linked list is built read and changed" {
+    let tail = RecursiveTypesNode { value: 3, next: null }
+    let mid = RecursiveTypesNode { value: 2, next: tail }
+    let mut head = RecursiveTypesNode { value: 1, next: mid }
+    let first = recursive_types_two(head)
+    head.next = RecursiveTypesNode { value: 10, next: null }
+    let second = recursive_types_two(head)
+    let other = head with { value: 5 }
+    let last = other with { next: null }
+    let third = f"{recursive_types_two(other)} {recursive_types_two(last)}"
+    assert(first == 3)
+    assert(second == 11)
+    assert(third == "15 5")
+}
+
+enum RecursiveTypesRingExpr {
+    Lit(i64),
+    Apply(RecursiveTypesCall),
+}
+
+struct RecursiveTypesCall {
+    name: String,
+    arg: RecursiveTypesRingExpr,
+}
+
+struct RecursiveTypesBlock { stmts: Vec[RecursiveTypesStmt] }
+enum RecursiveTypesStmt { Say(String), Nested(RecursiveTypesBlock) }
+
+fn recursive_types_depth(e: ref RecursiveTypesRingExpr) -> i64 {
+    return match e {
+        RecursiveTypesRingExpr::Lit(_n) => 0,
+        RecursiveTypesRingExpr::Apply(call) => 1 + recursive_types_depth(call.arg),
+    }
+}
+
+fn recursive_types_count(b: ref RecursiveTypesBlock) -> i64 {
+    let mut n = 0
+    for s in b.stmts {
+        n += match s {
+            RecursiveTypesStmt::Say(_t) => 1,
+            RecursiveTypesStmt::Nested(inner) => recursive_types_count(inner),
+        }
+    }
+    return n
+}
+
+// A ring through another type (D1): `Expr` holds a `Call`, which holds an
+// `Expr`. Both edges are on the ring and both are boxed; a field read off the
+// inner type goes through its box. A list is an indirection already, so a type
+// held through one is left alone.
+test "a ring through another type is boxed on both edges" {
+    let e = RecursiveTypesRingExpr::Apply(RecursiveTypesCall { name: "f", arg: RecursiveTypesRingExpr::Apply(RecursiveTypesCall { name: "g", arg: RecursiveTypesRingExpr::Lit(1) }) })
+    let inner = RecursiveTypesBlock { stmts: [RecursiveTypesStmt::Say("a"), RecursiveTypesStmt::Say("b")] }
+    let outer = RecursiveTypesBlock { stmts: [RecursiveTypesStmt::Say("x"), RecursiveTypesStmt::Nested(inner)] }
+    let line = f"{recursive_types_depth(e)} {recursive_types_count(outer)}"
+    assert(line == "2 3")
+}
+
+enum RecursiveTypesNestedExpr {
+    Num(i64),
+    Add(RecursiveTypesNestedExpr, RecursiveTypesNestedExpr),
+    Neg { inner: RecursiveTypesNestedExpr },
+}
+
+fn recursive_types_simplify(e: ref RecursiveTypesNestedExpr) -> i64 {
+    return match e {
+        RecursiveTypesNestedExpr::Add(RecursiveTypesNestedExpr::Num(0), b) => recursive_types_simplify(b),
+        RecursiveTypesNestedExpr::Add(a, RecursiveTypesNestedExpr::Num(0)) => recursive_types_simplify(a),
+        RecursiveTypesNestedExpr::Add(RecursiveTypesNestedExpr::Num(x), RecursiveTypesNestedExpr::Num(y)) => x + y,
+        RecursiveTypesNestedExpr::Add(RecursiveTypesNestedExpr::Neg { inner }, _b) if recursive_types_simplify(_b) > 100 => 100 - recursive_types_simplify(inner),
+        RecursiveTypesNestedExpr::Add(a, b) => recursive_types_simplify(a) + recursive_types_simplify(b),
+        RecursiveTypesNestedExpr::Num(n) => n,
+        RecursiveTypesNestedExpr::Neg { inner } => 0 - recursive_types_simplify(inner),
+    }
+}
+
+fn recursive_types_first(e: RecursiveTypesNestedExpr) -> i64 {
+    return match e {
+        RecursiveTypesNestedExpr::Add(RecursiveTypesNestedExpr::Num(n), _) => n,
+        else => -1,
+    }
+}
+
+// A pattern looks inside a boxed part (D5, item 1): the lowering binds the
+// part to a name, asks the question in the arm's guard - so the next arm is
+// tried where the part has another shape - and takes the part apart in the
+// arm. Over a lent value and an owned one, a part on either side, two parts at
+// once, and a guard of the program's own beside it.
+test "a pattern looks inside a boxed part" {
+    let a = recursive_types_simplify(RecursiveTypesNestedExpr::Add(RecursiveTypesNestedExpr::Num(0), RecursiveTypesNestedExpr::Num(5)))
+    let b = recursive_types_simplify(RecursiveTypesNestedExpr::Add(RecursiveTypesNestedExpr::Num(7), RecursiveTypesNestedExpr::Num(0)))
+    let c = recursive_types_simplify(RecursiveTypesNestedExpr::Add(RecursiveTypesNestedExpr::Num(2), RecursiveTypesNestedExpr::Num(3)))
+    let d = recursive_types_simplify(RecursiveTypesNestedExpr::Add(RecursiveTypesNestedExpr::Neg { inner: RecursiveTypesNestedExpr::Num(1) }, RecursiveTypesNestedExpr::Num(500)))
+    let e = recursive_types_simplify(RecursiveTypesNestedExpr::Add(RecursiveTypesNestedExpr::Neg { inner: RecursiveTypesNestedExpr::Num(1) }, RecursiveTypesNestedExpr::Num(5)))
+    let f = recursive_types_first(RecursiveTypesNestedExpr::Add(RecursiveTypesNestedExpr::Num(9), RecursiveTypesNestedExpr::Num(1)))
+    let g = recursive_types_first(RecursiveTypesNestedExpr::Num(3))
+    assert(a == 5)
+    assert(b == 7)
+    assert(c == 5)
+    assert(d == 99)
+    assert(e == 4)
+    assert(f == 9)
+    assert(g == -1)
+}
+
+enum RecursiveTypesGuardExpr {
+    Num(i64),
+    Name(String),
+    Add(RecursiveTypesGuardExpr, RecursiveTypesGuardExpr),
+}
+
+fn recursive_types_owned(e: RecursiveTypesGuardExpr) -> String {
+    return match e {
+        RecursiveTypesGuardExpr::Add(RecursiveTypesGuardExpr::Num(_n), _b) if _n == 0 => "zero",
+        RecursiveTypesGuardExpr::Add(RecursiveTypesGuardExpr::Name(s), _b) if s == "x" || s.len() > 3 => f"named {s}",
+        RecursiveTypesGuardExpr::Add(_a, _b) => "add",
+        else => "leaf",
+    }
+}
+
+fn recursive_types_lent(e: ref RecursiveTypesGuardExpr) -> i64 {
+    return match e {
+        RecursiveTypesGuardExpr::Add(RecursiveTypesGuardExpr::Num(n), _b) if n > 1 => n,
+        else => -1,
+    }
+}
+
+// A guard reads a name bound inside a boxed part (D5 item 2, #97). The guard
+// runs before the arm takes the part apart, so the lowering binds the names a
+// second time inside the guard, through the box: a number is copied out, text
+// stays a view of the part. Where the guard says no, the next arm is tried -
+// and the arm that is taken still takes the part apart. Over a value the
+// function owns, and over one it was lent.
+test "a guard reads a name bound inside a box" {
+    let a = recursive_types_owned(RecursiveTypesGuardExpr::Add(RecursiveTypesGuardExpr::Num(0), RecursiveTypesGuardExpr::Num(1)))
+    let b = recursive_types_owned(RecursiveTypesGuardExpr::Add(RecursiveTypesGuardExpr::Num(2), RecursiveTypesGuardExpr::Num(1)))
+    let c = recursive_types_owned(RecursiveTypesGuardExpr::Add(RecursiveTypesGuardExpr::Name("x"), RecursiveTypesGuardExpr::Num(1)))
+    let d = recursive_types_owned(RecursiveTypesGuardExpr::Add(RecursiveTypesGuardExpr::Name("long"), RecursiveTypesGuardExpr::Num(1)))
+    let e = recursive_types_owned(RecursiveTypesGuardExpr::Add(RecursiveTypesGuardExpr::Name("y"), RecursiveTypesGuardExpr::Num(1)))
+    let big = RecursiveTypesGuardExpr::Add(RecursiveTypesGuardExpr::Num(5), RecursiveTypesGuardExpr::Num(1))
+    let small = RecursiveTypesGuardExpr::Add(RecursiveTypesGuardExpr::Num(1), RecursiveTypesGuardExpr::Num(1))
+    let f = f"{recursive_types_lent(big)} {recursive_types_lent(small)}"
+    assert(a == "zero")
+    assert(b == "add")
+    assert(c == "named x")
+    assert(d == "named long")
+    assert(e == "add")
+    assert(f == "5 -1")
+}
+
+enum RecursiveTypesPartExpr {
+    Num(i64),
+    Add(RecursiveTypesPartExpr, RecursiveTypesPartExpr),
+}
+
+fn recursive_types_is_zero(e: ref RecursiveTypesPartExpr) -> bool {
+    return match e {
+        RecursiveTypesPartExpr::Num(n) => n == 0,
+        else => false,
+    }
+}
+
+fn recursive_types_simplify_part(e: RecursiveTypesPartExpr) -> String {
+    return match e {
+        RecursiveTypesPartExpr::Add(_a, _b) if recursive_types_is_zero(_a) => "left zero",
+        RecursiveTypesPartExpr::Add(_a, _b) if _a == RecursiveTypesPartExpr::Num(1) && _b != RecursiveTypesPartExpr::Num(1) => "left one",
+        RecursiveTypesPartExpr::Add(_a, _b) => "add",
+        RecursiveTypesPartExpr::Num(n) => f"{n}",
+    }
+}
+
+// A guard reads a part bound whole out of a box as the part (D5 item 2, #97):
+// a call that is lent it works as before, and a comparison with a value of the
+// part's type reads the part.
+test "a guard reads a boxed part as the part" {
+    let a = recursive_types_simplify_part(RecursiveTypesPartExpr::Add(RecursiveTypesPartExpr::Num(0), RecursiveTypesPartExpr::Num(1)))
+    let b = recursive_types_simplify_part(RecursiveTypesPartExpr::Add(RecursiveTypesPartExpr::Num(1), RecursiveTypesPartExpr::Num(2)))
+    let c = recursive_types_simplify_part(RecursiveTypesPartExpr::Add(RecursiveTypesPartExpr::Num(1), RecursiveTypesPartExpr::Num(1)))
+    assert(a == "left zero")
+    assert(b == "left one")
+    assert(c == "add")
+}
+
+enum RecursiveTypesToken { Word(String), Count(i64), End }
+
+fn recursive_types_weight(t: ref RecursiveTypesToken) -> i64 {
+    return match t {
+        RecursiveTypesToken::Word(w) => w.len() as i64,
+        RecursiveTypesToken::Count(n) => n,
+        RecursiveTypesToken::End => 0,
+    }
+}
+
+// The two defects a syntax tree meets first, in a type that holds nothing of
+// itself: a literal handed to a variant's text part, and a number bound out
+// of a lent `match`.
+test "a variants text is built and a lent number comes out as a number" {
+    let owned: String = "xyz"
+    let tokens = [RecursiveTypesToken::Word("ab"), RecursiveTypesToken::Count(5), RecursiveTypesToken::Word(owned), RecursiveTypesToken::End]
+    let mut total = 0
+    for t in tokens { total += recursive_types_weight(t) }
+    assert(total == 10)
+}

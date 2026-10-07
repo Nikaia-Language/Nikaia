@@ -4,8 +4,9 @@
 //! examples are for: a character literal was not a thing the language had, a
 //! string could not hold a `\u{…}` escape, and output could not be composed
 //! without a newline attached to every piece.
-
-mod common;
+//!
+//! What a hole prints when the program runs is
+//! `tests/language/src/literals.nika`.
 
 use nikaia::ast::{Expr, Item, MatchPattern, Stmt};
 use nikaia::contracts::LedgerOps;
@@ -497,40 +498,6 @@ fn a_map_or_a_set_in_a_hole_is_refused_too() {
         found[1].notes[0].contains("`s` is `collections::HashSet[i64]`"),
         "{found:#?}"
     );
-}
-
-/// **What a hole can print it still prints**: a list's length, one element,
-/// and the joined text the help names, which compiles and runs. A value this
-/// checker cannot type is not refused on a guess (Part III C.4).
-#[test]
-fn the_way_out_runs_and_what_prints_is_untouched() {
-    let source = "fn main() {\n\
-                  \x20   let data = [1, 2, 3]\n\
-                  \x20   let text = data.iter().join(\", \")\n\
-                  \x20   let words = [\"a\", \"b\"]\n\
-                  \x20   let joined = words.iter().join(\"-\")\n\
-                  \x20   println(f\"Reading: {text} {data.len()} {data[0]} {joined}\")\n\
-                  }\n";
-    assert!(findings(source).is_empty(), "{:#?}", findings(source));
-    let rust = emit(source);
-    let dir = common::scratch_dir("literals-joined-hole");
-    let file = dir.join("main.rs");
-    std::fs::write(&file, &rust).expect("write the Rust");
-    let binary = dir.join("program");
-    let built = common::compile(&file, &["-o", &binary.to_string_lossy()]);
-    assert!(
-        built.status.success(),
-        "{}\n--- emitted ---\n{rust}",
-        String::from_utf8_lossy(&built.stderr)
-    );
-    let out = std::process::Command::new(&binary)
-        .output()
-        .expect("run it");
-    assert_eq!(
-        String::from_utf8_lossy(&out.stdout),
-        "Reading: 1, 2, 3 3 1 a-b\n"
-    );
-    std::fs::remove_dir_all(&dir).ok();
 }
 
 /// **The grammar parses a hole** ([ADR-309](../../../docs/specification/adr/adr-309.md)

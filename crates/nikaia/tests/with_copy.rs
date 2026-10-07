@@ -13,14 +13,14 @@
 //! ([ADR-296](../../../docs/specification/adr/adr-296.md) D17). A `with` this
 //! compiler could not name a type for is refused rather than guessed at, and
 //! that is why the emitter's lookup cannot fail.
-
-mod common;
+//!
+//! What a copy holds when the program runs is
+//! `tests/language/src/with_copy.nika`; here are the lowering and the refusals.
 
 use nikaia::check::{self, Finding};
 use nikaia::contracts::{Ledger, LedgerOps, STD};
 use nikaia::emit;
 use nikaia::parser::parse_to_ast;
-use std::process::Command;
 
 fn findings(source: &str) -> Vec<Finding> {
     let parsed = parse_to_ast(source).expect("the source parses");
@@ -42,86 +42,7 @@ fn lower(source: &str) -> String {
         .rust
 }
 
-fn run(purpose: &str, source: &str) -> String {
-    let dir = common::scratch_dir(purpose);
-    let rust = lower(source);
-    let file = dir.join("main.rs");
-    std::fs::write(&file, &rust).expect("write the Rust");
-    let binary = dir.join("program");
-    let built = common::compile(&file, &["-o", &binary.to_string_lossy()]);
-    assert!(
-        built.status.success(),
-        "a `with` did not compile:\n{}\n--- emitted ---\n{rust}",
-        String::from_utf8_lossy(&built.stderr)
-    );
-    let ran = Command::new(&binary)
-        .current_dir(&dir)
-        .output()
-        .expect("run it");
-    assert!(
-        ran.status.success(),
-        "{}",
-        String::from_utf8_lossy(&ran.stderr)
-    );
-    let out = String::from_utf8_lossy(&ran.stdout).to_string();
-    std::fs::remove_dir_all(&dir).ok();
-    out
-}
-
 const POINT: &str = "struct Point { x: i64, y: i64, z: i64 }\n";
-
-/// **The whole of D1, run**: one field changes, the rest come from the value.
-///
-/// It runs rather than being read off the emitted line, because what `..p`
-/// means is the language below's and a test that only matched the text would
-/// pass for a copy that took the fields from the wrong place.
-#[test]
-fn a_copy_changes_what_it_names_and_carries_the_rest() {
-    let source = format!(
-        "{POINT}\n\
-         fn main() {{\n\
-         \x20   let p = Point {{ x: 1, y: 2, z: 3 }}\n\
-         \x20   let moved = p with {{ x: p.x + 1 }}\n\
-         \x20   println(f\"{{moved.x}} {{moved.y}} {{moved.z}}\")\n\
-         }}"
-    );
-    assert!(findings(&source).is_empty(), "{:#?}", findings(&source));
-    assert_eq!(run("with-copy", &source), "2 2 3\n");
-}
-
-/// **The shorthand is the literal's** (D1): `user with { name }` takes the
-/// local spelled like the field, which costs nothing here because the field
-/// list is the same node.
-#[test]
-fn the_shorthand_is_the_struct_literals() {
-    let source = "struct S { name: String, n: i64 }\n\
-         \n\
-         fn main() {\n\
-         \x20   let s = S { name: \"a\", n: 1 }\n\
-         \x20   let name: String = \"b\"\n\
-         \x20   let t = s with { name }\n\
-         \x20   println(f\"{t.name} {t.n}\")\n\
-         }";
-    assert_eq!(run("with-shorthand", source), "b 1\n");
-}
-
-/// **Only the top level, and a nested change is a nested `with`** (D2).
-///
-/// One rule and one level, so the question of what a path would mean through a
-/// `T?`, an enum or a list never has to be answered — and `with` nesting is
-/// the postfix rule applying twice, which is why it needed nothing for this.
-#[test]
-fn a_field_of_a_field_is_a_nested_with() {
-    let source = "struct Point { x: i64, y: i64 }\n\
-         struct Nested { pos: Point, tag: i64 }\n\
-         \n\
-         fn main() {\n\
-         \x20   let n = Nested { pos: Point { x: 1, y: 2 }, tag: 7 }\n\
-         \x20   let m = n with { pos: n.pos with { x: 9 } }\n\
-         \x20   println(f\"{m.pos.x} {m.pos.y} {m.tag}\")\n\
-         }";
-    assert_eq!(run("with-nested", source), "9 2 7\n");
-}
 
 /// **What it lowers to is one struct expression with a base** (§3), and `..p`
 /// rather than `..p.clone()`: no copy is inserted that the program did not

@@ -316,3 +316,46 @@ fn a_package_without_tests_says_so() {
     );
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// **Both settings, run again, build nothing again** (ADR-269 D12): the test
+/// build at `no` and at `yes` each keep a directory and a name of their own, so
+/// neither makes the other stale. While they shared one, every run lowered and
+/// compiled both again.
+#[test]
+fn both_settings_run_again_build_nothing_again() {
+    let dir = a_project(
+        "test-both-again",
+        &[(
+            "main.nika",
+            "fn main() {\n}\n\ntest \"one is one\" {\n    assert(1 == 1)\n}\n",
+        )],
+    );
+    let lowered = |log: &str| {
+        let trace = dir.join(log);
+        let out = Command::new(env!("CARGO_BIN_EXE_nikaia"))
+            .args(["test", "--both-settings", "--project"])
+            .arg(&dir)
+            .env("NIKAIA_CACHE_DIR", shared_cache_dir())
+            .env("NIKAIA_WRAPPER_TRACE", &trace)
+            .env_remove("CARGO_TARGET_DIR")
+            .output()
+            .expect("the nikaia binary runs");
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        std::fs::read_to_string(&trace)
+            .unwrap_or_default()
+            .lines()
+            .filter(|line| line.ends_with(" lowered"))
+            .count()
+    };
+    assert_eq!(
+        lowered("first.log"),
+        2,
+        "the first run lowers the test build at each setting"
+    );
+    assert_eq!(lowered("second.log"), 0, "the second run finds both fresh");
+    std::fs::remove_dir_all(&dir).ok();
+}

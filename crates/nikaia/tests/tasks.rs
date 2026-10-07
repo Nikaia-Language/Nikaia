@@ -8,6 +8,10 @@
 //! neither yields. With the executor (§6 step 1), `async fn` off the ledger
 //! (step 2) and `std` suspending for real (step 3), they can — and these are
 //! the tests that say so about programs rather than about `std`'s own futures.
+//!
+//! What a program with tasks computes is in `tests/language/src/tasks.nika`;
+//! what stays here needs the order of a program's output, files, a runtime
+//! configuration, a build switch, the checker or the emitted Rust.
 
 mod common;
 
@@ -95,9 +99,10 @@ fn a_task_nobody_joins_still_runs() {
     assert!(main_at < task_at, "{printed}");
 }
 
-/// `.join()` is an `.await`, and it hands back the body's value (D5).
+/// `.join()` is an `.await` (D5); that it hands back the body's value is in
+/// `tests/language/src/tasks.nika`.
 #[test]
-fn a_handle_joins_to_the_value_the_body_came_to() {
+fn a_join_is_an_await() {
     let source = "fn work(n: i64) -> i64 {\n\
          \x20   return n * 2\n\
          }\n\
@@ -116,12 +121,6 @@ fn a_handle_joins_to_the_value_the_body_came_to() {
     assert!(
         rust.contains("nikaia_std::task::TaskHandle::start(async move"),
         "{rust}"
-    );
-
-    assert_eq!(
-        run("tasks-join", source).trim(),
-        "started\n42",
-        "the handle did not carry the body's value"
     );
 }
 
@@ -212,41 +211,6 @@ fn data_a_task_took_and_the_program_used_again_is_refused() {
     for backend in ["closure", "borrow of moved", "async"] {
         assert!(!format!("{found:?}").contains(backend), "`{backend}`");
     }
-}
-
-/// **What `NK2101` must not refuse**, which is most of what a program writes.
-///
-/// Four cases, and each is a different reason: a value that was cloned first
-/// (Part I 8.3's own way out), a number and a view (both **copied**, so the
-/// task takes a copy and the name keeps working), and a name **assigned again**
-/// after the task — which gives it a value, is accepted by Rust, and refusing
-/// it would refuse a correct program (Part III, C.4).
-#[test]
-fn a_copy_a_clone_and_a_reassignment_are_not_refused() {
-    let source = "fn main() {\n\
-         \x20   let message = \"Hello\"\n\
-         \x20   let copy = message.clone()\n\
-         \x20   spawn fn { println(copy) }\n\
-         \x20   println(message)\n\
-         \n\
-         \x20   let n = 7\n\
-         \x20   spawn fn { println(f\"{n}\") }\n\
-         \x20   println(f\"{n}\")\n\
-         \n\
-         \x20   let word = \"Welt\"\n\
-         \x20   spawn fn { println(word) }\n\
-         \x20   println(word)\n\
-         \n\
-         \x20   let mut again = \"eins\"\n\
-         \x20   spawn fn { println(again) }\n\
-         \x20   again = \"zwei\"\n\
-         \x20   println(again)\n\
-         }";
-    assert!(findings(source).is_empty(), "{:?}", findings(source));
-    // And it is not accepted by being un-compilable: the whole of it runs.
-    let printed = run("tasks-accepted", source);
-    assert!(printed.contains("Hello"), "{printed}");
-    assert!(printed.contains("zwei"), "{printed}");
 }
 
 /// `NK2103`: a task's lambda may not name an argument, because a task is handed
@@ -412,24 +376,6 @@ fn a_task_that_never_finishes_is_abandoned_at_the_deadline() {
     assert!(said.contains("background task"), "{said}");
 
     std::fs::remove_dir_all(&dir).ok();
-}
-
-/// The `.nika` sources in this repository stay free of the runtime's words.
-///
-/// `runtime.rs` holds this for `examples/`; here it is about the one construct
-/// that names a task. `spawn` is Nikaia's word; `async`, `await` and `Future`
-/// are not, and a task is where they would leak in first.
-#[test]
-fn nothing_a_task_needs_is_written_in_nikaia() {
-    let source = "fn main() {\n\
-         \x20   let h = spawn fn { 1 }\n\
-         \x20   println(f\"{h.join()}\")\n\
-         }";
-    for word in ["async", "await", "Future", "move"] {
-        assert!(!source.contains(word), "`{word}` in a Nikaia program");
-    }
-    assert!(findings(source).is_empty(), "{:?}", findings(source));
-    assert_eq!(run("tasks-no-words", source).trim(), "1");
 }
 
 /// **Which executor a `spawn` goes to is the switch's one reach into a task**

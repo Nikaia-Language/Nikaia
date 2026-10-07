@@ -7,6 +7,11 @@
 //! whether the `Some(…)` lands in the right places is settled by the language
 //! below, and reading the emitted string would only say that this compiler
 //! agrees with itself.
+//!
+//! **What a program computes** with a `T?` - a reach, a fallback, a value lent
+//! or handed over - is in `tests/language/src/nullable.nika`, run by `nikaia
+//! test`. Here stay the refusals, the lowerings, and the one program that
+//! needs a file.
 
 mod common;
 
@@ -523,46 +528,6 @@ fn main() {
     );
 }
 
-/// **`?.` reaches a method**, because Part I 3.5 says it reaches a *member* and
-/// a method is one ([ADR-278](../../../docs/specification/adr/adr-278.md)).
-///
-/// It used to be refused with a sentence, on the reading that the section's
-/// example writes a field. The word the section actually uses is "member", and
-/// the owner settled which reading is the language's.
-///
-/// Three things at once, and each is a way the call is a **call** and not a
-/// field: the arguments reach it, the receiver is reached exactly once, and
-/// short-circuiting still answers `null`.
-#[test]
-fn a_safe_reach_calls_a_method_and_short_circuits() {
-    let printed = ran(
-        "safe-method",
-        "\
-struct User { name: String }
-
-impl User {
-    fn greet(ref self, greeting: ref String) -> String {
-        return f\"{greeting}, {self.name}\"
-    }
-}
-
-fn find(id: i64) -> User? {
-    if id > 0 {
-        return User { name: \"Ada\" }
-    }
-    return null
-}
-
-fn main() {
-    let here = find(1)?.greet(\"Hallo\") ?? \"nobody\"
-    let gone = find(0)?.greet(\"Hallo\") ?? \"nobody\"
-    println(f\"{here} | {gone}\")
-}
-",
-    );
-    assert_eq!(printed.trim(), "Hallo, Ada | nobody");
-}
-
 /// **A `match` and not the field's `map`**, and the reason is what a method can
 /// do that a field cannot: pause and fail.
 ///
@@ -604,46 +569,6 @@ fn main() throws {
     assert_eq!(printed.trim(), "hallo | missing");
 }
 
-/// **A method whose own result is a `T?` flattens**, exactly as a field of that
-/// shape does (ADR-278 D9, which this extends rather than changes).
-///
-/// Without it `a?.b()?.c` would reach through a nullable of a nullable, and the
-/// program would not compile at all — so a result that comes back is what says
-/// the flattening happened.
-#[test]
-fn a_reached_method_that_answers_a_nullable_does_not_nest() {
-    let printed = ran(
-        "safe-method-flatten",
-        "\
-struct User { name: String }
-
-fn long_enough(name: String) -> String? {
-    if name.len() > 3 {
-        return name
-    }
-    return null
-}
-
-impl User {
-    fn nickname(ref self) -> String? {
-        return long_enough(self.name.clone())
-    }
-}
-
-fn find(name: ref String) -> User? {
-    return User { name: name.clone() }
-}
-
-fn main() {
-    let long = find(\"Alexandra\")?.nickname() ?? \"none\"
-    let short = find(\"Ada\")?.nickname() ?? \"none\"
-    println(f\"{long} | {short}\")
-}
-",
-    );
-    assert_eq!(printed.trim(), "Alexandra | none");
-}
-
 /// **`?.` onto a method of something that cannot be absent is `NK1217`**, the
 /// same warning the field gets — and the way out is spelled as a *call*, which
 /// is the one place the two members differ.
@@ -671,69 +596,6 @@ fn main() {
         "{:?}",
         one.notes
     );
-}
-
-/// **`??` chains**, which it did not
-/// ([ADR-278](../../../docs/specification/adr/adr-278.md)).
-///
-/// `a ?? b ?? c` was a parse error naming the *second* `??`, in a language whose
-/// page says the operator provides a fallback and nowhere says a value may have
-/// only one. The tail was parsed at a precedence *below* the rule itself, so it
-/// could not hold another one.
-///
-/// **Right-associative**: `a ?? (b ?? c)`, which is what the types ask for — the
-/// last fallback is the plain value that ends the chain and every `??` before it
-/// takes the `T?` on its left.
-#[test]
-fn a_chain_of_fallbacks_takes_the_first_one_that_has_a_value() {
-    let printed = ran(
-        "coalesce-chain",
-        "\
-fn a() -> String? { return null }
-fn b() -> String? { return null }
-fn c() -> String? { return \"third\" }
-
-fn main() {
-    let none = a() ?? b() ?? \"last\"
-    let third = a() ?? b() ?? c() ?? \"last\"
-    println(f\"{none} | {third}\")
-}
-",
-    );
-    assert_eq!(printed.trim(), "last | third");
-}
-
-/// **The two operators of 3.5, in one expression.**
-///
-/// A reach that answers `null` falls through to the next one, and the chain ends
-/// in the plain value — which is the shape the section's own prose describes and
-/// neither half could carry on its own before this.
-#[test]
-fn a_reach_that_answers_null_falls_through_to_the_next_fallback() {
-    let printed = ran(
-        "coalesce-and-reach",
-        "\
-struct User { name: String }
-
-impl User {
-    fn greet(ref self) -> String { return f\"hi, {self.name}\" }
-}
-
-fn find(id: i64) -> User? {
-    if id > 0 {
-        return User { name: \"Ada\" }
-    }
-    return null
-}
-
-fn main() {
-    let found = find(0)?.greet() ?? find(1)?.greet() ?? \"nobody\"
-    let neither = find(0)?.greet() ?? find(0)?.greet() ?? \"nobody\"
-    println(f\"{found} | {neither}\")
-}
-",
-    );
-    assert_eq!(printed.trim(), "hi, Ada | nobody");
 }
 
 /// **A plain `.` on a `T?` is refused**, and it is `NK1121` the other way round
@@ -775,87 +637,6 @@ fn main() {
         "the guarded form is the way out: {help}"
     );
     assert!(help.contains("??"), "and so is ending the chain: {help}");
-}
-
-/// **And the guarded chain runs**, which is the other half of the same rule: the
-/// refusal above is only worth having if what it asks for works.
-///
-/// Three shapes, and the middle one is the point — `find(0)` answers `null` and
-/// the rest of the chain is never reached, which is the short-circuit. The third
-/// takes the value with `??` first and then reaches into it plainly, which is
-/// the refusal's second way out.
-#[test]
-fn a_guarded_chain_reaches_through_and_short_circuits() {
-    let printed = ran(
-        "nullable-chain",
-        "\
-struct Inner { c: i64 }
-struct Outer { b: Inner }
-
-fn find(id: i64) -> Outer? {
-    if id > 0 { return Outer { b: Inner { c: 7 } } }
-    return null
-}
-
-fn main() {
-    let there = find(1)?.b?.c ?? 0
-    let gone = find(0)?.b?.c ?? 0
-    let taken = (find(1) ?? Outer { b: Inner { c: 1 } }).b.c
-    println(f\"{there} {gone} {taken}\")
-}
-",
-    );
-    assert_eq!(printed.trim(), "7 0 7");
-}
-
-/// **A value this checker cannot type gets `.into()` and not `Some(…)`**
-/// ([ADR-278](../../../docs/specification/adr/adr-278.md)).
-///
-/// The rule used to write the constructor where it **knew** the value was a
-/// plain `T`, and stay silent otherwise — right about the risk, since wrapping a
-/// value that is already a `T?` makes an `Option<Option<T>>`, and wrong about
-/// what to do with it: the program then failed in the language below with
-/// `rustc`'s *"try wrapping the expression in `Some`"* about a form Nikaia does
-/// not have.
-///
-/// **Both directions, in one program, through one rule.** Both values are `?` to
-/// this checker — and one is a plain `String` while the other is **already** an
-/// `Option<&str>`. `.into()` is the wrap for the first and the identity for the
-/// second, which is the whole of why it needs no answer to a question the
-/// checker could not settle.
-///
-/// **Fragile on purpose, and named as such**: the `?` comes from `.clone()` and
-/// `strip_prefix` being in no ledger, and every real `std` name is a candidate
-/// for being written down — two fixtures in this repository have already broken
-/// that way. The stable source would be
-/// [ADR-024](../../../docs/specification/adr/adr-024.md) D4's erased generic,
-/// which is an absence the **language** decides; it cannot be used until a
-/// generic function lowers with its `<T>`, which it now does
-/// ([ADR-295](../../../docs/specification/adr/adr-295.md)). Whoever writes
-/// `String::clone` down should move this fixture rather than delete it — what it
-/// measures is the rule, not the ledger.
-#[test]
-fn a_value_of_unknown_type_is_converted_rather_than_left_alone() {
-    let printed = ran(
-        "nullable-into",
-        "\
-struct U { name: String }
-
-impl U {
-    fn copy(ref self) -> String? { return self.name.clone() }
-    fn rest(ref self) -> ref String? { return self.name.strip_prefix(\"A\") }
-}
-
-fn main() {
-    let u = U { name: \"Ada\" }
-    let v = U { name: \"zzz\" }
-    println(f\"{u.copy() ?? \"none\"}\")
-    println(f\"{u.rest() ?? \"no prefix\"}\")
-    println(f\"{v.rest() ?? \"no prefix\"}\")
-}
-",
-    );
-    assert_eq!(printed.trim(), "Ada\nda\nno prefix");
 }
 
 /// **And a value it can type keeps the constructor**, which is what the second
@@ -1025,89 +806,11 @@ fn two_structs_sharing_a_field_name_get_their_own_wraps() {
     );
 }
 
-/// And the arithmetic is the point: the wraps are in the right places, so the
-/// program means what it says.
-#[test]
-fn a_statement_with_two_wraps_runs() {
-    let source = "struct P {\n\
-         \x20   x: i64?,\n\
-         }\n\
-         \n\
-         fn pick(a: i64?) -> i64 {\n\
-         \x20   return a ?? 7\n\
-         }\n\
-         \n\
-         fn hold(p: P) -> i64 {\n\
-         \x20   return p.x ?? 9\n\
-         }\n\
-         \n\
-         fn main() {\n\
-         \x20   let r = pick(1) + pick(null)\n\
-         \x20   let s = hold(P { x: 2 }) + hold(P { x: null })\n\
-         \x20   println(f\"{r} {s}\")\n\
-         }\n";
-    // 1 + 7, and 2 + 9.
-    assert_eq!(ran("two-wraps-run", source).trim(), "8 11");
-}
-
 // ---------------------------------------------------------------------------
 // `?.` reaches through a view of its receiver
 // ([ADR-278](../../../docs/specification/adr/adr-278.md) D16,
 // [ADR-278](../../../docs/specification/adr/adr-278.md))
 // ---------------------------------------------------------------------------
-
-/// **The line [ADR-278](../../../docs/specification/adr/adr-278.md) was written
-/// for, for a member that copies.** `user?.id` used to take `user`, so a second
-/// reach was `rustc`'s *use of moved value* about a file nobody wrote
-/// (Part III, C.1) — with a `help: consider calling .as_ref()` and a
-/// `.clone()` beside it, neither of which this language has.
-///
-/// It **runs** rather than only compiles, because the thing that would go wrong
-/// with `as_ref()` is a value read out of the wrong place.
-#[test]
-fn a_reached_field_that_copies_leaves_the_receiver_where_it_was() {
-    let printed = ran(
-        "safe-field-lends",
-        "\
-struct User { name: String, id: i64 }
-
-fn main() {
-    let user: User? = User { name: \"Ada\", id: 7 }
-    let first = user?.id ?? 0
-    let again = user?.id ?? 0
-    println(f\"{first} {again}\")
-}
-",
-    );
-    assert_eq!(printed.trim(), "7 7");
-}
-
-/// **And for a method**, which is the half that needs no representation at all:
-/// what comes out of a reached method is the **call's** result rather than a
-/// view of the receiver.
-#[test]
-fn a_reached_method_leaves_the_receiver_where_it_was() {
-    let printed = ran(
-        "safe-method-lends",
-        "\
-struct User { name: String }
-
-impl User {
-    fn greet(ref self, word: ref String) -> String {
-        return f\"{word}, {self.name}\"
-    }
-}
-
-fn main() {
-    let u: User? = User { name: \"Ada\" }
-    let first = u?.greet(\"Hallo\") ?? \"nobody\"
-    let again = u?.greet(\"Servus\") ?? \"nobody\"
-    println(f\"{first} | {again}\")
-}
-",
-    );
-    assert_eq!(printed.trim(), "Hallo, Ada | Servus, Ada");
-}
 
 /// **The scrutinee is lent only where every candidate says the call changes
 /// nothing**, which is `NK1138`'s own rule one construct over.
@@ -1126,32 +829,6 @@ fn main() {
     );
     assert!(rust.contains("match whatever()"), "{rust}");
     assert!(!rust.contains("whatever().as_ref()"), "{rust}");
-}
-
-/// **And a member that does not copy is a view of the receiver**
-/// ([ADR-278](../../../docs/specification/adr/adr-278.md) D17,
-/// [ADR-278](../../../docs/specification/adr/adr-278.md) D19) — **Borrowed**,
-/// not Tethered: the view points into a binding that outlives the statement,
-/// which is what [ADR-283](../../../docs/specification/adr/adr-283.md) D2 calls
-/// the free case.
-///
-/// It **runs**, with the receiver read on both sides of the view.
-#[test]
-fn a_reached_field_that_moves_over_a_place_is_a_view() {
-    let printed = ran(
-        "safe-field-view",
-        "\
-struct User { name: String, tags: Vec[i64] }
-
-fn main() {
-    let user: User? = User { name: \"Ada\", tags: [1, 2, 3] }
-    let name = user?.name ?? \"nobody\"
-    let many = user?.tags?.len() ?? 0
-    println(f\"{name} {many}\")
-}
-",
-    );
-    assert_eq!(printed.trim(), "Ada 3");
 }
 
 /// **A receiver that is a temporary keeps its old lowering, and that is the
@@ -1272,7 +949,6 @@ fn main() {
 
 #[test]
 fn a_view_out_of_a_temporary_is_held_for_the_rest_of_the_block() {
-    assert_eq!(ran("held", HELD).trim(), "ada none a");
     let rust = lowered(HELD);
     assert!(rust.contains("let __nikaia_held_0 = find(1);"), "{rust}");
 }
@@ -1294,110 +970,6 @@ fn a_view_out_of_a_temporary_on_the_lazy_side_is_refused() {
             .contains("Put the value in a `let` on the line before"),
         "{refused}"
     );
-}
-
-/// **What a `match` over a call binds has the variant's type**
-/// (issue #171, found moving `fold` into Nikaia): `let a = match
-/// make(n) { R::Value(c) => c, other => return other }` left `a` untyped, so
-/// `a.name?.clone()` moved the field out where `a` was read again, and a
-/// method on `a` made the function look as if it paused.
-#[test]
-fn a_part_of_a_matched_call_is_typed_and_read_in_place() {
-    let printed = ran(
-        "matched-call",
-        "struct C { name: String?, n: i64 }\n\
-         enum R { Value(C), Nothing }\n\
-         \n\
-         fn make(n: i64) -> R {\n\
-         \x20   return if n > 0 { R::Value(C { name: \"a\", n: n }) } else { R::Nothing }\n\
-         }\n\
-         \n\
-         fn both(n: i64) -> R {\n\
-         \x20   let a = match make(n) {\n\
-         \x20       R::Value(c) => c,\n\
-         \x20       other => return other,\n\
-         \x20   }\n\
-         \x20   let b = match make(n + 1) {\n\
-         \x20       R::Value(c) => c,\n\
-         \x20       other => return other,\n\
-         \x20   }\n\
-         \x20   let pinned: String? = if a.name == null { b.name?.clone() } else { a.name?.clone() }\n\
-         \x20   return R::Value(C { name: pinned, n: a.n + b.n })\n\
-         }\n\
-         \n\
-         fn main() {\n\
-         \x20   match both(1) {\n\
-         \x20       R::Value(c) => println(f\"{c.n}\"),\n\
-         \x20       R::Nothing => println(\"none\"),\n\
-         \x20   }\n\
-         }\n",
-    );
-    assert_eq!(printed.trim(), "3");
-}
-
-/// **A nullable view is lent inside its option, and a copy of it is text of
-/// its own** (issue #171, found moving `fold` into Nikaia): a
-/// `ref String?` parameter is an `Option<&str>` (Part I 2.3), its caller hands
-/// `x.as_deref()` and `None` for `null`, and `b?.clone()` in the body is
-/// `to_owned()` of the `&str` reached.
-#[test]
-fn a_nullable_view_is_handed_and_copied() {
-    let printed = ran(
-        "nullable-view",
-        "fn either(a: ref String?, b: ref String?) -> String? {\n\
-         \x20   return b?.clone() if a == null\n\
-         \x20   return a?.clone()\n\
-         }\n\
-         \n\
-         struct Holder { name: String? }\n\
-         \n\
-         fn main() {\n\
-         \x20   let x: String? = \"x\"\n\
-         \x20   let y: String? = null\n\
-         \x20   let h = Holder { name: \"h\" }\n\
-         \x20   let got = either(y, x) ?? \"-\"\n\
-         \x20   let from = either(h.name, null) ?? \"-\"\n\
-         \x20   let none = either(null, null) ?? \"-\"\n\
-         \x20   let kept = x ?? \"?\"\n\
-         \x20   println(f\"{got} {from} {none} {kept}\")\n\
-         }\n",
-    );
-    assert_eq!(printed.trim(), "x h - x");
-}
-
-/// **A plain arm beside a `null` is `Some`** (found moving `contracts::trust`
-/// into Nikaia): `if b { 1 } else { null }` was `if b { 1 } else { None }
-/// .into()` below, which the language below cannot type - the conversion
-/// belongs to the arm, and the arm is a plain value.
-#[test]
-fn a_plain_arm_beside_a_null_is_the_value() {
-    let printed = ran(
-        "arm-beside-null",
-        "enum W { A, B }\n\
-         \n\
-         fn f(b: bool) -> i64? {\n\
-         \x20   return if b { 1 } else { null }\n\
-         }\n\
-         \n\
-         fn g(n: i64) -> W? {\n\
-         \x20   return match n {\n\
-         \x20       0 => if n == 0 { W::B } else { null },\n\
-         \x20       else => null,\n\
-         \x20   }\n\
-         }\n\
-         \n\
-         fn main() {\n\
-         \x20   let x = f(true) ?? 0\n\
-         \x20   let y = f(false) ?? 7\n\
-         \x20   let w = g(0) ?? W::A\n\
-         \x20   let z = match w {\n\
-         \x20       W::B => 2,\n\
-         \x20       else => 3,\n\
-         \x20   }\n\
-         \x20   println(f\"{x} {y} {z}\")\n\
-         }\n",
-    );
-    assert_eq!(printed.trim(), "1 7 2");
 }
 
 /// **`NK1205`: a variant matched on a `T?`** (issue #180): the
@@ -1429,64 +1001,6 @@ fn a_variant_matched_on_a_nullable_is_refused() {
         it.help.as_deref().is_some_and(|h| h.contains("??")),
         "{it:#?}"
     );
-
-    let printed = ran(
-        "variant-after-fallback",
-        &source(
-            "let w = g(0) ?? W::A\n    let z = match w {\n        W::B => 2,\n        else => 3,\n    }",
-        ),
-    );
-    assert_eq!(printed.trim(), "2");
-}
-
-/// **A nullable part of a lent value, handed to a `ref T?`**: `name` in
-/// `Shape::Named { name, .. }` over a `ref Shape` is a view of an `Option`
-/// below, and the parameter is an option of a view. `shown(name)` reached
-/// `rustc` as *expected `Option<&str>`, found `&Option<String>`* - found
-/// moving `Ty` into Nikaia (ADR-294), where `Ty::Fn`'s result is one.
-#[test]
-fn a_nullable_part_of_a_lent_value_is_opened_for_a_nullable_view() {
-    let printed = ran(
-        "lent-nullable-part",
-        r#"pub struct Row {
-    pub id: i64,
-}
-
-pub enum Shape {
-    Named { name: String?, count: i64 },
-    Held { row: Row? },
-    Nothing,
-}
-
-fn shown(name: ref String?) -> String {
-    return name ?? "none"
-}
-
-fn id_of(row: ref Row?) -> i64 {
-    if row == null {
-        return 0
-    }
-    return row?.id ?? 0
-}
-
-fn describe(s: ref Shape) -> String {
-    return match s {
-        Shape::Named { name, count } => f"{shown(name)} {count}",
-        Shape::Held { row } => f"row {id_of(row)}",
-        Shape::Nothing => "nothing",
-    }
-}
-
-fn main() {
-    println(describe(Shape::Named { name: "a", count: 2 }))
-    println(describe(Shape::Named { name: null, count: 3 }))
-    println(describe(Shape::Held { row: Row { id: 7 } }))
-    println(describe(Shape::Held { row: null }))
-    println(describe(Shape::Nothing))
-}
-"#,
-    );
-    assert_eq!(printed, "a 2\nnone 3\nrow 7\nrow 0\nnothing\n");
 }
 
 /// **A name on the left of `??` is handed over** when what it holds does not
@@ -1602,10 +1116,6 @@ fn main() {
     // `Row` is a struct: lent whatever it copies (ADR-279 D8).
     assert!(lowered.contains("r.as_ref(), || &spare"), "{lowered}");
     assert!(!lowered.contains("clone()"), "nothing is copied: {lowered}");
-    assert_eq!(
-        ran("coalesce-lends", source),
-        "some\n<some>\n<other>\nother\n3\nnothing\nstill usable\nsome\nsome\n"
-    );
 }
 
 /// **A field on the left of `??` is a place, as a name is** (ADR-279 D5).
@@ -1638,7 +1148,6 @@ fn main() {
 }
 "#;
     assert!(lowered(read).contains("self.parameter.as_deref()"));
-    assert_eq!(ran("field-coalesce", read), "<path>\n<none>\n");
     let kept = read.replace(
         "        return shown(self.parameter ?? \"none\")",
         "        let parameter = self.parameter ?? \"none\"\n        return shown(parameter)",
@@ -1698,10 +1207,6 @@ fn main() {
 "#;
     let rust = lowered(source);
     assert!(rust.contains(".as_deref()"), "{rust}");
-    assert_eq!(
-        ran("coalesce-lends-more", source),
-        "hole: found guest\ncompared\n5 <b>\nfound guest\nkept\n"
-    );
 }
 
 /// **`NK1206`: a `for` over a `T?`**. It was checked as a walk over the
@@ -1742,15 +1247,6 @@ fn a_loop_over_a_nullable_is_refused() {
             "{it:#?}"
         );
     }
-
-    assert_eq!(
-        ran("loop-after-fallback", &source("pick(1) ?? []")).trim(),
-        "3"
-    );
-    assert_eq!(
-        ran("loop-over-a-copy", &source("m[\"a\"]?.clone() ?? []")).trim(),
-        "3"
-    );
 }
 
 /// **A name bound to a map read is the map read** (#297). `let found =
@@ -1797,10 +1293,6 @@ fn a_name_bound_to_a_map_read_is_read_as_one() {
             .as_deref()
             .is_some_and(|h| h.contains("found?.clone()")),
         "{it:#?}"
-    );
-    assert_eq!(
-        ran("map-read-bound", &source("found?.clone() ?? []")).trim(),
-        "3 tokio::spawn x"
     );
 }
 
@@ -1851,7 +1343,6 @@ fn main() {
     let lowered = lowered(source);
     assert!(lowered.contains("found.as_ref(), || &spare"), "{lowered}");
     assert!(!lowered.contains("kind.as_ref()"), "{lowered}");
-    assert_eq!(ran("word-or-parts", source), "b\n8\ntrue false\n");
 }
 
 /// **A loan on the left of `??` and a jump on the right is a view**
@@ -1884,7 +1375,6 @@ fn main() {
 "#;
     let lowered = lowered(source);
     assert!(lowered.contains("match c.signature.as_ref()"), "{lowered}");
-    assert_eq!(ran("loan-beside-a-jump", source), "2 -1 2\n");
 
     let kept = r#"
 struct Sig { names: Vec[String] }
@@ -1911,28 +1401,6 @@ fn main() {
 /// `String` name is refused exactly as `?? nobody` is.
 #[test]
 fn the_text_form_of_text_beside_a_view_is_the_text_itself() {
-    let printed = ran(
-        "to-string-beside-a-view",
-        "\
-struct User { name: String }
-
-fn pick(user: ref User?, who: ref String) -> i64 {
-    let name = user?.name ?? who.to_string()
-    return name.len()
-}
-
-fn main() {
-    let user: User? = User { name: \"Ada\" }
-    let none: User? = null
-    let name = user?.name ?? \"nobody\".to_string()
-    let other = none?.name ?? \"nobody\".to_string()
-    let who: String = \"someone\"
-    println(f\"{name} {other} {pick(none, who)}\")
-}
-",
-    );
-    assert_eq!(printed.trim(), "Ada nobody 7");
-
     let found = findings(
         "\
 struct User { name: String }
@@ -2007,39 +1475,4 @@ fn main() {
     assert!(lowered.contains("name_of(Some(&Kind::B))"), "{lowered}");
     assert!(lowered.contains("text_of(Some(&owned))"), "{lowered}");
     assert!(lowered.contains("name_of((found).as_ref())"), "{lowered}");
-    assert_eq!(
-        ran("plain-into-nullable-view", source),
-        "a none b x own\nx own\n"
-    );
-}
-
-/// **A nested choice beside a `null` is `Some(…)` where its values are
-/// made** (#410): an inner `if` was written below as one, and the wrap put
-/// around it never reached its branches, so both went to `rustc` as `String`
-/// where the choice is a `String?`.
-#[test]
-fn a_nested_choice_beside_a_null_wraps_its_inner_branches() {
-    let source = r#"enum Shape {
-    Named(String, Vec[String]),
-    Other,
-}
-
-fn first(shape: ref Shape) -> String? {
-    return match shape {
-        Shape::Named(name, args) => if name == "Vec" { if args.len() > 0 { args[0].clone() } else { "?" } } else { null },
-        else => null,
-    }
-}
-
-fn main() {
-    let args: Vec[String] = ["i64"]
-    let none: Vec[String] = []
-    println(first(Shape::Named("Vec", args)) ?? "none")
-    println(first(Shape::Named("Vec", none)) ?? "none")
-    println(first(Shape::Named("Map", [])) ?? "none")
-    println(first(Shape::Other) ?? "none")
-}
-"#;
-    assert!(findings(source).is_empty(), "{:?}", findings(source));
-    assert_eq!(ran("nested-choice-null", source), "i64\n?\nnone\nnone\n");
 }

@@ -11,15 +11,14 @@
 //! lookup with its neighbour's value.
 //!
 //! A lookup is only right if it comes back with the right number. So the tests
-//! below compile the file and print what it found.
-
-mod common;
+//! that look a key up run the program, and they are
+//! `tests/build-time/src/fixed_map.nika`; this file keeps the shape of the table
+//! in the generated file, the refusals, and the two hashes side by side.
 
 use nikaia::check::{self, Finding};
 use nikaia::contracts::{Ledger, LedgerOps, STD};
 use nikaia::emit;
 use nikaia::parser::parse_to_ast;
-use std::process::Command;
 
 fn findings(source: &str) -> Vec<Finding> {
     let parsed = parse_to_ast(source).expect("the source parses");
@@ -33,32 +32,6 @@ fn lower(source: &str) -> String {
     emit::emit_program(&parsed, Default::default())
         .expect("the source lowers")
         .rust
-}
-
-fn run(purpose: &str, source: &str) -> String {
-    let dir = common::scratch_dir(purpose);
-    let rust = lower(source);
-    let file = dir.join("main.rs");
-    std::fs::write(&file, &rust).expect("write the Rust");
-    let binary = dir.join("program");
-    let built = common::compile(&file, &["-o", &binary.to_string_lossy()]);
-    assert!(
-        built.status.success(),
-        "a table did not compile:\n{}\n--- emitted ---\n{rust}",
-        String::from_utf8_lossy(&built.stderr)
-    );
-    let ran = Command::new(&binary)
-        .current_dir(&dir)
-        .output()
-        .expect("run it");
-    assert!(
-        ran.status.success(),
-        "{}",
-        String::from_utf8_lossy(&ran.stderr)
-    );
-    let out = String::from_utf8_lossy(&ran.stdout).to_string();
-    std::fs::remove_dir_all(&dir).ok();
-    out
 }
 
 /// Three keys: under [`nikaia::fixed::HASHED_FROM`], so the walked shape.
@@ -87,51 +60,6 @@ const LARGE: &str = "comptime WORDS: Fixed[ref String, i64] = [\n\
      \x20   println(f\"{WORDS.get(\"zulu\") ?? 0}\")\n\
      \x20   println(f\"{WORDS.len()}\")\n\
      }";
-
-/// **The small table answers every key it holds, and refuses the one it does
-/// not** (D3's walked shape).
-///
-/// `?? 0` is what turns the missing key into a number to print; `0` is not a
-/// value in the table, so the fourth line is the absence and not a hit.
-#[test]
-fn a_walked_table_finds_each_key_while_the_program_runs() {
-    assert_eq!(run("fixed-small", SMALL), "1\n2\n3\n0\n3\n");
-}
-
-/// **The hashed table answers the same way** (D3's CHD shape), which is the
-/// test the two hash implementations exist for: the compiler put `golf` in a
-/// slot, and `std` has to hash its way back to the same one.
-#[test]
-fn a_hashed_table_finds_each_key_while_the_program_runs() {
-    assert_eq!(run("fixed-large", LARGE), "1\n7\n14\n0\n14\n");
-}
-
-/// **Every key, not a sample.** A slot mix-up need not be visible in three
-/// lookups — the CHD generator moves keys around, and a table where two of them
-/// swapped values would pass a test that asked about neither. So this asks
-/// about all fourteen and the answer is the sum of one to fourteen.
-#[test]
-fn a_hashed_table_answers_all_of_its_keys() {
-    let source = "comptime WORDS: Fixed[ref String, i64] = [\n\
-         \x20   (\"alpha\", 1), (\"bravo\", 2), (\"charlie\", 3), (\"delta\", 4),\n\
-         \x20   (\"echo\", 5), (\"foxtrot\", 6), (\"golf\", 7), (\"hotel\", 8),\n\
-         \x20   (\"india\", 9), (\"juliet\", 10), (\"kilo\", 11), (\"lima\", 12),\n\
-         \x20   (\"mike\", 13), (\"november\", 14),\n\
-         ]\n\
-         comptime NAMES: Array[ref String, 14] = [\n\
-         \x20   \"alpha\", \"bravo\", \"charlie\", \"delta\", \"echo\", \"foxtrot\", \"golf\",\n\
-         \x20   \"hotel\", \"india\", \"juliet\", \"kilo\", \"lima\", \"mike\", \"november\",\n\
-         ]\n\
-         \n\
-         fn main() {\n\
-         \x20   let mut total = 0\n\
-         \x20   for name in NAMES {\n\
-         \x20       total = total + (WORDS.get(name) ?? 0)\n\
-         \x20   }\n\
-         \x20   println(f\"{total}\")\n\
-         }";
-    assert_eq!(run("fixed-every-key", source), "105\n");
-}
 
 /// **The small table is four static arrays and no displacements** (D2, D3).
 ///
@@ -171,44 +99,6 @@ fn from_the_threshold_the_table_carries_displacements() {
     );
 }
 
-/// **The value is whatever a `const` can hold**, and text is one of those (D2).
-///
-/// Nothing in the table is about `i64`: `rust_constant_type` answers for the
-/// declared value type and `rust_value` writes the value, which is the same
-/// pair every other `comptime` goes through.
-#[test]
-fn a_tables_values_may_be_text() {
-    let source = r#"comptime MIME: Fixed[ref String, ref String] = [("html", "text/html"), ("json", "application/json")]
-
-fn main() {
-    println(MIME.get("json") ?? "?")
-    println(MIME.get("css") ?? "?")
-    println(f"{MIME.has("html")}")
-}"#;
-    assert_eq!(run("fixed-text", source), "application/json\n?\ntrue\n");
-}
-
-/// **A table of nothing is a table**, and it used to be `NK1166`.
-///
-/// `[]` is a `Vec[?]`, so the crossing asked whether `?` was a pair of the
-/// declared types and got no — and the refusal read *this is a `Vec[?]` and the
-/// `const` says `Fixed[&str, i64]`*, whose way out asks the reader to write
-/// what they already wrote ([C.2](../../../docs/specification/30-nikaia-tooling.md),
-/// [C.4](../../../docs/specification/30-nikaia-tooling.md)). `?` fits
-/// everything ([ADR-024](../../../docs/specification/adr/adr-024.md) D1), and
-/// the array crossing one shape over had always read it that way —
-/// `comptime XS: Array[i64, 0] = []` lowered the whole time.
-#[test]
-fn a_table_of_nothing_is_a_table() {
-    let source = r#"comptime EMPTY: Fixed[ref String, i64] = []
-
-fn main() {
-    println(f"{EMPTY.len()} {EMPTY.is_empty()} {EMPTY.get("get") ?? 0}")
-}"#;
-    assert!(findings(source).is_empty(), "{:#?}", findings(source));
-    assert_eq!(run("fixed-empty", source), "0 true 0\n");
-}
-
 /// **A key written twice is `NK1169`** (D4), and it is the *only* refusal: a
 /// duplicate is a mistake the compiler can name, so `NK1127` saying it cannot
 /// evaluate the constant would be the same refusal again with less in it.
@@ -243,7 +133,7 @@ fn a_key_that_is_not_text_is_refused_once() {
 /// through a program.
 ///
 /// This is the weaker test of the pair and it is here for the message it gives
-/// when it fails: the running tests above say *the table answered wrongly*,
+/// when it fails: the running tests in `fixed_map.nika` say *the table answered wrongly*,
 /// and this one says *the two `fnv`s disagree*, which is the first thing to
 /// look at. It proves nothing on its own — both could be wrong together — which
 /// is why it is not the only test.
@@ -263,8 +153,8 @@ fn the_compiler_and_the_library_hash_the_same_bytes() {
 /// **The threshold is where the measurement put it**
 /// ([ADR-311](../../../docs/specification/adr/adr-311.md) D10).
 ///
-/// Twelve is not arbitrary and it is not free to move: the tests above are
-/// written around it, one on each side. A change here is a re-measurement, and
+/// Twelve is not arbitrary and it is not free to move: the tests are written
+/// around it, one on each side. A change here is a re-measurement, and
 /// this line is what makes that deliberate.
 #[test]
 fn the_threshold_is_twelve() {
@@ -319,8 +209,6 @@ fn a_table_holds_a_declared_type_and_the_program_reads_it() {
         rust.contains("const SHADES: Fixed<&'static Shade>"),
         "an `enum` is the same case: {rust}"
     );
-
-    assert_eq!(run("a table of rows", source), "2\n2\n-1\n2\n");
 }
 
 /// …and **a part of a row the language below cannot write is still `NK1167`**

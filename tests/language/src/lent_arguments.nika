@@ -1,0 +1,124 @@
+// The compiler writes the `&` at the call (ADR-094 D1, D2): a parameter the
+// callee only reads is lent, and the caller still has the value on the next
+// line. Where the `&` is and is not written, and what is refused, stays in
+// `crates/nikaia/tests/lent_arguments.rs`.
+
+fn lent_arguments_width(text: String) -> i64 { return text.len() as i64 }
+
+// The line the record was written for. `width(text)` reads `text` and hands it
+// back, and the caller still has it on the next line - no `&` anywhere in the
+// source, and the value never moved.
+test "a parameter that is only read is lent at the call" {
+    let text = "hello"
+    let line = f"{lent_arguments_width(text)} {text}"
+    assert(line == "5 hello")
+}
+
+fn lent_arguments_count(dna: ref String) -> i64 { return dna.len() as i64 }
+
+// A `String` reaching a `&str` is still the one rewrite Part I 6.5 makes: what
+// has to fit is the argument with the reference the compiler writes.
+test "an owned string reaches a view parameter without a written ampersand" {
+    let dna = "acgt"
+    let line = f"{lent_arguments_count(dna)} {dna}"
+    assert(line == "4 acgt")
+}
+
+fn lent_arguments_total(xs: ref Vec[i64]) -> i64 {
+    let mut sum = 0
+    for x in xs { sum += x }
+    return sum
+}
+
+fn lent_arguments_hand(xs: ref Vec[i64]) -> i64 { return lent_arguments_total(xs) }
+
+// An argument that is already a view gets no second one: the declaration and
+// the argument agree without it.
+test "an argument that is already a view is passed through" {
+    let mut xs = Vec()
+    xs.push(4)
+    xs.push(5)
+    let sum = lent_arguments_hand(xs)
+    assert(sum == 9)
+}
+
+fn lent_arguments_measure(text: String) -> i64 { return lent_arguments_width(text) + 1 }
+
+// It travels through the call graph, because the column does: `measure` lends
+// `text` onward only because `width` lends it.
+test "a parameter passed on to a lending callee is lent too" {
+    let t = "hello"
+    let line = f"{lent_arguments_measure(t)} {t}"
+    assert(line == "6 hello")
+}
+
+struct LentArgumentsEntry { count: i64 }
+
+fn lent_arguments_read(data: ref String) -> Vec[LentArgumentsEntry] throws {
+    let mut out = Vec()
+    out.push(LentArgumentsEntry { count: data.len() as i64 })
+    return out
+}
+
+fn lent_arguments_entries_total(entries: Vec[LentArgumentsEntry]) -> i64 {
+    let mut sum = 0
+    for e in entries { sum += e.count }
+    return sum
+}
+
+// A type the checker could not pin still gets its `&` at the call: an `if`
+// whose branches this compiler does not bring to one type hands back a value
+// it does not name, and the declaration lends all the same - so the call must
+// too.
+test "an argument whose type is not known is still lent" {
+    let data = "abcd"
+    let entries = if data.len() > 0 { lent_arguments_read(data) catch { return } } else { Vec() }
+    let total = lent_arguments_entries_total(entries)
+    assert(total == 4)
+}
+
+fn lent_arguments_fill(mut out: Vec[i64]) -> i64 {
+    out.push(1)
+    out.push(2)
+    return out.len() as i64
+}
+
+// A parameter a method changes is not lent (ADR-094 D3): the word is `mut`,
+// `&mut Vec<i64>` in the declaration and `&mut xs` at the call, and the
+// caller sees what was pushed.
+test "a parameter a method changes in place is not lent" {
+    let mut xs = Vec()
+    let line = f"{lent_arguments_fill(xs)} {xs.len()}"
+    assert(line == "2 2")
+}
+
+struct LentArgumentsR { items: Vec[i64], unknown: bool }
+
+fn lent_arguments_has(xs: ref Vec[i64], x: i64) -> bool {
+    for one in xs {
+        if one == x {
+            return true
+        }
+    }
+    return false
+}
+
+fn lent_arguments_add(given: ref Vec[i64], mut r: LentArgumentsR) {
+    for x in given {
+        if x < 0 {
+            r.unknown = true
+        } else if !lent_arguments_has(r.items, x) {
+            r.items.push(x)
+        }
+    }
+}
+
+// An `else if` lends what an `if` lends: the condition is a statement of the
+// `else` block, and the checker records the `&` it owes under that statement
+// (#125).
+test "an else if lends its arguments as an if does" {
+    let mut r = LentArgumentsR { items: [], unknown: false }
+    lent_arguments_add([1, 1, -2, 3], r)
+    let line = f"{r.items.len()} {r.unknown}"
+    assert(line == "2 true")
+}

@@ -1,0 +1,119 @@
+// A `match` over a place reads its parts and leaves it whole (ADR-291,
+// issue #168, Part I 6.5). How the parts are bound in the lowering stays in
+// `crates/nikaia/tests/match_views.rs`.
+
+enum MatchViewsShape {
+    Named(String),
+    Round { label: String, r: i64 },
+    Empty,
+}
+
+struct MatchViewsHolder {
+    shape: MatchViewsShape,
+    id: i64,
+}
+
+// The report's program: the same name matched twice, and a field of a struct
+// matched with the struct read afterwards.
+test "a name matched twice is still there" {
+    let mut seen: Vec[String] = []
+    let s = MatchViewsShape::Named(f"box")
+    match s {
+        MatchViewsShape::Named(n) => { seen.push(f"named {n}") }
+        MatchViewsShape::Round { label, r } => { seen.push(f"{label} {r}") }
+        MatchViewsShape::Empty => { seen.push("empty") }
+    }
+    match s {
+        MatchViewsShape::Named(n) => { seen.push(f"again {n}") }
+        else => { seen.push("other") }
+    }
+    let h = MatchViewsHolder { shape: MatchViewsShape::Round { label: f"ring", r: 3 }, id: 7 }
+    match h.shape {
+        MatchViewsShape::Round { label, r } => { seen.push(f"{label} {r}") }
+        else => { seen.push("other") }
+    }
+    assert(seen.len() == 3)
+    assert(seen[0] == "named box")
+    assert(seen[1] == "again box")
+    assert(seen[2] == "ring 3")
+    assert(h.id == 7)
+    // And the third variant, so the type has every one of its variants built.
+    let e = MatchViewsShape::Empty
+    let empty = match e {
+        MatchViewsShape::Empty => true
+        else => false
+    }
+    assert(empty)
+}
+
+fn match_views_label(s: MatchViewsShape) -> String {
+    match s {
+        MatchViewsShape::Named(n) => return n
+        else => return f"none"
+    }
+}
+
+// What an arm keeps is taken, as before: pushed into a list, handed back as
+// the arm's value, or returned.
+test "a part the arm keeps is taken" {
+    let mut said: Vec[String] = []
+    let mut kept: Vec[String] = []
+    let s = MatchViewsShape::Named(f"a")
+    match s {
+        MatchViewsShape::Named(n) => kept.push(n)
+        else => { said.push("other") }
+    }
+    let t = MatchViewsShape::Named(f"b")
+    let got = match t {
+        MatchViewsShape::Named(n) => n
+        else => f""
+    }
+    let big = MatchViewsShape::Round { label: f"c", r: 5 }
+    match big {
+        MatchViewsShape::Round { label, r } => {
+            if r > 4 {
+                said.push(f"big {label}")
+            }
+        }
+        else => { said.push("other") }
+    }
+    let d = match_views_label(MatchViewsShape::Named(f"d"))
+    assert(said.len() == 1)
+    assert(said[0] == "big c")
+    assert(kept.len() == 1)
+    assert(got == "b")
+    assert(d == "d")
+}
+
+enum MatchViewsConfigError {
+    NotFound(String),
+}
+
+impl Error for MatchViewsConfigError {
+    fn message(ref self) -> String {
+        match self {
+            MatchViewsConfigError::NotFound(p) => f"no config at {p}"
+        }
+    }
+}
+
+fn match_views_load() -> i64 throws {
+    throw MatchViewsConfigError::NotFound(f"etc")
+}
+
+// The same in a handler: `match error` takes the error apart by variant, and
+// `{error}` afterwards is still the error.
+test "a handler matches the error and still has it" {
+    let mut said: Vec[String] = []
+    let port = match_views_load() catch {
+        match error {
+            MatchViewsConfigError::NotFound(p) => { said.push(f"missing {p}") }
+        }
+        said.push(f"{error}")
+        8080
+    }
+    assert(said.len() == 2)
+    assert(said[0] == "missing etc")
+    assert(said[1] == "no config at etc")
+    assert(port == 8080)
+}

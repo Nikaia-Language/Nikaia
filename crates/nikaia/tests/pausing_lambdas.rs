@@ -2,15 +2,15 @@
 //! ([ADR-233](../../../docs/specification/adr/adr-233.md)): `map` and `filter`
 //! hand back a sequence whose step pauses, a list's `map`, `sort_by_key`,
 //! `or_insert_with` and `and_modify` await the lambda where they would have
-//! called it, and a door refuses a pause by the language's own rule. Each
-//! program is compiled and **run** at both settings of `user_parallelism`;
-//! every one of them was refused by the lowering before, as *not something
-//! this compiler can build yet*.
-
-mod common;
+//! called it, and a door refuses a pause by the language's own rule. Every
+//! one of them was refused by the lowering before, as *not something this
+//! compiler can build yet*.
+//!
+//! What the programs compute, at both settings of `user_parallelism`, is
+//! `tests/language/src/pausing_lambdas.nika`; this file keeps what the lowering
+//! writes and what is refused.
 
 use nikaia::contracts::LedgerOps;
-use std::process::Command;
 
 use nikaia::emit::{Build, emit_program};
 use nikaia::parser::parse_to_ast;
@@ -18,37 +18,6 @@ use nikaia::parser::parse_to_ast;
 fn lowered(source: &str, how: Build) -> String {
     let parsed = parse_to_ast(source).expect("the source parses");
     emit_program(&parsed, how).expect("the source lowers").rust
-}
-
-fn ran(purpose: &str, source: &str, how: Build) -> String {
-    let rust = lowered(source, how);
-    let dir = common::scratch_dir(&format!("pausing-lambdas-{purpose}"));
-    let path = dir.join("program.rs");
-    std::fs::write(&path, &rust).expect("write the Rust");
-    let binary = dir.join("program");
-    let compiled = common::compile(
-        &path,
-        &[
-            "--crate-type",
-            "bin",
-            "-o",
-            binary.to_str().expect("utf-8 path"),
-        ],
-    );
-    assert!(
-        compiled.status.success(),
-        "{purpose} did not compile:\n{}\n--- emitted ---\n{rust}",
-        String::from_utf8_lossy(&compiled.stderr)
-    );
-    let out = Command::new(&binary).output().expect("run it");
-    assert!(
-        out.status.success(),
-        "{purpose} failed:\n{}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    let printed = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    std::fs::remove_dir_all(&dir).ok();
-    printed
 }
 
 fn findings(source: &str) -> Vec<nikaia::check::Finding> {
@@ -61,18 +30,6 @@ fn findings(source: &str) -> Vec<nikaia::check::Finding> {
         .into_iter()
         .filter(|f| f.severity == nikaia::check::Severity::Error)
         .collect()
-}
-
-/// Both settings, the same output, and no refusal on the way.
-fn runs(purpose: &str, source: &str, expected: &str) {
-    assert!(
-        findings(source).is_empty(),
-        "{purpose}: {:#?}",
-        findings(source)
-    );
-    for how in [Build::default(), Build::parallel()] {
-        assert_eq!(ran(purpose, source, how), expected, "{purpose} at {how:?}");
-    }
 }
 
 fn refused(source: &str, code: &str) -> nikaia::check::Finding {
@@ -102,12 +59,11 @@ fn program(body: &str) -> String {
     format!("{SLOW}fn main() {{\n{body}}}\n")
 }
 
-/// **D1: `map` and `filter` hand back a sequence whose step pauses**, and every
-/// walk of it is the one a pausing sequence has: `collect`, `count`, `nth` and
-/// `join` are awaited, and a `for` gives its thread up at each step. A plain
-/// lambda after it, and a second pausing one, chain onto it.
+/// **D1: `map` and `filter` hand back a sequence whose step pauses**, lowered
+/// onto `seq::then` and `seq::then_filter`, and a second pausing lambda chains
+/// onto the first.
 #[test]
-fn map_and_filter_with_a_pausing_lambda_make_a_pausing_sequence() {
+fn map_and_filter_with_a_pausing_lambda_lower_to_a_pausing_sequence() {
     let source = program(
         "    let xs: Vec[i64] = [1, 2, 3]\n\
          \x20   let a = xs.iter().map(fn(x) { slow(x) }).collect()\n\
@@ -122,7 +78,6 @@ fn map_and_filter_with_a_pausing_lambda_make_a_pausing_sequence() {
          \x20       println(f\"{y}\")\n\
          \x20   }\n",
     );
-    runs("map-filter", &source, "6\n2\n4,8,12\n2\n4\n2\n4\n6");
     let rust = lowered(&source, Build::default());
     assert!(rust.contains("nikaia_std::seq::then("), "{rust}");
     assert!(rust.contains("nikaia_std::seq::then_filter("), "{rust}");
@@ -130,33 +85,10 @@ fn map_and_filter_with_a_pausing_lambda_make_a_pausing_sequence() {
     assert!(rust.contains(".then(async |y|"), "{rust}");
 }
 
-/// **D1: the lazy walks of the sequence**, which it has as adapters of its own,
-/// and one kept in a name before it is walked. Text items are handed to the
-/// lambda as views.
+/// **D2: the eager entries await the lambda where they would have called it**,
+/// through their counterparts in `seq`.
 #[test]
-fn the_pausing_sequence_has_the_lazy_walks_and_can_wait_in_a_name() {
-    runs(
-        "lazy",
-        &program(
-            "    let xs: Vec[i64] = [1, 2, 3, 4, 5, 6]\n\
-             \x20   let r = xs.iter().map(fn(x) { slow(x) }).skip(1).step_by(2).zip(xs.iter()).take(2).collect()\n\
-             \x20   println(f\"{r.len()}\")\n\
-             \x20   let lazy = xs.iter().filter(fn(x) { slow(x) > 8 })\n\
-             \x20   for y in lazy {\n\
-             \x20       println(f\"{y}\")\n\
-             \x20   }\n\
-             \x20   let words: Vec[String] = [f\"ab\", f\"abc\", f\"abcd\"]\n\
-             \x20   println(f\"{words.iter().filter(fn(w) { slow_len(w) > 2 }).count()}\")\n\
-             \x20   let c = xs.iter().map(fn(x) { xs.iter().map(fn(y) { slow(y + x) }).count() }).collect()\n\
-             \x20   println(f\"{c[0]}\")\n",
-        ),
-        "2\n5\n6\n2\n6",
-    );
-}
-
-/// **D2: the eager entries await the lambda where they would have called it.**
-#[test]
-fn the_eager_entries_await_a_pausing_lambda() {
+fn the_eager_entries_lower_to_their_pausing_counterparts() {
     let source = program(
         "    let xs: Vec[i64] = [3, 1, 2]\n\
          \x20   let doubled = xs.clone().map(fn(x) { slow(x) })\n\
@@ -171,7 +103,6 @@ fn the_eager_entries_await_a_pausing_lambda() {
          \x20   let got = m[\"a\"] ?? 0\n\
          \x20   println(f\"{got}\")\n",
     );
-    runs("eager", &source, "6\n3\n12");
     // A `mut` parameter is a `&mut Vec` already, and is handed on as it is.
     let rust = lowered(
         &format!(
@@ -230,38 +161,6 @@ fn a_pause_inside_a_door_is_refused_by_the_language() {
             "{door}: {finding:#?}"
         );
     }
-}
-
-/// **D4: a view of a value that copies goes where the value is wanted**, which
-/// is what the lambda `sort_by_key` hands over meets first; and a view of a
-/// `String` goes where a view of text is wanted.
-#[test]
-fn a_view_of_a_copy_and_of_a_string_are_handed_as_arguments() {
-    runs(
-        "views",
-        "fn quick(x: i64) -> i64 {\n\
-         \x20   return x\n\
-         }\n\
-         \n\
-         fn quick_len(w: ref String) -> i64 {\n\
-         \x20   return w.len()\n\
-         }\n\
-         \n\
-         fn own_len(w: String) -> i64 {\n\
-         \x20   return w.len()\n\
-         }\n\
-         \n\
-         fn main() {\n\
-         \x20   let mut xs: Vec[i64] = [3, 1, 2]\n\
-         \x20   xs.sort_by_key(fn(x) { quick(0 - x) })\n\
-         \x20   let words: Vec[String] = [f\"ab\", f\"abc\"]\n\
-         \x20   for w in words.iter() {\n\
-         \x20       println(f\"{quick_len(w)} {own_len(w)}\")\n\
-         \x20   }\n\
-         \x20   println(f\"{xs[0]}\")\n\
-         }\n",
-        "2 2\n3 3\n3",
-    );
 }
 
 /// **What is still refused is refused by a rule of the language**: a list's

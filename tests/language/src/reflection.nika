@@ -1,0 +1,25 @@
+// Generating code from a type's shape (Part II 10.3, ADR-304): what an
+// unrolled walk over a type's fields computes. What the lowering writes, what
+// is refused, the walk over variants and the report stay in
+// `crates/nikaia/tests/reflection.rs`.
+
+struct ReflectionUser { name: ref String, age: i64 }
+struct ReflectionPoint { x: i64, y: i64 }
+
+fn reflection_describe[T: Struct](value: T) -> String {
+    let mut out: String = ""
+    for field in T::fields {
+        out.push_str(f"{field.name} = {field.of(value)};")
+    }
+    return out
+}
+
+// Part II 10.3's own example. Two types, so the unrolling is per instantiation
+// and not per function: one `describe` the program wrote once reads two fields
+// of each.
+test "the specifications own example runs" {
+    let user = reflection_describe(ReflectionUser { name: "ada", age: 36 })
+    let point = reflection_describe(ReflectionPoint { x: 1, y: 2 })
+    assert(user == "name = ada;age = 36;")
+    assert(point == "x = 1;y = 2;")
+}

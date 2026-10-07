@@ -1,7 +1,10 @@
 //! **An option's default is a build-time value** (ADR-318, #374): any
 //! expression a `comptime` may hold, evaluated once where the function is
 //! declared, with the ledger recording its value; refused with a `comptime`'s
-//! codes where it cannot be computed.
+//! codes where it cannot be computed. What a call receives is
+//! `tests/build-time/src/option_defaults.nika`; here stay the ledger, the
+//! refusals, defaults across packages, and the defaults `std`'s Rust half
+//! computes (`nikaia test` refuses those, NK1127).
 
 mod common;
 
@@ -44,10 +47,10 @@ fn ran(source: &str) -> String {
 }
 
 /// D1: arithmetic, a call to a function of the program reading an item-level
-/// `comptime`, and text joined - each computed once, and a call that leaves
-/// the option out receives the value.
+/// `comptime`, and text joined - each computed once and recorded in the
+/// ledger; what a call receives is `tests/build-time/src/option_defaults.nika`.
 #[test]
-fn a_computed_default_is_evaluated_once_and_handed_to_the_call() {
+fn a_computed_default_is_evaluated_once_and_recorded() {
     let source = "comptime BASE = 7\n\
          \n\
          fn twice(n: i64) -> i64 {\n\
@@ -62,7 +65,6 @@ fn a_computed_default_is_evaluated_once_and_handed_to_the_call() {
          \x20   println(wait(\"x\"))\n\
          \x20   println(wait(\"y\"; tries: 1))\n\
          }\n";
-    assert_eq!(ran(source), "x 30000 14 ab\ny 30000 1 ab\n");
     let parsed = parse_to_ast(source).expect("the source parses");
     let ledger = common::infer(&parsed).render();
     assert!(ledger.contains("timeout: i64 = 30000"), "{ledger}");
@@ -85,40 +87,6 @@ fn a_default_that_cannot_run_at_build_time_is_refused() {
          \x20   println(f\"{a()}\")\n\
          }\n";
     assert_eq!(codes(source), vec!["NK1152".to_string()]);
-}
-
-/// A literal default is what it always was: nothing evaluated, nothing refused.
-#[test]
-fn a_literal_default_is_unchanged() {
-    let source = "fn a(t: i64 = -3, s: ref String = \"x\") -> String {\n\
-         \x20   return f\"{t}{s}\"\n\
-         }\n\
-         \n\
-         fn main() {\n\
-         \x20   println(a())\n\
-         }\n";
-    assert_eq!(ran(source), "-3x\n");
-}
-
-/// **A function with options is called at build time** (#374 step 2): what
-/// the caller names is used, and what it leaves out takes the default.
-#[test]
-fn a_function_with_options_runs_at_build_time() {
-    let source = "fn base(scale: i64 = 10) -> i64 {\n\
-         \x20   return scale * 3\n\
-         }\n\
-         \n\
-         comptime A = base()\n\
-         comptime B = base(scale: 2)\n\
-         \n\
-         fn f(x: i64; t: i64 = base()) -> i64 {\n\
-         \x20   return x + t\n\
-         }\n\
-         \n\
-         fn main() {\n\
-         \x20   println(f\"{A} {B} {f(1)}\")\n\
-         }\n";
-    assert_eq!(ran(source).trim(), "30 6 31");
 }
 
 /// **A default that needs itself is a ring** (ADR-318, `NK1168`), said once,
@@ -210,11 +178,9 @@ const A_STRUCT: &str = "struct Point {\n\
      }\n";
 
 /// **A struct of literals is a default** (ADR-318 D3, D4): the ledger records
-/// its value as a struct literal, and a call that leaves the option out
-/// receives it.
+/// its value as a struct literal.
 #[test]
-fn a_struct_default_is_recorded_and_handed_to_the_call() {
-    assert_eq!(ran(A_STRUCT), "p 1 2\nq 5 6\n");
+fn a_struct_default_is_recorded() {
     let parsed = parse_to_ast(A_STRUCT).expect("the source parses");
     let ledger = common::infer(&parsed).render();
     assert!(
@@ -457,8 +423,7 @@ fn a_duration_default_is_recorded_and_handed_to_the_call() {
 }
 
 /// **A view of a list takes a list as its default** (ADR-318 D4): computed or
-/// written, recorded as `[…]`, and lent to a call that leaves the option out.
-/// A list the option would own is still `NK1167`.
+/// written, recorded as `[…]`.
 #[test]
 fn a_view_of_a_list_takes_a_list_default() {
     let source = "fn three() -> Vec[i64] {\n\
@@ -482,25 +447,10 @@ fn a_view_of_a_list_takes_a_list_default() {
          \x20   println(lit(\"b\"))\n\
          \x20   println(total(\"c\"; xs: [10, 20]))\n\
          }\n";
-    assert_eq!(ran(source), "a 6\nb 2\nc 30\n");
     let parsed = parse_to_ast(source).expect("the source parses");
     let ledger = common::infer(&parsed).render();
     assert!(ledger.contains("xs: ref Vec[i64] = [1, 2, 3]"), "{ledger}");
     assert!(ledger.contains("xs: ref Vec[i64] = [4, 5]"), "{ledger}");
-}
-
-/// **A text default for an owned `String`** (#498): the call that leaves it
-/// out hands over a `String`, not the literal's view.
-#[test]
-fn a_text_default_for_an_owned_string_is_one() {
-    let source = "fn shout(word: ref String; mark: String = \"!!!\") -> String {\n\
-         \x20   return f\"{word}{mark}\"\n\
-         }\n\
-         \n\
-         fn main() {\n\
-         \x20   println(shout(\"yo\"))\n\
-         }\n";
-    assert_eq!(ran(source), "yo!!!\n");
 }
 
 /// **A default std's Rust half computes** (ADR-321 D1, #468): `ref String`

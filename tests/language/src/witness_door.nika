@@ -1,0 +1,58 @@
+// `set(neu; after: seen)` is the one door for a stamped value (ADR-281 D26):
+// what it stores, and what it leaves alone when the lock moved. What is refused
+// and how it lowers is `crates/nikaia/tests/witness_door.rs`.
+
+// **It stores, and the value is the one that was computed outside.**
+test "the store happens when nothing moved" {
+    let kasse = SharedMut(100)
+    let stand = kasse.get()
+    kasse.set(stand + 23; after: stand)
+    let now = kasse.get()
+    assert(now == 123)
+}
+
+// **And when something did move it fails rather than overwriting it**, which
+// is the failure the whole record exists for: the second store is written
+// against a witness the lock no longer holds.
+test "an overtaken witness leaves the value alone" {
+    let kasse = SharedMut(0)
+    let stand = kasse.get()
+    let mut said: Vec[String] = []
+    kasse.set(1; after: stand) catch { said.push("first") }
+    kasse.set(2; after: stand) catch { said.push(f"overtaken: {error}") }
+    let now = kasse.get()
+    let told = said.len()
+    assert(told == 1)
+    let overtaken = said[0].contains("overtaken:")
+    let why = said[0].contains("the lock no longer holds the value that was seen")
+    assert(overtaken)
+    assert(why)
+    // The second store did not happen.
+    assert(now == 1)
+}
+
+// **`Locked[T]` is the same door**, which is what one surface over two shapes
+// means (ADR-281 D9).
+test "the local shape has the same door" {
+    let kasse = Locked(7)
+    let stand = kasse.get()
+    kasse.set(stand * 6; after: stand)
+    let now = kasse.get()
+    assert(now == 42)
+}
+
+// **The witness is a view and the value is not**, which is the difference
+// between what is stored and what is only read. The case that says it: a
+// witness larger than a word, read *again* after the door has been asked
+// whether it still holds. A witness taken by value would have been moved out
+// of the caller, and `rustc` would have said so about a file nobody wrote -
+// which is what this did before the ledger said `seen: &$T`.
+test "a witness is lent and can be read again" {
+    let start: Vec[i64] = Vec()
+    let xs = Locked(start)
+    let seen = xs.get()
+    let neu: Vec[i64] = Vec()
+    xs.set(neu; after: seen)
+    let size = seen.len()
+    assert(size == 0)
+}

@@ -19,9 +19,8 @@
 //!
 //! Run rather than read wherever the question is about behaviour: whether a
 //! shape works is the language below's answer, and comparing emitted text would
-//! only say this compiler agrees with itself.
-
-mod common;
+//! only say this compiler agrees with itself. The four shapes run in
+//! `tests/language/src/concatenation.nika`.
 
 use nikaia::check;
 use nikaia::contracts::{Ledger, LedgerOps, STD};
@@ -45,51 +44,6 @@ fn lowered(purpose: &str, source: &str) -> String {
     emit_program(&parsed, Build::default())
         .expect("the source lowers")
         .rust
-}
-
-fn ran(purpose: &str, source: &str) -> String {
-    let rust = lowered(purpose, source);
-    let dir = common::scratch_dir(purpose);
-    let file = dir.join("main.rs");
-    std::fs::write(&file, &rust).expect("write the Rust");
-    let binary = dir.join("program");
-    let out = common::compile(&file, &["-o", binary.to_str().expect("utf-8 path")]);
-    assert!(
-        out.status.success(),
-        "the lowering of {purpose} does not compile:\n{}\n--- the Rust ---\n{rust}",
-        String::from_utf8_lossy(&out.stderr),
-    );
-    let ran = std::process::Command::new(&binary)
-        .output()
-        .expect("the program runs");
-    let printed = String::from_utf8_lossy(&ran.stdout).into_owned();
-    let _ = std::fs::remove_dir_all(&dir);
-    printed
-}
-
-/// **All four shapes, compiled and run.** Three of them did not compile at all.
-#[test]
-fn every_shape_concatenates_and_prints() {
-    let printed = ran(
-        "four shapes",
-        r#"
-fn main() {
-    let s = "left-".to_string()
-    let t = "right".to_string()
-    let u = "p".to_string()
-    let v = "q".to_string()
-
-    println("x" + "y")
-    println("x" + t)
-    println(s + "y")
-    println(u + v)
-}
-"#,
-    );
-    assert_eq!(
-        printed.lines().collect::<Vec<_>>(),
-        vec!["xy", "xright", "left-y", "pq"]
-    );
 }
 
 /// D2: a `+` over text becomes a call, and the checker's span is what says

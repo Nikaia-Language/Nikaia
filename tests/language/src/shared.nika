@@ -1,0 +1,177 @@
+// `Shared[T]` and `SharedMut[T]` (Part I 6.2, ADR-037, ADR-281, ADR-312): what
+// a program holding a shared value computes, at both settings. How the count
+// is lowered, what `--sharing` reports and what is refused is
+// `crates/nikaia/tests/shared.rs`.
+
+pub struct SharedConnection {
+    host: String
+}
+
+fn shared_connect(host: String) -> SharedConnection {
+    SharedConnection { host: host }
+}
+
+fn shared_serve(db: ref SharedConnection) -> String {
+    return f"serving {db.host}"
+}
+
+// A `Shared[Connection]` made, lent to a function that takes `&Connection`.
+// `serve` never mentions sharing, which is Part I 6.2's own example: whether
+// the value is shared is the caller's decision, and `serve` has no business
+// knowing.
+test "a shared value is made by calling the type and lent out by a view" {
+    let db = Shared(shared_connect("localhost"))
+    let first = shared_serve(db)
+    let second = shared_serve(db)
+    assert(first == "serving localhost")
+    assert(second == "serving localhost")
+}
+
+pub fn shared_serve_public(db: Shared[SharedConnection]) -> String {
+    return f"serving {db.host}"
+}
+
+// A value the analysis cannot prove stays put gets the atomic floor, and the
+// program still computes the same thing. Here the public signature is what
+// forces the floor (ADR-037 D8's last row).
+test "the atomic floor runs the same program" {
+    let db = Shared(shared_connect("localhost"))
+    let served = shared_serve_public(db)
+    assert(served == "serving localhost")
+}
+
+struct SharedPool {
+    db: Shared[SharedConnection],
+    size: i64
+}
+
+// A field whose declared type says the value is shared is the other place the
+// first handle is made (Part I 6.2).
+test "a hull written in a struct literal field makes a handle" {
+    let pool = SharedPool { db: Shared(shared_connect("localhost")), size: 4 }
+    let shown = f"{pool.size} to {pool.db.host}"
+    assert(shown == "4 to localhost")
+}
+
+struct SharedConn { host: String }
+
+struct SharedConnPool { db: Shared[SharedConn] }
+
+fn shared_connect_conn(host: String) -> SharedConn {
+    SharedConn { host: host }
+}
+
+fn shared_serve_conn(db: ref SharedConn) -> String {
+    return f"serving {db.host}"
+}
+
+fn shared_peek(db: ref Shared[SharedConn]) -> String {
+    return f"peeking {db.host}"
+}
+
+fn shared_keep(db: Shared[SharedConn]) -> SharedConnPool {
+    return SharedConnPool { db: db }
+}
+
+// A handle handed on by value is duplicated, and a borrow duplicates nothing
+// (ADR-312 D1). `db` is still ours after `keep` took one of its own, which is
+// the whole point of the rule: each handle dies at the end of its own block
+// (D3).
+test "a handle handed on by value is duplicated and a borrow is not" {
+    let db = Shared(shared_connect_conn("localhost"))
+    let served = shared_serve_conn(db)
+    let peeked = shared_peek(db)
+    let pool = shared_keep(db)
+    let kept = f"kept {pool.db.host}"
+    let again = shared_serve_conn(db)
+    assert(served == "serving localhost")
+    assert(peeked == "peeking localhost")
+    assert(kept == "kept localhost")
+    assert(again == "serving localhost")
+}
+
+// A handle read out of a field and handed on by value is duplicated too:
+// `keep(pool.db)` gives the callee an owner as surely as `keep(db)` does.
+test "a handle read out of a field is duplicated when it is handed on" {
+    let db = Shared(shared_connect_conn("localhost"))
+    let pool = shared_keep(db)
+    let again = shared_keep(pool.db)
+    let shown = f"{pool.db.host} {again.db.host}"
+    assert(shown == "localhost localhost")
+}
+
+fn shared_connect_returned(host: String) -> Shared[SharedConnection] {
+    let c = Shared(SharedConnection { host: host })
+    return c
+}
+
+// A function that returns a shared value wraps on a line of its own, and the
+// `return` then hands on what is already shared (Part I 6.2).
+test "a function returning a shared value wraps on a line of its own" {
+    let db = shared_connect_returned("localhost")
+    let shown = f"connected to {db.host}"
+    assert(shown == "connected to localhost")
+}
+
+fn shared_zaehle(counter: SharedMut[i64]) {
+    counter.update fn(mut alt) { alt += 1 }
+}
+
+// Part II 12.2's counter, which is the program `user_parallelism` exists for
+// (ADR-281): it runs at both settings.
+test "the counter of part ii 12 2 runs at both settings" {
+    let counter = SharedMut(0)
+    counter.set(5)
+    shared_zaehle(counter)
+    let total = counter.get()
+    assert(total == 6)
+}
+
+// A handle a task uses is duplicated, not moved (ADR-312 D1's task half): the
+// caller's own handle survives the `spawn`.
+test "a handle a task uses is duplicated and the name survives" {
+    let counter = SharedMut(0)
+    let t = spawn fn { counter.update fn(mut alt) { alt += 1 } }
+    t.join()
+    let total = counter.get()
+    assert(total == 1)
+}
+
+fn shared_bump(counter: SharedMut[i64], times: i64) {
+    let mut i = 0
+    while i < times {
+        counter.update fn(mut old) { old += 1 }
+        i = i + 1
+    }
+}
+
+// Four tasks on four threads, one lock, and the count is exact (ADR-312 D7).
+// A count that came out short would be the lock failing to be one; at `no` the
+// same program has to compute the same number, which is the uniform API of
+// Part II 11.2 applied to the thing hardest to keep uniform.
+test "a lock shared by four tasks counts every increment" {
+    let counter = SharedMut(0)
+    let a = spawn fn { shared_bump(counter, 2500) }
+    let b = spawn fn { shared_bump(counter, 2500) }
+    let c = spawn fn { shared_bump(counter, 2500) }
+    let d = spawn fn { shared_bump(counter, 2500) }
+    a.join()
+    b.join()
+    c.join()
+    d.join()
+    let total = counter.get()
+    assert(total == 10000)
+}
+
+// Chapter 12's own transfer (ADR-281 D11, D18): the block hands back one new
+// value per lock.
+test "a transfer between two locks runs at both settings" {
+    let konto_a = SharedMut(100)
+    let konto_b = SharedMut(5)
+    update_all(konto_a, konto_b) fn(mut von, mut nach) {
+        von -= 30
+        nach += 30
+    }
+    let stand = access_all(konto_a, konto_b) fn(a, b) { f"{a} {b}" }
+    assert(stand == "70 35")
+}

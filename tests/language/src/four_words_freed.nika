@@ -1,0 +1,12 @@
+// `loop`, `const`, `macro` and `quote` are names (ADR-298): one the language
+// below reserves is escaped and still names its value. The reserved list, the
+// sentences and the lowering are `crates/nikaia/tests/four_words_freed.rs`.
+
+// And the escaped program compiles and runs, which is the half a string
+// search cannot say.
+test "an escaped name runs" {
+    let mut loop = 1
+    let const = 2
+    loop = loop + const
+    assert(loop == 3)
+}

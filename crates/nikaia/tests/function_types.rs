@@ -11,10 +11,10 @@
 //! the language's: without `sync` the code may pause, without `throws` it
 //! cannot fail. That is the reading a *declaration* already has, applied to a
 //! type — which is why it needs no words of its own.
-
-mod common;
-
-use std::process::Command;
+//!
+//! What the programs compute when they run is
+//! `tests/language/src/function_types.nika`; this file keeps how the types
+//! parse, read back, fit, lower and are refused.
 
 use nikaia::ast::Item;
 use nikaia::contracts::ty::Ty;
@@ -45,39 +45,6 @@ fn signature(source: &str, of: &str) -> String {
         .as_ref()
         .expect("a signature")
         .text()
-}
-
-/// Compile the lowering and run it, because "a closure argument" is a claim
-/// about the language below.
-fn ran(purpose: &str, source: &str) -> String {
-    let rust = lowered(source);
-    let dir = common::scratch_dir(&format!("function-type-{purpose}"));
-    let path = dir.join("program.rs");
-    std::fs::write(&path, &rust).expect("write the Rust");
-    let binary = dir.join("program");
-    let compiled = common::compile(
-        &path,
-        &[
-            "--crate-type",
-            "bin",
-            "-o",
-            binary.to_str().expect("utf-8 path"),
-        ],
-    );
-    assert!(
-        compiled.status.success(),
-        "{purpose} did not compile:\n{}\n--- emitted ---\n{rust}",
-        String::from_utf8_lossy(&compiled.stderr)
-    );
-    let out = Command::new(&binary).output().expect("run it");
-    assert!(
-        out.status.success(),
-        "{purpose} failed:\n{}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    let printed = String::from_utf8_lossy(&out.stdout).to_string();
-    std::fs::remove_dir_all(&dir).ok();
-    printed
 }
 
 /// **D1's three forms**, exactly as the record writes them: parameters in
@@ -162,12 +129,6 @@ fn a_lambda_that_does_less_fits_a_type_that_allows_more() {
 /// `access` take and what costs nothing.
 #[test]
 fn a_run_parameter_lowers_to_a_closure_argument() {
-    let printed = ran(
-        "twice",
-        "fn twice(x: i64, f: fn(i64) -> i64) -> i64 { return f(f(x)) }\n\
-         fn main() { println(f\"{twice(2, fn(n) { return n * 3 })}\") }\n",
-    );
-    assert_eq!(printed.trim(), "18");
     // **A view of it** (Part I 5.4 C): `on_tick` only calls its handler, so the
     // parameter is immediate and borrows, exactly as an ordinary parameter the
     // body only reads does. The `&` used not to be written, which held for as
@@ -190,7 +151,6 @@ fn a_run_parameters_result_is_its_declared_type() {
                   fn main() { println(f\"{has(fn(x) { x.clone() }, \"a::b\")}\") }\n";
     let rust = lowered(source);
     assert!(rust.contains("\nfn has("), "{rust}");
-    assert_eq!(ran("run-result", source).trim(), "true");
 }
 
 /// **And what it takes as a view is lent to it** (#125): an owned `name`
@@ -204,7 +164,6 @@ fn a_run_parameter_is_lent_what_it_takes_as_a_view() {
                   }\n\
                   fn main() { println(ask(fn(x) { x.len() })) }\n";
     assert!(lowered(source).contains("f(&name)"), "{}", lowered(source));
-    assert_eq!(ran("run-lent", source).trim(), "3");
 }
 
 /// **And `throws` puts the same `Result` on the closure's result** that a
@@ -267,31 +226,6 @@ fn a_lambda_that_pauses_fits_a_parameter_that_allows_pausing() {
         rust.contains("io::read_to_string().await"),
         "and its body may await inside it: {rust}"
     );
-}
-
-/// **The declaration and the call read one column**
-/// ([ADR-277](../../../docs/specification/adr/adr-277.md) D14), and this is the
-/// test that would catch them drifting apart: the two disagreeing is one
-/// parameter with two shapes, which is `rustc`'s words about a file nobody
-/// wrote.
-///
-/// It **runs**, because the shape looking right is what the old lowering also
-/// did.
-#[test]
-fn a_run_parameter_that_pauses_compiles_and_runs() {
-    let printed = ran(
-        "async-run-parameter",
-        "use std::time\n\n\
-         fn twice(f: fn() -> i64) -> i64 { return f() + f() }\n\
-         fn main() {\n\
-         \x20   let said = twice(fn() {\n\
-         \x20       time::sleep(1.millis())\n\
-         \x20       return 21\n\
-         \x20   })\n\
-         \x20   println(f\"{said}\")\n\
-         }\n",
-    );
-    assert_eq!(printed.trim(), "42");
 }
 
 /// **A parameter the body *keeps* keeps the box**
@@ -447,17 +381,6 @@ fn a_failure_caught_inside_the_lambda_is_not_the_lambdas() {
         "{ERROR}fn main() {{ let ys = [1, 2].map fn(x) {{ risky(x) catch {{ 0 }} }} }}\n"
     ));
     assert!(!mapped.iter().any(|f| f.code == "NK2606"), "{mapped:#?}");
-    // …and what is let through is a program `rustc` takes, with the handler's
-    // value standing where the failure was.
-    let ran = ran(
-        "caught-in-lambda",
-        "enum E { Bad }\n\
-         impl Error for E { fn message(ref self) -> String { return \"bad\" } }\n\
-         fn risky(x: i64) -> i64 throws {\n    if x > 1 { throw E::Bad }\n    return x * 10\n}\n\
-         fn main() {\n    let ys = [1, 2].map fn(x) { risky(x) catch { 0 } }\n    \
-         for y in ys { println(f\"{y}\") }\n}\n",
-    );
-    assert_eq!(ran.trim(), "10\n0");
 
     // Not caught in the body, and a `catch` around the call does not stand in
     // for one.
@@ -714,8 +637,6 @@ fn a_handler_passed_on_inside_a_loop_is_lent() {
         rust.contains("twice(n, f)"),
         "and the call hands on the view it was lent: {rust}"
     );
-    // (1+1) + (2+2) + (3+3) = 12, times ten.
-    assert_eq!(ran("passed-on", source).trim(), "120");
 }
 
 /// **A parameter the declaration wrote `mut` is handed straight on**
@@ -760,7 +681,6 @@ fn a_mut_parameter_handed_to_another_mut_parameter_gains_no_second_reference() {
         rust.contains("twice(&mut xs)"),
         "a `let mut` argument is still lent: {rust}"
     );
-    assert_eq!(ran("mut-passed-on", source).trim(), "3");
 }
 
 /// **What a kept function is handed is borrowed for the call alone**: a
@@ -795,5 +715,4 @@ fn main() {
         "{}",
         lowered(source)
     );
-    assert_eq!(ran("kept-borrow", source), "8\n");
 }

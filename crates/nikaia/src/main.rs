@@ -687,6 +687,10 @@ fn test_command(
             }
             let mut built = Project::open(&start, args.target.as_deref(), Some(setting))?;
             built.settings.tests = testing;
+            built.variant = Some(format!(
+                "{setting}-{}",
+                if testing { "tests" } else { "program" }
+            ));
             built.settings.optimize(&args.optimization)?;
             built.settings.refutations(args.refuted_claims.as_deref())?;
             let (code, binary) = built.drive_to(

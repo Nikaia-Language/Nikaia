@@ -17,9 +17,8 @@
 //! where it should not is worse than the leak it replaces —
 //! [Part III C.4](../../../docs/specification/30-nikaia-tooling.md) says this
 //! compiler never refuses a correct program — so every shape that worked before
-//! is here, run, beside every shape that leaked.
-
-mod common;
+//! is run, in `tests/language/src/borrowed_subject.nika`, beside every shape
+//! that leaked here.
 
 use nikaia::check;
 use nikaia::contracts::{Ledger, LedgerOps, STD};
@@ -31,34 +30,6 @@ fn findings(source: &str) -> Vec<check::Finding> {
     let own = Ledger::infer(&parsed);
     let library = Ledger::parse(STD).expect("std's shipped ledger parses");
     check::check_program(&parsed, &own, &library, &std::collections::BTreeSet::new()).findings
-}
-
-fn ran(purpose: &str, source: &str) -> String {
-    let found = findings(source);
-    assert!(
-        found.is_empty(),
-        "{purpose} is a correct program and the checker says otherwise: {found:#?}"
-    );
-    let parsed = parse_to_ast(source).expect("the source parses");
-    let rust = emit_program(&parsed, Build::default())
-        .expect("the source lowers")
-        .rust;
-    let dir = common::scratch_dir(purpose);
-    let file = dir.join("main.rs");
-    std::fs::write(&file, &rust).expect("write the Rust");
-    let binary = dir.join("program");
-    let out = common::compile(&file, &["-o", binary.to_str().expect("utf-8 path")]);
-    assert!(
-        out.status.success(),
-        "the lowering of {purpose} does not compile:\n{}\n--- the Rust ---\n{rust}",
-        String::from_utf8_lossy(&out.stderr),
-    );
-    let ran = std::process::Command::new(&binary)
-        .output()
-        .expect("the program runs");
-    let printed = String::from_utf8_lossy(&ran.stdout).into_owned();
-    let _ = std::fs::remove_dir_all(&dir);
-    printed
 }
 
 /// A struct with one field that moves and one that copies, for both directions.
@@ -136,95 +107,6 @@ fn every_by_value_position_is_refused() {
     }
 }
 
-/// **A field that copies is not refused**, because handing one out takes
-/// nothing away. This is half the polarity and it is why the rule reads the
-/// field's type rather than counting `&self`s.
-#[test]
-fn a_field_that_copies_is_handed_out_freely() {
-    let printed = ran(
-        "a copying field",
-        &around(
-            "    fn m(ref self) -> i64 {\n        return self.count\n    }",
-            "r.m()",
-        ),
-    );
-    assert_eq!(printed.trim(), "1");
-}
-
-/// The way out the message names first, run.
-#[test]
-fn a_written_clone_is_the_way_out() {
-    let printed = ran(
-        "a written clone",
-        &around(
-            "    fn m(ref self) -> String {\n        return self.name.clone()\n    }",
-            "r.m()",
-        ),
-    );
-    assert_eq!(printed.trim(), "a");
-}
-
-/// And the other: a method that means to consume its subject says so.
-#[test]
-fn a_method_that_owns_its_subject_may_hand_the_field_out() {
-    let printed = ran(
-        "an owning receiver",
-        r#"
-struct Row {
-    name: String,
-}
-
-impl Row {
-    fn into_name(self) -> String {
-        return self.name
-    }
-}
-
-fn main() {
-    let r = Row { name: "a".to_string() }
-    println(r.into_name())
-}
-"#,
-    );
-    assert_eq!(printed.trim(), "a");
-}
-
-/// **Reading a field is not taking it**, which is the case that would have made
-/// this refusal useless: a method call on the field, its length, and its use in
-/// an interpolation all borrow, and all still work.
-#[test]
-fn reading_a_field_is_not_taking_it() {
-    let printed = ran(
-        "reading rather than taking",
-        r#"
-struct Row {
-    name: String,
-    count: i64,
-}
-
-impl Row {
-    fn shout(ref self) -> String {
-        return self.name.to_uppercase()
-    }
-
-    fn size(ref self) -> i64 {
-        return self.name.len()
-    }
-
-    fn label(ref self) -> String {
-        return f"{self.name}: {self.count}"
-    }
-}
-
-fn main() {
-    let r = Row { name: "a".to_string(), count: 1 }
-    println(f"{r.shout()} {r.size()} {r.label()}")
-}
-"#,
-    );
-    assert_eq!(printed.trim(), "A 1 a: 1");
-}
-
 /// A **free function** is not a method, so nothing here is borrowed and nothing
 /// is refused — including a local that happens to be called `self`… which it
 /// cannot be (`NK1119`), so this is about the ordinary case.
@@ -250,46 +132,6 @@ fn main() {
         found.is_empty(),
         "nothing is borrowed in a free function: {found:#?}"
     );
-}
-
-/// **The way out the message leads with**, run — and it is the one the entry
-/// that filed this said did not exist.
-///
-/// `&self.name` is [Part I 6.5](../../../docs/specification/10-nikaia-light.md)'s
-/// own spelling (`let name = &config.name`), and `NK1104`'s help had been saying
-/// *"write `&` to take a view of it"* the whole time. What is refused is
-/// `return self.name` **without** the `&` against a `-> &str`, which is a
-/// `String` in a `&str` slot — the same refusal a parameter gets (`NK1102`) and
-/// a `let` gets (`NK1103`), so the rule is uniform rather than special here.
-#[test]
-fn a_view_of_the_field_is_the_free_way_out() {
-    let printed = ran(
-        "a view of the field",
-        r#"
-struct Row {
-    name: String,
-    tags: Vec[i64],
-}
-
-impl Row {
-    fn name(ref self) -> ref String {
-        return self.name
-    }
-
-    fn tags(ref self) -> ref Vec[i64] {
-        return self.tags
-    }
-}
-
-fn main() {
-    let mut v = Vec()
-    v.push(7)
-    let r = Row { name: "a".to_string(), tags: v }
-    println(f"{r.name()} {r.tags()[0]}")
-}
-"#,
-    );
-    assert_eq!(printed.trim(), "a 7");
 }
 
 /// **And the help names only what can be taken**
@@ -347,46 +189,6 @@ fn main() {
         "the ways out, and no `&` for the author to write: {:?}",
         refusal.help
     );
-}
-
-/// **And the `&` is the compiler's to write**
-/// ([ADR-094](../../../docs/specification/adr/adr-094.md) D1's third position).
-///
-/// `return self.name` against a declared `ref String` was two refusals at once —
-/// `NK1131` for the move and `NK1104` for the type — so the accessor a program
-/// most often writes had no spelling of its own. It has one now, and it is the
-/// one the declaration already implies: the result is a view, the value is a
-/// place inside a borrowed subject, and there is nothing else the line could
-/// mean.
-#[test]
-fn a_field_handed_back_where_a_view_is_declared_needs_no_reference() {
-    let printed = ran(
-        "a view of the field with no reference written",
-        r#"
-struct Row {
-    name: String,
-    tags: Vec[i64],
-}
-
-impl Row {
-    fn name(ref self) -> ref String {
-        return self.name
-    }
-
-    fn tags(ref self) -> ref Vec[i64] {
-        self.tags
-    }
-}
-
-fn main() {
-    let mut v = Vec()
-    v.push(7)
-    let r = Row { name: "a".to_string(), tags: v }
-    println(f"{r.name()} {r.tags()[0]}")
-}
-"#,
-    );
-    assert_eq!(printed.trim(), "a 7");
 }
 
 /// The reference lands in the lowering, and it lands **once**.
@@ -529,7 +331,8 @@ fn main() { println("x") }
 /// **A `mut` parameter given away whole is the same shape**
 /// (issue #161): it is passed as `ref mut`, so the function borrows
 /// it as a method borrows `ref self`. `Box { items: out }` and `return out`
-/// were `rustc`'s *mismatched types* about a file nobody wrote.
+/// were `rustc`'s *mismatched types* about a file nobody wrote. The ways out
+/// run in `tests/language/src/borrowed_subject.nika`.
 #[test]
 fn a_mut_parameter_given_away_whole_is_refused() {
     for body in [
@@ -554,32 +357,14 @@ fn a_mut_parameter_given_away_whole_is_refused() {
             "{it:#?}"
         );
     }
-
-    // **The ways out run**: a copy, and a parameter changed in place and read.
-    let printed = ran(
-        "mut-parameter-copied",
-        "struct Keep { items: Vec[String] }\n\
-         \n\
-         fn store(mut out: Vec[String]) -> Keep {\n\
-         \x20   out.push(\"x\")\n\
-         \x20   return Keep { items: out.clone() }\n\
-         }\n\
-         \n\
-         fn main() {\n\
-         \x20   let mut v: Vec[String] = []\n\
-         \x20   let k = store(v)\n\
-         \x20   println(f\"{k.items.len()} {v.len()}\")\n\
-         }\n",
-    );
-    assert_eq!(printed.trim(), "1 1");
 }
 
 /// **The written `ref` is the compiler's line said twice** (#96, ADR-202 D2):
 /// at a `return` of a place inside a borrowed subject or a lent parameter it is
-/// `NK1137`, and the line without it lends - a parameter declared `ref Row`
-/// as a `ref self` does.
+/// `NK1137`. That the line without it lends - a parameter declared `ref Row`
+/// as a `ref self` does - is run in `tests/language/src/borrowed_subject.nika`.
 #[test]
-fn a_written_ref_at_a_lending_return_is_refused_and_a_lent_parameter_lends() {
+fn a_written_ref_at_a_lending_return_is_refused() {
     for body in ["return ref self.name", "return ref row.name"] {
         let source = format!(
             "struct Row {{ name: String }}\n\
@@ -609,22 +394,4 @@ fn a_written_ref_at_a_lending_return_is_refused_and_a_lent_parameter_lends() {
         let codes: Vec<&str> = findings(&source).iter().map(|f| f.code).collect();
         assert_eq!(codes, vec!["NK1137"], "`{body}`");
     }
-    let printed = ran(
-        "a lent parameter lends",
-        r#"
-struct Row {
-    name: String,
-}
-
-fn of(row: ref Row) -> ref String {
-    return row.name
-}
-
-fn main() {
-    let r = Row { name: "ada" }
-    println(f"{of(r)}")
-}
-"#,
-    );
-    assert_eq!(printed.trim(), "ada");
 }

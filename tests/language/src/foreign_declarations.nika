@@ -1,0 +1,15 @@
+// `extern` and `unsafe`, the two words Part III 15.1 writes (ADR-302): a C
+// function declared and called. How the two forms parse, are checked and
+// lower is `crates/nikaia/tests/foreign_declarations.rs`.
+
+// The declaration keeps the C name, so it carries no topic prefix.
+extern {
+    fn getpid() -> i32
+}
+
+// And it compiles and runs, which is the only proof that the two forms mean in
+// the language below what they say here.
+test "the whole thing compiles and runs" {
+    let id = unsafe { getpid() }
+    assert(id > 0)
+}

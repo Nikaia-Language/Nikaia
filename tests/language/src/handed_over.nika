@@ -1,0 +1,297 @@
+// Owned keys, literals where text is kept, and data used after it was handed
+// over (ADR-293): what the programs that are not refused compute. The refusals,
+// and what the lowering writes, are `crates/nikaia/tests/handed_over.rs`.
+
+use std::collections
+
+// --- D1: a map whose keys are owned ---
+
+// **The wall this package began with**: a map keyed by an owned `String`,
+// written with a literal and with a name, read with a name that stays usable,
+// and a text fallback after `??` on a map of text.
+test "a map keyed by owned text is written and read" {
+    let mut m: collections::HashMap[String, i64] = collections::HashMap()
+    m["a"] = 1
+    let name: String = "b"
+    m[name] = 2
+    let probe: String = "a"
+    let first = m[probe] ?? 0
+    let second = m["b"] ?? 0
+    let third = m[probe.to_uppercase()] ?? 9
+    let size = m.len()
+    assert(size == 2)
+    assert(first == 1)
+    assert(second == 2)
+    assert(third == 9)
+    assert(probe == "a")
+}
+
+// **A key is not a position**: a map keyed by an `i64` had its key turned into
+// a `usize` by the brackets. And a map of text, read with a literal after
+// `??`, is a view of text - nothing copied.
+test "a map keyed by numbers holds text" {
+    let mut ids: collections::HashMap[i64, String] = collections::HashMap()
+    let k = 7
+    ids[k] = "seven"
+    ids[k + 1] = "eight"
+    let a = ids[7] ?? "-"
+    let b = ids[k + 1] ?? "-"
+    let c = ids[3] ?? "-"
+    assert(a == "seven")
+    assert(b == "eight")
+    assert(c == "-")
+}
+
+// **A map whose keys are only ever views is a map keyed by views**
+// (ADR-282 D12): the key written `String` is a view below, so nothing is
+// copied - where this used to be refused with ADR-282's sentence asking for a
+// `.clone()`.
+fn handed_over_count(text: ref String) -> i64 {
+    let mut m: collections::HashMap[String, i64] = collections::HashMap()
+    for w in text.split(" ") {
+        m[w] = (m[w] ?? 0) + 1
+    }
+    return m["a"] ?? 0
+}
+
+test "a map keyed only by views is keyed by views" {
+    let n = handed_over_count("a b a")
+    assert(n == 2)
+}
+
+// --- D2: a literal assigned to text ---
+
+// **An assignment keeps what it is given**, so a literal assigned to a
+// `String` is built into one there, as at every other place that keeps text.
+test "a literal assigned to text is built there" {
+    let mut s: String = "a"
+    assert(s == "a")
+    s = "b"
+    assert(s == "b")
+}
+
+// --- D3: used after it was handed over ---
+
+// **And the programs that are not refused run**: the refusal is only worth
+// having if what it lets through is what the language below accepts.
+fn handed_over_stop(s: String) -> i64 {
+    let mut xs: Vec[String] = []
+    xs.push(s)
+    return xs.len()
+}
+
+fn handed_over_serve(connection: String, a: i64) -> i64 {
+    if a == 0 {
+        return handed_over_stop(connection)
+    }
+    return handed_over_stop(connection) + 1
+}
+
+test "what is not refused runs" {
+    let mut xs: Vec[String] = []
+    let c: String = "c"
+    let mut shown = ""
+    if xs.len() > 2 {
+        xs.push(c)
+    } else {
+        shown = f"{c}"
+    }
+    let mut again: String = "d"
+    xs.push(again)
+    again = "e"
+    let served = handed_over_serve("x".clone(), 1)
+    let size = xs.len()
+    assert(shown == "c")
+    assert(again == "e")
+    assert(size == 1)
+    assert(served == 2)
+}
+
+// --- ADR-293: within one statement, parts of a value ---
+
+// **`name = f(name)` gives back what it took**, in the same statement.
+test "a statement that takes and gives back is a program" {
+    let mut name: String = "n"
+    name = name + "x"
+    assert(name == "nx")
+}
+
+struct HandedOverP {
+    name: String,
+    x: i64,
+}
+
+// **A part of an owned value is handed over, and the rest stays**: `p.x` is
+// still there after `p.name` went (ADR-293 D32).
+test "a part handed over leaves the rest" {
+    let mut xs: Vec[String] = []
+    let p = HandedOverP { name: "a", x: 1 }
+    xs.push(p.name)
+    let size = xs.len()
+    assert(p.x == 1)
+    assert(size == 1)
+}
+
+// And a part assigned again is there again.
+test "a part handed over and assigned again is there again" {
+    let mut xs: Vec[String] = []
+    let mut p = HandedOverP { name: "a", x: 1 }
+    xs.push(p.name)
+    p.name = "b"
+    assert(p.name == "b")
+}
+
+// **A parameter whose part is handed over is kept**: it was lent (`&P`) and
+// the body took a field out of the loan, which `rustc` refused.
+fn handed_over_names(p: HandedOverP) -> i64 {
+    let mut xs: Vec[String] = []
+    xs.push(p.name)
+    return xs.len() + p.x
+}
+
+test "a parameter whose part is handed over is kept" {
+    let p = HandedOverP { name: "z", x: 5 }
+    let n = handed_over_names(p)
+    assert(n == 6)
+}
+
+// --- ADR-293: the rest of ADR-293 ---
+
+// **`insert` is the write under the language below's name**, handing back
+// what it replaced; a literal key is built into the map's own text.
+test "insert writes and hands back what it replaced" {
+    let mut m: collections::HashMap[String, i64] = collections::HashMap()
+    m.insert("a", 1)
+    let before = m.insert("a", 2) ?? 0
+    let now = m["a"] ?? 0
+    let size = m.len()
+    assert(before == 1)
+    assert(now == 2)
+    assert(size == 1)
+}
+
+// **A copy is a copy of a view too**: a `String` the body only reads is a
+// `&str` below, and `.clone()` of that was the reference.
+fn handed_over_copy(name: String) -> String {
+    return name.clone()
+}
+
+test "a copy of a view is text of its own" {
+    let c = handed_over_copy("x")
+    let ys: Vec[i64] = [1, 2]
+    let zs = ys.clone()
+    let copied = zs.len()
+    let kept = ys.len()
+    assert(c == "x")
+    assert(copied == 2)
+    assert(kept == 2)
+}
+
+// --- ADR-282: one word for a copy ---
+
+// **A copy of text is text of its own and a copy of a slice is a list**, each
+// written below as what makes one (ADR-282 D9).
+fn handed_over_first(xs: ref Array[i64]) -> Vec[i64] {
+    return xs.clone()
+}
+
+fn handed_over_shout(name: ref String) -> String {
+    let copy = name.clone()
+    return copy + "!"
+}
+
+test "a copy is owned whatever it copied" {
+    let xs = [1, 2, 3]
+    let part = ref xs[0..<2]
+    let owned = handed_over_first(part)
+    let size = owned.len()
+    let shouted = handed_over_shout("hey")
+    assert(size == 2)
+    assert(shouted == "hey!")
+}
+
+// **A literal is enough wherever text of its own is kept** (ADR-282 D3): in a
+// tuple, in every link of an `else if` chain, after a `??` inside an f-string
+// hole - the places a program used to write `.to_string()` to get a `String`.
+struct HandedOverU { name: String }
+
+impl HandedOverU {
+    fn copy(ref self) -> String? { return null }
+    fn rest(ref self) -> ref String? { return self.name.strip_prefix("A") }
+}
+
+fn handed_over_pair() -> (i64, String) {
+    return (1, "one")
+}
+
+fn handed_over_grade(score: i64) -> String {
+    let g: String = if score >= 90 { "A" } else if score >= 80 { "B" } else { "F" }
+    return g
+}
+
+test "a bare literal is text of its own where it is kept" {
+    let u = HandedOverU { name: "Ada" }
+    let (n, word) = handed_over_pair()
+    let line = f"{n} {word} {handed_over_grade(85)}"
+    let copied = f"{u.copy() ?? "none"}"
+    let rest = f"{u.rest() ?? "n/a"}"
+    assert(line == "1 one B")
+    assert(copied == "none")
+    assert(rest == "da")
+}
+
+// **A name bound again is a new binding** (0.0.230). Two loops that each bind
+// `more` and hand it to something that keeps it are two names to the reader,
+// and were one to the walk that finds a read after a hand-over: the second
+// loop's `more.len()` was taken for a read of the first loop's `more`. A `let`
+// gives the name a value again, as an assignment does.
+fn handed_over_next() -> Vec[i64] throws { return [1, 2] }
+
+fn handed_over_two_loops() -> i64 {
+    let mut all = Vec()
+    while all.len() < 4 {
+        let more = handed_over_next() catch { return -1 }
+        all.push(more)
+    }
+    while all.len() < 8 {
+        let more = handed_over_next() catch { return -1 }
+        if more.len() == 0 { return -1 }
+        all.push(more)
+    }
+    return all.len()
+}
+
+test "a name bound again is not the one handed over" {
+    let n = handed_over_two_loops()
+    assert(n == 8)
+}
+
+// **A `let mut` of a literal that the body grows holds text of its own**
+// (0.0.232). `let mut s = "a"` then `s = s + "b"` was `NK1105` with a help to
+// take a view of the sum; found writing a miniature compiler in Nikaia, where
+// emitted code is built up this way. The growing is read off `+`, `+=` and an
+// f-string, which can only be owned text.
+fn handed_over_width(s: ref String) -> i64 { return s.len() as i64 }
+
+test "a literal binding the body grows is text of its own" {
+    let mut out = "fn main() {\n"
+    let before = handed_over_width(out)
+    out = out + "    let a = 1;\n"
+    out += "    let b = 2;\n"
+    out = f"{out}}}"
+    let after = handed_over_width(out)
+    assert(before == 12)
+    assert(after == 43)
+    assert(out == "fn main() {\n    let a = 1;\n    let b = 2;\n}")
+}
+
+// **A literal assigned is still a view**, and so is a name that may be one:
+// the best of a list of views is the ordinary shape, and reading it as owned
+// text would refuse it.
+test "a literal assigned is still a view" {
+    let words = ["a", "bbb", "cc"]
+    let mut best = ""
+    for w in words { if w.len() > best.len() { best = w } }
+    best = "-"
+    assert(best == "-")
+}

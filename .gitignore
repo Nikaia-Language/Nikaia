@@ -65,3 +65,8 @@ node_modules/
 /tests/language/nikaia.contracts
 /tests/language/nikaia.derived
 /tests/language/nikaia.proofs
+/tests/build-time/target
+/tests/build-time/nikaia.lock
+/tests/build-time/nikaia.contracts
+/tests/build-time/nikaia.derived
+/tests/build-time/nikaia.proofs

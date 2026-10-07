@@ -3,6 +3,10 @@
 //!
 //! The type, and text standing wherever one is asked (D2): an owned name is
 //! made from the text, and a view of one borrows it without a copy.
+//!
+//! What programs that make, compare and join names compute is
+//! `tests/language/src/file_paths.nika`; here are the lowering, the refusals
+//! and a name printed to both streams.
 
 mod common;
 
@@ -90,26 +94,6 @@ fn a_view_of_a_file_name_borrows_the_text() {
     );
 }
 
-/// **And the program runs.**
-#[test]
-fn a_program_with_file_names_compiles_and_runs() {
-    let dir = common::scratch_dir("file-paths");
-    let file = dir.join("main.rs");
-    std::fs::write(&file, lowered(PROGRAM)).expect("write the Rust");
-    let binary = dir.join("program");
-    let out = common::compile(&file, &["-o", binary.to_str().expect("utf-8 path")]);
-    assert!(
-        out.status.success(),
-        "{}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    let run = std::process::Command::new(&binary)
-        .output()
-        .expect("run the program");
-    let _ = std::fs::remove_dir_all(&dir);
-    assert_eq!(String::from_utf8_lossy(&run.stdout), "true true\n");
-}
-
 /// **Something that is not text is refused as before.**
 #[test]
 fn a_number_is_not_a_file_name() {
@@ -194,30 +178,6 @@ fn a_file_names_operations_are_stds_and_compare_bytes() {
     }
 }
 
-/// **And they run**: `==` is byte for byte, so `dir//data.csv` is another
-/// name.
-#[test]
-fn a_file_names_operations_run() {
-    let dir = common::scratch_dir("file-path-operations");
-    let file = dir.join("main.rs");
-    std::fs::write(&file, lowered(OPERATIONS)).expect("write the Rust");
-    let binary = dir.join("program");
-    let out = common::compile(&file, &["-o", binary.to_str().expect("utf-8 path")]);
-    assert!(
-        out.status.success(),
-        "{}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    let run = std::process::Command::new(&binary)
-        .output()
-        .expect("run the program");
-    let _ = std::fs::remove_dir_all(&dir);
-    assert_eq!(
-        String::from_utf8_lossy(&run.stdout),
-        "true true dir/data.bak dir/other.txt data.csv csv\ntrue false true\n"
-    );
-}
-
 const JOINED: &str = "use std::fs\n\
      \n\
      fn main() {\n\
@@ -242,25 +202,6 @@ fn an_interpolated_name_is_joined_by_its_bytes() {
              std::ffi::OsStr::new(\".bak\")])"
         ),
         "{rust}"
-    );
-    let dir = common::scratch_dir("file-path-joined");
-    let file = dir.join("main.rs");
-    std::fs::write(&file, &rust).expect("write the Rust");
-    let binary = dir.join("program");
-    let out = common::compile(&file, &["-o", binary.to_str().expect("utf-8 path")]);
-    assert!(
-        out.status.success(),
-        "{}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    let run = std::process::Command::new(&binary)
-        .current_dir(&dir)
-        .output()
-        .expect("run the program");
-    let _ = std::fs::remove_dir_all(&dir);
-    assert_eq!(
-        String::from_utf8_lossy(&run.stdout),
-        "data.csv.3.bak false\n"
     );
 }
 

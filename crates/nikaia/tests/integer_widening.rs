@@ -2,7 +2,9 @@
 //! ([ADR-285](../../../docs/specification/adr/adr-285.md) D32, #439): `u32`
 //! into `i64` at a `let`, an argument (`v.push(a)` too), a `return`, a last expression, a field
 //! and an assignment, and a list element of a stated type. `u64` into `i64` can
-//! lose a value and stays refused at each of them.
+//! lose a value and stays refused at each of them. What the programs that
+//! widen compute is `tests/language/src/integer_widening.nika`; here are the
+//! refusals, the lowering and what needs a build of its own.
 
 mod common;
 
@@ -22,32 +24,6 @@ fn errors(source: &str) -> Vec<nikaia::check::Finding> {
         .into_iter()
         .filter(|f| f.severity == nikaia::check::Severity::Error)
         .collect()
-}
-
-fn runs(purpose: &str, source: &str, expected: &str) {
-    let found = errors(source);
-    assert!(found.is_empty(), "{purpose}: {found:#?}");
-    let parsed = parse_to_ast(source).expect("the source parses");
-    let rust = emit_program(&parsed, Build::default())
-        .expect("it lowers")
-        .rust;
-    let dir = common::scratch_dir(&format!("widening-{purpose}"));
-    let path = dir.join("program.rs");
-    std::fs::write(&path, &rust).expect("write the Rust");
-    let binary = dir.join("program");
-    let compiled = common::compile(
-        &path,
-        &["--crate-type", "bin", "-o", &binary.to_string_lossy()],
-    );
-    assert!(
-        compiled.status.success(),
-        "{purpose} did not compile:\n{}\n--- emitted ---\n{rust}",
-        String::from_utf8_lossy(&compiled.stderr)
-    );
-    let out = Command::new(&binary).output().expect("run it");
-    assert!(out.status.success(), "{purpose} failed");
-    assert_eq!(String::from_utf8_lossy(&out.stdout), expected, "{purpose}");
-    std::fs::remove_dir_all(&dir).ok();
 }
 
 /// One program per slot: `{from}` written where `{into}` is stated.
@@ -142,30 +118,6 @@ fn the_common_type_of_every_pair() {
     assert_eq!(common_integer("u32", "f64"), None);
 }
 
-/// **`u32` into `i64`, in every slot that states a type** (D32): it is
-/// accepted, lowered as `i64::from(..)`, and runs.
-#[test]
-fn a_u32_goes_into_an_i64_in_every_slot() {
-    for (slot, source) in slots("u32", "i64") {
-        let expected = if slot == "list element" {
-            "2 7\n"
-        } else {
-            "7\n"
-        };
-        runs(slot, &source, expected);
-    }
-}
-
-/// **The other widenings the table allows**: `u8` into `u32`, `u32` into
-/// `u64`, `i32` into `i64`.
-#[test]
-fn every_lossless_widening_runs() {
-    for (from, into) in [("u8", "u32"), ("u32", "u64"), ("i32", "i64"), ("u8", "i64")] {
-        let (_, source) = slots(from, into).swap_remove(0);
-        runs(&format!("{from}-{into}"), &source, "7\n");
-    }
-}
-
 /// **`u64` into `i64` can lose a value, and stays refused in each slot** (D32):
 /// the common type of the two does not exist.
 #[test]
@@ -199,44 +151,6 @@ fn codes(source: &str) -> Vec<&'static str> {
     errors(source).into_iter().map(|f| f.code).collect()
 }
 
-/// **A mixed operator computes in the common type** (#439 step 3): `u32 +
-/// i64` is an `i64` and prints the right sum, a bit operator too.
-#[test]
-fn a_mixed_operator_computes_in_the_common_type() {
-    runs(
-        "operators",
-        "fn main() {\n\
-         \x20   let a: u32 = 4000000000\n\
-         \x20   let b: i64 = -3\n\
-         \x20   let c: u8 = 2\n\
-         \x20   let s = a + b\n\
-         \x20   let t: i64 = b * a - c\n\
-         \x20   let m = a ^ c\n\
-         \x20   println(f\"{s} {t} {m}\")\n\
-         }\n",
-        "3999999997 -12000000002 4000000002\n",
-    );
-}
-
-/// **A list literal of two integer types holds their common type**, whatever
-/// comes first (#439 step 3).
-#[test]
-fn a_list_of_two_integer_types_holds_their_common_type() {
-    runs(
-        "lists",
-        "fn main() {\n\
-         \x20   let a: u32 = 7\n\
-         \x20   let b: i64 = -3\n\
-         \x20   let xs = [a, b]\n\
-         \x20   let ys = [b, a]\n\
-         \x20   println(f\"{xs[0] + ys[0]}\")\n\
-         \x20   let zs: Vec[i64] = xs\n\
-         \x20   println(f\"{zs.len()}\")\n\
-         }\n",
-        "4\n2\n",
-    );
-}
-
 /// **`u64` with a signed type has no common type** (D32): the operator stays
 /// `NK1199` and the list `NK1154`.
 #[test]
@@ -253,26 +167,6 @@ fn a_u64_with_a_signed_type_stays_refused() {
             "fn main() {{\n{both}    let xs = [a, b]\n    println(f\"{{xs.len()}}\")\n}}\n"
         ))
         .contains(&"NK1154")
-    );
-}
-
-/// **Every pair of integer types compares as numbers** (#439 step 4): with a
-/// common type the narrower side is widened, and `u64` against a signed type is
-/// a sign test and a compare - so a negative number is below every `u64`.
-#[test]
-fn every_pair_of_integer_types_compares_as_numbers() {
-    runs(
-        "comparisons",
-        "fn main() {\n\
-         \x20   let a: u32 = 7\n\
-         \x20   let b: i64 = -3\n\
-         \x20   let u: u64 = 18446744073709551615\n\
-         \x20   let i: i32 = -1\n\
-         \x20   println(f\"{(-1 as i64) < (0 as u64)} {u > 9223372036854775807 as i64}\")\n\
-         \x20   println(f\"{a > b} {b < a} {a != b}\")\n\
-         \x20   println(f\"{u == b} {i < u} {u >= i} {b <= u}\")\n\
-         }\n",
-        "true true\ntrue true true\nfalse true true true\n",
     );
 }
 
@@ -293,12 +187,6 @@ fn a_type_variable_is_not_widened_to_agree() {
         refusal.help.as_deref(),
         Some("Convert one of them: `a as i64`.")
     );
-    // **One type is one type**: the same call with two `i64`s runs.
-    runs(
-        "one-type",
-        &source.replace("let a: i32", "let a: i64"),
-        "1\n",
-    );
 }
 
 /// **An open number's type is decided before any widening** (#439 step 6):
@@ -312,19 +200,6 @@ fn an_open_number_is_decided_before_any_widening() {
          fn main() {\n    let n = 5\n    println(f\"{wide(n)} {narrow(n)}\")\n}\n",
     );
     assert!(found.contains(&"NK1200"), "{found:?}");
-}
-
-/// **A stated type reaches the operands** (#439 step 7): `x * y` over two
-/// `i32`s, returned as an `i64`, is computed in `i64` and does not stop where
-/// an `i32` would. A literal among the operands is an `i64` too.
-#[test]
-fn a_stated_type_reaches_the_operands() {
-    let source = "fn area(x: i32, y: i32) -> i64 {\n    x * y\n}\n\n\
-                  fn scaled(x: i32) -> i64 {\n    return -(x * 3) + 1\n}\n\n\
-                  fn main() {\n    let s: i64 = 50000 \n    let a: i32 = 50000\n    \
-                  let t: i64 = a * a\n    \
-                  println(f\"{area(50000, 50000)} {scaled(1000000000)} {t} {s}\")\n}\n";
-    runs("reach", source, "2500000000 -2999999999 2500000000 50000\n");
 }
 
 /// **It does not reach into a name**: `let p = x * y` is computed in `i32`,
@@ -396,7 +271,6 @@ fn a_width_dependent_computation_says_which_width() {
              first and widens the result."
         )
     );
-    runs("written", &program("let t: i64 = (a as i64) << 3"), "56\n");
 }
 
 /// **The help says when a number goes into another type on its own** (#439
@@ -451,7 +325,6 @@ const NOT_NEGATIVE: &str = "fn half(k: i64) -> u64 {\n\
 /// the emitted Rust.
 #[test]
 fn a_value_proved_not_negative_goes_into_a_u64() {
-    runs("not-negative", NOT_NEGATIVE, "3 4 0\n");
     let parsed = parse_to_ast(NOT_NEGATIVE).expect("the source parses");
     let rust = emit_program(&parsed, Build::default())
         .expect("it lowers")
@@ -529,38 +402,11 @@ fn the_answer_is_recorded_and_replayed() {
     assert!(written.lines().any(|l| l.contains(" proved ")), "{written}");
 }
 
-/// **`len() >= 0` for every list** (#439 step 10): a list whose elements take
-/// no space has no upper bound on its length, and still none below zero.
-#[test]
-fn a_length_of_elements_that_take_no_space_is_not_negative() {
-    runs(
-        "unsized",
-        "enum One {\n    It,\n}\n\n\
-         fn main() {\n    let units = [One::It, One::It]\n    let n: u64 = units.len()\n    \
-         println(f\"{n}\")\n}\n",
-        "2\n",
-    );
-}
-
 /// **`x += a` is `x = x + a`** (D32): over a `u32` into an `i64` it widens and
 /// runs; a sum that is wider than `x` does not fit it (`NK1105`); `u64` with
 /// `i64` has no common type (`NK1199`).
 #[test]
 fn a_compound_assignment_computes_in_the_common_type() {
-    runs(
-        "compound",
-        "fn main() {\n\
-         \x20   let xs: Vec[u32] = [1, 2, 3]\n\
-         \x20   let a: u32 = 4\n\
-         \x20   let mut total: i64 = 0\n\
-         \x20   total += a\n\
-         \x20   for n in xs {\n\
-         \x20       total += n * 2\n\
-         \x20   }\n\
-         \x20   println(f\"{total}\")\n\
-         }\n",
-        "16\n",
-    );
     let narrower = "fn main() {\n    let b: i64 = 4\n    let mut small: u32 = 1\n    small += b\n    println(f\"{small}\")\n}\n";
     assert!(codes(narrower).contains(&"NK1105"), "{:?}", codes(narrower));
     let none = "fn main() {\n    let b: i64 = 4\n    let mut u: u64 = 1\n    u += b\n    println(f\"{u}\")\n}\n";
@@ -572,12 +418,6 @@ fn a_compound_assignment_computes_in_the_common_type() {
 /// operation narrow into a wider return type is `NK1215` there as well.
 #[test]
 fn a_last_expression_asks_as_a_return_does() {
-    runs(
-        "tail-len",
-        "fn count(xs: ref Vec[i64]) -> u64 {\n    xs.len()\n}\n\n\
-         fn main() {\n    let xs = [1, 2, 3]\n    println(f\"{count(xs)}\")\n}\n",
-        "3\n",
-    );
     let refused = "fn f(k: i64) -> u64 {\n    k\n}\n\nfn main() {\n    println(f\"{f(3)}\")\n}\n";
     assert!(codes(refused).contains(&"NK1104"), "{:?}", codes(refused));
     let narrow =

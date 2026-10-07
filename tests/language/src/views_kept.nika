@@ -1,0 +1,97 @@
+// Views kept past a call (Part I 6.6): where a destination already names the
+// buffer a view parameter points into, the program is lowered and runs. What
+// is refused is `crates/nikaia/tests/views_kept.rs`.
+
+// **A view put into the struct a function hands back** points into the one
+// buffer the result can view: the parameter's.
+struct ViewsKeptReading { name: ref String, temp: i64 }
+
+fn views_kept_make(name: ref String, temp: i64) -> ViewsKeptReading {
+    return ViewsKeptReading { name: name, temp: temp }
+}
+
+test "a view in a struct handed back is the parameters" {
+    let text: String = "oslo"
+    let r = views_kept_make(text, 3)
+    let printed = f"{r.name} {r.temp}"
+    assert(printed == "oslo 3")
+}
+
+// **A view stored in a field of a struct the caller lends**, where the
+// struct holds views: the parameter is a view of that struct's buffer.
+struct ViewsKeptSummary { label: ref String, count: i64 }
+
+fn views_kept_relabel(mut s: ViewsKeptSummary, name: ref String) {
+    s.label = name
+}
+
+test "a view stored in a lent struct is its buffers" {
+    let text: String = "a b"
+    let mut s = ViewsKeptSummary { label: text.trim(), count: 0 }
+    views_kept_relabel(s, text)
+    let label = s.label == "a b"
+    assert(label)
+}
+
+// **A call on a subject that has nowhere to keep a view keeps none.** A
+// method of a struct of three `bool`s handed a `ref` on to another method of
+// the same struct was refused (`NK2302`, *a call on `Shape` might keep what
+// it's given*): the struct cannot hold the view whatever the method does,
+// which is the rule a field of the subject already had.
+pub struct ViewsKeptShape {
+    pub ends: bool,
+    pub sized: bool,
+}
+
+impl ViewsKeptShape {
+    fn meets(ref self, wanted: ref ViewsKeptShape) -> bool {
+        return self.missing(wanted).len() == 0
+    }
+
+    fn missing(ref self, wanted: ref ViewsKeptShape) -> Vec[String] {
+        let mut words: Vec[String] = []
+        if wanted.ends && !self.ends {
+            words.push("ends")
+        }
+        return words
+    }
+}
+
+test "a call on a subject that holds no view keeps none" {
+    let a = ViewsKeptShape { ends: true, sized: false }
+    let b = ViewsKeptShape { ends: false, sized: true }
+    let ab = a.meets(ref b)
+    let ba = b.meets(ref a)
+    assert(ab)
+    assert(!ba)
+}
+
+// **Owned text is not a pattern**: `starts_with`, `ends_with` and `contains`
+// take a view of text or a character. Owned text handed to one is `NK1102`
+// (`views_kept.rs`), and each shape that is accepted runs.
+fn views_kept_lent(line: ref String, w: String) -> bool {
+    return line.starts_with(ref w)
+}
+
+fn views_kept_formatted(line: ref String, w: String) -> bool {
+    return line.starts_with(ref f"{w}")
+}
+
+fn views_kept_literal(line: ref String, _w: String) -> bool {
+    return line.starts_with("ab")
+}
+
+fn views_kept_character(line: ref String, _w: String) -> bool {
+    return line.starts_with('a')
+}
+
+test "owned text handed to a pattern is refused and a view runs" {
+    let lent = views_kept_lent("abc", "a")
+    let formatted = views_kept_formatted("abc", "a")
+    let literal = views_kept_literal("abc", "a")
+    let character = views_kept_character("abc", "a")
+    assert(lent)
+    assert(formatted)
+    assert(literal)
+    assert(character)
+}

@@ -1,0 +1,62 @@
+// A `for` lends, and a `let` over a place is a view of it (ADR-094 D4): what
+// the programs that lend compute. The lowering and the refusals are
+// `crates/nikaia/tests/lending.rs`.
+
+// The line the record was written for. `entries.len()` after the loop used to
+// be `rustc`'s *use of moved value*; it is a program.
+test "a for leaves the collection where it was" {
+    let mut xs = Vec()
+    xs.push(1)
+    xs.push(2)
+    let mut sum = 0
+    for x in xs { sum += x }
+    let shown = f"{sum} of {xs.len()}"
+    assert(shown == "3 of 2")
+}
+
+// Taking the elements away is written: D4's words are *"removing a name from
+// scope"*, which is consuming the container rather than emptying one somebody
+// still holds.
+test "a drain takes the elements away" {
+    let mut xs = Vec()
+    xs.push("a")
+    xs.push("b")
+    let mut all = Vec()
+    for x in xs.drain() { all.push(x) }
+    let taken = all.len()
+    assert(taken == 2)
+}
+
+comptime LENDING_NS: Array[i32, 3] = [1, 2, 3]
+
+// A cast over a `for` binding is a cast over a view (ADR-182 D1): what a cast
+// comes to is a question only the language below answers, and the arithmetic
+// has to be right as well as compile.
+test "a cast over a for binding reaches the number" {
+    let mut sum: i64 = 0
+    for n in LENDING_NS { sum = sum + (n as i64) }
+    assert(sum == 6)
+}
+
+struct LendingRow { a: i64 }
+
+// And the way out of `NK1183` works, which is what makes the refusal one: a
+// view reads the same, and the numeric half still reads the number through it
+// (ADR-182 D5).
+test "the way out of that refusal runs" {
+    let mut seen = Vec()
+    let rows: Vec[LendingRow] = [LendingRow { a: 1 }, LendingRow { a: 2 }]
+    for r in rows {
+        let copy = r
+        seen.push(copy.a)
+    }
+    let ns: Vec[i64] = [7]
+    for n in ns {
+        let q: i64 = n
+        seen.push(q)
+    }
+    let shown = f"{seen[0]} {seen[1]} {seen[2]}"
+    let count = seen.len()
+    assert(shown == "1 2 7")
+    assert(count == 3)
+}

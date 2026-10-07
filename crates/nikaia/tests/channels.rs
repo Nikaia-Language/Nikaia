@@ -5,8 +5,10 @@
 //! binds them was already built
 //! ([ADR-291](../../../docs/specification/adr/adr-291.md)). What the record had
 //! to decide was where it lives and what it promises.
-
-mod common;
+//!
+//! What a program reads from one when it runs is
+//! `tests/language/src/channels.nika`; here are the ledger, the lowering and
+//! the refusals.
 
 use nikaia::contracts::SignatureOps;
 use nikaia::contracts::ty::TyOps;
@@ -27,50 +29,6 @@ fn lowered(source: &str) -> String {
     emit_program(&parsed, Build::default())
         .expect("the source lowers")
         .rust
-}
-
-fn output(purpose: &str, source: &str) -> String {
-    assert!(findings(source).is_empty(), "{:#?}", findings(source));
-    let rust = lowered(source);
-    let dir = common::scratch_dir(purpose);
-    let file = dir.join("main.rs");
-    std::fs::write(&file, &rust).expect("write the Rust");
-    let binary = dir.join("program");
-    let out = common::compile(&file, &["-o", binary.to_str().expect("utf-8 path")]);
-    assert!(
-        out.status.success(),
-        "the lowering compiles:\n{}\n--- the Rust ---\n{rust}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    let ran = std::process::Command::new(&binary)
-        .output()
-        .expect("run the program");
-    assert!(
-        ran.status.success(),
-        "the program runs:\n{}",
-        String::from_utf8_lossy(&ran.stderr)
-    );
-    let _ = std::fs::remove_dir_all(&dir);
-    String::from_utf8_lossy(&ran.stdout).trim().to_string()
-}
-
-/// **Part II 12.5's own example, as a program that runs** (§5 step 3).
-#[test]
-fn the_pages_own_example_runs() {
-    let printed = output(
-        "channel-page",
-        "use std::channel\n\
-         \n\
-         fn main() {\n\
-         \x20   let (tx, rx) = channel::bounded(100)\n\
-         \x20   spawn fn {\n\
-         \x20       tx.send(\"Calculation complete\")\n\
-         \x20   }\n\
-         \x20   let msg = rx.recv() ?? \"nobody sent anything\"\n\
-         \x20   println(msg)\n\
-         }\n",
-    );
-    assert_eq!(printed, "Calculation complete");
 }
 
 /// **D2: `send` pauses**, which is the missing `sync` line in the ledger and
@@ -140,26 +98,6 @@ fn a_signature_that_hands_back_a_tuple_parses() {
     );
 }
 
-/// **D3: `null` means every sender is gone**, and it is the ordinary end of a
-/// stream rather than a failure — so a program reads it with `??` and never
-/// with a `catch`.
-#[test]
-fn a_closed_channel_hands_back_nothing() {
-    let printed = output(
-        "channel-closed",
-        "use std::channel\n\
-         \n\
-         fn main() {\n\
-         \x20   let (tx, rx) = channel::bounded(4)\n\
-         \x20   spawn fn { tx.send(5) }\n\
-         \x20   let first = rx.recv() ?? 0\n\
-         \x20   let second = rx.recv() ?? -1\n\
-         \x20   println(f\"{first} {second}\")\n\
-         }\n",
-    );
-    assert_eq!(printed, "5 -1");
-}
-
 /// **D2, where it is meant to be read: a `sync` body cannot send.**
 ///
 /// And the compiler names the promise in the way rather than saying anything
@@ -227,29 +165,4 @@ fn a_channel_is_answered_by_what_it_carries() {
         Crossing::May,
         "a lock is not handed to code nothing describes, in a channel or out of one"
     );
-}
-
-/// **Back-pressure is a pause and the value still arrives.** A channel of one,
-/// filled, with a second send waiting for room: the receiver takes the first,
-/// the sender wakes, and both values come out in order.
-#[test]
-fn a_full_channel_waits_for_room() {
-    let printed = output(
-        "channel-backpressure",
-        "use std::channel\n\
-         \n\
-         fn main() {\n\
-         \x20   let (tx, rx) = channel::bounded(1)\n\
-         \x20   spawn fn {\n\
-         \x20       tx.send(1)\n\
-         \x20       tx.send(2)\n\
-         \x20       tx.send(3)\n\
-         \x20   }\n\
-         \x20   let a = rx.recv() ?? 0\n\
-         \x20   let b = rx.recv() ?? 0\n\
-         \x20   let c = rx.recv() ?? 0\n\
-         \x20   println(f\"{a} {b} {c}\")\n\
-         }\n",
-    );
-    assert_eq!(printed, "1 2 3");
 }

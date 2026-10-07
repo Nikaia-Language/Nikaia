@@ -1,0 +1,45 @@
+// `value with { field: … }` (ADR-118, Part I 4.2): a copy of a value with named
+// fields changed, and what the copy holds. The lowering and the refusals are
+// `crates/nikaia/tests/with_copy.rs`.
+
+struct WithCopyPoint { x: i64, y: i64, z: i64 }
+
+// The whole of D1, run: one field changes, the rest come from the value. It
+// runs rather than being read off the emitted line, because what `..p` means
+// is the language below's and a test that only matched the text would pass for
+// a copy that took the fields from the wrong place.
+test "a copy changes what it names and carries the rest" {
+    let p = WithCopyPoint { x: 1, y: 2, z: 3 }
+    let moved = p with { x: p.x + 1 }
+    assert(moved.x == 2)
+    assert(moved.y == 2)
+    assert(moved.z == 3)
+}
+
+// The shorthand is the literal's (D1): `user with { name }` takes the local
+// spelled like the field, which costs nothing here because the field list is
+// the same node.
+struct WithCopyNamed { name: String, n: i64 }
+
+test "the shorthand is the struct literals" {
+    let s = WithCopyNamed { name: "a", n: 1 }
+    let name: String = "b"
+    let t = s with { name }
+    assert(t.name == "b")
+    assert(t.n == 1)
+}
+
+// Only the top level, and a nested change is a nested `with` (D2). One rule
+// and one level, so the question of what a path would mean through a `T?`, an
+// enum or a list never has to be answered - and `with` nesting is the postfix
+// rule applying twice, which is why it needed nothing for this.
+struct WithCopyFlat { x: i64, y: i64 }
+struct WithCopyNested { pos: WithCopyFlat, tag: i64 }
+
+test "a field of a field is a nested with" {
+    let n = WithCopyNested { pos: WithCopyFlat { x: 1, y: 2 }, tag: 7 }
+    let m = n with { pos: n.pos with { x: 9 } }
+    assert(m.pos.x == 9)
+    assert(m.pos.y == 2)
+    assert(m.tag == 7)
+}

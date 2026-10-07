@@ -1,0 +1,198 @@
+// A narrower integer goes into a wider slot where no value can be lost
+// (ADR-285 D32, #439), and integers of two types compute and compare in their
+// common type: what such programs compute. What stays refused, and what is
+// lowered, is `crates/nikaia/tests/integer_widening.rs`.
+
+fn integer_widening_take(x: i64) -> i64 {
+    return x
+}
+
+fn integer_widening_give(a: u32) -> i64 {
+    return a
+}
+
+fn integer_widening_give_last(a: u32) -> i64 {
+    a
+}
+
+struct IntegerWideningSlot {
+    v: i64,
+}
+
+// `u32` into `i64`, in every slot that states a type (D32): it is accepted,
+// lowered as `i64::from(..)`, and runs.
+test "a u32 goes into an i64 in every slot" {
+    let a: u32 = 7
+    let x: i64 = a
+    assert(x == 7)
+    let taken = integer_widening_take(a)
+    assert(taken == 7)
+    let given = integer_widening_give(a)
+    assert(given == 7)
+    let last = integer_widening_give_last(a)
+    assert(last == 7)
+    let s = IntegerWideningSlot { v: a }
+    assert(s.v == 7)
+    let mut y: i64 = 0
+    assert(y == 0)
+    y = a
+    assert(y == 7)
+    let mut v: Vec[i64] = []
+    v.push(a)
+    assert(v[0] == 7)
+    let xs: Vec[i64] = [a, a]
+    assert(xs.len() == 2)
+    assert(xs[0] == 7)
+}
+
+// The other widenings the table allows: `u8` into `u32`, `u32` into `u64`,
+// `i32` into `i64`.
+test "every lossless widening runs" {
+    let a: u8 = 7
+    let x: u32 = a
+    assert(x == 7)
+    let b: u32 = 7
+    let y: u64 = b
+    assert(y == 7)
+    let c: i32 = 7
+    let z: i64 = c
+    assert(z == 7)
+    let d: u8 = 7
+    let w: i64 = d
+    assert(w == 7)
+}
+
+// A mixed operator computes in the common type (#439 step 3): `u32 + i64` is
+// an `i64` and gives the right sum, a bit operator too.
+test "a mixed operator computes in the common type" {
+    let a: u32 = 4000000000
+    let b: i64 = -3
+    let c: u8 = 2
+    let s = a + b
+    let t: i64 = b * a - c
+    let m = a ^ c
+    let line = f"{s} {t} {m}"
+    assert(line == "3999999997 -12000000002 4000000002")
+}
+
+// A list literal of two integer types holds their common type, whatever comes
+// first (#439 step 3).
+test "a list of two integer types holds their common type" {
+    let a: u32 = 7
+    let b: i64 = -3
+    let xs = [a, b]
+    let ys = [b, a]
+    let sum = f"{xs[0] + ys[0]}"
+    assert(sum == "4")
+    let zs: Vec[i64] = xs
+    assert(zs.len() == 2)
+}
+
+// Every pair of integer types compares as numbers (#439 step 4): with a common
+// type the narrower side is widened, and `u64` against a signed type is a sign
+// test and a compare - so a negative number is below every `u64`.
+test "every pair of integer types compares as numbers" {
+    let a: u32 = 7
+    let b: i64 = -3
+    let u: u64 = 18446744073709551615
+    let i: i32 = -1
+    let first = f"{(-1 as i64) < (0 as u64)} {u > 9223372036854775807 as i64}"
+    let second = f"{a > b} {b < a} {a != b}"
+    let third = f"{u == b} {i < u} {u >= i} {b <= u}"
+    assert(first == "true true")
+    assert(second == "true true true")
+    assert(third == "false true true true")
+}
+
+// One type is one type (#439 step 5): a type variable handed two `i64`s runs;
+// the refusal of an `i32` and an `i64` is in the `.rs` file.
+fn integer_widening_pick[T](a: T, _b: T) -> T {
+    a
+}
+
+test "a type variable is not widened to agree" {
+    let a: i64 = 1
+    let b: i64 = 2
+    let line = f"{integer_widening_pick(a, b)}"
+    assert(line == "1")
+}
+
+// A stated type reaches the operands (#439 step 7): `x * y` over two `i32`s,
+// returned as an `i64`, is computed in `i64` and does not stop where an `i32`
+// would. A literal among the operands is an `i64` too.
+fn integer_widening_area(x: i32, y: i32) -> i64 {
+    x * y
+}
+
+fn integer_widening_scaled(x: i32) -> i64 {
+    return -(x * 3) + 1
+}
+
+test "a stated type reaches the operands" {
+    let s: i64 = 50000
+    let a: i32 = 50000
+    let t: i64 = a * a
+    let line = f"{integer_widening_area(50000, 50000)} {integer_widening_scaled(1000000000)} {t} {s}"
+    assert(line == "2500000000 -2999999999 2500000000 50000")
+}
+
+// `NK1215`: a computation whose result depends on the width (#439 step 8); the
+// program that wrote one reading runs.
+test "a width dependent computation says which width" {
+    let a: u32 = 7
+    let t: i64 = (a as i64) << 3
+    assert(t == 56)
+}
+
+// A value the walk shows is not negative goes into a `u64` (#439 step 9): a
+// length, and a value after `if k >= 0`.
+fn integer_widening_half(k: i64) -> u64 {
+    if k >= 0 {
+        let n: u64 = k
+        return n / 2
+    }
+    return 0
+}
+
+test "a value proved not negative goes into a u64" {
+    let xs = [1, 2, 3]
+    let n: u64 = xs.len()
+    let line = f"{n} {integer_widening_half(9)} {integer_widening_half(-4)}"
+    assert(line == "3 4 0")
+}
+
+// `len() >= 0` for every list (#439 step 10): a list whose elements take no
+// space has no upper bound on its length, and still none below zero.
+enum IntegerWideningOne {
+    It,
+}
+
+test "a length of elements that take no space is not negative" {
+    let units = [IntegerWideningOne::It, IntegerWideningOne::It]
+    let n: u64 = units.len()
+    assert(n == 2)
+}
+
+// `x += a` is `x = x + a` (D32): over a `u32` into an `i64` it widens and runs.
+test "a compound assignment computes in the common type" {
+    let xs: Vec[u32] = [1, 2, 3]
+    let a: u32 = 4
+    let mut total: i64 = 0
+    total += a
+    for n in xs {
+        total += n * 2
+    }
+    assert(total == 16)
+}
+
+// A body's last expression asks the walk too (D32): `xs.len()` handed back as
+// a `u64` is taken.
+fn integer_widening_count(xs: ref Vec[i64]) -> u64 {
+    xs.len()
+}
+
+test "a last expression asks as a return does" {
+    let xs = [1, 2, 3]
+    let n = integer_widening_count(xs)
+    assert(n == 3)
+}

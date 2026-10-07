@@ -13,10 +13,9 @@
 //! nothing is released — which is [ADR-276](../../../docs/specification/adr/adr-276.md)'s
 //! own standard, and the reason they are reserved **with their constructs**
 //! rather than ahead of them ([ADR-298](../../../docs/specification/adr/adr-298.md)).
-
-mod common;
-
-use std::process::Command;
+//!
+//! That the two forms run - `getpid` called in an `unsafe` block - is
+//! `tests/language/src/foreign_declarations.nika`.
 
 use nikaia::contracts::{Ledger, LedgerOps, STD};
 use nikaia::emit::{Build, emit_program};
@@ -171,40 +170,4 @@ fn a_written_convention_is_nk1227() {
                 .is_some_and(|h| h.contains("extern { … }"))
         );
     }
-}
-
-/// **And it compiles and runs**, which is the only proof that the two forms
-/// mean in the language below what they say here.
-#[test]
-fn the_whole_thing_compiles_and_runs() {
-    let rust = lowered(&format!(
-        "{DECLARED}fn main() {{ let id = unsafe {{ getpid() }}\n\
-         \x20   println(f\"{{id > 0}}\") }}\n"
-    ));
-    let dir = common::scratch_dir("extern-c");
-    let path = dir.join("program.rs");
-    std::fs::write(&path, &rust).expect("write the Rust");
-    let binary = dir.join("program");
-    let compiled = common::compile(
-        &path,
-        &[
-            "--crate-type",
-            "bin",
-            "-o",
-            binary.to_str().expect("utf-8 path"),
-        ],
-    );
-    assert!(
-        compiled.status.success(),
-        "did not compile:\n{}\n--- emitted ---\n{rust}",
-        String::from_utf8_lossy(&compiled.stderr)
-    );
-    let out = Command::new(&binary).output().expect("run it");
-    assert!(
-        out.status.success(),
-        "{}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "true");
-    std::fs::remove_dir_all(&dir).ok();
 }

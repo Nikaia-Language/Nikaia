@@ -1,0 +1,39 @@
+// A number's methods are `std`'s (#438, Part III C.1): what they compute. That
+// they are described, do not pause, and that an undescribed one is refused is
+// `crates/nikaia/tests/number_methods.rs`.
+
+fn number_methods_lo(a: i64, b: i64) -> i64 {
+    return a.min(b)
+}
+
+fn number_methods_hi(a: i64, b: i64) -> i64 {
+    return a.max(b)
+}
+
+fn number_methods_floor_half(a: i64) -> i64 {
+    return a.div_euclid(2)
+}
+
+fn number_methods_size(a: i64) -> i64 {
+    return a.abs()
+}
+
+// What they compute, run: `div_euclid` rounds down where `/` rounds to zero.
+test "min max and div euclid run" {
+    let line = f"{number_methods_lo(7, 3)} {number_methods_hi(7, 3)} {number_methods_floor_half(-7)} {number_methods_size(-5)}"
+    assert(line == "3 7 -4 5")
+}
+
+// **The methods a program reaches for first are described** (#443): since
+// `NK1210`, a method missing from the ledger is a program refused, so text,
+// powers, the smaller of two and a float's floor have entries - and the
+// function that calls them stays a plain one, and runs.
+fn number_methods_calc(a: i64, c: i32, d: i32, u: u64, f: f64, g: f64) -> String {
+    let parts = [a.to_string(), a.pow(2).to_string(), (-a).rem_euclid(3).to_string(), (-a).signum().to_string(), c.min(d).to_string(), u.count_ones().to_string(), f.floor().to_string(), f.round().to_string(), f.max(g).to_string(), f.powi(2).to_string(), f.is_nan().to_string()]
+    return parts.join(" ")
+}
+
+test "the common methods of a number are described and run" {
+    let line = number_methods_calc(7, 4, 2, 5, 1.5, 2.5)
+    assert(line == "7 49 2 -1 2 2 1 2 2.5 2.25 false")
+}

@@ -1,0 +1,118 @@
+// How far a compiler written in Nikaia gets: the pieces a compiler needs,
+// written the way one would be, without a workaround. The pieces of the
+// compiler that are Nikaia already, called from Rust, stay in
+// `crates/nikaia/tests/self_hosting.rs`.
+
+use std::collections
+use std::text
+
+// `text::parse_i64` is `atoi` (0.0.237), written in Nikaia in
+// `std/text.nika`: an optional sign and digits, and nothing where the text
+// writes no `i64` - both ends of the range included, one past either end not.
+test "text reads a whole number" {
+    let mut out = ""
+    for s in ["42", "-7", "+3", "0", "", "-", "12a", " 1", "9223372036854775807", "-9223372036854775808", "9223372036854775808", "-9223372036854775809"] {
+        let found = text::parse_i64(s)
+        let shown = if found == null { "null" } else { f"{found ?? 0}" }
+        out = out + f"[{s}] {shown}\n"
+    }
+    let sum = (text::parse_i64("20") ?? 0) + (text::parse_i64("x") ?? 1)
+    assert(out == "[42] 42\n[-7] -7\n[+3] 3\n[0] 0\n[] null\n[-] null\n[12a] null\n[ 1] null\n[9223372036854775807] 9223372036854775807\n[-9223372036854775808] -9223372036854775808\n[9223372036854775808] null\n[-9223372036854775809] null\n")
+    assert(sum == 21)
+}
+
+enum SelfHostingExpr {
+    Num(i64),
+    Name(String),
+    Add(SelfHostingExpr, SelfHostingExpr),
+    Mul(SelfHostingExpr, SelfHostingExpr),
+}
+
+struct SelfHostingLet {
+    name: String,
+    value: SelfHostingExpr,
+}
+
+grammar SelfHostingMini {
+    rule WS = (" " | "\t")* { }
+    rule NL = ("\n" | " " | "\t")* { }
+    rule NAME -> String = s:raw_ident { s.clone() }
+    rule NUM -> i64 = d:digit+ { text::parse_i64(d) ?? 0 }
+    rule atom -> SelfHostingExpr = WS n:NUM WS { SelfHostingExpr::Num(n) } | WS s:NAME WS { SelfHostingExpr::Name(s) }
+    rule term -> SelfHostingExpr = a:atom "*" b:term { SelfHostingExpr::Mul(a, b) } | a:atom { a }
+    rule expr -> SelfHostingExpr = a:term "+" b:expr { SelfHostingExpr::Add(a, b) } | a:term { a }
+    rule line -> SelfHostingLet = NL "let" WS name:NAME WS "=" value:expr { SelfHostingLet { name, value } }
+    entry rule program -> Vec[SelfHostingLet] = lines:line* NL { lines }
+}
+
+fn self_hosting_emit(e: ref SelfHostingExpr) -> String {
+    return match e {
+        SelfHostingExpr::Num(n) => f"{n}",
+        SelfHostingExpr::Name(s) => f"{s}",
+        SelfHostingExpr::Add(a, b) => f"({self_hosting_emit(a)} + {self_hosting_emit(b)})",
+        SelfHostingExpr::Mul(a, b) => f"({self_hosting_emit(a)} * {self_hosting_emit(b)})",
+    }
+}
+
+fn self_hosting_unknown(e: ref SelfHostingExpr, known: ref collections::HashSet[String]) -> Vec[String] {
+    let mut out = Vec()
+    match e {
+        SelfHostingExpr::Num(_) => {}
+        SelfHostingExpr::Name(s) => { if !known.contains(s) { out.push(s.clone()) } }
+        SelfHostingExpr::Add(a, b) => { out.extend(self_hosting_unknown(a, known)) out.extend(self_hosting_unknown(b, known)) }
+        SelfHostingExpr::Mul(a, b) => { out.extend(self_hosting_unknown(a, known)) out.extend(self_hosting_unknown(b, known)) }
+    }
+    return out
+}
+
+// The miniature compiler, with no workaround left in it: it parses, finds the
+// name nothing declares, and writes the Rust.
+test "the miniature compiler builds and runs" {
+    let source = "let a = 2 + 3\nlet b = a * 4\nlet c = b + z\n"
+    let lines = SelfHostingMini::program(source)
+    let mut known = collections::HashSet()
+    let mut errors = ""
+    let mut rust = "fn main() {\n"
+    for l in lines {
+        for missing in self_hosting_unknown(l.value, known) {
+            errors = errors + f"error: nothing declares `{missing}`\n"
+        }
+        rust = rust + f"    let {l.name} = {self_hosting_emit(l.value)};\n"
+        known.insert(l.name.clone())
+    }
+    let written = rust + "}"
+    assert(errors == "error: nothing declares `z`\n")
+    assert(written == "fn main() {\n    let a = (2 + 3);\n    let b = (a * 4);\n    let c = (b + z);\n}")
+}
+
+fn self_hosting_count(long: ref Vec[char], short: ref Vec[char]) -> i64 {
+    let mut n = 0
+    for c in long {
+        if short[0] == c { n += 1 }
+        if c == 'x' { n += 10 }
+        if c != short[0] && c < 'z' { n += 100 }
+    }
+    return n
+}
+
+// What moving the spelling piece needed from the lowering (0.0.238): a cell of
+// a list of lists written in place, and an element of a list lent to the
+// function compared with a value - both of which reached `rustc` as a file
+// nobody wrote.
+test "a table is written in place and a lent element compares" {
+    let mut d: Vec[Vec[i64]] = Vec()
+    for _ in 0..<3 {
+        let mut row: Vec[i64] = Vec()
+        for _ in 0..<3 { row.push(0) }
+        d.push(row)
+    }
+    d[1][2] = 7
+    d[2][0] = d[1][2] + 1
+    let a: Vec[char] = "abxa".chars().collect()
+    let b: Vec[char] = "a".chars().collect()
+    let counted = self_hosting_count(a, b)
+    assert(d[1][2] == 7)
+    assert(d[2][0] == 8)
+    assert(d[0][0] == 0)
+    assert(counted == 212)
+}

@@ -7,15 +7,12 @@
 //! parameter missing, a parameter that is not there - are errors against the
 //! `.nika` file the user wrote (ADR-300).
 //!
-//! The first of those is checked by compiling the emitted Rust and running it,
-//! because a lowering that produces plausible-looking Rust which does not build
-//! is worth nothing.
-
-mod common;
+//! The first of those is checked by running the program, because a lowering
+//! that produces plausible-looking Rust which does not build is worth nothing:
+//! that is `tests/language/src/dsl_parameters.nika`.
 
 use nikaia::contracts::LedgerOps;
 use std::path::PathBuf;
-use std::process::Command;
 
 use nikaia::check::Severity;
 use nikaia::emit::{Build, emit_program};
@@ -50,48 +47,6 @@ fn findings(source: &str) -> Vec<nikaia::check::Finding> {
 fn a_spread_is_a_parameter_the_body_may_use() {
     let found = findings(&fixture("sql_statement.nika"));
     assert!(found.is_empty(), "{found:#?}");
-}
-
-/// The one that has to be true before any of the others are worth anything:
-/// the emitted Rust compiles, runs, and prints what the program says.
-#[test]
-fn a_deferred_parameter_dsl_lowers_compiles_and_runs() {
-    let source = fixture("sql_statement.nika");
-    let rust = emit(&source);
-
-    let dir = common::scratch_dir("dsl-parameters");
-    let path = dir.join("statement.rs");
-    std::fs::write(&path, &rust).expect("write the emitted Rust");
-
-    let binary = dir.join("statement");
-    let compiled = common::compile(
-        &path,
-        &[
-            "--crate-type",
-            "bin",
-            "-o",
-            binary.to_str().expect("utf-8 path"),
-        ],
-    );
-    assert!(
-        compiled.status.success(),
-        "the emitted Rust did not compile:\n{}\n--- emitted ---\n{rust}",
-        String::from_utf8_lossy(&compiled.stderr),
-    );
-
-    let run = Command::new(&binary).output().expect("run it");
-    assert!(run.status.success(), "it should run");
-
-    // The statement reaches the driver **with its holes as written**: a
-    // deferred parameter is not string interpolation, so nothing was spliced
-    // into the SQL (Part III, 15.3). The values arrived beside it.
-    assert_eq!(
-        String::from_utf8_lossy(&run.stdout).trim(),
-        "people.db: SELECT name FROM people WHERE id = :id AND active = :active\n\
-         id=501 active=true"
-    );
-
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// The type carries the body's names, and takes its field types from the call
@@ -373,7 +328,7 @@ fn parameters_handed_to_a_callee_that_is_no_driver_are_refused() {
     );
 
     // The same statement given to a driver is what the help hands over, and
-    // it lowers, compiles and runs.
+    // it is a program (that it runs is `tests/language/src/dsl_parameters.nika`).
     let source = "pub struct Page { name: String }\n\
                   \n\
                   impl Page {\n\
@@ -395,26 +350,6 @@ fn parameters_handed_to_a_callee_that_is_no_driver_are_refused() {
         .filter(|f| f.severity == Severity::Error)
         .collect();
     assert!(found.is_empty(), "{found:#?}");
-    let rust = emit(source);
-    let dir = common::scratch_dir("dsl-free-driver");
-    let path = dir.join("driver.rs");
-    std::fs::write(&path, &rust).expect("write the emitted Rust");
-    let binary = dir.join("driver");
-    let compiled = common::compile(
-        &path,
-        &["--crate-type", "bin", "-o", binary.to_str().expect("utf-8")],
-    );
-    assert!(
-        compiled.status.success(),
-        "the emitted Rust did not compile:\n{}\n--- emitted ---\n{rust}",
-        String::from_utf8_lossy(&compiled.stderr),
-    );
-    let run = Command::new(&binary).output().expect("run it");
-    assert_eq!(
-        String::from_utf8_lossy(&run.stdout),
-        "index: console.log(:msg)\nhi\n"
-    );
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// **A grammar from a package is `package::Grammar`**

@@ -5,10 +5,9 @@
 //! given later - and the type is written into the generated `let`, so nothing
 //! is left to the language below's inference. And a constant operation that
 //! overflows is `NK1116` wherever it stands (issue #176, closed).
-
-mod common;
-
-use std::process::Command;
+//!
+//! What the programs compute is `tests/language/src/numbers_by_use.nika`; this
+//! file keeps the generated `let` and the refusals.
 
 use nikaia::contracts::{Ledger, LedgerOps, STD};
 use nikaia::emit::{Build, emit_program};
@@ -25,112 +24,35 @@ fn findings(source: &str) -> Vec<nikaia::check::Finding> {
         .collect()
 }
 
-/// Runs the program at both settings of `user_parallelism` and hands back the
-/// Rust it was lowered to, for the line a test wants to see.
-fn runs(purpose: &str, source: &str, expected: &str) -> String {
-    let found = findings(source);
-    assert!(found.is_empty(), "{purpose}: {found:#?}");
-    let mut lowered = String::new();
-    for how in [Build::default(), Build::parallel()] {
-        let parsed = parse_to_ast(source).expect("the source parses");
-        let rust = emit_program(&parsed, how).expect("it lowers").rust;
-        let dir = common::scratch_dir(&format!("numbers-{purpose}"));
-        let path = dir.join("program.rs");
-        std::fs::write(&path, &rust).expect("write the Rust");
-        let binary = dir.join("program");
-        let compiled = common::compile(
-            &path,
-            &["--crate-type", "bin", "-o", &binary.to_string_lossy()],
-        );
-        assert!(
-            compiled.status.success(),
-            "{purpose} did not compile at {how:?}:\n{}\n--- emitted ---\n{rust}",
-            String::from_utf8_lossy(&compiled.stderr)
-        );
-        let out = Command::new(&binary).output().expect("run it");
-        assert!(
-            out.status.success(),
-            "{purpose} failed at {how:?}: {}",
-            String::from_utf8_lossy(&out.stderr)
-        );
-        assert_eq!(
-            String::from_utf8_lossy(&out.stdout),
-            expected,
-            "{purpose} at {how:?}"
-        );
-        std::fs::remove_dir_all(&dir).ok();
-        lowered = rust;
-    }
-    lowered
+fn lowered(source: &str) -> String {
+    let parsed = parse_to_ast(source).expect("the source parses");
+    emit_program(&parsed, Build::default())
+        .expect("it lowers")
+        .rust
 }
 
 /// **An index is a use** (D2): `v[i].push(x)` over a bare `let i = 0` was
 /// `rustc`'s *type annotations needed* (issue #177), because
-/// `index::at` takes any integer and nothing else said which.
+/// `index::at` takes any integer and nothing else said which. The type is
+/// written into the generated `let`.
 #[test]
 fn an_index_makes_a_bare_number_an_i64() {
-    let rust = runs(
-        "index",
+    let rust = lowered(
         "fn main() {\n\
          \x20   let mut rows: Vec[Vec[i64]] = [[], []]\n\
          \x20   let i = 1\n\
          \x20   rows[i].push(7)\n\
          \x20   println(f\"{rows[1].len()} {rows[1][0]}\")\n\
          }\n",
-        "1 7\n",
     );
     assert!(rust.contains("let i: i64 = 1;"), "{rust}");
 }
 
-/// **A parameter, an annotation and a comparison are uses** (D2), and each
-/// types the number it is given - `u32` and `u64` included, which a number
-/// above an `i32` could not be before (ADR-285 D23 is answered).
+/// **A sum through names is refused where nothing asks it to be wide** - a
+/// name is where the widening stops (ADR-285 D26). Where a use asks, it is wide:
+/// `tests/language/src/numbers_by_use.nika`.
 #[test]
-fn the_use_decides_among_all_the_integer_types() {
-    runs(
-        "uses",
-        "fn wide(n: u64) -> u64 {\n\
-         \x20   return n * 2\n\
-         }\n\
-         \n\
-         fn main() {\n\
-         \x20   let big = 3000000000\n\
-         \x20   let small = 5\n\
-         \x20   let mask: u32 = small\n\
-         \x20   let v: Vec[i64] = [1, 2, 3]\n\
-         \x20   let mut i = 0\n\
-         \x20   let mut total = 0\n\
-         \x20   while i < v.len() {\n\
-         \x20       total += v[i]\n\
-         \x20       i += 1\n\
-         \x20   }\n\
-         \x20   println(f\"{wide(big)} {mask} {i} {total}\")\n\
-         }\n",
-        "6000000000 5 3 6\n",
-    );
-}
-
-/// **What is given later is held to the type too** (D3), and a sum through
-/// names is wide where a use asks for it to be: `a + a` over a bare
-/// `2000000000` is an `i64` handed to an `i64`, and still refused where
-/// nothing asks - a name is where the widening stops (ADR-285 D26).
-#[test]
-fn what_a_number_is_given_decides_where_no_use_does() {
-    runs(
-        "given",
-        "fn wide(n: i64) -> i64 {\n\
-         \x20   return n\n\
-         }\n\
-         \n\
-         fn main() {\n\
-         \x20   let mut n = 1\n\
-         \x20   n = 3000000000\n\
-         \x20   let a = 2000000000\n\
-         \x20   let c = a + a\n\
-         \x20   println(f\"{n} {wide(c)}\")\n\
-         }\n",
-        "3000000000 4000000000\n",
-    );
+fn a_sum_nothing_asks_to_be_wide_is_refused() {
     let unasked = findings(
         "fn main() {\n\
          \x20   let a = 2000000000\n\
@@ -198,13 +120,4 @@ fn an_overflow_is_refused_wherever_the_operation_stands() {
             "{place}: {found:#?}"
         );
     }
-    runs(
-        "fits",
-        "fn main() {\n\
-         \x20   let a: i32 = 2000000000\n\
-         \x20   let b: i32 = 100\n\
-         \x20   println(f\"{a + b} {a - b}\")\n\
-         }\n",
-        "2000000100 1999999900\n",
-    );
 }

@@ -1,0 +1,6 @@
+// What runs while a program is built (`comptime`, computed defaults), as tests
+// of its own (ADR-269). A package of its own and a small one: each value
+// computed while the package is built is a run over the whole package, so
+// these would cost every other topic's files once per value (#468).
+fn main() {
+}

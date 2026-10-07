@@ -1,0 +1,60 @@
+// A DSL with deferred parameters generates a shadow type (ADR-296 D5): the
+// statement reaches the driver with its holes as written, and the values the
+// call site gave arrive beside it. The type, the hole syntax and the refusals
+// are `crates/nikaia/tests/dsl_parameters.rs`.
+
+struct DslParametersDb {
+    name: String,
+}
+
+impl DslParametersDb {
+    // The driver. `...args: Self::dsl` is the typed spread of ADR-296 D5: the
+    // parameters of whatever statement this call was given, as one value on
+    // the stack.
+    fn prepare(ref self, statement: ref String; ...args: Self::dsl) -> Self::dsl {
+        println(f"{self.name}: {statement}")
+        return args
+    }
+}
+
+// The one that has to be true before any of the others are worth anything:
+// the emitted Rust compiles, runs, and computes what the program says. The
+// statement reaches the driver **with its holes as written**: a deferred
+// parameter is not string interpolation, so nothing was spliced into the SQL
+// (Part III, 15.3). The values arrived beside it.
+test "a deferred parameter dsl lowers compiles and runs" {
+    let db = DslParametersDb { name: "people.db" }
+
+    let query = dsl mysql {
+        SELECT name FROM people WHERE id = :id AND active = :active
+    } eod
+
+    // Subject: the statement ; Config: what it left open.
+    let bound = db.prepare(query; id: 501, active: true)
+
+    let said = f"{db.name}: {query}"
+    assert(said == "people.db: SELECT name FROM people WHERE id = :id AND active = :active")
+    assert(bound.id == 501)
+    assert(bound.active)
+}
+
+// **A statement given to a driver** is what `NK1109`'s help hands over, and it
+// lowers, compiles and runs.
+struct DslParametersPage { name: String }
+
+impl DslParametersPage {
+    fn run(ref self, statement: ref String; ...args: Self::dsl) -> Self::dsl {
+        println(f"{self.name}: {statement}")
+        return args
+    }
+}
+
+test "parameters handed to a driver arrive" {
+    let driver = DslParametersPage { name: "index" }
+    let message = "hi"
+    let script = dsl js { console.log(:msg) } eod
+    let bound = driver.run(script; msg: message)
+    let said = f"{driver.name}: {script}"
+    assert(said == "index: console.log(:msg)")
+    assert(bound.msg == "hi")
+}

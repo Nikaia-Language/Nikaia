@@ -1,0 +1,59 @@
+// Two defects found moving the interval propagation into Nikaia (#435), each
+// fixed in the compiler (ADR-294 D3): arms that meet at `T?` because one is a
+// `T?` already, and `is_empty` on a map or a set. How `is_empty` lowers stays
+// in `crates/nikaia/tests/mixed_arms.rs`.
+
+use std::collections
+
+fn mixed_arms_maybe(n: i64) -> i64? {
+    if n > 10 {
+        return null
+    }
+    return n * 2
+}
+
+fn mixed_arms_mixed(n: i64) -> i64? {
+    return match n {
+        1 => 5,
+        else => mixed_arms_maybe(n),
+    }
+}
+
+fn mixed_arms_block_null(n: i64) -> i64? {
+    return match n {
+        1 => 5,
+        2 => {
+            if n > 0 {
+                return mixed_arms_maybe(n)
+            }
+            null
+        },
+        else => mixed_arms_maybe(n),
+    }
+}
+
+test "a plain arm beside an optional one is some" {
+    let a = mixed_arms_mixed(1) ?? -1
+    let b = mixed_arms_mixed(3) ?? -1
+    let c = mixed_arms_mixed(30) ?? -1
+    let d = mixed_arms_block_null(1) ?? -1
+    let e = mixed_arms_block_null(2) ?? -1
+    let f = mixed_arms_block_null(30) ?? -1
+    assert(a == 5)
+    assert(b == 6)
+    assert(c == -1)
+    assert(d == 5)
+    assert(e == 4)
+    assert(f == -1)
+}
+
+fn mixed_arms_none(m: ref collections::BTreeMap[String, i64], s: ref collections::HashSet[i64]) -> bool {
+    return m.is_empty() && s.is_empty()
+}
+
+test "is empty on a map or a set does not pause" {
+    let m: collections::BTreeMap[String, i64] = collections::BTreeMap()
+    let s: collections::HashSet[i64] = collections::HashSet()
+    let none = mixed_arms_none(m, s)
+    assert(none)
+}

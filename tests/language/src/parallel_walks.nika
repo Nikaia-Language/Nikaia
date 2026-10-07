@@ -1,0 +1,62 @@
+// `par_iter()`: a list walked on every core at once (ADR-235, Part II 12.6),
+// meaning the same at both settings of `user_parallelism`. What a parallel
+// lambda may not do, and what each setting lowers to, stays in
+// `crates/nikaia/tests/parallel_walks.rs`.
+
+fn parallel_walks_weight(x: i64) -> i64 {
+    return x * x
+}
+
+// D1: the walks, the order of a `collect`, a `for` over one, and a `SharedMut`
+// changed through `update` - at `no` the list's `iter()`, at `yes` every core,
+// and the same values at both.
+test "a parallel walk means the same at both settings" {
+    let xs: Vec[i64] = [1, 2, 3, 4, 5]
+    let big = xs.par_iter().map(fn(x) { parallel_walks_weight(x) }).filter(fn(y) { y > 4 }).collect()
+    let first = f"{big.len()} {big[0]} {big[2]}"
+    let odd = f"{xs.par_iter().filter(fn(x) { x % 2 == 1 }).count()}"
+    let total = SharedMut(0)
+    xs.par_iter().for_each(fn(x) { total.update fn(mut t) { t += x } })
+    let once = total.get()
+    let walk = xs.par_iter()
+    walk.for_each(fn(x) { total.update fn(mut t) { t += x } })
+    let twice = total.get()
+    let mut taken: Vec[i64] = []
+    for y in xs.par_iter().map(fn(x) { x + 1 }).take(2) {
+        taken.push(y)
+    }
+    let words: Vec[String] = [f"a", f"bb"]
+    let joined = words.par_iter().map(fn(w) { w.len() }).join(",")
+    let n = taken.len()
+    let t0 = taken[0]
+    let t1 = taken[1]
+    assert(first == "3 9 25")
+    assert(odd == "3")
+    assert(once == 15)
+    assert(twice == 30)
+    assert(n == 2)
+    assert(t0 == 2)
+    assert(t1 == 3)
+    assert(joined == "1,2")
+}
+
+// D2: a parallel lambda may not change a name outside it - but a name of its
+// own is its own.
+test "a parallel lambda changes a name of its own" {
+    let xs: Vec[i64] = [1, 2]
+    let ys = xs.par_iter().map(fn(x) {
+        let mut y = x
+        y += 1
+        return y
+    }).collect()
+    let second = ys[1]
+    assert(second == 3)
+}
+
+// §3: `join` over a plain walk, which had no counterpart below: a `map` is not
+// a list, and the language below's `join` is a list's.
+test "a plain walk joins" {
+    let xs: Vec[i64] = [1, 2, 3]
+    let joined = xs.iter().map(fn(x) { x * 2 }).join("-")
+    assert(joined == "2-4-6")
+}

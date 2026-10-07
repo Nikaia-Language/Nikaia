@@ -13,8 +13,8 @@
 //! had was a type, and `N` is a number — so the type language gained
 //! [`Ty::Count`] rather than `Array` gaining a shape of its own, which is what
 //! keeps every reader of a type that does not care about arrays unchanged.
-
-mod common;
+//!
+//! A program with one runs in `tests/language/src/fixed_size_array.nika`.
 
 use nikaia::contracts::ty::Ty;
 use nikaia::contracts::ty::TyOps;
@@ -282,46 +282,4 @@ fn a_plain_list_is_still_a_vec() {
         "{}",
         lowered(source)
     );
-}
-
-/// **D3, measured where it matters: it compiles, it runs, and `len()` is the
-/// `N` it was declared with** — known while the program is built, because
-/// `[T; N]::len` is a constant below.
-#[test]
-fn an_array_compiles_and_runs() {
-    let rust = lowered(
-        r#"
-struct Vector3 { parts: Array[f64, 3] }
-
-fn scaled(v: Vector3, by: f64) -> Array[f64, 3] {
-    return [v.parts[0] * by, v.parts[1] * by, v.parts[2] * by]
-}
-
-fn main() {
-    let v = Vector3 { parts: [1.0, 2.0, 3.0] }
-    let out = scaled(v, 2.0)
-    println(f"{out[0]} {out[1]} {out[2]} {out.len()}")
-}
-"#,
-    );
-    let dir = common::scratch_dir("fixed-size-array");
-    let file = dir.join("main.rs");
-    std::fs::write(&file, &rust).expect("write the Rust");
-    let binary = dir.join("program");
-    let out = common::compile(&file, &["-o", binary.to_str().expect("utf-8 path")]);
-    assert!(
-        out.status.success(),
-        "the lowering compiles:\n{}\n--- the Rust ---\n{rust}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    let ran = std::process::Command::new(&binary)
-        .output()
-        .expect("run the program");
-    assert_eq!(
-        String::from_utf8_lossy(&ran.stdout).trim(),
-        "2 4 6 3",
-        "{}",
-        String::from_utf8_lossy(&ran.stderr)
-    );
-    let _ = std::fs::remove_dir_all(&dir);
 }

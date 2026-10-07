@@ -6,6 +6,9 @@
 //! call `f` and nothing else that pauses; a caller is `sync` where the lambda it
 //! hands over is; and the function is lowered as the `async fn` its body is, so
 //! a caller that cannot pause drives it once and one that can awaits it.
+//!
+//! What such programs compute is `tests/language/src/sync_of_a_lambda.nika`;
+//! here are the ledger, the refusals and what the lowering writes.
 
 mod common;
 
@@ -13,34 +16,6 @@ use std::process::Command;
 
 use nikaia::emit::{Build, emit_program};
 use nikaia::parser::parse_to_ast;
-
-fn runs(purpose: &str, source: &str, expected: &str) {
-    for how in [Build::default(), Build::parallel()] {
-        let parsed = parse_to_ast(source).expect("the source parses");
-        let rust = emit_program(&parsed, how).expect("it lowers").rust;
-        let dir = common::scratch_dir(&format!("sync-of-{purpose}"));
-        let path = dir.join("program.rs");
-        std::fs::write(&path, &rust).expect("write the Rust");
-        let binary = dir.join("program");
-        let compiled = common::compile(
-            &path,
-            &["--crate-type", "bin", "-o", &binary.to_string_lossy()],
-        );
-        assert!(
-            compiled.status.success(),
-            "{purpose} did not compile at {how:?}:\n{}\n--- emitted ---\n{rust}",
-            String::from_utf8_lossy(&compiled.stderr)
-        );
-        let out = Command::new(&binary).output().expect("run it");
-        assert!(out.status.success(), "{purpose} failed at {how:?}");
-        assert_eq!(
-            String::from_utf8_lossy(&out.stdout),
-            expected,
-            "{purpose} at {how:?}"
-        );
-        std::fs::remove_dir_all(&dir).ok();
-    }
-}
 
 /// What the compiler says about a file, as `nikaia lower` says it.
 fn said(purpose: &str, source: &str) -> (bool, String, String) {
@@ -81,33 +56,11 @@ fn a_sync_caller_may_call_it_with_a_lambda_that_does_not_pause() {
          \x20   println(f\"{{twice(21)}}\")\n\
          }}\n"
     );
-    runs("sync-caller", &source, "42\n");
     let (ok, stderr, ledger) = said("sync-caller", &source);
     assert!(ok, "{stderr}");
     assert!(
         ledger.contains("[fn.\"apply\"]\nsync = \"sync(f)\""),
         "{ledger}"
-    );
-}
-
-/// **A lambda that pauses makes the call pause**, and a caller that may pause
-/// awaits it.
-#[test]
-fn a_lambda_that_pauses_makes_the_call_pause() {
-    runs(
-        "pausing-lambda",
-        &format!(
-            "use std::time\n\
-             {APPLY}\
-             fn main() {{\n\
-             \x20   let r = apply(fn(n) {{\n\
-             \x20       time::sleep(1.millis())\n\
-             \x20       n * 2\n\
-             \x20   }}, 21)\n\
-             \x20   println(f\"{{r}}\")\n\
-             }}\n"
-        ),
-        "42\n",
     );
 }
 
@@ -235,7 +188,6 @@ fn main() {
         .expect("it lowers")
         .rust;
     assert!(!rust.contains("async fn"), "{rust}");
-    runs("declared-clone", source, "3 n\n");
 }
 
 /// **Nor does a copy of a number or a tuple**, for the same reason: no ledger
@@ -261,7 +213,6 @@ fn main() {
         .expect("it lowers")
         .rust;
     assert!(!rust.contains("async fn"), "{rust}");
-    runs("number-clone", source, "4\n");
 }
 
 /// **A set of pairs is taken apart as a list of them is**: `for (a, b) in
@@ -294,5 +245,4 @@ fn main() {
         .expect("it lowers")
         .rust;
     assert!(!rust.contains("async fn firsts"), "{rust}");
-    runs("set-of-pairs", source, "2\n");
 }

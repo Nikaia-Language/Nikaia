@@ -1,13 +1,10 @@
 //! **`par_iter()`: a list walked on every core at once**
-//! ([ADR-235](../../../docs/specification/adr/adr-235.md), Part II 12.6). Each
-//! program is compiled and **run** at both settings of `user_parallelism` and
-//! prints the same at each; what a parallel lambda may not do is refused at
-//! both.
-
-mod common;
+//! ([ADR-235](../../../docs/specification/adr/adr-235.md), Part II 12.6). That
+//! each walk means the same at both settings of `user_parallelism` is
+//! `tests/language/src/parallel_walks.nika`, run by `nikaia test`; here stay
+//! what each setting lowers to and what a parallel lambda may not do.
 
 use nikaia::contracts::LedgerOps;
-use std::process::Command;
 
 use nikaia::emit::{Build, emit_program};
 use nikaia::parser::parse_to_ast;
@@ -15,37 +12,6 @@ use nikaia::parser::parse_to_ast;
 fn lowered(source: &str, how: Build) -> String {
     let parsed = parse_to_ast(source).expect("the source parses");
     emit_program(&parsed, how).expect("the source lowers").rust
-}
-
-fn ran(purpose: &str, source: &str, how: Build) -> String {
-    let rust = lowered(source, how);
-    let dir = common::scratch_dir(&format!("parallel-walks-{purpose}"));
-    let path = dir.join("program.rs");
-    std::fs::write(&path, &rust).expect("write the Rust");
-    let binary = dir.join("program");
-    let compiled = common::compile(
-        &path,
-        &[
-            "--crate-type",
-            "bin",
-            "-o",
-            binary.to_str().expect("utf-8 path"),
-        ],
-    );
-    assert!(
-        compiled.status.success(),
-        "{purpose} did not compile:\n{}\n--- emitted ---\n{rust}",
-        String::from_utf8_lossy(&compiled.stderr)
-    );
-    let out = Command::new(&binary).output().expect("run it");
-    assert!(
-        out.status.success(),
-        "{purpose} failed:\n{}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    let printed = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    std::fs::remove_dir_all(&dir).ok();
-    printed
 }
 
 fn findings(source: &str) -> Vec<nikaia::check::Finding> {
@@ -58,17 +24,6 @@ fn findings(source: &str) -> Vec<nikaia::check::Finding> {
         .into_iter()
         .filter(|f| f.severity == nikaia::check::Severity::Error)
         .collect()
-}
-
-fn runs(purpose: &str, source: &str, expected: &str) {
-    assert!(
-        findings(source).is_empty(),
-        "{purpose}: {:#?}",
-        findings(source)
-    );
-    for how in [Build::default(), Build::parallel()] {
-        assert_eq!(ran(purpose, source, how), expected, "{purpose} at {how:?}");
-    }
 }
 
 fn refused(source: &str, code: &str) -> nikaia::check::Finding {
@@ -107,7 +62,6 @@ const WALKS: &str = "fn weight(x: i64) -> i64 {\n\
 /// `yes` every core, and the same lines at both.
 #[test]
 fn a_parallel_walk_means_the_same_at_both_settings() {
-    runs("walks", WALKS, "3 9 25\n3\n15\n30\n2\n3\n1,2");
     let at_no = lowered(WALKS, Build::default());
     assert!(at_no.contains("xs.iter()"), "{at_no}");
     assert!(!at_no.contains("nikaia_std::par"), "{at_no}");
@@ -154,31 +108,4 @@ fn a_parallel_lambda_that_changes_a_shared_name_is_refused() {
             "{finding:#?}"
         );
     }
-    runs(
-        "own-name",
-        "fn main() {\n\
-         \x20   let xs: Vec[i64] = [1, 2]\n\
-         \x20   let ys = xs.par_iter().map(fn(x) {\n\
-         \x20       let mut y = x\n\
-         \x20       y += 1\n\
-         \x20       return y\n\
-         \x20   }).collect()\n\
-         \x20   println(f\"{ys[1]}\")\n\
-         }\n",
-        "3",
-    );
-}
-
-/// **§3: `join` over a plain walk**, which had no counterpart below: a `map`
-/// is not a list, and the language below's `join` is a list's.
-#[test]
-fn a_plain_walk_joins() {
-    runs(
-        "join",
-        "fn main() {\n\
-         \x20   let xs: Vec[i64] = [1, 2, 3]\n\
-         \x20   println(xs.iter().map(fn(x) { x * 2 }).join(\"-\"))\n\
-         }\n",
-        "2-4-6",
-    );
 }

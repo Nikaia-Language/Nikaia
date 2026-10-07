@@ -1,0 +1,51 @@
+// `u64`, `u32` and the bit operators (ADR-285): the types a program asked for,
+// `&`, `|`, `^`, `<<`, `>>` and `!` on integers, a literal as wide as a `u64`,
+// and a text's bytes. The refusals are `crates/nikaia/tests/bits.rs`.
+
+// FNV-1a, written as it is written in Rust (D1, D2, D3, D6): a `u64` whose
+// offset basis is above an `i64`, `^` over the bytes of a text, a wrapping
+// multiply, and the hash cut apart with a shift and a mask. The numbers are
+// FNV-1a's for `hello`, which every implementation agrees on.
+fn bits_fnv(key: ref String, seed: u64) -> u64 {
+    let mut hash: u64 = 0xcbf29ce484222325 ^ seed
+    for b in key.bytes() {
+        hash ^= b as u64
+        hash = hash.wrapping_mul(0x100000001b3)
+    }
+    return hash
+}
+
+test "a hash is written as it is everywhere else" {
+    let h = bits_fnv("hello", 0)
+    let high: u64 = h >> 32
+    let low: u32 = h.truncating_u32()
+    let line = f"{h} {high} {low} {(h & 0xff) == 0x0b}"
+    assert(line == "11831194018420276491 2754664518 2158673163 true")
+}
+
+// Each operator once, on a signed and an unsigned type (D3): and, or,
+// exclusive or, both shifts, and `!` flipping the bits of a `u32`.
+test "each bit operator says what it says in every language" {
+    let x: i64 = 0b1010
+    let flags: u32 = 10
+    let line = f"{x & 6} {x | 5} {x ^ 0xF} {x << 3} {x >> 1} {!flags}"
+    assert(line == "2 15 5 80 5 4294967285")
+}
+
+// A literal as wide as a `u64` holds (D2).
+test "a literal above an i64 is a u64s" {
+    let big: u64 = 18446744073709551615
+    let line = f"{big}"
+    assert(line == "18446744073709551615")
+}
+
+// An unannotated constant takes its type from its uses (ADR-285): with nothing
+// pinning `a`, the three names are one number, no use asks, and what they are
+// given does not fit an `i32` - so the sum is an `i64`.
+test "a large constant is an i64 and mixes with nothing else" {
+    let a = 1
+    let b = 3000000000
+    let c = a + b
+    let line = f"{c}"
+    assert(line == "3000000001")
+}

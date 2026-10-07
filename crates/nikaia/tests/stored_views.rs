@@ -10,8 +10,9 @@
 //! is the deliberately stored views, which are the proof that the guard is not
 //! passing because the analysis is asleep. The third is the shapes the analysis
 //! reaches one step further into: where the destination already names the buffer,
-//! the program is *lowered* with that buffer written out, and those tests compile
-//! and run the result rather than reading the text.
+//! the program is *lowered* with that buffer written out: here is the signature
+//! it is written with, and what those programs compute when they run is
+//! `tests/language/src/stored_views.nika`.
 
 mod common;
 
@@ -248,64 +249,11 @@ fn a_naked_view_given_to_a_task_is_refused() {
 
 // --- one step further: a destination that already names the buffer -----------
 
-/// Lower, compile with the `rustc` that built this test, run, and return stdout.
-///
-/// Reading the emitted text is not enough here: what the old behaviour produced
-/// was text that looked right and did not compile, which is the whole defect.
-fn lower_compile_run(source: &str, purpose: &str) -> String {
-    let parsed = parse_to_ast(source).expect("the source parses");
-    let own = Ledger::infer(&parsed);
-    let library = Ledger::parse(STD).expect("std's shipped ledger parses");
-    let refusals: Vec<String> = check::check(&parsed, &own, &library)
-        .findings
-        .into_iter()
-        .map(|f| format!("{}: {}", f.code, f.message))
-        .collect();
-    assert!(
-        refusals.is_empty(),
-        "the compiler refused a program it should lower: {refusals:#?}"
-    );
-
-    let rust = emit_program(&parsed, Build::default())
-        .expect("the source lowers")
-        .rust;
-
-    let dir = common::scratch_dir(purpose);
-    let path = dir.join("prog.rs");
-    std::fs::write(&path, &rust).expect("write the emitted Rust");
-    let binary = dir.join("prog");
-    let compiled = common::compile(
-        &path,
-        &[
-            "--crate-type",
-            "bin",
-            "-o",
-            binary.to_str().expect("utf-8 path"),
-        ],
-    );
-    assert!(
-        compiled.status.success(),
-        "the emitted Rust did not compile:\n{}\n--- emitted ---\n{rust}",
-        String::from_utf8_lossy(&compiled.stderr)
-    );
-
-    let run = std::process::Command::new(&binary)
-        .output()
-        .expect("run the program");
-    assert!(
-        run.status.success(),
-        "the program failed: {}",
-        String::from_utf8_lossy(&run.stderr)
-    );
-    let _ = std::fs::remove_dir_all(&dir);
-    String::from_utf8_lossy(&run.stdout).trim().to_string()
-}
-
 /// The defect, now lowered instead of refused: the subject already carries the
 /// buffer, so the parameter is written as a view of *that* buffer.
 ///
 /// This is the program `rustc` used to refuse with `E0621` about a line nobody
-/// wrote. It compiles and prints.
+/// wrote. It runs in `stored_views.nika`.
 #[test]
 fn a_view_stored_in_the_subject_is_lowered_with_the_buffer_named() {
     let source = r#"
@@ -333,55 +281,6 @@ fn a_view_stored_in_the_subject_is_lowered_with_the_buffer_named() {
         "the parameter has to be written as a view of the input buffer:
 {rust}"
     );
-    assert_eq!(lower_compile_run(source, "stored-view-subject"), "Hamburg");
-}
-
-/// The same through a call the compiler cannot see the end of. `insert` may keep
-/// what it is given and nothing written down says it does, so this used to be
-/// refused in stage A and used to reach `rustc` before that.
-#[test]
-fn a_view_handed_to_a_call_on_the_subject_is_lowered_too() {
-    let source = r#"
-use std::collections
-
-                struct Summary { stations: collections::HashMap[ref String, i32] }
-        impl Summary {
-            pub fn() -> Summary sync { return Summary { stations: collections::HashMap() } }
-            fn record(ref mut self, name: ref String, temp: i32) sync {
-                self.stations.insert(name, temp)
-            }
-            fn count(ref self) -> i64 sync { return self.stations.len() }
-        }
-        fn main() {
-            let mut s = Summary()
-            s.record("Hamburg", 12)
-            println(f"{s.count()}")
-        }
-    "#;
-    assert_eq!(lower_compile_run(source, "stored-view-call"), "1");
-}
-
-/// A read-only call on a field that holds views. The refusal in stage A covered
-/// this, because nothing tells it from `insert`; naming the buffer covers it
-/// instead, and costs the program nothing.
-#[test]
-fn a_read_only_call_on_a_view_field_is_lowered_rather_than_refused() {
-    let source = r#"
-use std::collections
-
-                struct Summary { stations: collections::HashMap[ref String, i32] }
-        impl Summary {
-            pub fn() -> Summary sync { return Summary { stations: collections::HashMap() } }
-            fn has(ref self, name: ref String) -> bool sync {
-                return self.stations.contains_key(name)
-            }
-        }
-        fn main() {
-            let s = Summary()
-            println(f"{s.has("Hamburg")}")
-        }
-    "#;
-    assert_eq!(lower_compile_run(source, "stored-view-read"), "false");
 }
 
 /// A view that reaches the field through a local. The carrier is followed by
@@ -416,7 +315,6 @@ use std::collections
         rust.contains("fn record(&mut self, name: &'a str)"),
         "{rust}"
     );
-    assert_eq!(lower_compile_run(source, "stored-view-local"), "1");
 }
 
 /// A parameter nothing stores keeps the spelling it had: the buffer is written

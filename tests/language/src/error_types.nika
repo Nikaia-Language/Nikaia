@@ -1,0 +1,197 @@
+// The failure channel is the error type, where the ledger names one (ADR-280):
+// what a handler is handed and what it prints, as programs that run. What the
+// channel is lowered to, and what the ledger records, is
+// `crates/nikaia/tests/error_types.rs`.
+
+use std::fs
+use std::io
+
+// Part I 7.1's error type, with both variant shapes it writes.
+enum ErrorTypesConfigError {
+    NotFound(ref String),
+    BadSyntax { line: i64, expected: ref String },
+}
+
+impl Error for ErrorTypesConfigError {
+    fn message(ref self) -> String {
+        match self {
+            ErrorTypesConfigError::NotFound(p) => f"no config at {p}"
+            ErrorTypesConfigError::BadSyntax { line, expected } => f"line {line}: expected {expected}"
+        }
+    }
+}
+
+fn error_types_load() -> i64 throws {
+    throw ErrorTypesConfigError::NotFound("etc")
+}
+
+// An error that carries a view is a type with a lifetime, and a typed channel
+// is what lets it have one: `Box<dyn Error>` is `'static`, so
+// `ConfigError::NotFound(path)` - Part I 7.1's own line - used to be *borrowed
+// data escapes outside of function* (`E0521`) about a generated file.
+fn error_types_load_at(path: ref String) -> i64 throws {
+    throw ErrorTypesConfigError::NotFound(path)
+}
+
+test "an error that borrows the caller s buffer compiles" {
+    let port = error_types_load_at("etc") catch { 8080 }
+    assert(port == 8080)
+}
+
+// Part I 7.1's own `catch`, as a program that runs. This is the defect the
+// record closes: the page writes this and called it implemented, and it did
+// not compile. (Without the page's `else`, which both variants make
+// unreachable.)
+fn error_types_load_bad() -> i64 throws {
+    throw ErrorTypesConfigError::BadSyntax { line: 7, expected: "a number" }
+}
+
+test "the pages own catch runs" {
+    let port = error_types_load_bad() catch {
+        match error {
+            ErrorTypesConfigError::NotFound(_) => 1
+            ErrorTypesConfigError::BadSyntax { line, .. } => line
+        }
+    }
+    assert(port == 7)
+}
+
+// `{error}` is still the message the author wrote (Part I 7.1), because opening
+// the envelope hands the handler the author's own value.
+test "the short form is the authors message" {
+    let mut said = ""
+    let port = error_types_load() catch {
+        said = f"{error}"
+        8080
+    }
+    assert(said == "no config at etc")
+    assert(port == 8080)
+}
+
+// And `error.full()` still names the site (ADR-023 D6). The envelope was opened
+// at the binding, so the long form is assembled from the two halves rather than
+// from one value - which is the lowering's business and not the page's.
+test "the long form names the site" {
+    let mut said = ""
+    let port = error_types_load() catch {
+        said = f"{error.full()}"
+        8080
+    }
+    let message = said.contains("no config at etc")
+    let site = said.contains("raised at error_types_load")
+    // And it says a trace was not captured (ADR-280), rather than leaving a
+    // reader to wonder whether one was lost. This is the line that caught the
+    // first shape of D2: opening the envelope kept the site and dropped the
+    // trace, so the long form was two lines and silently shorter.
+    let trace = said.contains("NIKAIA_TRACE=1")
+    assert(message)
+    assert(site)
+    assert(trace)
+    assert(port == 8080)
+}
+
+// `throw error` passes the error on (D3), and it keeps the site it was raised
+// at rather than taking the handler's - which is what ADR-023 D6 asks for.
+fn error_types_again() -> i64 throws {
+    return error_types_load() catch {
+        match error {
+            ErrorTypesConfigError::BadSyntax { .. } => 1
+            else => throw error
+        }
+    }
+}
+
+test "a handler may pass the error on" {
+    let mut said = ""
+    let port = error_types_again() catch { said = f"{error.full()}" 8080 }
+    let site = said.contains("raised at error_types_load")
+    assert(site)
+    assert(port == 8080)
+}
+
+// A failure propagates without being written (ADR-023 D8), and a typed channel
+// carries it the same way a box did: the caller's set is the callee's, so the
+// two agree by construction.
+fn error_types_outer() -> i64 throws {
+    return error_types_load()
+}
+
+test "a failure propagates through a typed channel" {
+    let port = error_types_outer() catch { 8080 }
+    assert(port == 8080)
+}
+
+// The whole of it, as a program that runs: a failure from `std` crosses a
+// function boundary and the handler takes it apart by variant.
+fn error_types_read(path: ref String) -> String throws {
+    return fs::read_to_string(ref path, fs::Root::Anywhere)
+}
+
+test "a failure from std is matched by variant" {
+    let text = error_types_read("nope.txt") catch {
+        match error {
+            io::IoError::NotFound(p) => f"no file: {p.display()}"
+            else => "other".clone()
+        }
+    }
+    assert(text == "no file: nope.txt")
+}
+
+// `{error}` is the message and `error.full()` says there is no site (D3), which
+// is not a gap but the truth: no `throw` in this program raised it, and it is
+// the same sentence the opaque channel has always used for an error that came
+// from below.
+test "the long form says there is no site" {
+    let mut said = ""
+    let text = error_types_read("nope.txt") catch {
+        said = f"{error.full()}"
+        "fallback".clone()
+    }
+    let named = said.contains("nope.txt")
+    let no_site = said.contains("no site recorded")
+    assert(named)
+    assert(no_site)
+    assert(text == "fallback")
+}
+
+// The list survives a hop to a caller that only propagates (ADR-280, issue
+// #199): `pair` joins two failing reads, and `relay` hands its failure on.
+// `relay`'s channel was a bare `io::IoError`, which nothing converts an
+// envelope into, and `rustc` refused the file; now it is the envelope, and the
+// handler reads both failures, in each of the two places.
+fn error_types_pair() -> String throws {
+    let both = overlap {
+        fs::read_to_string("missing-one.txt", fs::Root::Anywhere)
+        fs::read_to_string("missing-two.txt", fs::Root::Anywhere)
+    }
+    return f"{both.0}{both.1}"
+}
+
+fn error_types_relay() -> String throws {
+    return error_types_pair()
+}
+
+test "a joined failure survives a caller that propagates it" {
+    let mut pair_said = ""
+    let a = error_types_pair() catch {
+        pair_said = f"pair: {error.full()}"
+        f""
+    }
+    let mut relay_said = ""
+    let mut relay_full = ""
+    let b = error_types_relay() catch {
+        match error {
+            io::IoError::NotFound(what) => { relay_said = f"relay: not found {what.display()}" }
+            else => { relay_said = "relay: other" }
+        }
+        relay_full = f"{error.full()}"
+        f""
+    }
+    let printed = f"{pair_said}\n{relay_said}\n{relay_full}\n{a}{b}"
+    let not_found = printed.contains("relay: not found missing-one.txt")
+    let joins = printed.matches("and then:").count()
+    let second = printed.matches("missing-two.txt").count()
+    assert(not_found)
+    assert(joins == 2)
+    assert(second == 2)
+}

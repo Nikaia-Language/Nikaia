@@ -1,0 +1,56 @@
+// `comptime` bindings (ADR-287): what the program reads from a value worked
+// out while it was built. What is folded into the lowering and what is
+// refused is `crates/nikaia/tests/comptime.rs`.
+
+// A program with `comptime` bindings runs, which is the part no amount of
+// reading the emitted file replaces.
+test "a program with comptime bindings compiles and prints them" {
+    comptime LIMIT = 4 * 1024
+    comptime BIG = 3000000000
+    comptime WIDE: i64 = 7
+    comptime ON = true
+    let printed = f"{LIMIT} {BIG} {WIDE} {ON}"
+    assert(printed == "4096 3000000000 7 true")
+}
+
+// **Each use takes the value in the type it asks for** (ADR-287 D21): one
+// function hands `A` to an `i32` and to an `i64` parameter, and `FIB_10` to an
+// `i64` `let`, which `rustc` refused while the `const` was an `i32`.
+fn comptime_big(n: i64) -> i64 {
+    return n * 1000000000
+}
+
+fn comptime_fib(n: i64) -> i64 {
+    if n < 2 {
+        return n
+    }
+    return comptime_fib(n - 1) + comptime_fib(n - 2)
+}
+
+fn comptime_take_i32(x: i32) -> i32 {
+    return x
+}
+
+fn comptime_take_i64(x: i64) -> i64 {
+    return x
+}
+
+comptime COMPTIME_A = comptime_big(1)
+comptime COMPTIME_B = comptime_big(3)
+comptime COMPTIME_FIB_10 = comptime_fib(10)
+comptime COMPTIME_N = 4 * 1024
+comptime COMPTIME_W: i64 = comptime_big(1)
+
+test "an integer comptime takes the type each use asks for" {
+    let y: i64 = COMPTIME_FIB_10
+    let first = f"{comptime_take_i32(COMPTIME_A)} {comptime_take_i64(COMPTIME_A)} {y} {comptime_take_i64(COMPTIME_N)} {comptime_take_i32(COMPTIME_A + 1)}"
+    let x = COMPTIME_A + 1
+    let m = COMPTIME_N
+    let second = f"{x} {m} {COMPTIME_B} {COMPTIME_W}"
+    // Read where no use asks for a type, too: every use above takes the value
+    // in a type of its own, which leaves the constant itself unread below.
+    let shown = f"{COMPTIME_FIB_10}"
+    assert(first == "1000000000 1000000000 55 4096 1000000001")
+    assert(second == "1000000001 4096 3000000000 1000000000")
+    assert(shown == "55")
+}

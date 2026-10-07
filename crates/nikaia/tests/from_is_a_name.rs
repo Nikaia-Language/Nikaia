@@ -10,13 +10,12 @@
 //! It is also the most common name on the list: Part III 17.1 writes
 //! `pub fn rename(from: Path, to: Path, root: Root)`, and that declaration did
 //! not parse.
-
-mod common;
+//!
+//! That a program naming it runs is in `tests/language/src/from_is_a_name.nika`.
 
 use nikaia::contracts::{Ledger, LedgerOps, STD};
 use nikaia::emit::{Build, emit_program};
 use nikaia::parser::parse_to_ast;
-use std::process::Command;
 
 fn findings(source: &str) -> Vec<nikaia::check::Finding> {
     let parsed = parse_to_ast(source).expect("the source parses");
@@ -34,11 +33,12 @@ fn from_left_the_reserved_list() {
     );
 }
 
-/// **A name in every position that declares one**, and the program **runs** —
-/// because a name that parses and then lowers to something `rustc` refuses
-/// would pass a parse test and fail a reader.
+/// **A name in every position that declares one**, checked and lowered. That
+/// the program **runs** - because a name that parses and then lowers to
+/// something `rustc` refuses would pass a parse test and fail a reader - is in
+/// `tests/language/src/from_is_a_name.nika`.
 #[test]
-fn from_is_a_name_everywhere_and_the_program_runs() {
+fn from_is_a_name_everywhere() {
     let source = "struct Move { from: i64, to: i64 }\n\
          \n\
          fn step(from: i64, to: i64) -> i64 {\n\
@@ -61,23 +61,6 @@ fn from_is_a_name_everywhere_and_the_program_runs() {
     // Rust does not reserve `from` either, so nothing is escaped — which is
     // the half that makes this a one-table change rather than two.
     assert!(!rust.contains("r#from"), "{rust}");
-
-    let dir = common::scratch_dir("from-is-a-name");
-    let file = dir.join("main.rs");
-    std::fs::write(&file, &rust).expect("write the Rust");
-    let binary = dir.join("program");
-    let built = common::compile(&file, &["-o", &binary.to_string_lossy()]);
-    assert!(
-        built.status.success(),
-        "{}\n--- emitted ---\n{rust}",
-        String::from_utf8_lossy(&built.stderr)
-    );
-    let ran = Command::new(&binary)
-        .current_dir(&dir)
-        .output()
-        .expect("run it");
-    assert_eq!(String::from_utf8_lossy(&ran.stdout), "32\n10\n");
-    std::fs::remove_dir_all(&dir).ok();
 }
 
 /// **Part III 17.1's declaration parses**, which is D3 and the reason the word

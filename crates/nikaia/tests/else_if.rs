@@ -9,12 +9,11 @@
 //! holds exactly one `if`, with that block's braces left out, so the chain *is*
 //! an `if` inside an `if` and every rule of `if` holds at every link. `else if`
 //! is two words with whitespace between them, not a keyword.
-
-mod common;
+//!
+//! What a chain answers when it runs is `tests/language/src/else_if.nika`.
 
 use nikaia::contracts::LedgerOps;
 use std::path::PathBuf;
-use std::process::Command;
 
 use nikaia::emit::{Build, emit_program};
 use nikaia::parser::parse_to_ast;
@@ -26,13 +25,11 @@ fn lowered(source: &str) -> Result<String, String> {
         .map_err(|e| format!("{e:#}"))
 }
 
-/// **A three-link chain's value, run** (D1, and §5's third step).
-///
-/// The value and not the shape: a chain whose branches carry the `let`'s value
-/// is where *the branches agree on one type and the chain ends with an `else`*
-/// has to hold, and the only way to say it held is to run the program.
+/// **A three-link chain stays flat** (D2). What it answers at every link is
+/// `else_if.nika`'s, because the only way to say the value held is to run the
+/// program.
 #[test]
-fn a_three_link_chain_answers_at_every_link() {
+fn a_three_link_chain_stays_flat() {
     let source = "fn grade(score: i64) -> String {\n\
                   \x20   let g: String = if score >= 90 {\n\
                   \x20       \"A\"\n\
@@ -58,32 +55,6 @@ fn a_three_link_chain_answers_at_every_link() {
         "the chain stays flat: {rust}"
     );
     assert!(!rust.contains("else { if "), "and is not nested: {rust}");
-
-    let dir = common::scratch_dir("else-if");
-    let file = dir.join("chain.rs");
-    std::fs::write(&file, &rust).expect("write the Rust");
-    let binary = dir.join("chain");
-    let compiled = common::compile(
-        &file,
-        &[
-            "--crate-type",
-            "bin",
-            "-o",
-            binary.to_str().expect("utf-8 path"),
-        ],
-    );
-    assert!(
-        compiled.status.success(),
-        "the emitted Rust did not compile:\n{}\n--- emitted ---\n{rust}",
-        String::from_utf8_lossy(&compiled.stderr)
-    );
-    let ran = Command::new(&binary).output().expect("the program runs");
-    assert_eq!(
-        String::from_utf8_lossy(&ran.stdout).trim_end(),
-        "ABCF",
-        "every link answers for its own range"
-    );
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// **An `else` whose block holds an `if` *and* other statements stays a block**

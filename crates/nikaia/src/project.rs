@@ -2209,6 +2209,13 @@ pub struct Project {
     /// copy in the cache, and a message the language below raised about it is
     /// said against the file the author wrote, not the copy's path.
     pub written: Option<PathBuf>,
+    /// **Which of `nikaia test`'s builds this is** (ADR-269 D12): the test
+    /// build and the program, each at each setting asked for. They differ in
+    /// what is lowered and in the switches, so in one place each would make
+    /// the others stale and Cargo would build all of them again every run;
+    /// each keeps a directory and a name of its own instead. `None` for a
+    /// plain build, which keeps `target/nikaia/` as it is.
+    pub variant: Option<String>,
 }
 
 thread_local! {
@@ -2266,6 +2273,7 @@ impl Project {
             settings,
             warned: false,
             written: None,
+            variant: None,
         })
     }
 
@@ -2278,7 +2286,16 @@ impl Project {
     /// build output: it is regenerated from `nikaia.toml` on every build and
     /// editing it would be editing something the next build overwrites.
     pub fn build_dir(&self) -> PathBuf {
-        self.root.join("target").join("nikaia").join("build")
+        self.own_dir().join("build")
+    }
+
+    /// `target/nikaia/`, or a directory under it of the [`Self::variant`]'s.
+    fn own_dir(&self) -> PathBuf {
+        let dir = self.root.join("target").join("nikaia");
+        match &self.variant {
+            Some(variant) => dir.join("variants").join(variant),
+            None => dir,
+        }
     }
 
     /// Where the emitted Rust goes - **outside** [`Self::build_dir`], and that
@@ -2287,7 +2304,7 @@ impl Project {
     /// the package dirty the moment it was written, and every build would
     /// recompile.
     pub fn gen_dir(&self) -> PathBuf {
-        self.root.join("target").join("nikaia").join("gen")
+        self.own_dir().join("gen")
     }
 
     /// **The switches, as a file Cargo can see** (ADR-021 D5).
@@ -2309,11 +2326,7 @@ impl Project {
     /// reason: a file *inside* the path package would make it dirty on every
     /// build rather than on a changed one.
     pub fn switches_path(&self) -> PathBuf {
-        self.root
-            .join("target")
-            .join("nikaia")
-            .join("gen")
-            .join("switches")
+        self.gen_dir().join("switches")
     }
 
     /// The ledger, in the project root (Part III 13.5).
@@ -3000,7 +3013,12 @@ impl Project {
     /// What sets this project's program apart in the shared directory: the
     /// start of the hash of where the project is (#495).
     fn root_tag(&self) -> String {
-        orchestrator::cache::sha256_hex(self.root.to_string_lossy().as_bytes())[..16].to_string()
+        let mut named = self.root.to_string_lossy().into_owned();
+        if let Some(variant) = &self.variant {
+            named.push('\u{1f}');
+            named.push_str(variant);
+        }
+        orchestrator::cache::sha256_hex(named.as_bytes())[..16].to_string()
     }
 
     /// The program a build in the shared directory produced, under the

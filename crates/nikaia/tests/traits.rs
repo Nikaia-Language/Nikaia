@@ -7,8 +7,10 @@
 //! named as the prerequisite for a bound: `[T: Summarize]` has to name
 //! something. Until it did, a generic body could move and pass its value and
 //! nothing else, which `NK1126` said to the user in so many words.
-
-mod common;
+//!
+//! What a call through a trait or a bound computes is
+//! `tests/language/src/traits.nika`, run by `nikaia test`; here stay what the
+//! lowering writes and what is refused.
 
 use nikaia::check;
 use nikaia::contracts::{Ledger, LedgerOps, STD, Sync};
@@ -38,27 +40,6 @@ fn lowered(purpose: &str, source: &str) -> String {
     emit_program(&parsed, Build::default())
         .expect("the source lowers")
         .rust
-}
-
-/// Compile the lowering as a binary, run it, hand back what it printed.
-fn ran(purpose: &str, source: &str) -> String {
-    let rust = lowered(purpose, source);
-    let dir = common::scratch_dir(purpose);
-    let file = dir.join("main.rs");
-    std::fs::write(&file, &rust).expect("write the Rust");
-    let binary = dir.join("program");
-    let out = common::compile(&file, &["-o", binary.to_str().expect("utf-8 path")]);
-    assert!(
-        out.status.success(),
-        "the lowering of {purpose} does not compile:\n{}\n--- the Rust ---\n{rust}",
-        String::from_utf8_lossy(&out.stderr),
-    );
-    let ran = std::process::Command::new(&binary)
-        .output()
-        .expect("the program runs");
-    let printed = String::from_utf8_lossy(&ran.stdout).into_owned();
-    let _ = std::fs::remove_dir_all(&dir);
-    printed
 }
 
 /// Part I 4.7's own program, declared and bound and run.
@@ -92,13 +73,6 @@ fn main() {
     println(shout(u))
 }
 "#;
-
-/// D1 and D3 together: the declaration parses, the bound resolves the call, and
-/// the program runs.
-#[test]
-fn a_trait_is_declared_bound_and_run() {
-    assert_eq!(ran("a trait and a bound", SUMMARIZE).trim(), "User: Ada");
-}
 
 /// D1: the method is a **signature**, so the lowering writes a `;` where an
 /// `impl`'s writes a body.
@@ -592,40 +566,6 @@ fn main() {
     );
 }
 
-/// **`docs/language-review.md` §1.3's probe**, which is what the work entry
-/// named as the evidence: a trait over a file read, refused as `NK1129` before
-/// ADR-288 and a program now — compiled and run.
-#[test]
-fn a_trait_over_a_file_read_is_a_program() {
-    let printed = ran(
-        "a pausing trait",
-        r#"
-trait Source {
-    fn load(ref self) -> String throws
-    fn name(ref self) -> String sync
-}
-
-struct Fixed {
-    text: String,
-}
-
-impl Source for Fixed {
-    fn load(ref self) -> String throws {
-        return self.text.clone()
-    }
-    fn name(ref self) -> String sync { return "fixed".to_string() }
-}
-
-fn main() throws {
-    let s = Fixed { text: "loaded".to_string() }
-    let text = s.load() catch { "".to_string() }
-    println(f"{s.name()}: {text}")
-}
-"#,
-    );
-    assert_eq!(printed.trim(), "fixed: loaded");
-}
-
 /// **`+ Send` follows the executor, not the type**
 /// ([ADR-288](../../../docs/specification/adr/adr-288.md) D26).
 ///
@@ -737,40 +677,6 @@ fn main() {
         "the way out is the line that would make it true: {:?}",
         refusal.help
     );
-}
-
-/// And the type that **does** implement it is not refused — which is the half
-/// that matters, because a check that reads an `impl` table could as easily
-/// refuse every call through a bound. Run rather than accepted: a bound that
-/// type-checks here and not below would be worth nothing.
-#[test]
-fn the_type_that_implements_it_passes_and_runs() {
-    let printed = ran(
-        "a call through a bound",
-        r#"
-trait Speaks {
-    fn say(ref self) -> String sync
-}
-
-struct Dog { name: String }
-
-impl Speaks for Dog {
-    fn say(ref self) -> String sync {
-        return "woof".clone()
-    }
-}
-
-fn tell[T: Speaks](x: T) -> String sync {
-    return x.say()
-}
-
-fn main() {
-    let d = Dog { name: "rex".clone() }
-    println(tell(d))
-}
-"#,
-    );
-    assert_eq!(printed.trim(), "woof");
 }
 
 /// `[T: A + B]`: **each** bound is a question of its own, and the one the type
@@ -1011,7 +917,8 @@ fn an_impl_of_a_declared_trait_is_silent() {
 /// (0.0.240). `fn message(self)` under `Error`'s `message(ref self)`, or
 /// `fn name(self)` under a trait of this file that wrote `ref self`, lowered
 /// as written and `rustc` said *cannot move out of `*self`* about a file
-/// nobody wrote. The right receiver is a program that runs.
+/// nobody wrote. The right receiver is a program that runs
+/// (`tests/language/src/traits.nika`).
 #[test]
 fn a_method_takes_self_the_way_its_trait_declares() {
     let mine = "trait Named {\n\
@@ -1063,9 +970,4 @@ fn a_method_takes_self_the_way_its_trait_declares() {
         "{:#?}",
         findings(language)
     );
-
-    let fixed = mine
-        .replace("fn name(self)", "fn name(ref self)")
-        .replace("return self.n", "return self.n.clone()");
-    assert_eq!(ran("receiver-agrees", &fixed), "a\n");
 }

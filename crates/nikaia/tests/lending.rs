@@ -16,6 +16,10 @@
 //! place's value would **move**, and that one the checker answers — `let mi =
 //! self.bodies[i].mass` over an `f64` is a copy, and a `&` there is a borrow
 //! held across the loop that writes the same field.
+//!
+//! What the programs that lend compute is in `tests/build-time/src/lending.nika`.
+//! Two stay here as runs: `total(ref xs)` is a program the checker now refuses
+//! (`NK1137`), and the shadowed binding is a program `rustc` warns about.
 
 mod common;
 
@@ -76,24 +80,6 @@ fn findings(source: &str) -> Vec<nikaia::check::Finding> {
         .findings
 }
 
-/// **The line the record was written for.** `entries.len()` after the loop used
-/// to be `rustc`'s *use of moved value*; it is a program.
-#[test]
-fn a_for_leaves_the_collection_where_it_was() {
-    let printed = ran(
-        "for-lends",
-        "fn main() {\n\
-         \x20   let mut xs = Vec()\n\
-         \x20   xs.push(1)\n\
-         \x20   xs.push(2)\n\
-         \x20   let mut sum = 0\n\
-         \x20   for x in xs { sum += x }\n\
-         \x20   println(f\"{sum} of {xs.len()}\")\n\
-         }\n",
-    );
-    assert_eq!(printed.trim(), "3 of 2");
-}
-
 /// **And a call, a range or a method call owns what it made.** There is nothing
 /// to lend: the value did not exist before the expression that names it.
 #[test]
@@ -147,22 +133,10 @@ fn a_for_over_a_parameter_that_is_already_a_view_still_iterates() {
 ///
 /// It is what a body that hands an element to a callee which **keeps** it has
 /// to say — `all.push(v)` in `examples/json/src/main.nika`, and `or_insert(counts)` in
-/// `access-log.nika`, both of which this step rewrote.
+/// `access-log.nika`, both of which this step rewrote. What it computes is in
+/// `tests/build-time/src/lending.nika`.
 #[test]
-fn a_drain_takes_the_elements_away() {
-    let printed = ran(
-        "for-drains",
-        "fn main() {\n\
-         \x20   let mut xs = Vec()\n\
-         \x20   xs.push(\"a\")\n\
-         \x20   xs.push(\"b\")\n\
-         \x20   let mut all = Vec()\n\
-         \x20   for x in xs.drain() { all.push(x) }\n\
-         \x20   println(f\"{all.len()}\")\n\
-         }\n",
-    );
-    assert_eq!(printed.trim(), "2");
-
+fn a_drain_is_into_iter_below() {
     let rust = lowered(
         "fn main() {\n\
          \x20   let mut xs = Vec()\n\
@@ -257,34 +231,6 @@ fn a_let_over_a_whole_name_stays_a_move() {
     assert!(rust.contains("let b = a;"), "{rust}");
 }
 
-/// **A cast over a `for` binding is a cast over a view**
-/// ([ADR-182](../../../docs/specification/adr/adr-182.md) D1, which closed
-/// issue #138's entry for it at 0.0.131).
-///
-/// The loop binds a view of each element, which is what D4 is for and is what
-/// lets the loop read without copying — and Rust's `as` does not see through
-/// one. What came back was *casting `&i32` as `i64` is invalid*, relayed onto
-/// the `.nika` line, with a way out that reads *dereference the expression*: a
-/// noun and an instruction about a file nobody wrote
-/// ([Part III C.1](../../../docs/specification/30-nikaia-tooling.md)).
-///
-/// **This runs**, because what a cast comes to is a question only the language
-/// below answers, and the arithmetic has to be right as well as compile.
-#[test]
-fn a_cast_over_a_for_binding_reaches_the_number() {
-    let printed = ran(
-        "a cast over a for binding",
-        "comptime NS: Array[i32, 3] = [1, 2, 3]\n\
-         \n\
-         fn main() {\n\
-         \x20   let mut sum: i64 = 0\n\
-         \x20   for n in NS { sum = sum + (n as i64) }\n\
-         \x20   println(f\"{sum}\")\n\
-         }\n",
-    );
-    assert_eq!(printed.trim(), "6");
-}
-
 /// **A name that shadows the binding is not a view**, and the same statement
 /// may cast over both.
 ///
@@ -376,31 +322,6 @@ fn a_let_that_declares_a_type_over_a_for_binding_is_refused() {
         help.contains("Remove the type") && help.contains(".clone()"),
         "{refused:#?}"
     );
-}
-
-/// **And the way out works**, which is what makes the refusal one: a view reads
-/// the same, and the numeric half still reads the number through it
-/// ([ADR-182](../../../docs/specification/adr/adr-182.md) D5).
-#[test]
-fn the_way_out_of_that_refusal_runs() {
-    let printed = ran(
-        "the way out of a declared type over a binding",
-        "struct Row { a: i64 }\n\
-         \n\
-         fn main() {\n\
-         \x20   let rows: Vec[Row] = [Row { a: 1 }, Row { a: 2 }]\n\
-         \x20   for r in rows {\n\
-         \x20       let copy = r\n\
-         \x20       println(f\"{copy.a}\")\n\
-         \x20   }\n\
-         \x20   let ns: Vec[i64] = [7]\n\
-         \x20   for n in ns {\n\
-         \x20       let q: i64 = n\n\
-         \x20       println(f\"{q}\")\n\
-         \x20   }\n\
-         }\n",
-    );
-    assert_eq!(printed, "1\n2\n7\n");
 }
 
 /// **`NK1137` speaks the program's word** (ADR-184 D4, Part III C.1-C.2): the

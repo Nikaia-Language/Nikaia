@@ -18,14 +18,13 @@
 //! `Struct` in this scope* — [Part III
 //! C.1](../../../docs/specification/30-nikaia-tooling.md)'s class, and the hole
 //! this package would have opened if the emitter had not been told.
-
-mod common;
+//!
+//! A program with both bounds runs in `tests/language/src/shape_bounds.nika`.
 
 use nikaia::check::{self, Finding};
 use nikaia::contracts::{Ledger, LedgerOps, STD};
 use nikaia::emit;
 use nikaia::parser::parse_to_ast;
-use std::process::Command;
 
 fn findings(source: &str) -> Vec<Finding> {
     let parsed = parse_to_ast(source).expect("the source parses");
@@ -47,32 +46,6 @@ fn lower(source: &str) -> String {
         .rust
 }
 
-fn run(purpose: &str, source: &str) -> String {
-    let dir = common::scratch_dir(purpose);
-    let rust = lower(source);
-    let file = dir.join("main.rs");
-    std::fs::write(&file, &rust).expect("write the Rust");
-    let binary = dir.join("program");
-    let built = common::compile(&file, &["-o", &binary.to_string_lossy()]);
-    assert!(
-        built.status.success(),
-        "a shape bound did not compile:\n{}\n--- emitted ---\n{rust}",
-        String::from_utf8_lossy(&built.stderr)
-    );
-    let ran = Command::new(&binary)
-        .current_dir(&dir)
-        .output()
-        .expect("run it");
-    assert!(
-        ran.status.success(),
-        "{}",
-        String::from_utf8_lossy(&ran.stderr)
-    );
-    let out = String::from_utf8_lossy(&ran.stdout).to_string();
-    std::fs::remove_dir_all(&dir).ok();
-    out
-}
-
 const SHAPES: &str = "struct Point { x: i64, y: i64 }\n\
      enum Op { Add, Sub }\n\
      \n\
@@ -83,22 +56,6 @@ const SHAPES: &str = "struct Point { x: i64, y: i64 }\n\
      fn name_it[T: Enum](value: T) -> ref String {\n\
      \x20   return \"an enum\"\n\
      }\n";
-
-/// **The bound is legal and the program runs**, which is the whole of D2 for
-/// this package: `NK1135` used to refuse `Struct` as a trait nothing declares,
-/// which was true and not the answer.
-#[test]
-fn a_shape_bound_is_a_bound_and_the_program_runs() {
-    let source = format!(
-        "{SHAPES}\n\
-         fn main() {{\n\
-         \x20   println(describe(Point {{ x: 1, y: 2 }}))\n\
-         \x20   println(name_it(Op::Add))\n\
-         }}"
-    );
-    assert!(findings(&source).is_empty(), "{:#?}", findings(&source));
-    assert_eq!(run("shape-bound", &source), "a struct\nan enum\n");
-}
 
 /// **The bound does not travel into the generated file**, because the language
 /// below has no trait by either name. This is the assertion that stops

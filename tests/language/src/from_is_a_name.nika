@@ -1,0 +1,20 @@
+// `from` is an ordinary name (ADR-310 D12, D13): written in every position
+// that declares one, the program runs. The reserved list, the parse and the
+// lowering are `crates/nikaia/tests/from_is_a_name.rs`.
+
+struct FromIsANameMove { from: i64, to: i64 }
+
+fn from_is_a_name_step(from: i64, to: i64) -> i64 {
+    return to - from
+}
+
+// A name in every position that declares one, and the program runs - because
+// a name that parses and then lowers to something `rustc` refuses would pass a
+// parse test and fail a reader.
+test "from is a name everywhere and the program runs" {
+    let from = 10
+    let m = FromIsANameMove { from: from, to: 42 }
+    let moved = from_is_a_name_step(m.from, m.to)
+    assert(moved == 32)
+    assert(from == 10)
+}

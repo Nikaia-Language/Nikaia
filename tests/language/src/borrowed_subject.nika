@@ -1,0 +1,175 @@
+// A field of a borrowed subject, handed out by value (ADR-083): the shapes
+// that are correct programs, and what they compute. The refusals, the ledger
+// and the lowering are `crates/nikaia/tests/borrowed_subject.rs`.
+
+struct BorrowedSubjectCountRow {
+    name: String,
+    count: i64,
+}
+
+impl BorrowedSubjectCountRow {
+    fn m(ref self) -> i64 {
+        return self.count
+    }
+}
+
+// A field that copies is not refused, because handing one out takes nothing
+// away. This is half the polarity and it is why the rule reads the field's
+// type rather than counting `&self`s.
+test "a field that copies is handed out freely" {
+    let r = BorrowedSubjectCountRow { name: "a".to_string(), count: 1 }
+    let got = r.m()
+    assert(got == 1)
+}
+
+struct BorrowedSubjectCloneRow {
+    name: String,
+    count: i64,
+}
+
+impl BorrowedSubjectCloneRow {
+    fn m(ref self) -> String {
+        return self.name.clone()
+    }
+}
+
+// The way out the message names first, run.
+test "a written clone is the way out" {
+    let r = BorrowedSubjectCloneRow { name: "a".to_string(), count: 1 }
+    let got = r.m()
+    assert(got == "a")
+}
+
+struct BorrowedSubjectOwnedRow {
+    name: String,
+}
+
+impl BorrowedSubjectOwnedRow {
+    fn into_name(self) -> String {
+        return self.name
+    }
+}
+
+// And the other: a method that means to consume its subject says so.
+test "a method that owns its subject may hand the field out" {
+    let r = BorrowedSubjectOwnedRow { name: "a".to_string() }
+    let got = r.into_name()
+    assert(got == "a")
+}
+
+struct BorrowedSubjectReadRow {
+    name: String,
+    count: i64,
+}
+
+impl BorrowedSubjectReadRow {
+    fn shout(ref self) -> String {
+        return self.name.to_uppercase()
+    }
+
+    fn size(ref self) -> i64 {
+        return self.name.len()
+    }
+
+    fn label(ref self) -> String {
+        return f"{self.name}: {self.count}"
+    }
+}
+
+// Reading a field is not taking it, which is the case that would have made
+// this refusal useless: a method call on the field, its length, and its use in
+// an interpolation all borrow, and all still work.
+test "reading a field is not taking it" {
+    let r = BorrowedSubjectReadRow { name: "a".to_string(), count: 1 }
+    let shown = f"{r.shout()} {r.size()} {r.label()}"
+    assert(shown == "A 1 a: 1")
+}
+
+struct BorrowedSubjectViewRow {
+    name: String,
+    tags: Vec[i64],
+}
+
+impl BorrowedSubjectViewRow {
+    fn name(ref self) -> ref String {
+        return self.name
+    }
+
+    fn tags(ref self) -> ref Vec[i64] {
+        return self.tags
+    }
+}
+
+// The way out the message leads with, run - and it is the one the entry that
+// filed this said did not exist. Declaring the result a view is enough, and
+// the reference is the compiler's.
+test "a view of the field is the free way out" {
+    let mut v = Vec()
+    v.push(7)
+    let r = BorrowedSubjectViewRow { name: "a".to_string(), tags: v }
+    let shown = f"{r.name()} {r.tags()[0]}"
+    assert(shown == "a 7")
+}
+
+struct BorrowedSubjectTailRow {
+    name: String,
+    tags: Vec[i64],
+}
+
+impl BorrowedSubjectTailRow {
+    fn name(ref self) -> ref String {
+        return self.name
+    }
+
+    fn tags(ref self) -> ref Vec[i64] {
+        self.tags
+    }
+}
+
+// `return self.name` against a declared `ref String` was two refusals at once
+// - `NK1131` for the move and `NK1104` for the type - so the accessor a
+// program most often writes had no spelling of its own. It has one now, and it
+// is the one the declaration already implies: the result is a view, the value
+// is a place inside a borrowed subject, and there is nothing else the line
+// could mean.
+test "a field handed back where a view is declared needs no reference" {
+    let mut v = Vec()
+    v.push(7)
+    let r = BorrowedSubjectTailRow { name: "a".to_string(), tags: v }
+    let shown = f"{r.name()} {r.tags()[0]}"
+    assert(shown == "a 7")
+}
+
+struct BorrowedSubjectKeep { items: Vec[String] }
+
+fn borrowed_subject_store(mut out: Vec[String]) -> BorrowedSubjectKeep {
+    out.push("x")
+    return BorrowedSubjectKeep { items: out.clone() }
+}
+
+// A `mut` parameter given away whole is refused (issue #161); the ways out
+// run: a copy, and a parameter changed in place and read.
+test "a mut parameter given away whole has a way out" {
+    let mut v: Vec[String] = []
+    let k = borrowed_subject_store(v)
+    let kept = k.items.len()
+    let changed = v.len()
+    assert(kept == 1)
+    assert(changed == 1)
+}
+
+struct BorrowedSubjectNamed {
+    name: String,
+}
+
+fn borrowed_subject_of(row: ref BorrowedSubjectNamed) -> ref String {
+    return row.name
+}
+
+// The line without a written `ref` lends (#96, ADR-202 D2): a parameter
+// declared `ref Row` lends as a `ref self` does.
+test "a lent parameter lends" {
+    let r = BorrowedSubjectNamed { name: "ada" }
+    let shown = f"{borrowed_subject_of(r)}"
+    assert(shown == "ada")
+}

@@ -3,19 +3,16 @@
 //!
 //! `enum Expr { Add(Expr, Expr) }` is a program as written. The fields on a
 //! ring of types that hold each other inline go behind a `Box` below; a program
-//! builds, matches and reads them as the types it declared. Every test here
-//! **runs a program**, at both settings of `user_parallelism`, because what is
-//! claimed is that the box is invisible - which a test of the emitted text
-//! could not show.
+//! builds, matches and reads them as the types it declared. That the box is
+//! invisible - which a test of the emitted text could not show - is shown by
+//! the programs in `tests/language/src/recursive_types.nika`, run by `nikaia
+//! test` at both settings; here stay what the lowering writes and what is
+//! refused.
 //!
 //! Two defects found on the way are closed here too, because a syntax tree
 //! meets both on its first line: a literal handed to a variant's text part was
 //! not built into text of its own (`Stmt::Say("a")`), and a number bound out of
 //! a lent value was a reference (`Expr::Num(n) => n` over a `ref Expr`).
-
-mod common;
-
-use std::process::Command;
 
 use nikaia::contracts::{Ledger, LedgerOps, STD};
 use nikaia::emit::{Build, emit_program};
@@ -31,39 +28,6 @@ fn findings(source: &str) -> Vec<nikaia::check::Finding> {
 fn lowered(source: &str, how: Build) -> String {
     let parsed = parse_to_ast(source).expect("the source parses");
     emit_program(&parsed, how).expect("it lowers").rust
-}
-
-fn ran(purpose: &str, source: &str, how: Build) -> String {
-    let rust = lowered(source, how);
-    let dir = common::scratch_dir(&format!("recursive-{purpose}"));
-    let path = dir.join("program.rs");
-    std::fs::write(&path, &rust).expect("write the Rust");
-    let binary = dir.join("program");
-    let compiled = common::compile(
-        &path,
-        &["--crate-type", "bin", "-o", &binary.to_string_lossy()],
-    );
-    assert!(
-        compiled.status.success(),
-        "{purpose} did not compile:\n{}\n--- emitted ---\n{rust}",
-        String::from_utf8_lossy(&compiled.stderr)
-    );
-    let out = Command::new(&binary).output().expect("run it");
-    assert!(
-        out.status.success(),
-        "{purpose} failed:\n{}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    std::fs::remove_dir_all(&dir).ok();
-    String::from_utf8_lossy(&out.stdout).to_string()
-}
-
-fn runs(purpose: &str, source: &str, expected: &str) {
-    let found = findings(source);
-    assert!(found.is_empty(), "{purpose}: {found:#?}");
-    for how in [Build::default(), Build::parallel()] {
-        assert_eq!(ran(purpose, source, how), expected, "{purpose} at {how:?}");
-    }
 }
 
 /// **A syntax tree, as written** (D1-D3): built with its constructors, walked
@@ -110,7 +74,6 @@ fn an_expression_tree_is_built_matched_and_taken_apart() {
                   \x20   let l = left(tree)\n\
                   \x20   println(f\"left = {show(l)}\")\n\
                   }\n";
-    runs("tree", source, "(2 + (3 * -4)) = -10\nleft = 2\n");
     // **The box is below, and only there**: in the declaration, around what
     // is built, and nowhere the program wrote a word about it.
     let rust = lowered(source, Build::default());
@@ -118,34 +81,6 @@ fn an_expression_tree_is_built_matched_and_taken_apart() {
     assert!(rust.contains("Neg { inner: Box<Expr> }"), "{rust}");
     assert!(rust.contains("Box::new(Expr::Num(2))"), "{rust}");
     assert!(!rust.contains("Num(Box"), "{rust}");
-}
-
-/// **A list linked by a nullable field** (D1): `next: Node?` holds a `Node`
-/// inline when it is there, so it is boxed too. Built with `null` and with a
-/// node, read through `?.`, assigned, and copied with `with`.
-#[test]
-fn a_linked_list_is_built_read_and_changed() {
-    let source = "struct Node {\n\
-                  \x20   value: i64,\n\
-                  \x20   next: Node?,\n\
-                  }\n\
-                  \n\
-                  fn two(n: ref Node) -> i64 {\n\
-                  \x20   return n.value + (n.next?.value ?? 0)\n\
-                  }\n\
-                  \n\
-                  fn main() {\n\
-                  \x20   let tail = Node { value: 3, next: null }\n\
-                  \x20   let mid = Node { value: 2, next: tail }\n\
-                  \x20   let mut head = Node { value: 1, next: mid }\n\
-                  \x20   println(f\"{two(head)}\")\n\
-                  \x20   head.next = Node { value: 10, next: null }\n\
-                  \x20   println(f\"{two(head)}\")\n\
-                  \x20   let other = head with { value: 5 }\n\
-                  \x20   let last = other with { next: null }\n\
-                  \x20   println(f\"{two(other)} {two(last)}\")\n\
-                  }\n";
-    runs("list", source, "3\n11\n15 5\n");
 }
 
 /// **A ring through another type** (D1): `Expr` holds a `Call`, which holds an
@@ -191,56 +126,11 @@ fn a_ring_through_another_type_is_boxed_on_both_edges() {
                   \x20   let outer = Block { stmts: [Stmt::Say(\"x\"), Stmt::Nested(inner)] }\n\
                   \x20   println(f\"{depth(e)} {count(outer)}\")\n\
                   }\n";
-    runs("ring", source, "2 3\n");
     let rust = lowered(source, Build::default());
     assert!(rust.contains("Apply(Box<Call>)"), "{rust}");
     assert!(rust.contains("arg: Box<Expr>"), "{rust}");
     assert!(rust.contains("stmts: Vec<Stmt>"), "{rust}");
     assert!(rust.contains("Nested(Block)"), "{rust}");
-}
-
-/// **A pattern looks inside a boxed part** (D5, item 1): the lowering binds
-/// the part to a name, asks the question in the arm's guard - so the next arm
-/// is tried where the part has another shape - and takes the part apart in the
-/// arm. Over a lent value and an owned one, a part on either side, two parts
-/// at once, and a guard of the program's own beside it.
-#[test]
-fn a_pattern_looks_inside_a_boxed_part() {
-    let source = "enum Expr {\n\
-                  \x20   Num(i64),\n\
-                  \x20   Add(Expr, Expr),\n\
-                  \x20   Neg { inner: Expr },\n\
-                  }\n\
-                  \n\
-                  fn simplify(e: ref Expr) -> i64 {\n\
-                  \x20   return match e {\n\
-                  \x20       Expr::Add(Expr::Num(0), b) => simplify(b),\n\
-                  \x20       Expr::Add(a, Expr::Num(0)) => simplify(a),\n\
-                  \x20       Expr::Add(Expr::Num(x), Expr::Num(y)) => x + y,\n\
-                  \x20       Expr::Add(Expr::Neg { inner }, b) if simplify(b) > 100 => 100 - simplify(inner),\n\
-                  \x20       Expr::Add(a, b) => simplify(a) + simplify(b),\n\
-                  \x20       Expr::Num(n) => n,\n\
-                  \x20       Expr::Neg { inner } => 0 - simplify(inner),\n\
-                  \x20   }\n\
-                  }\n\
-                  \n\
-                  fn first(e: Expr) -> i64 {\n\
-                  \x20   return match e {\n\
-                  \x20       Expr::Add(Expr::Num(n), _) => n,\n\
-                  \x20       else => -1,\n\
-                  \x20   }\n\
-                  }\n\
-                  \n\
-                  fn main() {\n\
-                  \x20   println(simplify(Expr::Add(Expr::Num(0), Expr::Num(5))))\n\
-                  \x20   println(simplify(Expr::Add(Expr::Num(7), Expr::Num(0))))\n\
-                  \x20   println(simplify(Expr::Add(Expr::Num(2), Expr::Num(3))))\n\
-                  \x20   println(simplify(Expr::Add(Expr::Neg { inner: Expr::Num(1) }, Expr::Num(500))))\n\
-                  \x20   println(simplify(Expr::Add(Expr::Neg { inner: Expr::Num(1) }, Expr::Num(5))))\n\
-                  \x20   println(first(Expr::Add(Expr::Num(9), Expr::Num(1))))\n\
-                  \x20   println(first(Expr::Num(3)))\n\
-                  }\n";
-    runs("nested", source, "5\n7\n5\n99\n4\n9\n-1\n");
 }
 
 /// **An arm that looks inside a box covers no variant on its own** (D5):
@@ -355,70 +245,4 @@ fn a_guard_reads_a_name_bound_inside_a_box() {
                   }\n";
     let found = findings(source);
     assert!(!found.iter().any(|f| f.code == "NK1193"), "{found:#?}");
-    runs(
-        "guard-inside-a-box",
-        source,
-        "zero\nadd\nnamed x\nnamed long\nadd\n5 -1\n",
-    );
-}
-
-/// **A guard reads a part bound whole out of a box as the part** (D5 item 2,
-/// #97). The arm opens the box at its head, and a guard runs before that, so
-/// the guard reads it through the box: a call that is lent it works as before,
-/// and a comparison with a value of the part's type - `&Box<Expr>` against an
-/// `Expr` below - now reads the part.
-#[test]
-fn a_guard_reads_a_boxed_part_as_the_part() {
-    let source = "enum Expr {\n\
-                  \x20   Num(i64),\n\
-                  \x20   Add(Expr, Expr),\n\
-                  }\n\
-                  \n\
-                  fn is_zero(e: ref Expr) -> bool {\n\
-                  \x20   return match e {\n\
-                  \x20       Expr::Num(n) => n == 0,\n\
-                  \x20       else => false,\n\
-                  \x20   }\n\
-                  }\n\
-                  \n\
-                  fn simplify(e: Expr) -> String {\n\
-                  \x20   return match e {\n\
-                  \x20       Expr::Add(a, b) if is_zero(a) => \"left zero\",\n\
-                  \x20       Expr::Add(a, b) if a == Expr::Num(1) && b != Expr::Num(1) => \"left one\",\n\
-                  \x20       Expr::Add(a, b) => \"add\",\n\
-                  \x20       Expr::Num(n) => f\"{n}\",\n\
-                  \x20   }\n\
-                  }\n\
-                  \n\
-                  fn main() {\n\
-                  \x20   println(simplify(Expr::Add(Expr::Num(0), Expr::Num(1))))\n\
-                  \x20   println(simplify(Expr::Add(Expr::Num(1), Expr::Num(2))))\n\
-                  \x20   println(simplify(Expr::Add(Expr::Num(1), Expr::Num(1))))\n\
-                  }\n";
-    runs("guard-reads-a-box", source, "left zero\nleft one\nadd\n");
-}
-
-/// **The two defects a syntax tree meets first**, in a type that holds nothing
-/// of itself: a literal handed to a variant's text part, and a number bound
-/// out of a lent `match`.
-#[test]
-fn a_variants_text_is_built_and_a_lent_number_comes_out_as_a_number() {
-    let source = "enum Token { Word(String), Count(i64), End }\n\
-                  \n\
-                  fn weight(t: ref Token) -> i64 {\n\
-                  \x20   return match t {\n\
-                  \x20       Token::Word(w) => w.len() as i64,\n\
-                  \x20       Token::Count(n) => n,\n\
-                  \x20       Token::End => 0,\n\
-                  \x20   }\n\
-                  }\n\
-                  \n\
-                  fn main() {\n\
-                  \x20   let owned: String = \"xyz\"\n\
-                  \x20   let tokens = [Token::Word(\"ab\"), Token::Count(5), Token::Word(owned), Token::End]\n\
-                  \x20   let mut total = 0\n\
-                  \x20   for t in tokens { total += weight(t) }\n\
-                  \x20   println(f\"{total}\")\n\
-                  }\n";
-    runs("token", source, "10\n");
 }

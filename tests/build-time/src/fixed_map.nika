@@ -1,0 +1,119 @@
+// A map whose keys the build knew (ADR-311): the table is built by the
+// compiler and searched by `std`, two implementations of one hash that meet
+// only here, in what a lookup answers. The shape of the table and what is
+// refused is `crates/nikaia/tests/fixed_map.rs`.
+
+// **The small table answers every key it holds, and refuses the one it does
+// not** (D3's walked shape: three keys, under the threshold).
+//
+// `?? 0` is what turns the missing key into a number; `0` is not a value in
+// the table, so the fourth answer is the absence and not a hit.
+comptime FIXED_MAP_ROUTES: Fixed[ref String, i64] = [("get", 1), ("post", 2), ("put", 3)]
+
+test "a walked table finds each key while the program runs" {
+    let get = FIXED_MAP_ROUTES.get("get") ?? 0
+    let post = FIXED_MAP_ROUTES.get("post") ?? 0
+    let put = FIXED_MAP_ROUTES.get("put") ?? 0
+    let patch = FIXED_MAP_ROUTES.get("patch") ?? 0
+    let count = FIXED_MAP_ROUTES.len()
+    assert(get == 1)
+    assert(post == 2)
+    assert(put == 3)
+    assert(patch == 0)
+    assert(count == 3)
+}
+
+// **The hashed table answers the same way** (D3's CHD shape: fourteen keys,
+// from the threshold up), which is the test the two hash implementations
+// exist for: the compiler put `golf` in a slot, and `std` has to hash its way
+// back to the same one.
+comptime FIXED_MAP_WORDS: Fixed[ref String, i64] = [
+    ("alpha", 1), ("bravo", 2), ("charlie", 3), ("delta", 4),
+    ("echo", 5), ("foxtrot", 6), ("golf", 7), ("hotel", 8),
+    ("india", 9), ("juliet", 10), ("kilo", 11), ("lima", 12),
+    ("mike", 13), ("november", 14),
+]
+
+test "a hashed table finds each key while the program runs" {
+    let alpha = FIXED_MAP_WORDS.get("alpha") ?? 0
+    let golf = FIXED_MAP_WORDS.get("golf") ?? 0
+    let november = FIXED_MAP_WORDS.get("november") ?? 0
+    let zulu = FIXED_MAP_WORDS.get("zulu") ?? 0
+    let count = FIXED_MAP_WORDS.len()
+    assert(alpha == 1)
+    assert(golf == 7)
+    assert(november == 14)
+    assert(zulu == 0)
+    assert(count == 14)
+}
+
+// **Every key, not a sample.** A slot mix-up need not be visible in three
+// lookups — the CHD generator moves keys around, and a table where two of them
+// swapped values would pass a test that asked about neither. So this asks
+// about all fourteen and the answer is the sum of one to fourteen.
+comptime FIXED_MAP_NAMES: Array[ref String, 14] = [
+    "alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf",
+    "hotel", "india", "juliet", "kilo", "lima", "mike", "november",
+]
+
+test "a hashed table answers all of its keys" {
+    let mut total = 0
+    for name in FIXED_MAP_NAMES {
+        total = total + (FIXED_MAP_WORDS.get(name) ?? 0)
+    }
+    assert(total == 105)
+}
+
+// **The value is whatever a `const` can hold**, and text is one of those (D2).
+//
+// Nothing in the table is about `i64`: `rust_constant_type` answers for the
+// declared value type and `rust_value` writes the value, which is the same
+// pair every other `comptime` goes through.
+comptime FIXED_MAP_MIME: Fixed[ref String, ref String] = [("html", "text/html"), ("json", "application/json")]
+
+test "a tables values may be text" {
+    let json = FIXED_MAP_MIME.get("json") ?? "?"
+    let css = FIXED_MAP_MIME.get("css") ?? "?"
+    let html = FIXED_MAP_MIME.has("html")
+    let found = json == "application/json"
+    let missing = css == "?"
+    assert(found)
+    assert(missing)
+    assert(html)
+}
+
+// **A table of nothing is a table**, and it used to be `NK1166`: `[]` is a
+// `Vec[?]`, and `?` fits everything (ADR-024 D1).
+comptime FIXED_MAP_EMPTY: Fixed[ref String, i64] = []
+
+test "a table of nothing is a table" {
+    let printed = f"{FIXED_MAP_EMPTY.len()} {FIXED_MAP_EMPTY.is_empty()} {FIXED_MAP_EMPTY.get("get") ?? 0}"
+    assert(printed == "0 true 0")
+}
+
+// **A table may hold a `struct`, as a view of one** (ADR-311 D13): a Nikaia
+// `struct` is not `Copy`, and **a reference to one is** — so the table holds
+// `&'static Row` and nothing about `get` changes.
+//
+// **The row is read through `?.`**, which is what a `T?` already asks for
+// (Part I 2.3), and a `&[&str]` inside it gets its `&` from ADR-179 D2 — this
+// is the one place the two records meet.
+struct FixedMapRow { a: i64, tags: ref Array[ref String] }
+enum FixedMapShade { Odd, Even }
+
+comptime FIXED_MAP_TABLE: Fixed[ref String, FixedMapRow] = [
+    ("x", FixedMapRow { a: 1, tags: ["one", "uno"] }),
+    ("y", FixedMapRow { a: 2, tags: ["two"] }),
+]
+comptime FIXED_MAP_SHADES: Fixed[ref String, FixedMapShade] = [("a", FixedMapShade::Odd), ("b", FixedMapShade::Even)]
+
+test "a table holds a declared type and the program reads it" {
+    let y = FIXED_MAP_TABLE.get("y")?.a ?? 0
+    let tags = FIXED_MAP_TABLE.get("x")?.tags?.len() ?? 0
+    let missing = FIXED_MAP_TABLE.get("zz")?.a ?? -1
+    let shades = FIXED_MAP_SHADES.len()
+    assert(y == 2)
+    assert(tags == 2)
+    assert(missing == -1)
+    assert(shades == 2)
+}

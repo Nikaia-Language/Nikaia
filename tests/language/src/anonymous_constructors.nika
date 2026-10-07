@@ -1,0 +1,22 @@
+// `std`'s own types are constructed by the anonymous constructor (ADR-140 D2):
+// what the collections built that way hold. The refusals and the lowering are
+// `crates/nikaia/tests/anonymous_constructors.rs`.
+
+use std::collections
+
+// The other three collections are built (0.0.232). Text for the lookups: a
+// key that is not already a view is passed by value, which is issue #169's *a
+// method's key of a number type*.
+test "the other three collections are built" {
+    let mut seen = collections::HashSet()
+    seen.insert("a")
+    seen.insert("a")
+    let mut order = collections::BTreeMap()
+    order.insert("two", 2)
+    order.insert("one", 1)
+    let mut kept = collections::BTreeSet()
+    kept.insert("x")
+    let known = order.contains_key("one") && seen.contains("a") && kept.contains("x")
+    let shown = f"{seen.len()} {order.len()} {kept.len()} {known}"
+    assert(shown == "1 2 1 true")
+}

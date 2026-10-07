@@ -1,0 +1,41 @@
+// A `SharedMut` that crosses to a task is a word where it can be (ADR-281 D13,
+// D14): the same values at both settings of `user_parallelism`. Which row a
+// value takes, and what `--sharing` says about it, stays in
+// `crates/nikaia/tests/word_locks.rs`.
+
+fn word_locks_bump(c: SharedMut[i64], by: i64) {
+    c.update fn(mut v) { v += by }
+}
+
+pub fn word_locks_published(c: SharedMut[i64]) {
+    c.update fn(mut v) { v += 1 }
+}
+
+// D1: the rows, and the same program at both settings. At `no` every value is
+// the cheap shape; at `yes` a word that crosses is a word, and a value passed
+// to a function takes the function's parameter with it.
+test "a crossing word is a word and the rest keep their lock" {
+    let hits = SharedMut(0)
+    let t = spawn fn { word_locks_bump(hits, 2) }
+    t.join()
+    word_locks_bump(hits, 3)
+    let a = SharedMut(10)
+    let b = SharedMut(20)
+    let u = spawn fn { a.update fn(mut v) { v -= 1 } }
+    u.join()
+    update_all(a, b) fn(mut x, mut y) {
+        x -= 5
+        y += 5
+    }
+    let p = SharedMut(0)
+    let w = spawn fn { word_locks_published(p) }
+    w.join()
+    let big = SharedMut(f"text")
+    let z = spawn fn { big.update fn(mut s) { s = f"{s}!" } }
+    z.join()
+    let xs: Vec[i64] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+    let total = SharedMut(0)
+    xs.par_iter().for_each(fn(x) { total.update fn(mut t) { t += x } })
+    let line = f"{hits.get()} {a.get()} {b.get()} {p.get()} {big.get()} {total.get()}"
+    assert(line == "5 4 25 1 text! 55")
+}

@@ -4,6 +4,34 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.651] — 2026-10-07
+
+**375 tests of what a program computes are Nikaia tests now.** They were Rust
+tests that lowered a program, compiled it with `rustc`, linked `std` and ran
+it, one program at a time; they are `test` blocks in `tests/language` and
+`tests/build-time`, one file per topic, built once per setting by
+`nikaia test --both-settings` and run at both settings, where most ran at one.
+What stays in Rust is what a `test` block cannot say: refusals, the emitted
+Rust, the ledger, and programs that need files, input, arguments, an exit
+code or a switch.
+- **The topics with `comptime`s and computed defaults are a package of their
+  own**, `tests/build-time`: a value computed while a package is built is a run
+  over the whole package (#468), and in one package with the rest they made
+  its build quadratic.
+- **`nikaia test` keeps each of its builds apart**: the test build and the
+  program at each setting have a directory and a crate name of their own
+  (`target/nikaia/variants/<setting>-<kind>/`). In one place each made the
+  others stale, and every run lowered and compiled all of them again.
+- A task test compared what unjoined tasks printed, which the two settings may
+  print in either order; its tasks now hand their values back and are joined.
+- The migration turned up compiler faults, left in Rust and to be filed: a
+  `comptime` a test block reads breaks the build-time parser program; `nikaia
+  test` refuses a `comptime` that `std`'s Rust half computes, which `nikaia
+  run` accepts; an error sum whose member lives in another file does not
+  compile; `m["a"] ?? …` compared with a number does not compile; a kept lambda
+  over a `SharedMut` does not compile at `user-parallelism = yes`; `x?.f(1)` on
+  a field of function type reaches `rustc`.
+
 ## [0.0.650] — 2026-10-07
 
 **What the language means is tested in the language.** `tests/language` is one

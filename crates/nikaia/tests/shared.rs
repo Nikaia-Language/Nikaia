@@ -1,22 +1,20 @@
-//! `Shared[T]`, compiled and run.
+//! `Shared[T]`: how it is lowered, what `--sharing` reports, and what is
+//! refused.
 //!
 //! Part I 6.2 says how the first handle on a shared value is made - by writing
 //! the type - and [ADR-042](../../../docs/specification/adr/adr-042.md) D2 says
 //! a function that only *uses* the value takes an ordinary view of it. Neither
-//! claim can be checked by reading the emitted Rust: `Rc` and `Arc` differ in
-//! nothing a program can observe except speed and `Send`-ness
-//! (ADR-037 D7), so a test that compared text would pass on a
-//! lowering that does not run. These compile the emitted Rust and run the
-//! binary.
-//!
-//! At **both settings of `user_parallelism`**, because
-//! [ADR-037](../../../docs/specification/adr/adr-037.md) D6 is the claim that
-//! one count serves both: a program that printed differently under the two
-//! would be the failure that decision exists to rule out.
+//! claim can be checked by reading the emitted Rust alone: `Rc` and `Arc` differ
+//! in nothing a program can observe except speed and `Send`-ness
+//! (ADR-037 D7), so a test that compared text would pass on a lowering that does
+//! not run. **What the programs compute** is therefore in
+//! `tests/language/src/shared.nika`, run at both settings of `user_parallelism`,
+//! because [ADR-037](../../../docs/specification/adr/adr-037.md) D6 is the claim
+//! that one count serves both. The tests here hold the same programs' lowerings.
 
 mod common;
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Command;
 
 /// A `Shared[Connection]` made, lent to a function that takes `&Connection`,
@@ -68,47 +66,19 @@ fn lower(dir: &Path, source: &str, flags: &[&str]) -> String {
     std::fs::read_to_string(&output).expect("the emitted Rust")
 }
 
-/// Lower, compile, and hand back the binary and the Rust it was built from.
-fn build(dir: &Path, source: &str, flags: &[&str]) -> (PathBuf, String) {
-    let rust = lower(dir, source, flags);
-    let binary = dir.join("program");
-    let compiled = common::compile(
-        &dir.join("main.rs"),
-        &[
-            "--crate-type",
-            "bin",
-            "-o",
-            binary.to_str().expect("utf-8 path"),
-        ],
-    );
-    assert!(
-        compiled.status.success(),
-        "the emitted Rust did not compile:\n{}\n--- emitted ---\n{rust}",
-        String::from_utf8_lossy(&compiled.stderr)
-    );
-    (binary, rust)
-}
-
-/// Lower, compile, run, and hand back what it printed and the Rust behind it.
-fn run(purpose: &str, source: &str, flags: &[&str]) -> (String, String) {
+/// Lower in a scratch directory, and hand back the emitted Rust.
+fn lowered(purpose: &str, source: &str, flags: &[&str]) -> String {
     let dir = common::scratch_dir(purpose);
-    let (binary, rust) = build(&dir, source, flags);
-    let ran = Command::new(&binary).output().expect("run the program");
-    assert!(
-        ran.status.success(),
-        "the program failed: {}",
-        String::from_utf8_lossy(&ran.stderr)
-    );
-    let printed = String::from_utf8_lossy(&ran.stdout).into_owned();
+    let rust = lower(&dir, source, flags);
     let _ = std::fs::remove_dir_all(&dir);
-    (printed, rust)
+    rust
 }
 
-/// The whole of Part I 6.2's worked example, end to end.
+/// Part I 6.2's worked example, lowered (what it computes is in
+/// `tests/language/src/shared.nika`).
 #[test]
 fn a_shared_value_is_made_by_calling_the_type_and_lent_out_by_a_view() {
-    let (printed, rust) = run("shared-borrowed", BORROWED, &[]);
-    assert_eq!(printed.trim(), "serving localhost\nserving localhost");
+    let rust = lowered("shared-borrowed", BORROWED, &[]);
     // Nothing crosses a thread with it, so D7's optimisation applies: the plain
     // count. That is the base case ADR-037 §5 asks for - an analysis answering
     // `atomic` about everything would pass a test that only checked it ran.
@@ -124,7 +94,7 @@ fn a_shared_value_is_made_by_calling_the_type_and_lent_out_by_a_view() {
     );
 }
 
-/// One count at both settings of `user_parallelism`, and the same program.
+/// One count at both settings of `user_parallelism`.
 ///
 /// ADR-037 D6's whole claim: the representation came off the switch, so a
 /// library built at one setting keeps working at the other. The *count* a value
@@ -133,9 +103,8 @@ fn a_shared_value_is_made_by_calling_the_type_and_lent_out_by_a_view() {
 /// than "they print the same" and is the one D4 makes.
 #[test]
 fn the_switches_agree_about_a_shared_value() {
-    let (sequential, one) = run("shared-sequential", BORROWED, &["--user-parallelism", "no"]);
-    let (parallel, two) = run("shared-parallel", BORROWED, &["--user-parallelism", "yes"]);
-    assert_eq!(sequential, parallel, "the two builds print differently");
+    let one = lowered("shared-sequential", BORROWED, &["--user-parallelism", "no"]);
+    let two = lowered("shared-parallel", BORROWED, &["--user-parallelism", "yes"]);
     // **What may not move is the meaning, and it does not.** The count itself
     // may: since [ADR-312](../../../docs/specification/adr/adr-312.md) D10 one
     // user thread is a build where nothing can cross, so every count there is
@@ -150,15 +119,15 @@ fn the_switches_agree_about_a_shared_value() {
     );
 }
 
-/// A value the analysis cannot prove stays put gets the atomic floor, and the
-/// program still runs and still prints the same thing.
+/// A value the analysis cannot prove stays put gets the atomic floor (that the
+/// program still computes the same thing is in `tests/language`).
 ///
 /// `Rc` and `Arc` differ in nothing observable (ADR-037 D7), which
 /// is what lets the count be inferred at all - so the two lowerings of the same
 /// program have to agree about what it prints. Here the public signature is what
 /// forces the floor (ADR-037 D8's last row).
 #[test]
-fn the_atomic_floor_runs_the_same_program() {
+fn a_public_signature_takes_the_atomic_floor() {
     let source = "\
 struct Connection {
     host: String
@@ -182,8 +151,7 @@ fn main() {
     // a unit this build cannot see to do with the value
     // ([ADR-312](../../../docs/specification/adr/adr-312.md) D10) and the count
     // is plain there whatever the signature says.
-    let (printed, rust) = run("shared-atomic", source, &["--user-parallelism", "yes"]);
-    assert_eq!(printed.trim(), "serving localhost");
+    let rust = lowered("shared-atomic", source, &["--user-parallelism", "yes"]);
     assert!(
         rust.contains("std::sync::Arc<Connection>"),
         "a public signature is the one fallback no contract can lift:\n{rust}"
@@ -191,8 +159,7 @@ fn main() {
 
     // …and the same program at one user thread, which prints the same thing and
     // pays nothing for a crossing that cannot happen.
-    let (printed, rust) = run("shared-atomic-no", source, &["--user-parallelism", "no"]);
-    assert_eq!(printed.trim(), "serving localhost");
+    let rust = lowered("shared-atomic-no", source, &["--user-parallelism", "no"]);
     assert!(rust.contains("std::rc::Rc<Connection>"), "{rust}");
 }
 
@@ -219,8 +186,7 @@ fn main() {
     println(f\"{pool.size} to {pool.db.host}\")
 }
 ";
-    let (printed, rust) = run("shared-field", source, &[]);
-    assert_eq!(printed.trim(), "4 to localhost");
+    let rust = lowered("shared-field", source, &[]);
     assert!(
         rust.contains("::new(connect("),
         "the field's declared type is what makes the handle:\n{rust}"
@@ -289,13 +255,7 @@ fn main() {
     serve(db)
 }
 ";
-    let (printed, rust) = run("shared-duplicated", source, &[]);
-    // `db` is still ours after `keep` took one of its own, which is the whole
-    // point of the rule: each handle dies at the end of its own block (D3).
-    assert_eq!(
-        printed.trim(),
-        "serving localhost\npeeking localhost\nkept localhost\nserving localhost"
-    );
+    let rust = lowered("shared-duplicated", source, &[]);
     assert!(
         rust.contains("keep(db.clone())"),
         "a handle handed on by value is duplicated:\n{rust}"
@@ -337,8 +297,7 @@ fn main() {
     println(f\"{pool.db.host} {again.db.host}\")
 }
 ";
-    let (printed, rust) = run("shared-field-handover", source, &[]);
-    assert_eq!(printed.trim(), "localhost localhost");
+    let rust = lowered("shared-field-handover", source, &[]);
     assert!(
         rust.contains("keep(pool.db.clone())"),
         "a handle taken out of a field is handed on by value:\n{rust}"
@@ -450,7 +409,7 @@ fn report(source: &str) -> String {
 /// write the type. Both are ordinary, and this runs the first.
 #[test]
 fn a_function_returning_a_shared_value_wraps_on_a_line_of_its_own() {
-    let (printed, rust) = run(
+    let rust = lowered(
         "shared-returned",
         "struct Connection {\n    \
              host: String\n\
@@ -467,7 +426,6 @@ fn a_function_returning_a_shared_value_wraps_on_a_line_of_its_own() {
          }\n",
         &[],
     );
-    assert_eq!(printed.trim(), "connected to localhost");
     // The annotated `let` is the one constructor, and the `return` adds nothing.
     assert_eq!(
         rust.matches("Rc::new").count() + rust.matches("Arc::new").count(),
@@ -492,7 +450,8 @@ fn main() {
 }
 ";
 
-/// **It compiles and runs, at both settings, for the first time.**
+/// **It lowers to a matching pair of hulls at both settings** (and runs, in
+/// `tests/language/src/shared.nika`).
 ///
 /// Three things had to be true at once and none of them was
 /// ([ADR-281](../../../docs/specification/adr/adr-281.md)): `SharedMut` had to be
@@ -501,14 +460,13 @@ fn main() {
 /// because a literal has no type of its own; and both ends of the value - the
 /// local and the parameter it is handed to - had to agree about the count.
 #[test]
-fn the_counter_of_part_ii_12_2_runs_at_both_settings() {
+fn the_counter_of_part_ii_12_2_lowers_at_both_settings() {
     for setting in ["no", "yes"] {
-        let (printed, rust) = run(
+        let rust = lowered(
             &format!("sharedmut-{setting}"),
             COUNTER,
             &["--user-parallelism", setting],
         );
-        assert_eq!(printed.trim(), "6", "at `{setting}`");
 
         // **One name above, two hulls below, and always a matching pair** -
         // never an atomic count around a cheap lock (ADR-312 D10, ADR-281 D7).
@@ -586,12 +544,11 @@ fn main() {
 #[test]
 fn a_handle_a_task_uses_is_duplicated_and_the_name_survives() {
     for setting in ["no", "yes"] {
-        let (printed, rust) = run(
+        let rust = lowered(
             &format!("task-handle-{setting}"),
             SHARED_WITH_A_TASK,
             &["--user-parallelism", setting],
         );
-        assert_eq!(printed.trim(), "1", "at `{setting}`");
         assert!(
             rust.contains("{ let counter = counter.clone(); nikaia_std::task::TaskHandle::start"),
             "the step is written outside the future at `{setting}`:\n{rust}"
@@ -602,7 +559,7 @@ fn a_handle_a_task_uses_is_duplicated_and_the_name_survives() {
     // robust shape - and only where it does (ADR-037 D7, ADR-281 D7). For a
     // counter the robust lock is the word itself, a compare-and-swap
     // (ADR-281 D8): the count is atomic either way.
-    let (_, crossing) = run(
+    let crossing = lowered(
         "task-handle-pair",
         SHARED_WITH_A_TASK,
         &["--user-parallelism", "yes"],
@@ -631,7 +588,7 @@ fn a_handle_a_task_uses_is_duplicated_and_the_name_survives() {
 /// same program has to print the same number, which is the *uniform API* of
 /// Part II 11.2 applied to the thing hardest to keep uniform.
 #[test]
-fn a_lock_shared_by_four_tasks_counts_every_increment() {
+fn four_tasks_on_one_lock_are_on_the_pool_at_yes() {
     const SHARED_COUNTER: &str = "\
 fn bump(counter: SharedMut[i64], times: i64) {
     let mut i = 0
@@ -656,15 +613,10 @@ fn main() {
 ";
 
     for setting in ["no", "yes"] {
-        let (printed, rust) = run(
+        let rust = lowered(
             &format!("lock-in-tasks-{setting}"),
             SHARED_COUNTER,
             &["--user-parallelism", setting],
-        );
-        assert_eq!(
-            printed.trim(),
-            "10000",
-            "`{setting}`: every increment has to be in the total"
         );
         // The lowering is what says the tasks are on threads at all: at `yes`
         // the pool's starter, which is where the `Send` bound is, and at `no`
@@ -701,14 +653,13 @@ fn main() {
 ";
 
 #[test]
-fn a_transfer_between_two_locks_runs_at_both_settings() {
+fn a_transfer_between_two_locks_lowers_at_both_settings() {
     for setting in ["no", "yes"] {
-        let (printed, rust) = run(
+        let rust = lowered(
             &format!("two-locks-{setting}"),
             TRANSFER,
             &["--user-parallelism", setting],
         );
-        assert_eq!(printed.trim(), "70 35", "at `{setting}`");
         // The locks go in by reference and the block is the last argument -
         // which is what the trailing-lambda rule already made of it.
         assert!(

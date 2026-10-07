@@ -1,0 +1,48 @@
+// A sequence's count is an `i64`, as a length is (Part I 2.2, ADR-285 D1,
+// issue #164): it stands where an `i64` is wanted, under an operator and as a
+// receiver, and a program's own `count` is left alone.
+
+fn counts_words(text: ref String) -> i64 {
+    return text.split_whitespace().count()
+}
+
+// The three programs of the report: a count returned as an `i64`, bound to
+// one, and added to a length.
+test "a count stands where an i64 is wanted" {
+    let n: i64 = "a b c".split_whitespace().count()
+    let sum = "abc".chars().count() + "abc".len()
+    let words = counts_words("one two")
+    assert(words == 2)
+    assert(n == 3)
+    assert(sum == 6)
+}
+
+// Where the conversion binds: `as` sits below the unary operators and a method
+// call, so a negated count and a method on a count are parenthesised, as a
+// length is.
+test "a count under an operator or a method is parenthesised" {
+    let xs: Vec[i64] = [1, 2, 3]
+    let down = -xs.iter().count()
+    let shown = xs.iter().count().to_string()
+    assert(down == -3)
+    assert(shown == "3")
+}
+
+struct CountsTally {
+    seen: String,
+}
+
+impl CountsTally {
+    fn count(ref self) -> String {
+        return f"{self.seen}!"
+    }
+}
+
+// A program's own `count` is left as it is: only the one `std` gives a
+// sequence is converted, which the checker says by what the call resolved to.
+test "a programs own count is not converted" {
+    let t = CountsTally { seen: f"x" }
+    let words = "a b".split_whitespace().count() + 1
+    let line = f"{t.count()} {words}"
+    assert(line == "x! 3")
+}

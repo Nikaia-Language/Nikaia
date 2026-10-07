@@ -10,8 +10,8 @@
 //! **It is not a pattern language.** `match` has patterns already and neither
 //! site needs them; what the two write is a tuple whose arity is known, taken
 //! apart by position.
-
-mod common;
+//!
+//! What the parts hold when it runs is `tests/language/src/tuple_let.nika`.
 
 use nikaia::check;
 use nikaia::contracts::{Ledger, LedgerOps, STD};
@@ -34,10 +34,10 @@ fn lowered(source: &str) -> String {
         .rust
 }
 
-/// **The whole shape, compiled and run** — and the parts keep their types,
-/// which is what says they were taken apart rather than left as `?`.
+/// **The whole shape, lowered** — taken apart by position. That the parts keep
+/// their types when it runs is `tests/language/src/tuple_let.nika`.
 #[test]
-fn a_tuple_of_names_binds_the_parts_and_runs() {
+fn a_tuple_of_names_binds_the_parts() {
     let source = r#"
 fn pair() -> (i64, String) {
     return (7, "seven".to_string())
@@ -52,22 +52,6 @@ fn main() {
     let rust = lowered(source);
     assert!(rust.contains("let (n, word) = pair();"), "{rust}");
     assert!(rust.contains("let (a, b, c) = "), "{rust}");
-
-    let dir = common::scratch_dir("tuple-let");
-    let file = dir.join("main.rs");
-    std::fs::write(&file, &rust).expect("write the Rust");
-    let binary = dir.join("program");
-    let out = common::compile(&file, &["-o", binary.to_str().expect("utf-8 path")]);
-    assert!(
-        out.status.success(),
-        "the lowering compiles:\n{}\n--- the Rust ---\n{rust}",
-        String::from_utf8_lossy(&out.stderr),
-    );
-    let ran = std::process::Command::new(&binary)
-        .output()
-        .expect("the program runs");
-    assert_eq!(String::from_utf8_lossy(&ran.stdout).trim(), "7 seven 1 2 3");
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// **The line Part I 8.1.2 writes**, which is one of the two sites this exists

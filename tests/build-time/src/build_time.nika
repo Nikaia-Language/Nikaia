@@ -1,0 +1,166 @@
+// Running Nikaia while the program is built (ADR-287): what a `comptime`
+// worked out is what the running program reads. What it refuses and what it
+// lowers to is `crates/nikaia/tests/build_time.rs`.
+
+// **The pair is held to the only standard that settles it**: the same literal,
+// read while the program is built and while it runs, is the same bytes.
+//
+// A decoder and its inverse are two implementations of one meaning, which is
+// the hazard issue #178 argues about one
+// construct over. What makes this one safe is not care, it is this test — and
+// it **runs** the program, because a decoder that agrees with itself proves
+// nothing.
+comptime BUILD_TIME_BUILT: ref String = "a\tb\nc \"q\" \u{0041} \u{20AC}"
+comptime BUILD_TIME_BUILT_LEN: i64 = "a\tb\nc \"q\" \u{0041} \u{20AC}".len()
+
+test "the build and the run read a literal the same way" {
+    let at_run_time = "a\tb\nc \"q\" \u{0041} \u{20AC}"
+    let same = BUILD_TIME_BUILT == at_run_time
+    let same_len = BUILD_TIME_BUILT_LEN == at_run_time.len()
+    assert(same)
+    assert(same_len)
+}
+
+// **A `struct` is only as writable as its fields**, and the way out has to be
+// one that can be taken — which the first shape of this was not: it asked the
+// **value**, so it told a program that had already declared `Array[i64, 3]` to
+// declare `Array[T, N]`. It asks the **declaration** now. (The refusal is
+// `build_time.rs`'s; the way out is taken here.)
+struct BuildTimeBag { items: Array[i64, 3], label: ref String }
+
+impl BuildTimeBag {
+    fn total(ref self) -> i64 sync {
+        let mut sum = 0
+        for i in 0..<3 { sum = sum + self.items[i] }
+        return sum
+    }
+}
+
+comptime BUILD_TIME_BAG: BuildTimeBag = BuildTimeBag { items: [1, 2, 3], label: "bag" }
+comptime BUILD_TIME_BAG_TOTAL: i64 = BUILD_TIME_BAG.total()
+
+test "a field a const cannot hold is named and the way out works" {
+    let printed = f"{BUILD_TIME_BAG.label} {BUILD_TIME_BAG_TOTAL}"
+    let at_run_time = BUILD_TIME_BAG.total()
+    assert(printed == "bag 6")
+    assert(at_run_time == 6)
+}
+
+// **A float is a build-time value** (0.0.125): the literal is written with
+// `{:?}` and not `{}`, because Rust's `Debug` for a float is the shortest text
+// that reads back as the same bits.
+fn build_time_half(n: f64) -> f64 { return n / 2.0 }
+
+comptime BUILD_TIME_R: f64 = 1.5
+comptime BUILD_TIME_H: f64 = build_time_half(BUILD_TIME_R)
+
+test "a float crosses as the bits the build had" {
+    let printed = f"{BUILD_TIME_R} {BUILD_TIME_H}"
+    assert(printed == "1.5 0.75")
+}
+
+// **A list of lists crosses as an array of arrays** (0.0.125). One recursion,
+// and the rule is the same at every depth.
+comptime BUILD_TIME_GRID: Array[Array[i64, 2], 2] = [[1, 2], [3, 4]]
+
+test "a nested list crosses as a nested array" {
+    let cell = BUILD_TIME_GRID[1][0]
+    assert(cell == 3)
+}
+
+// **And a `struct` may hold one** (0.0.125).
+struct BuildTimeRow { a: i64, b: i64 }
+struct BuildTimeHolder { rows: Array[BuildTimeRow, 2] }
+
+comptime BUILD_TIME_HELD: BuildTimeHolder = BuildTimeHolder { rows: [BuildTimeRow { a: 1, b: 2 }, BuildTimeRow { a: 3, b: 4 }] }
+
+test "a struct field may be a fixed array" {
+    let a = BUILD_TIME_HELD.rows[1].a
+    assert(a == 3)
+}
+
+// **An `enum` crosses, by the variant the value *is*** (0.0.125): no payload,
+// a float, two things at a time, and a variant inside an array.
+enum BuildTimeShape { Empty, Num(f64), Pair(i64, ref String) }
+
+comptime BUILD_TIME_A: BuildTimeShape = BuildTimeShape::Num(1.5)
+comptime BUILD_TIME_B: BuildTimeShape = BuildTimeShape::Pair(7, "x")
+comptime BUILD_TIME_C: Array[BuildTimeShape, 2] = [BuildTimeShape::Empty, BuildTimeShape::Num(2.0)]
+
+test "an enum variant crosses with what it carries" {
+    let pair = match BUILD_TIME_B {
+        BuildTimeShape::Pair(n, s) => f"{n}{s}"
+        else => f"other"
+    }
+    let num = match BUILD_TIME_A {
+        BuildTimeShape::Num(v) => f"{v}"
+        else => f"other"
+    }
+    let count = BUILD_TIME_C.len()
+    assert(pair == "7x")
+    assert(num == "1.5")
+    assert(count == 2)
+}
+
+// **A variant with named fields wears a struct literal, and it is its `enum`**
+// (0.0.125).
+enum BuildTimeSpot { Dot, Spot { x: i64 } }
+
+fn build_time_make() -> BuildTimeSpot { return BuildTimeSpot::Spot { x: 3 } }
+
+comptime BUILD_TIME_S: BuildTimeSpot = BuildTimeSpot::Spot { x: 4 }
+
+test "a variant with named fields is its enum" {
+    let made = match build_time_make() {
+        BuildTimeSpot::Spot { x } => x
+        else => 0
+    }
+    let built = match BUILD_TIME_S {
+        BuildTimeSpot::Spot { x } => x
+        else => 0
+    }
+    let dot = match BuildTimeSpot::Dot {
+        BuildTimeSpot::Spot { x } => x
+        else => 0
+    }
+    assert(made == 3)
+    assert(built == 4)
+    assert(dot == 0)
+}
+
+// **An integer while the program is built is a magnitude and a sign**
+// (`tools/integers.nika`), the shape a literal already has: the smallest
+// `i64` is one, the bit operators read the two's complement of a negative
+// number, a right shift of one rounds down, and a remainder takes the sign of
+// what is divided - each the value the running program would have printed.
+comptime BUILD_TIME_LOWEST: i64 = -9223372036854775807 - 1
+comptime BUILD_TIME_HIGHEST: u64 = 18446744073709551615
+comptime BUILD_TIME_MASKED: i64 = -6 & 7
+comptime BUILD_TIME_HALVED: i64 = -7 >> 1
+comptime BUILD_TIME_SHIFTED: i64 = 3 << 4
+comptime BUILD_TIME_LEFT: i64 = -7 % 3
+comptime BUILD_TIME_ORDER: bool = -2 < 1
+
+test "build time integers are a magnitude and a sign" {
+    let printed = f"{BUILD_TIME_LOWEST} {BUILD_TIME_HIGHEST} {BUILD_TIME_MASKED} {BUILD_TIME_HALVED} {BUILD_TIME_SHIFTED} {BUILD_TIME_LEFT} {BUILD_TIME_ORDER}"
+    assert(printed == "-9223372036854775808 18446744073709551615 2 -4 48 -1 true")
+}
+
+// The same operations through a call, so the evaluator answers and not the
+// fold in front of it.
+fn build_time_mask(a: i64, b: i64) -> i64 { return a & b }
+fn build_time_halve(a: i64) -> i64 { return a >> 1 }
+fn build_time_left(a: i64, b: i64) -> i64 { return a % b }
+fn build_time_below(a: i64, b: i64) -> bool { return a < b }
+fn build_time_lowest() -> i64 { return 0 - 9223372036854775807 - 1 }
+
+comptime BUILD_TIME_CALL_MASKED: i64 = build_time_mask(-6, 7)
+comptime BUILD_TIME_CALL_HALVED: i64 = build_time_halve(-7)
+comptime BUILD_TIME_CALL_LEFT: i64 = build_time_left(-7, 3)
+comptime BUILD_TIME_CALL_ORDER: bool = build_time_below(-2, 1)
+comptime BUILD_TIME_CALL_LOWEST: i64 = build_time_lowest()
+
+test "build time integers through a call" {
+    let printed = f"{BUILD_TIME_CALL_MASKED} {BUILD_TIME_CALL_HALVED} {BUILD_TIME_CALL_LEFT} {BUILD_TIME_CALL_ORDER} {BUILD_TIME_CALL_LOWEST}"
+    assert(printed == "2 -4 -1 true -9223372036854775808")
+}

@@ -13,6 +13,10 @@
 //! the parameter is a `&str` and the literal is handed over as it is, with no
 //! allocation at all (D3). And a **view** of text the program has is still
 //! refused - that is a copy, and a copy is written (ADR-282 D7).
+//!
+//! What the programs compute is `tests/language/src/text_literals.nika`; here
+//! stay what the literal is lowered to, the refusals, and the callees that
+//! print what they read.
 
 mod common;
 
@@ -71,7 +75,7 @@ fn findings(source: &str) -> Vec<nikaia::check::Finding> {
         .findings
 }
 
-/// Every position that keeps what it is given, in one program that runs.
+/// Every position that keeps what it is given, in one program.
 #[test]
 fn a_literal_is_a_string_wherever_one_is_kept() {
     let source = "struct Person {\n\
@@ -87,7 +91,6 @@ fn a_literal_is_a_string_wherever_one_is_kept() {
                       println(f\"{p.name} {p.nick ?? \"-\"} {s} {names.len()} {keep(\"kept\")} {label()}\")\n\
                   }\n";
     assert!(findings(source).is_empty(), "{:?}", findings(source));
-    assert_eq!(ran("kept", source).trim(), "Ada A let 3 kept label");
     let rust = lowered(source);
     assert!(rust.contains("name: String::from(\"Ada\")"), "{rust}");
     assert!(rust.contains("Some(String::from(\"A\"))"), "{rust}");
@@ -123,7 +126,6 @@ fn a_literal_nobody_keeps_stays_a_view() {
                   }\n";
     let rust = lowered(source);
     assert!(!rust.contains("String::from"), "{rust}");
-    assert_eq!(ran("view", source).trim(), "same");
 }
 
 /// **A view of text the program has is still refused where the field is
@@ -156,7 +158,6 @@ fn a_list_with_a_view_in_it_is_a_list_of_views() {
     assert!(findings(source).is_empty(), "{:?}", findings(source));
     let rust = lowered(source);
     assert!(!rust.contains("String::from"), "{rust}");
-    assert_eq!(ran("list-of-views", source).trim(), "2");
 }
 
 /// **A literal takes its neighbours' text**: in a list that already holds text
@@ -185,10 +186,6 @@ fn a_literal_beside_text_of_its_own_becomes_it() {
     assert!(findings(source).is_empty(), "{:?}", findings(source));
     let rust = lowered(source);
     assert!(rust.contains("vec![String::from(\"a\")"), "{rust}");
-    assert_eq!(
-        ran("neighbours", source).trim(),
-        "2 anonymous zero ada many 5"
-    );
 }
 
 /// **A view handed to a `String` the callee only reads is lent as it is**
@@ -285,5 +282,4 @@ fn a_branch_of_literals_kept_is_declared_string_and_one_looked_at_is_not() {
     assert!(rust.contains("let q: String = if"), "{rust}");
     assert!(rust.contains("let r: String = match"), "{rust}");
     assert!(rust.contains("let v = if"), "{rust}");
-    assert_eq!(ran("branch-of-literals", source).trim(), "3 x many 4");
 }

@@ -1,0 +1,105 @@
+// `sync(f)`: a function pauses only where the lambda handed to `f` does
+// (ADR-288 D31). What such calls compute is here; the ledger, the refusals and
+// the lowering are `crates/nikaia/tests/sync_of_a_lambda.rs`.
+
+use std::collections
+use std::time
+
+fn sync_of_a_lambda_apply(f: fn(i64) -> i64, x: i64) -> i64 sync(f) {
+    return f(x)
+}
+
+// A `sync` caller hands it a lambda that does not pause, and the call is
+// `sync` - where without the word it was `NK2202`, *`apply` can pause*.
+fn sync_of_a_lambda_twice(x: i64) -> i64 sync {
+    return sync_of_a_lambda_apply(fn(n) { n * 2 }, x)
+}
+
+test "a sync caller may call it with a lambda that does not pause" {
+    let r = sync_of_a_lambda_twice(21)
+    assert(r == 42)
+}
+
+// A lambda that pauses makes the call pause, and a caller that may pause
+// awaits it.
+test "a lambda that pauses makes the call pause" {
+    let r = sync_of_a_lambda_apply(fn(n) {
+        time::sleep(1.millis())
+        n * 2
+    }, 21)
+    assert(r == 42)
+}
+
+// A copy of a type this program declares does not pause: its `clone` is the
+// derived one. `r.clone()` on a declared `struct` was answered as a method
+// nothing describes, and the function around it was lowered `async` (found
+// moving the ledger's records into Nikaia, ADR-294).
+pub struct SyncOfALambdaRow {
+    pub id: i64,
+}
+
+pub struct SyncOfALambdaHolder {
+    pub row: SyncOfALambdaRow?,
+    pub name: String?,
+}
+
+impl SyncOfALambdaHolder {
+    fn row_copy(ref self) -> SyncOfALambdaRow {
+        return self.row?.clone() ?? SyncOfALambdaRow { id: 0 }
+    }
+
+    fn plain(ref self, r: ref SyncOfALambdaRow) -> SyncOfALambdaRow {
+        return r.clone()
+    }
+
+    fn name_copy(ref self) -> String {
+        return self.name?.clone() ?? "none"
+    }
+}
+
+test "a clone of a declared type is sync" {
+    let h = SyncOfALambdaHolder { row: SyncOfALambdaRow { id: 3 }, name: "n" }
+    let line = f"{h.row_copy().id} {h.name_copy()}"
+    let other = h.plain(SyncOfALambdaRow { id: 5 })
+    assert(line == "3 n")
+    assert(other.id == 5)
+}
+
+// Nor does a copy of a number or a tuple, for the same reason: no ledger
+// describes `i64::clone`, and answered as a method nothing describes, every
+// function around `at.clone()` was lowered `async` (found moving
+// `contracts::keep`'s walk into Nikaia, ADR-294).
+fn sync_of_a_lambda_first(pair: (i64, String)) -> i64 {
+    let copy = pair.clone()
+    return copy.0.clone()
+}
+
+test "a clone of a number or a tuple is sync" {
+    let at: i64 = 4
+    let x: String = "x"
+    let pair = (at.clone(), x)
+    let first = sync_of_a_lambda_first(pair)
+    assert(first == 4)
+}
+
+// A set of pairs is taken apart as a list of them is: `for (a, b) in links`
+// over a `BTreeSet[(String, String)]` bound two names of unknown type, so
+// `a.clone()` resolved to nothing and the function was lowered `async` (found
+// moving `text_tiers` into Nikaia, #125).
+fn sync_of_a_lambda_firsts(links: ref collections::BTreeSet[(String, String)]) -> i64 {
+    let mut out: collections::BTreeSet[String] = collections::BTreeSet()
+    for (a, b) in links {
+        out.insert(a.clone())
+        out.insert(b.clone())
+    }
+    return out.len()
+}
+
+test "a for over a set of pairs is sync" {
+    let mut links: collections::BTreeSet[(String, String)] = collections::BTreeSet()
+    let x: String = "x"
+    let y: String = "y"
+    links.insert((x, y))
+    let n = sync_of_a_lambda_firsts(links)
+    assert(n == 2)
+}

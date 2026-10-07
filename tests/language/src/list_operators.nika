@@ -1,0 +1,35 @@
+// A list has no operators (Part I 4.5), and what keeps them still computes:
+// numbers, text, and a struct's fields. The refusals are
+// `crates/nikaia/tests/list_operators.rs`.
+
+// Numbers and text keep their operators, and the way the refusal names runs.
+// And text read out of a list joins without being taken out of it (0.0.234):
+// `w[0] + w[2]` over a `Vec[String]` moved the element out, and `rustc`
+// refused it; each side is now lent, and `w[0]` is still there to read
+// afterwards. A list of views joins the same way.
+test "numbers and text are untouched and extend joins two lists" {
+    let mut a = [1, 2]
+    a.extend([3])
+    let mut w: Vec[String] = ["x"]
+    w.extend(["y", "z"])
+    let n = a[0] + a[2] * 2
+    let t = w[0] + w[2]
+    let v = ["p", "q"]
+    let u = v[1] + v[0] + w[1]
+    let shown = f"{a.len()} {w.len()} {n} {t} {u} {w[0]}"
+    assert(shown == "3 3 7 xz qpy x")
+}
+
+struct ListOperatorsAccount { balance: i32, owner: String }
+
+// What has operators keeps them: a struct's numeric field, and text joined
+// with `+` and `+=`, are not refused, and the program runs.
+test "a structs fields and text keep their operators" {
+    let mut a = ListOperatorsAccount { balance: 1, owner: "ada" }
+    a.balance -= 30
+    let b = a.balance * 2
+    let mut t = a.owner + "!"
+    t += "?"
+    let shown = f"{a.balance} {b} {t}"
+    assert(shown == "-29 -58 ada!?")
+}

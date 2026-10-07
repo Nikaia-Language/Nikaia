@@ -8,12 +8,11 @@
 //! `&[T]` stayed unspellable. Which was fine until the length was not one
 //! number: a **field** whose run differs per value has no `Array` to be.
 //!
-//! **These tests run programs**, because what a view points at is not a
-//! question a string comparison answers. A `const` compared against text would
-//! pass for a lowering that wrote the right characters and pointed them at a
-//! temporary.
-
-mod common;
+//! **What the programs read is `tests/build-time/src/slices.nika`**, because
+//! what a view points at is not a question a string comparison answers. A
+//! `const` compared against text would pass for a lowering that wrote the right
+//! characters and pointed them at a temporary; this file keeps what the
+//! lowering writes and the refusals.
 
 use nikaia::check;
 use nikaia::contracts::{Ledger, LedgerOps, STD};
@@ -34,27 +33,6 @@ fn lowered(source: &str) -> String {
     emit_program(&parsed, Build::default())
         .expect("the source lowers")
         .rust
-}
-
-/// Compile and run, hand back what it printed.
-fn ran(purpose: &str, source: &str) -> String {
-    let rust = lowered(source);
-    let dir = common::scratch_dir(purpose);
-    let file = dir.join("main.rs");
-    std::fs::write(&file, &rust).expect("write the Rust");
-    let binary = dir.join("program");
-    let out = common::compile(&file, &["-o", binary.to_str().expect("utf-8 path")]);
-    assert!(
-        out.status.success(),
-        "the lowering of {purpose} does not compile:\n{}\n--- the Rust ---\n{rust}",
-        String::from_utf8_lossy(&out.stderr),
-    );
-    let ran = std::process::Command::new(&binary)
-        .output()
-        .expect("the program runs");
-    let printed = String::from_utf8_lossy(&ran.stdout).into_owned();
-    let _ = std::fs::remove_dir_all(&dir);
-    printed
 }
 
 /// **The whole of D1 in one program**: a run of `struct`s a build computed, a
@@ -91,11 +69,6 @@ fn a_run_crosses_and_the_program_reads_it() {
         ),
         "{rust}"
     );
-
-    assert_eq!(
-        ran("a run that crosses", source),
-        "2 3 4\n20\none\n1=one\n2=two\n"
-    );
 }
 
 /// **A `struct` field may be one**, which is the whole reason this type exists.
@@ -120,32 +93,6 @@ fn a_field_may_view_a_run() {
                   }\n";
     let rust = lowered(source);
     assert!(rust.contains("settings: &[Setting {"), "{rust}");
-    assert_eq!(
-        ran("a field that views a run", source),
-        "main 2\nhost=h\nport=8080\n"
-    );
-}
-
-/// **A `Vec` is lent to a parameter and the caller writes nothing**
-/// ([ADR-094](../../../docs/specification/adr/adr-094.md) D1, the rule `&str`
-/// already had): the callee reads and the caller keeps.
-#[test]
-fn a_run_is_lent_to_a_parameter() {
-    let source = "fn total(xs: ref Array[i64]) -> i64 {\n\
-                  \x20   let mut sum = 0\n\
-                  \x20   for n in xs { sum = sum + n }\n\
-                  \x20   return sum\n\
-                  }\n\
-                  \n\
-                  comptime NS: ref Array[i64] = [1, 2, 3]\n\
-                  \n\
-                  fn main() {\n\
-                  \x20   let mut built: Vec[i64] = []\n\
-                  \x20   built.push(10)\n\
-                  \x20   built.push(20)\n\
-                  \x20   println(f\"{total(built)} {total(NS)}\")\n\
-                  }\n";
-    assert_eq!(ran("a run lent to a parameter", source), "30 6\n");
 }
 
 /// **`NK1179`: a run this body owns, in a field that views one.**
@@ -253,7 +200,6 @@ fn a_cut_with_an_open_end() {
          \x20   let tail = xs[1..]\n\
          \x20   println(f\"{name} {rest} {head} {tail.len()}\")\n\
          }\n";
-    assert_eq!(ran("open-cuts", source), "Hamburg 12.0 Ham 3\n");
     let rust = lowered(source);
     assert!(rust.contains("at(sep + 1..)"), "{rust}");
 }

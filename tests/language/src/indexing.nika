@@ -1,0 +1,133 @@
+// A write through the brackets, and a read (ADR-080 D2, ADR-293): what a map,
+// a sequence and a slice hold after the brackets. What they lower to and the
+// range that aborts are `crates/nikaia/tests/indexing.rs`.
+
+use std::collections
+
+// Part I 4.5's own example, compiled and run.
+//
+// **With the `??` the read now needs** (ADR-293 D1): a map has a value only
+// where the key is, so the bracket answers a `T?` and a program that knows
+// better says so.
+test "a map written through the brackets compiles and runs" {
+    let mut scores = collections::HashMap()
+    scores["Player1"] = 100
+    scores["Player2"] = 7
+    let one = scores["Player1"] ?? 0
+    let two = scores["Player2"] ?? 0
+    assert(one == 100)
+    assert(two == 7)
+}
+
+// **A sequence is written the same way and means the same thing**, which is
+// what makes this one rule rather than two: `Set` for a `Vec` *is* an indexed
+// assignment, chosen by the language below on the container's type because this
+// emitter does not know it (ADR-296 D17).
+test "a sequence written through the brackets still works" {
+    let mut xs = Vec()
+    xs.push(10)
+    xs.push(20)
+    xs[0] = 99
+    let first = xs[0]
+    let second = xs[1]
+    assert(first == 99)
+    assert(second == 20)
+}
+
+// And both together, run: the sequence, its compound write, and the map.
+test "a sequence and a map in one program" {
+    let mut xs = Vec()
+    xs.push(10)
+    xs.push(20)
+    xs[0] = 99
+    xs[1] += 1
+
+    let mut scores = collections::HashMap()
+    scores["a"] = 1
+
+    let n = scores["a"] ?? 0
+    let first = xs[0]
+    let second = xs[1]
+    assert(first == 99)
+    assert(second == 21)
+    assert(n == 1)
+}
+
+// **A field read on an element of a sequence**, which did not compile at all
+// (0.0.125): `rows[1].a` — for a `Vec` and for an `Array[T, N]` alike — was
+// *type annotations needed*, since a **field read on the element** needs the
+// type before an integer literal's late defaulting happens.
+//
+// **A nested index is the same absence one level out**, and it is here for
+// that reason: `grid[1][0]` has an index where a base stands.
+struct IndexingRow { a: i64, b: i64 }
+
+test "a field of an indexed element compiles and runs" {
+    let rows: Array[IndexingRow, 2] = [IndexingRow { a: 1, b: 2 }, IndexingRow { a: 3, b: 4 }]
+    let a = rows[1].a
+    let mut held: Vec[IndexingRow] = []
+    held.push(IndexingRow { a: 5, b: 6 })
+    let b = held[0].b
+    let grid: Array[Array[i64, 2], 2] = [[1, 2], [3, 4]]
+    let cell = grid[1][0]
+    assert(a == 3)
+    assert(b == 6)
+    assert(cell == 3)
+}
+
+// …and **a range the program computes stays in the conversion**, which is
+// where `index::at` earns its place over a slice: a range built out of
+// **names** is an `i64` one and has to be converted (ADR-285 D1).
+// `examples/k-nucleotide/src/main.nika` writes the second shape.
+test "a slice of text is converted where the range is computed" {
+    let text = "hello"
+    let part = ref text[1..3]
+    let at: i64 = 1
+    let computed = f"{text[at..<at + 3]}"
+    let written = part == "ell"
+    assert(written)
+    assert(computed == "ell")
+}
+
+// **A slice of text read as a value did not lower** (ADR-182 D2): over a
+// **range** the read answers a `&str` already, and `*` over one is a `str`.
+//
+// **Off the shape of what is in the brackets** and not off a type: a range is
+// a run and a key is not, in this language and in the one below alike.
+test "a slice of text read as a value runs" {
+    let text = "hello world"
+    let bare = f"{text[1..3]}"
+    let part = ref text[1..3]
+    let viewed = f"{part}"
+    let open = f"{text[0..<5]}"
+    assert(bare == "ell")
+    assert(viewed == "ell")
+    assert(open == "hello")
+}
+
+// **And a run of a sequence is the same shape**, which is the half that says
+// this is about the brackets rather than about text: `*&[i64]` is unsized for
+// the reason `*&str` is.
+test "a slice of a sequence read as a value runs" {
+    let xs: Vec[i64] = [1, 2, 3, 4]
+    let bare = xs[1..2].len()
+    let run = ref xs[1..2]
+    let viewed = run.len()
+    assert(bare == 2)
+    assert(viewed == 2)
+}
+
+// **A field of an element is read through the reference the read answers**:
+// `rows[1].a` is `get(&rows, 1).a`, with no `*` the language below does on
+// its own (found moving the ledger's records into Nikaia, ADR-294, where
+// `clippy` refused the deref in `std`).
+struct IndexingNamedRow {
+    a: i64,
+    name: String,
+}
+
+test "a field of an element is read without a deref" {
+    let rows = [IndexingNamedRow { a: 1, name: "x" }, IndexingNamedRow { a: 2, name: "y" }]
+    let printed = f"{rows[1].a} {rows[0].name}"
+    assert(printed == "2 x")
+}

@@ -7,10 +7,8 @@
 //! [ADR-298](../../../docs/specification/adr/adr-298.md) D1 does not accept —
 //! and `NK1117` can say that sentence about an ordinary name, so they were
 //! paying for nothing.
-
-mod common;
-
-use std::process::Command;
+//!
+//! That an escaped one still runs is in `tests/language/src/four_words_freed.nika`.
 
 use nikaia::contracts::{Ledger, LedgerOps, STD};
 use nikaia::emit::{Build, emit_program};
@@ -90,43 +88,6 @@ fn the_three_the_backend_reserves_are_escaped() {
             "`{word}`: escaped should be {escaped}\n{rust}"
         );
     }
-}
-
-/// **And the escaped program compiles and runs**, which is the half a string
-/// search cannot say.
-#[test]
-fn an_escaped_name_runs() {
-    let rust = lowered(
-        "fn main() {\n\
-         \x20   let mut loop = 1\n\
-         \x20   let const = 2\n\
-         \x20   loop = loop + const\n\
-         \x20   println(f\"{loop}\")\n\
-         }",
-    )
-    .expect("it lowers");
-
-    let dir = common::scratch_dir("four-words");
-    let file = dir.join("words.rs");
-    std::fs::write(&file, &rust).expect("write the Rust");
-    let binary = dir.join("words");
-    let compiled = common::compile(
-        &file,
-        &[
-            "--crate-type",
-            "bin",
-            "-o",
-            binary.to_str().expect("utf-8 path"),
-        ],
-    );
-    assert!(
-        compiled.status.success(),
-        "the emitted Rust did not compile:\n{}\n--- emitted ---\n{rust}",
-        String::from_utf8_lossy(&compiled.stderr)
-    );
-    let ran = Command::new(&binary).output().expect("the program runs");
-    assert_eq!(String::from_utf8_lossy(&ran.stdout).trim_end(), "3");
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// **What each used to be told a reserved word, `NK1117` tells a stray one**

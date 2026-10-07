@@ -2,12 +2,9 @@
 //! ([ADR-281](../../../docs/specification/adr/adr-281.md), ADR-281 D13 and D14):
 //! its `update` runs the block on a copy and compare-and-swaps it in, and no
 //! lock is taken. A value a door over several locks holds, a published one and
-//! one that is not a word keep the lock; each program prints the same at both
-//! settings of `user_parallelism`.
-
-mod common;
-
-use std::process::Command;
+//! one that is not a word keep the lock. That the program computes the same at
+//! both settings of `user_parallelism` is `tests/language/src/word_locks.nika`,
+//! run by `nikaia test`; here stay the rows and what `--sharing` says.
 
 use nikaia::contracts::sharing::{self, Count};
 use nikaia::contracts::{Ledger, LedgerOps, STD};
@@ -17,37 +14,6 @@ use nikaia::parser::parse_to_ast;
 fn lowered(source: &str, how: Build) -> String {
     let parsed = parse_to_ast(source).expect("the source parses");
     emit_program(&parsed, how).expect("the source lowers").rust
-}
-
-fn ran(purpose: &str, source: &str, how: Build) -> String {
-    let rust = lowered(source, how);
-    let dir = common::scratch_dir(&format!("word-locks-{purpose}"));
-    let path = dir.join("program.rs");
-    std::fs::write(&path, &rust).expect("write the Rust");
-    let binary = dir.join("program");
-    let compiled = common::compile(
-        &path,
-        &[
-            "--crate-type",
-            "bin",
-            "-o",
-            binary.to_str().expect("utf-8 path"),
-        ],
-    );
-    assert!(
-        compiled.status.success(),
-        "{purpose} did not compile:\n{}\n--- emitted ---\n{rust}",
-        String::from_utf8_lossy(&compiled.stderr)
-    );
-    let out = Command::new(&binary).output().expect("run it");
-    assert!(
-        out.status.success(),
-        "{purpose} failed:\n{}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    let printed = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    std::fs::remove_dir_all(&dir).ok();
-    printed
 }
 
 fn decisions(source: &str) -> Vec<sharing::Decision> {
@@ -102,9 +68,6 @@ const PROGRAM: &str = "fn bump(c: SharedMut[i64], by: i64) {\n\
 /// value passed to a function takes the function's parameter with it.
 #[test]
 fn a_crossing_word_is_a_word_and_the_rest_keep_their_lock() {
-    for how in [Build::default(), Build::parallel()] {
-        assert_eq!(ran("rows", PROGRAM, how), "5 4 25 1 text! 55", "at {how:?}");
-    }
     let rust = lowered(PROGRAM, Build::parallel());
     for word in [
         "fn bump(c: std::sync::Arc<nikaia_std::lock::Word<i64>>",

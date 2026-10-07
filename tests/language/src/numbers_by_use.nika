@@ -1,0 +1,62 @@
+// A number takes the type its uses ask for, and this compiler decides it
+// (ADR-285): what such programs compute. What the generated `let` says and what
+// is refused is `crates/nikaia/tests/numbers_by_use.rs`.
+
+// **An index is a use** (D2): `v[i].push(x)` over a bare `let i = 0` was
+// `rustc`'s *type annotations needed* (issue #177), because `index::at` takes
+// any integer and nothing else said which.
+test "an index makes a bare number an i64" {
+    let mut rows: Vec[Vec[i64]] = [[], []]
+    let i = 1
+    rows[i].push(7)
+    let line = f"{rows[1].len()} {rows[1][0]}"
+    assert(line == "1 7")
+}
+
+// **A parameter, an annotation and a comparison are uses** (D2), and each
+// types the number it is given - `u32` and `u64` included, which a number
+// above an `i32` could not be before (ADR-285 D23 is answered).
+fn numbers_by_use_wide_u64(n: u64) -> u64 {
+    return n * 2
+}
+
+test "the use decides among all the integer types" {
+    let big = 3000000000
+    let small = 5
+    let mask: u32 = small
+    let v: Vec[i64] = [1, 2, 3]
+    let mut i = 0
+    let mut total = 0
+    while i < v.len() {
+        total += v[i]
+        i += 1
+    }
+    let line = f"{numbers_by_use_wide_u64(big)} {mask} {i} {total}"
+    assert(line == "6000000000 5 3 6")
+}
+
+// **What is given later is held to the type too** (D3), and a sum through
+// names is wide where a use asks for it to be: `a + a` over a bare
+// `2000000000` is an `i64` handed to an `i64` (ADR-285 D26).
+fn numbers_by_use_wide_i64(n: i64) -> i64 {
+    return n
+}
+
+test "what a number is given decides where no use does" {
+    let mut n = 1
+    assert(n == 1)
+    n = 3000000000
+    let a = 2000000000
+    let c = a + a
+    let line = f"{n} {numbers_by_use_wide_i64(c)}"
+    assert(line == "3000000000 4000000000")
+}
+
+// **An operation that fits is not refused** (issue #176): the sum of two
+// `i32`s that stays inside one, in an `f"…"` hole.
+test "an operation that fits is computed" {
+    let a: i32 = 2000000000
+    let b: i32 = 100
+    let line = f"{a + b} {a - b}"
+    assert(line == "2000000100 1999999900")
+}

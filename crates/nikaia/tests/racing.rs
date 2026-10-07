@@ -11,6 +11,9 @@
 //! [ADR-292](../../../docs/specification/adr/adr-292.md)'s `overlap` is the
 //! other half of the pair (D4): it runs its branches at once and keeps
 //! **every** result, this one keeps the **first**.
+//!
+//! What a `select` computes is `tests/language/src/racing.nika`; here stay what
+//! it lowers to, its refusals, and what depends on how long a task sleeps.
 
 mod common;
 
@@ -174,26 +177,6 @@ fn select_is_a_reserved_word() {
     );
 }
 
-/// **The first to finish wins, and it runs the arm that named it.** The other
-/// arm sleeps, so which one that is, is not a race the test has to win.
-#[test]
-fn the_first_to_finish_is_the_one_that_is_kept() {
-    let printed = output(
-        "select-first",
-        "use std::time\n\
-         \n\
-         fn quick() -> i64 { return 42 }\n\
-         \n\
-         fn main() {\n\
-         \x20   select {\n\
-         \x20       answer = quick() => { println(f\"{answer}\") }\n\
-         \x20       _ = time::sleep(5.seconds()) => { println(\"too slow\") }\n\
-         \x20   }\n\
-         }\n",
-    );
-    assert_eq!(printed, "42");
-}
-
 /// **And the other way round**: an arm that pauses loses to one that does not
 /// have to, whatever the written order.
 #[test]
@@ -210,39 +193,6 @@ fn a_sleeping_arm_loses_to_a_ready_one() {
          }\n",
     );
     assert_eq!(printed, "soon enough");
-}
-
-/// **Part II 12.4's own example, as a program that runs** (§5 step 4) — with a
-/// timeout short enough that a test does not wait five seconds for it.
-///
-/// The error a branch throws is an **enum variant**, because an error type is
-/// an `enum` ([ADR-023](../../../docs/specification/adr/adr-023.md) D1).
-#[test]
-fn the_pages_own_example_runs() {
-    let printed = output(
-        "select-page",
-        "use std::time\n\
-         \n\
-         enum Timeout { TooSlow }\n\
-         \n\
-         impl Error for Timeout {\n\
-         \x20   fn message(ref self) -> String {\n\
-         \x20       match self {\n\
-         \x20           Timeout::TooSlow => { return \"too slow\" }\n\
-         \x20       }\n\
-         \x20   }\n\
-         }\n\
-         \n\
-         fn heavy_math() -> i64 { return 6 * 7 }\n\
-         \n\
-         fn main() throws {\n\
-         \x20   select {\n\
-         \x20       result = heavy_math() => { println(f\"{result}\") }\n\
-         \x20       _ = time::sleep(5.millis()) => { throw Timeout::TooSlow }\n\
-         \x20   }\n\
-         }\n",
-    );
-    assert_eq!(printed, "42");
 }
 
 /// **An arm that can fail propagates from the arm that won**, and not from the
@@ -266,7 +216,6 @@ fn a_failing_arm_propagates_from_its_own_body() {
         "every arm is wrapped so the vehicle sees one shape\n{rust}"
     );
     assert!(rust.contains("let n = __nikaia_won?;"), "{rust}");
-    assert_eq!(output("select-fallible", source), "3");
 }
 
 /// **D3: a handle has `cancel()`**, and it takes the handle — so §4's open
@@ -287,7 +236,6 @@ fn a_handle_can_be_cancelled() {
         "{}",
         lowered(source)
     );
-    assert_eq!(output("select-cancel", source), "stopped");
 }
 
 /// **A cancelled task does not run to its end**, which is what makes `cancel`

@@ -13,6 +13,9 @@
 //! then fails for a reason that is harder to read than the one it started with.
 //! Arguing that every position was found is not the same as showing it, so every
 //! word goes through every position and the result is handed to `rustc`.
+//!
+//! That an escaped name still names the same value when the program runs is a
+//! behaviour test, in `tests/language/src/reserved_below.nika`.
 
 mod common;
 
@@ -192,10 +195,11 @@ fn a_word_the_language_below_allows_is_not_escaped() {
     }
 }
 
-/// The escape is invisible to the program's own output: a field called `type`
-/// still prints what was put in it.
+/// The escaped declaration. That the escape is invisible to the program's own
+/// output - a field called `type` still prints what was put in it - is
+/// `tests/language/src/reserved_below.nika`.
 #[test]
-fn an_escaped_name_still_names_the_same_value() {
+fn an_escaped_name_is_escaped_where_it_is_declared() {
     let source = r#"
 struct Event {
     type: String,
@@ -212,25 +216,6 @@ fn main() {
         rust.contains("r#type: String"),
         "the declaration is escaped:\n{rust}"
     );
-    let dir = common::scratch_dir("an-escaped-field-runs");
-    let file = dir.join("main.rs");
-    std::fs::write(&file, &rust).expect("write the Rust");
-    let binary = dir.join("program");
-    let out = common::compile(&file, &["-o", binary.to_str().expect("utf-8 path")]);
-    assert!(
-        out.status.success(),
-        "it compiles:\n{}\n--- the Rust ---\n{rust}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    let ran = std::process::Command::new(&binary)
-        .output()
-        .expect("the program runs");
-    assert_eq!(
-        String::from_utf8_lossy(&ran.stdout).trim(),
-        "click 7",
-        "`type` names the same value it was given"
-    );
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// D3: the three the language below cannot escape are refused **here**, in this

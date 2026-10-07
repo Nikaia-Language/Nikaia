@@ -2,11 +2,13 @@
 //! build-time value a literal that leaves the field out takes, evaluated once
 //! where the struct is declared, recorded in the ledger, and refused with
 //! `NK1234` where a literal leaves out a field that has none.
+//!
+//! What a literal that leaves a field out holds is in
+//! `tests/language/src/field_defaults.nika`, run by `nikaia test`.
 
 mod common;
 
 use nikaia::contracts::{Ledger, LedgerOps, STD};
-use nikaia::emit::{Build, emit_program_reading};
 use nikaia::parser::parse_to_ast;
 
 fn codes(source: &str) -> Vec<String> {
@@ -20,29 +22,6 @@ fn codes(source: &str) -> Vec<String> {
         .collect()
 }
 
-fn ran(source: &str) -> String {
-    assert!(codes(source).is_empty(), "{:?}", codes(source));
-    let parsed = parse_to_ast(source).expect("the source parses");
-    let rust = emit_program_reading(&parsed, Build::default(), &common::reads())
-        .expect("the source lowers")
-        .rust;
-    let dir = common::scratch_dir("field-defaults");
-    let file = dir.join("main.rs");
-    std::fs::write(&file, &rust).expect("write the Rust");
-    let binary = dir.join("program");
-    let out = common::compile(&file, &["-o", binary.to_str().expect("utf-8 path")]);
-    assert!(
-        out.status.success(),
-        "the lowering compiles:\n{}\n--- the Rust ---\n{rust}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    let run = std::process::Command::new(&binary)
-        .output()
-        .expect("run the program");
-    let _ = std::fs::remove_dir_all(&dir);
-    String::from_utf8_lossy(&run.stdout).to_string()
-}
-
 const PAGE: &str = "pub struct Page {\n\
      \x20   pub size: i64 = 50,\n\
      \x20   pub cursor: String?,\n\
@@ -50,21 +29,6 @@ const PAGE: &str = "pub struct Page {\n\
      \x20   pub limit: i64? = 7,\n\
      \x20   pub step: i64 = 3 * 4,\n\
      }\n";
-
-/// `Page { cursor: null }` has a `size` of 50; a literal, text, a value into
-/// a `T?` and a computed default each reach the literal that leaves them out.
-#[test]
-fn a_field_left_out_takes_its_default() {
-    let source = format!(
-        "{PAGE}\n\
-         fn main() {{\n\
-         \x20   let p = Page {{ cursor: null }}\n\
-         \x20   let q = Page {{ cursor: \"c\", size: 10 }}\n\
-         \x20   println(f\"{{p.size}} {{p.label}} {{p.limit ?? 0}} {{p.step}} {{q.size}}\")\n\
-         }}\n"
-    );
-    assert_eq!(ran(&source), "50 all = \"x\" 7 12 10\n");
-}
 
 /// A literal that leaves out a field without a default is `NK1234`.
 #[test]

@@ -1,0 +1,20 @@
+// A `comptime` binding where an item stands (ADR-287): what the constants hold
+// when the program runs. What they are lowered to, and what is refused, is
+// `crates/nikaia/tests/comptime_item.rs`.
+
+// The whole shape, run: the four kinds of initialiser the body form takes,
+// `pub`, and a function that reads a constant declared below it.
+fn comptime_item_before() -> i64 {
+    return COMPTIME_ITEM_LIMIT
+}
+
+comptime COMPTIME_ITEM_MAX = 1000
+pub comptime COMPTIME_ITEM_LIMIT: i64 = 4 * 1024
+comptime COMPTIME_ITEM_DOUBLE = COMPTIME_ITEM_MAX * 2
+comptime COMPTIME_ITEM_YES = true
+
+test "an item constant is written folded and read from anywhere" {
+    let b = comptime_item_before()
+    let line = f"{COMPTIME_ITEM_MAX} {COMPTIME_ITEM_LIMIT} {COMPTIME_ITEM_DOUBLE} {COMPTIME_ITEM_YES} {b}"
+    assert(line == "1000 4096 2000 true 4096")
+}

@@ -1,0 +1,140 @@
+// A function type says what a handler may do (ADR-277 D6 and D7): what a
+// program that hands functions around computes. How the types parse, read back,
+// fit, lower and are refused is `crates/nikaia/tests/function_types.rs`.
+
+use std::time
+
+// **D5's run case**: a closure argument, which is what `std`'s own `map` and
+// `access` take and what costs nothing.
+fn function_types_twice(x: i64, f: fn(i64) -> i64) -> i64 { return f(f(x)) }
+
+test "a run parameter lowers to a closure argument" {
+    let n = function_types_twice(2, fn(n) { return n * 3 })
+    assert(n == 18)
+}
+
+// **A run parameter's call hands back what its type says** (#125): typed as
+// nothing, `name.contains` on its result resolved to no method, which is read
+// as one that may pause, and `has` came out `async` with nothing in it that
+// pauses.
+fn function_types_has(f: fn(ref String) -> String sync, s: ref String) -> bool {
+    let name = f(s)
+    return name.contains("::")
+}
+
+test "a run parameters result is its declared type" {
+    let has = function_types_has(fn(x) { x.clone() }, "a::b")
+    assert(has)
+}
+
+// **And what it takes as a view is lent to it** (#125): an owned `name`
+// handed to a `fn(ref String)` gains the `&` a declared function's argument
+// would, where it went below by value and `rustc` refused it.
+fn function_types_ask(f: fn(ref String) -> i64 sync) -> i64 {
+    let name: String = "abc"
+    return f(name)
+}
+
+test "a run parameter is lent what it takes as a view" {
+    let n = function_types_ask(fn(x) { x.len() })
+    assert(n == 3)
+}
+
+// **The declaration and the call read one column** (ADR-277 D14), and this is
+// the test that would catch them drifting apart: the two disagreeing is one
+// parameter with two shapes, which is `rustc`'s words about a file nobody
+// wrote. It **runs**, because the shape looking right is what the old lowering
+// also did.
+fn function_types_add_twice(f: fn() -> i64) -> i64 { return f() + f() }
+
+test "a run parameter that pauses compiles and runs" {
+    let said = function_types_add_twice(fn() {
+        time::sleep(1.millis())
+        return 21
+    })
+    assert(said == 42)
+}
+
+// **A failure caught inside the lambda is not the lambda's**: what is let
+// through is a program `rustc` takes, with the handler's value standing where
+// the failure was.
+enum FunctionTypesE { Bad }
+
+impl Error for FunctionTypesE { fn message(ref self) -> String { return "bad" } }
+
+fn function_types_risky(x: i64) -> i64 throws {
+    if x > 1 { throw FunctionTypesE::Bad }
+    return x * 10
+}
+
+test "a failure caught inside the lambda is not the lambdas" {
+    let ys = [1, 2].map fn(x) { function_types_risky(x) catch { 0 } }
+    let mut seen: Vec[i64] = []
+    for y in ys { seen.push(y) }
+    assert(seen == [10, 0])
+}
+
+// **A handler passed on inside a loop is lent**: a parameter the body only
+// **calls or passes on** is not in `keeps`, so the declaration takes a view of
+// it and a call that hands the lent view on hands it as it is.
+fn function_types_sum_twice(n: i64, f: fn(i64) -> i64) -> i64 {
+    return f(n) + f(n)
+}
+
+fn function_types_all(f: fn(i64) -> i64) -> i64 {
+    let mut total = 0
+    for n in [1, 2, 3] {
+        total = total + function_types_sum_twice(n, f)
+    }
+    return total
+}
+
+test "a handler passed on inside a loop is lent" {
+    // (1+1) + (2+2) + (3+3) = 12, times ten.
+    let total = function_types_all(fn(x) { x * 10 })
+    assert(total == 120)
+}
+
+// **A parameter the declaration wrote `mut` is handed straight on** (ADR-094
+// D3): it is a `&mut T` already, and a `let mut` argument is still lent.
+fn function_types_bump(mut xs: Vec[i64]) {
+    xs.push(1)
+}
+
+fn function_types_bump_twice(mut xs: Vec[i64]) {
+    function_types_bump(xs)
+    function_types_bump(xs)
+}
+
+test "a mut parameter handed to another mut parameter gains no second reference" {
+    let mut xs = [0]
+    function_types_bump_twice(xs)
+    let size = xs.len()
+    assert(size == 3)
+}
+
+// **What a kept function is handed is borrowed for the call alone**: a
+// struct that holds a view and a function took, below, only what lives as
+// long as that view, so a call with a local's text was a borrow `rustc`
+// refused (found moving `text_tiers` into Nikaia, #125).
+struct FunctionTypesAsk {
+    name: ref String,
+    size_of: fn(ref String) -> i64 sync,
+}
+
+fn function_types_sum(ask: ref FunctionTypesAsk, words: ref Vec[String]) -> i64 {
+    let mut total = ask.size_of(ask.name)
+    for word in words {
+        let local: String = f"{word}!"
+        total += ask.size_of(local)
+    }
+    return total
+}
+
+test "a kept function takes a borrow of any length" {
+    let name: String = "abc"
+    let ask = FunctionTypesAsk { name: ref name, size_of: fn(s) { s.len() } }
+    let words: Vec[String] = ["x", "yy"]
+    let total = function_types_sum(ask, words)
+    assert(total == 8)
+}

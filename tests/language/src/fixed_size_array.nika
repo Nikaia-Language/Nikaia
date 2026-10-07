@@ -1,0 +1,19 @@
+// `Array[T, N]` - a container that does not allocate (ADR-152): a program
+// with one runs. How it is lowered, recorded and refused stays in
+// `crates/nikaia/tests/fixed_size_array.rs`.
+
+struct FixedSizeArrayVector3 { parts: Array[f64, 3] }
+
+fn fixed_size_array_scaled(v: FixedSizeArrayVector3, by: f64) -> Array[f64, 3] {
+    return [v.parts[0] * by, v.parts[1] * by, v.parts[2] * by]
+}
+
+// D3, measured where it matters: it compiles, it runs, and `len()` is the `N`
+// it was declared with - known while the program is built, because
+// `[T; N]::len` is a constant below.
+test "an array compiles and runs" {
+    let v = FixedSizeArrayVector3 { parts: [1.0, 2.0, 3.0] }
+    let out = fixed_size_array_scaled(v, 2.0)
+    let shown = f"{out[0]} {out[1]} {out[2]} {out.len()}"
+    assert(shown == "2 4 6 3")
+}

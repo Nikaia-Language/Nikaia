@@ -1,0 +1,114 @@
+// An option's default is a build-time value (ADR-318, #374): what a call that
+// leaves the option out receives. What the ledger records, refusals, and
+// defaults that cross packages stay in `crates/nikaia/tests/option_defaults.rs`.
+
+comptime OPTION_DEFAULTS_BASE = 7
+
+fn option_defaults_twice(n: i64) -> i64 {
+    return n * 2
+}
+
+fn option_defaults_wait(label: ref String; timeout: i64 = 30 * 1000, tries: i64 = option_defaults_twice(OPTION_DEFAULTS_BASE), name: ref String = "a" + "b") -> String {
+    return f"{label} {timeout} {tries} {name}"
+}
+
+// D1: arithmetic, a call to a function of the program reading an item-level
+// `comptime`, and text joined - each computed once, and a call that leaves
+// the option out receives the value.
+test "a computed default is evaluated once and handed to the call" {
+    let x = option_defaults_wait("x")
+    let y = option_defaults_wait("y"; tries: 1)
+    assert(OPTION_DEFAULTS_BASE == 7)
+    assert(x == "x 30000 14 ab")
+    assert(y == "y 30000 1 ab")
+}
+
+fn option_defaults_literal(t: i64 = -3, s: ref String = "x") -> String {
+    return f"{t}{s}"
+}
+
+// A literal default is what it always was: nothing evaluated, nothing refused.
+test "a literal default is unchanged" {
+    let a = option_defaults_literal()
+    assert(a == "-3x")
+}
+
+fn option_defaults_base(scale: i64 = 10) -> i64 {
+    return scale * 3
+}
+
+comptime OPTION_DEFAULTS_A = option_defaults_base()
+comptime OPTION_DEFAULTS_B = option_defaults_base(scale: 2)
+
+fn option_defaults_plus(x: i64; t: i64 = option_defaults_base()) -> i64 {
+    return x + t
+}
+
+// A function with options is called at build time (#374 step 2): what the
+// caller names is used, and what it leaves out takes the default.
+test "a function with options runs at build time" {
+    let f = option_defaults_plus(1)
+    assert(OPTION_DEFAULTS_A == 30)
+    assert(OPTION_DEFAULTS_B == 6)
+    assert(f == 31)
+}
+
+struct OptionDefaultsPoint {
+    x: i64,
+    y: i64,
+}
+
+fn option_defaults_origin() -> OptionDefaultsPoint {
+    return OptionDefaultsPoint { x: 1, y: 2 }
+}
+
+fn option_defaults_show(label: ref String; at: OptionDefaultsPoint = option_defaults_origin()) -> String {
+    return f"{label} {at.x} {at.y}"
+}
+
+// A struct of literals is a default (ADR-318 D3, D4): a call that leaves the
+// option out receives it.
+test "a struct default is handed to the call" {
+    let p = option_defaults_show("p")
+    let q = option_defaults_show("q"; at: OptionDefaultsPoint { x: 5, y: 6 })
+    assert(p == "p 1 2")
+    assert(q == "q 5 6")
+}
+
+fn option_defaults_three() -> Vec[i64] {
+    return [1, 2, 3]
+}
+
+fn option_defaults_total(label: ref String; xs: ref Vec[i64] = option_defaults_three()) -> String {
+    let mut sum = 0
+    for x in xs {
+        sum = sum + x
+    }
+    return f"{label} {sum}"
+}
+
+fn option_defaults_lit(label: ref String; xs: ref Vec[i64] = [4, 5]) -> String {
+    return f"{label} {xs.len()}"
+}
+
+// A view of a list takes a list as its default (ADR-318 D4): computed or
+// written, and lent to a call that leaves the option out.
+test "a view of a list takes a list default" {
+    let a = option_defaults_total("a")
+    let b = option_defaults_lit("b")
+    let c = option_defaults_total("c"; xs: [10, 20])
+    assert(a == "a 6")
+    assert(b == "b 2")
+    assert(c == "c 30")
+}
+
+fn option_defaults_shout(word: ref String; mark: String = "!!!") -> String {
+    return f"{word}{mark}"
+}
+
+// A text default for an owned `String` (#498): the call that leaves it out
+// hands over a `String`, not the literal's view.
+test "a text default for an owned string is one" {
+    let s = option_defaults_shout("yo")
+    assert(s == "yo!!!")
+}

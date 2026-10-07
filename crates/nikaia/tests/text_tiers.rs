@@ -9,7 +9,8 @@
 //! | both | `EitherText`: each value borrowed or owned where it is put in |
 //!
 //! Not one of these programs writes `ref`, `.clone()` or anything about
-//! where text lives.
+//! where text lives. What the one program that reads no file computes is
+//! `tests/language/src/text_tiers.nika`.
 
 mod common;
 
@@ -211,7 +212,7 @@ fn both_kinds_of_text_in_one_field_each_as_it_is() {
 
 /// **Text of its own only: nothing changes.** The ordinary field is a
 /// `String` below, as before this record, and a literal in it is built where
-/// it stands (ADR-282 D4).
+/// it stands (ADR-282 D4). That it runs is in `text_tiers.nika`.
 #[test]
 fn a_field_only_text_of_its_own_flows_into_stays_a_string() {
     let source = r##"struct Greeting {
@@ -225,7 +226,6 @@ fn main() {
     println(f"{a.text} {b.text}")
 }
 "##;
-    runs("owned", source, "hello world hi");
     let rust = lowered(source, Build::default());
     assert!(
         rust.contains("struct Greeting {\n    text: String,"),

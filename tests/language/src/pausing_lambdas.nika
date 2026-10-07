@@ -1,0 +1,104 @@
+// A lambda that pauses, where `std` takes one (ADR-233): what the programs
+// compute, at both settings. What the lowering writes and what is refused is
+// `crates/nikaia/tests/pausing_lambdas.rs`.
+
+use std::time
+use std::collections
+
+fn pausing_lambdas_slow(x: i64) -> i64 {
+    time::sleep(1.millis())
+    return x * 2
+}
+
+fn pausing_lambdas_slow_len(w: ref String) -> i64 {
+    time::sleep(1.millis())
+    return w.len()
+}
+
+// **D1: `map` and `filter` hand back a sequence whose step pauses**, and every
+// walk of it is the one a pausing sequence has: `collect`, `count`, `nth` and
+// `join` are awaited, and a `for` gives its thread up at each step. A plain
+// lambda after it, and a second pausing one, chain onto it.
+test "map and filter with a pausing lambda make a pausing sequence" {
+    let xs: Vec[i64] = [1, 2, 3]
+    let a = xs.iter().map(fn(x) { pausing_lambdas_slow(x) }).collect()
+    assert(a[2] == 6)
+    let n = xs.iter().filter(fn(x) { pausing_lambdas_slow(x) > 2 }).count()
+    assert(n == 2)
+    let joined = xs.iter().map(fn(x) { pausing_lambdas_slow(x) }).map(fn(y) { pausing_lambdas_slow(y) }).join(",")
+    assert(joined == "4,8,12")
+    let b = xs.iter().map(fn(x) { pausing_lambdas_slow(x) }).map(fn(y) { y + 1 }).filter(fn(y) { y > 3 }).collect()
+    let size = b.len()
+    assert(size == 2)
+    let second = xs.iter().map(fn(x) { pausing_lambdas_slow(x) }).nth(1) ?? 0
+    assert(second == 4)
+    let mut seen: Vec[i64] = []
+    for y in xs.iter().map(fn(x) { pausing_lambdas_slow(x) }) {
+        seen.push(y)
+    }
+    assert(seen == [2, 4, 6])
+}
+
+// **D1: the lazy walks of the sequence**, which it has as adapters of its own,
+// and one kept in a name before it is walked. Text items are handed to the
+// lambda as views.
+test "the pausing sequence has the lazy walks and can wait in a name" {
+    let xs: Vec[i64] = [1, 2, 3, 4, 5, 6]
+    let r = xs.iter().map(fn(x) { pausing_lambdas_slow(x) }).skip(1).step_by(2).zip(xs.iter()).take(2).collect()
+    let size = r.len()
+    assert(size == 2)
+    let lazy = xs.iter().filter(fn(x) { pausing_lambdas_slow(x) > 8 })
+    let mut seen: Vec[i64] = []
+    for y in lazy {
+        seen.push(y)
+    }
+    assert(seen == [5, 6])
+    let words: Vec[String] = [f"ab", f"abc", f"abcd"]
+    let long = words.iter().filter(fn(w) { pausing_lambdas_slow_len(w) > 2 }).count()
+    assert(long == 2)
+    let c = xs.iter().map(fn(x) { xs.iter().map(fn(y) { pausing_lambdas_slow(y + x) }).count() }).collect()
+    assert(c[0] == 6)
+}
+
+// **D2: the eager entries await the lambda where they would have called it.**
+test "the eager entries await a pausing lambda" {
+    let xs: Vec[i64] = [3, 1, 2]
+    let doubled = xs.clone().map(fn(x) { pausing_lambdas_slow(x) })
+    assert(doubled[0] == 6)
+    let mut ys: Vec[i64] = [3, 1, 2]
+    ys.sort_by_key(fn(y) { pausing_lambdas_slow(0 - y) })
+    assert(ys[0] == 3)
+    let mut m: collections::HashMap[String, i64] = collections::HashMap()
+    m.entry(f"a").or_insert_with(fn() { pausing_lambdas_slow(5) })
+    m.entry(f"a").or_insert_with(fn() { pausing_lambdas_slow(7) })
+    m.entry(f"a").and_modify(fn(mut v) { v += pausing_lambdas_slow(1) })
+    let got = m["a"] ?? 0
+    assert(got == 12)
+}
+
+// **D4: a view of a value that copies goes where the value is wanted**, which
+// is what the lambda `sort_by_key` hands over meets first; and a view of a
+// `String` goes where a view of text is wanted.
+fn pausing_lambdas_quick(x: i64) -> i64 {
+    return x
+}
+
+fn pausing_lambdas_quick_len(w: ref String) -> i64 {
+    return w.len()
+}
+
+fn pausing_lambdas_own_len(w: String) -> i64 {
+    return w.len()
+}
+
+test "a view of a copy and of a string are handed as arguments" {
+    let mut xs: Vec[i64] = [3, 1, 2]
+    xs.sort_by_key(fn(x) { pausing_lambdas_quick(0 - x) })
+    let words: Vec[String] = [f"ab", f"abc"]
+    let mut seen: Vec[String] = []
+    for w in words.iter() {
+        seen.push(f"{pausing_lambdas_quick_len(w)} {pausing_lambdas_own_len(w)}")
+    }
+    assert(seen == ["2 2", "3 3"])
+    assert(xs[0] == 3)
+}

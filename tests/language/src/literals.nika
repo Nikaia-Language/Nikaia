@@ -1,0 +1,14 @@
+// Literals and the holes of an f-string: what a hole prints. How literals are
+// parsed and lowered and what is refused is `crates/nikaia/tests/literals.rs`.
+
+// **What a hole can print it still prints**: a list's length, one element,
+// and the joined text the help names, which compiles and runs. A value this
+// checker cannot type is not refused on a guess (Part III C.4).
+test "the way out runs and what prints is untouched" {
+    let data = [1, 2, 3]
+    let text = data.iter().join(", ")
+    let words = ["a", "b"]
+    let joined = words.iter().join("-")
+    let printed = f"Reading: {text} {data.len()} {data[0]} {joined}"
+    assert(printed == "Reading: 1, 2, 3 3 1 a-b")
+}

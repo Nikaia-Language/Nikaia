@@ -17,6 +17,11 @@
 //! to be a copy plus a compare-and-swap; here every value takes the address
 //! row, so the block runs exactly once. D3 allows that outright — *may* run
 //! more than once is a licence, not a requirement — and what is left is speed.
+//!
+//! What a lock holds after its doors ran is
+//! `tests/language/src/update_doors.nika`; this file keeps the lowering, the
+//! refusals, and the lambda kept in a field, which builds at the default
+//! setting only.
 
 mod common;
 
@@ -66,39 +71,6 @@ fn ran(purpose: &str, source: &str) -> String {
     printed
 }
 
-/// **Part II 12.2's own counter**, which stopped lowering the day the page was
-/// rewritten to D1's form, because a lambda's parameter did not take `mut`.
-#[test]
-fn the_specifications_counter_compiles_and_runs() {
-    let printed = ran(
-        "counter",
-        "fn main() {\n\
-         \x20   let counter = SharedMut(0)\n\
-         \x20   counter.update fn(mut n) { n += 1 }\n\
-         \x20   counter.update fn(mut n) { n += 1 }\n\
-         \x20   println(f\"{counter.get()}\")\n\
-         }\n",
-    );
-    assert_eq!(printed.trim(), "2");
-}
-
-/// **A value that is not a word takes the address and is not copied**, which is
-/// what the `Option` was in the way of: a ten-thousand-entry list is changed
-/// where it lies.
-#[test]
-fn a_list_is_changed_where_it_lies() {
-    let printed = ran(
-        "list",
-        "fn main() {\n\
-         \x20   let log = SharedMut(Vec())\n\
-         \x20   log.update fn(mut entries) { entries.push(1) }\n\
-         \x20   log.update fn(mut entries) { entries.push(2) }\n\
-         \x20   println(f\"{log.access fn(e) { e.len() }}\")\n\
-         }\n",
-    );
-    assert_eq!(printed.trim(), "2");
-}
-
 /// **The `mut` parameter is an address below**, so every mention of it is
 /// dereferenced — `+=` and an assignment need it outright, and writing it
 /// everywhere is one rule rather than a list of positions.
@@ -126,26 +98,6 @@ fn a_plain_lambda_parameter_is_left_alone() {
          }\n",
     );
     assert!(!rust.contains("(*n)"), "{rust}");
-}
-
-/// **`update_all` is D1 widened** ([ADR-281](../../../docs/specification/adr/adr-281.md)
-/// D6): one `mut` per lock, nothing returned, both held for the whole of the
-/// block.
-#[test]
-fn update_all_takes_one_mut_per_lock() {
-    let printed = ran(
-        "both",
-        "fn main() {\n\
-         \x20   let payer = SharedMut(100)\n\
-         \x20   let payee = SharedMut(0)\n\
-         \x20   update_all(payer, payee) fn(mut a, mut b) {\n\
-         \x20       a -= 30\n\
-         \x20       b += 30\n\
-         \x20   }\n\
-         \x20   println(f\"{payer.get()} {payee.get()}\")\n\
-         }\n",
-    );
-    assert_eq!(printed.trim(), "70 30");
 }
 
 /// **A lambda inside the block still means the address**, which is why the list

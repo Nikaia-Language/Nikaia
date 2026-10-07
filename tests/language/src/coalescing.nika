@@ -1,0 +1,47 @@
+// `a ?? b`, and the three things a postfix `??` would be reached for, each
+// with a spelling of its own (ADR-279). The refusal of a postfix `??` stays in
+// `crates/nikaia/tests/coalescing.rs`.
+
+use std::collections
+
+// And `??` itself is untouched, including the chain ADR-278 D15 allows.
+test "coalescing and its chain still parse and run" {
+    let a: String? = null
+    let b: String? = null
+    let s = a ?? b ?? "last"
+    assert(s == "last")
+}
+
+// The first of the three: a fallback value.
+test "a fallback value is the operator itself" {
+    let mut m = collections::HashMap()
+    m["a"] = 1
+    let n = m["b"] ?? 0
+    assert(n == 0)
+}
+
+fn coalescing_pick(q: String?) -> String {
+    let id = q ?? return "bad request"
+    return id
+}
+
+// The second: a jump, because the four of them are expressions (ADR-276 D20).
+// This is the shape ADR-279 D4 puts in ADR-289 D19's line: a handler reaching
+// a parameter that may be absent answers when it is.
+test "a jump is the second spelling" {
+    let missing: String? = null
+    let said = coalescing_pick(missing)
+    assert(said == "bad request")
+}
+
+// The third: saying the value is known to be there, which ends the program
+// with the program's own words rather than with punctuation (ADR-293 D6). Run
+// for the half that matters here - that it is a value afterwards and the
+// program goes on.
+test "panic is the third spelling and the value goes on" {
+    let mut m = collections::HashMap()
+    m["a"] = 7
+    let n = m["a"] ?? panic("a was a key a moment ago")
+    let shown = f"{n}"
+    assert(shown == "7")
+}

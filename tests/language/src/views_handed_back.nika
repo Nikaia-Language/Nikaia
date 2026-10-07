@@ -1,0 +1,93 @@
+// A view handed back is handed back silently (ADR-283 D23-D24, #442): what the
+// programs compute, the view of a local, of a parameter and of an argument made
+// in the call alike. The refusal and `--tethers` are
+// `crates/nikaia/tests/views_handed_back.rs`.
+
+fn views_handed_back_d() -> ref String {
+    let s: String = "x".clone()
+    return ref s
+}
+
+// **D23, step 1**: the caller's keep is declared wherever the call stands -
+// here alone, inside `println`, where it was never declared.
+test "a view of a local lives in the callers keep" {
+    println(views_handed_back_d())
+    let said = views_handed_back_d()
+    assert(said == "x")
+}
+
+// …and in an `f"…"` hole, a condition and an argument.
+test "the callers keep in every position" {
+    let n = views_handed_back_d().len()
+    let mut line = ""
+    if views_handed_back_d().len() == 1 {
+        line = f"{views_handed_back_d()} {n}"
+    }
+    assert(line == "x 1")
+}
+
+struct ViewsHandedBackRow {
+    name: String,
+}
+
+fn views_handed_back_e(t: String) -> ref String {
+    return ref t
+}
+
+fn views_handed_back_c(row: ViewsHandedBackRow) -> ref String {
+    return ref row.name
+}
+
+fn views_handed_back_first(a: String, b: String) -> ref String {
+    if a.len() > b.len() {
+        return ref a
+    }
+    return ref b
+}
+
+fn views_handed_back_label(a: String, b: String) -> ref String {
+    if a == b {
+        return "same"
+    }
+    return "other"
+}
+
+// **D24, step 2**: a view handed back through a parameter lowered as a view
+// borrows from the caller's argument - `'static` was *lifetime may not live
+// long enough* - and with two such parameters they share one lifetime.
+test "a view of a parameter borrows from the argument" {
+    let t: String = "y".clone()
+    let row = ViewsHandedBackRow { name: "z".clone() }
+    let line = f"{views_handed_back_e(t)} {views_handed_back_c(row)} {views_handed_back_first("long", "x")} {views_handed_back_label("a", "b")}"
+    assert(line == "y z long other")
+}
+
+// **D24, step 3**: an argument made in the call goes into the caller's keep.
+test "an argument made in the call is kept" {
+    let r = views_handed_back_e("y".clone())
+    let q = views_handed_back_c(ViewsHandedBackRow { name: "z".clone() })
+    let l = views_handed_back_e("w")
+    let line = f"{r} {q} {l}"
+    assert(line == "y z w")
+}
+
+// **Step 5**: `NK1104`'s help is the way out, and following it runs.
+test "following nk1104s help runs" {
+    println(views_handed_back_e("y"))
+    let said = views_handed_back_e("y")
+    assert(said == "y")
+}
+
+// **An argument made in the call whose view is handed on** (#493): the view
+// leaves `g` through its result, so the argument goes into the keep `g` is
+// given and the caller declares it beside the call - it was *cannot return
+// value referencing local variable*.
+fn views_handed_back_g() -> ref String {
+    return views_handed_back_e("y".clone())
+}
+
+test "an argument made in the call handed on lives in the callers keep" {
+    println(views_handed_back_g())
+    let said = views_handed_back_g()
+    assert(said == "y")
+}

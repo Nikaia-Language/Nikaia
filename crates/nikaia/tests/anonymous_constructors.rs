@@ -11,8 +11,9 @@
 //! ([ADR-296](../../../docs/specification/adr/adr-296.md) D17); what changed is
 //! that the resolution reaching for it now reaches into the library too, where
 //! it used to stop at this unit.
-
-mod common;
+//!
+//! What a program built this way computes is in
+//! `tests/language/src/anonymous_constructors.nika`.
 
 use nikaia::contracts::{Ledger, LedgerOps, STD};
 use nikaia::emit::{Build, emit_program};
@@ -142,30 +143,6 @@ fn every_finding(source: &str) -> Vec<nikaia::check::Finding> {
     nikaia::check::check(&parsed, &own, &library).findings
 }
 
-fn ran(purpose: &str, source: &str) -> String {
-    let rust = lowered(source);
-    let dir = common::scratch_dir(purpose);
-    let file = dir.join("main.rs");
-    std::fs::write(&file, &rust).expect("write the Rust");
-    let binary = dir.join("program");
-    let built = common::compile(&file, &["-o", &binary.to_string_lossy()]);
-    assert!(
-        built.status.success(),
-        "{}\n--- emitted ---\n{rust}",
-        String::from_utf8_lossy(&built.stderr)
-    );
-    let out = std::process::Command::new(&binary)
-        .output()
-        .expect("run it");
-    assert!(
-        out.status.success(),
-        "{}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    std::fs::remove_dir_all(&dir).ok();
-    String::from_utf8_lossy(&out.stdout).to_string()
-}
-
 /// **The other three collections are built** (0.0.232), and a `std` type with
 /// no constructor described is refused here rather than by `rustc`.
 ///
@@ -174,6 +151,8 @@ fn ran(purpose: &str, source: &str) -> String {
 /// file nobody wrote. The ledger described `HashSet`, `BTreeMap` and
 /// `BTreeSet` as types and none of them as constructed, so each now has its
 /// `::new` entry, and `NK1190` stands where the next such gap would land.
+/// What they hold once built is in
+/// `tests/language/src/anonymous_constructors.nika`.
 #[test]
 fn the_other_three_collections_are_built() {
     // Text for the lookups: a key that is not already a view is passed by
@@ -198,7 +177,6 @@ fn the_other_three_collections_are_built() {
         every_finding(source)
     );
     assert!(lowered(source).contains("collections::BTreeMap::new()"));
-    assert_eq!(ran("three-collections", source), "1 2 1 true\n");
 }
 
 /// **What `NK1190` refuses**: a type the library names, called as its

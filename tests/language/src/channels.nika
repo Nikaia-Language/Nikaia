@@ -1,0 +1,45 @@
+// A channel is `std`'s, and only bounded (ADR-149, Part II 12.5): what a
+// program reads from one. What it lowers to and what is refused is
+// `crates/nikaia/tests/channels.rs`.
+
+use std::channel
+
+// Part II 12.5's own example, as a program that runs (§5 step 3).
+test "the pages own example runs" {
+    let (tx, rx) = channel::bounded(100)
+    spawn fn {
+        tx.send("Calculation complete")
+    }
+    let msg = rx.recv() ?? "nobody sent anything"
+    assert(msg == "Calculation complete")
+}
+
+// D3: `null` means every sender is gone, and it is the ordinary end of a
+// stream rather than a failure - so a program reads it with `??` and never with
+// a `catch`.
+test "a closed channel hands back nothing" {
+    let (tx, rx) = channel::bounded(4)
+    spawn fn { tx.send(5) }
+    let first = rx.recv() ?? 0
+    let second = rx.recv() ?? -1
+    assert(first == 5)
+    assert(second == -1)
+}
+
+// Back-pressure is a pause and the value still arrives. A channel of one,
+// filled, with a second send waiting for room: the receiver takes the first,
+// the sender wakes, and both values come out in order.
+test "a full channel waits for room" {
+    let (tx, rx) = channel::bounded(1)
+    spawn fn {
+        tx.send(1)
+        tx.send(2)
+        tx.send(3)
+    }
+    let a = rx.recv() ?? 0
+    let b = rx.recv() ?? 0
+    let c = rx.recv() ?? 0
+    assert(a == 1)
+    assert(b == 2)
+    assert(c == 3)
+}

@@ -1,0 +1,90 @@
+// Arithmetic that says what happens at the edge (ADR-285, ADR-315): wrapping,
+// saturating and counted lengths, as the numbers a program computes. What
+// aborts, what the manifest and the lowering say, and what the shipping build
+// does is `crates/nikaia/tests/overflow.rs`.
+
+// **Wrapping and saturating arithmetic, run.**
+//
+// ADR-285 D6 and D7. These exist because D1 aborts: a hash function wraps on
+// purpose and has to be able to say so. Run rather than read, because what is
+// under test is a number and not a spelling - and the pair with the plain `*`
+// in `overflow.rs` is the whole point, since the same arithmetic two ways must
+// give two answers.
+fn overflow_hash(seed: i32, c: i32) -> i32 {
+    return seed.wrapping_mul(31).wrapping_add(c)
+}
+
+fn overflow_clamp(level: i32, rise: i32) -> i32 {
+    return level.saturating_add(rise)
+}
+
+fn overflow_shifted(n: i64) -> i64 {
+    return n.wrapping_shl(2)
+}
+
+test "wrapping and saturating say what the operator would refuse" {
+    let wrapped = overflow_hash(2147483647, 7)
+    let saturated = overflow_clamp(2147483647, 5)
+    let shifted = overflow_shifted(3)
+    assert(wrapped == 2147483624)
+    assert(saturated == 2147483647)
+    assert(shifted == 12)
+}
+
+// **A length is an `i64` and an index takes one, and neither conversion is
+// written** (ADR-285 D1).
+//
+// The program below is the shape D1 is about: a loop over a length, an index by
+// the loop variable, a length in arithmetic and a length in a comparison. Before
+// this, every one of those lines carried an `as i64` the user wrote and that
+// could not fail.
+test "a length is an i64 and the conversions are emitted" {
+    let mut xs = Vec()
+    xs.push(10)
+    xs.push(20)
+    xs.push(30)
+    let mut sum = 0
+    for i in 0..<xs.len() {
+        sum = sum + xs[i]
+    }
+    let last = xs[xs.len() - 1]
+    let short = xs.len() < 2
+    let fits = 1 + xs.len() < 5
+    let printed = f"{sum} {last} {short} {fits} {xs.len()}"
+    assert(printed == "60 30 false true 3")
+}
+
+// **A count goes in as an `i64` and the conversion is emitted** (ADR-285 D15)
+// — the parameter direction of ADR-285 D1: the user writes **no** conversion,
+// and a **literal** count is left alone.
+test "a count is written as an i64 and the conversion is emitted" {
+    let indent: i64 = 2
+    let pad = "  ".repeat(indent)
+    let rule = "-".repeat(3)
+    let printed = f"[{pad}][{rule}]"
+    assert(printed == "[    ][---]")
+}
+
+// **A named method on a number written as its receiver** (#417): the number
+// takes the integer type its use asks for - a `let`'s, a parameter's, a
+// `return`'s - as `7 + 1` would, and the first type that holds it where
+// nothing asks; a negative one keeps its sign. `(-7).wrapping_add(2)` came out
+// as `-7.wrapping_add(2)`, which is `-(7.wrapping_add(2))` below, and the
+// function was taken to pause on a method of nothing known.
+fn overflow_f() -> i32 {
+    return (-7).wrapping_add(2)
+}
+
+fn overflow_g() -> i64 {
+    return 7.wrapping_mul(3)
+}
+
+fn overflow_h(n: u64) -> u64 {
+    return n + 1
+}
+
+test "a named method on a written number takes the type its use asks" {
+    let x: i64 = 7.wrapping_add(1)
+    let printed = f"{overflow_f()} {overflow_g()} {x} {overflow_h(5.saturating_add(1))} {7.checked_mul(3) ?? 0}"
+    assert(printed == "-5 21 8 7 21")
+}

@@ -15,7 +15,8 @@
 //! program which does not compile. So every shape that mentions the name is
 //! checked to still bind it — a hole, a nested block, a `let` that only passes
 //! it on — and the one shape that merely *looks* like it (`errors`) is checked
-//! not to.
+//! not to. A handler that reads the error is run in
+//! `tests/language/src/catch_handler.nika`.
 
 mod common;
 
@@ -160,9 +161,10 @@ fn main() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// **The other half of the polarity, compiled and run**: a handler that does
-/// read the error still gets a binding it can read, under the name Kap 7.1
-/// promises. A `_error` written here would not compile at all.
+/// **The other half of the polarity**: a handler that does read the error
+/// still gets a binding it can read, under the name Kap 7.1 promises. A
+/// `_error` written here would not compile at all; the program runs in
+/// `tests/language/src/catch_handler.nika`.
 #[test]
 fn a_handler_that_reads_the_error_still_can() {
     let rust = lowered(
@@ -184,24 +186,4 @@ fn main() {
         rust.contains("Err(error) =>"),
         "the handler reads it, so the binding keeps its name:\n{rust}"
     );
-
-    let dir = common::scratch_dir("catch-handler-reads");
-    let file = dir.join("main.rs");
-    std::fs::write(&file, &rust).expect("write the Rust");
-    let binary = dir.join("program");
-    let out = common::compile(&file, &["-o", binary.to_str().expect("utf-8 path")]);
-    assert!(
-        out.status.success(),
-        "the lowering compiles:\n{}\n--- the Rust ---\n{rust}",
-        String::from_utf8_lossy(&out.stderr),
-    );
-    let ran = std::process::Command::new(&binary)
-        .output()
-        .expect("the program runs");
-    let printed = String::from_utf8_lossy(&ran.stdout).into_owned();
-    assert!(
-        printed.starts_with("caught "),
-        "and the handler printed what it caught: {printed:?}"
-    );
-    let _ = std::fs::remove_dir_all(&dir);
 }

@@ -27,6 +27,10 @@
 //! and **no** check flag at all - the shipping build, as far as this mechanism is
 //! concerned - which is the whole claim: a conversion that does not fit aborts
 //! there too.
+//!
+//! What the named operations and counted lengths compute is
+//! `tests/language/src/overflow.nika`; this file keeps what aborts, what the
+//! lowering and the manifest say, and the shipping build.
 
 mod common;
 
@@ -229,69 +233,9 @@ fn a_built_program_that_overflows_aborts() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// **Wrapping and saturating arithmetic, run.**
-///
-/// ADR-285 D6 and D7. These exist because D1 aborts: a hash function wraps on
-/// purpose and has to be able to say so. Run rather than read, because what is
-/// under test is a number and not a spelling - and the pair with the plain `*`
-/// below is the whole point, since the same arithmetic two ways must give two
-/// answers.
-#[test]
-fn wrapping_and_saturating_say_what_the_operator_would_refuse() {
-    let dir = common::scratch_dir("overflow-named");
-    let rust = lower(
-        &dir,
-        "fn hash(seed: i32, c: i32) -> i32 {\n    \
-             return seed.wrapping_mul(31).wrapping_add(c)\n\
-         }\n\
-         \n\
-         fn clamp(level: i32, rise: i32) -> i32 {\n    \
-             return level.saturating_add(rise)\n\
-         }\n\
-         \n\
-         fn shifted(n: i64) -> i64 {\n    \
-             return n.wrapping_shl(2)\n\
-         }\n\
-         \n\
-         fn main() {\n    \
-             println(f\"{hash(2147483647, 7)} {clamp(2147483647, 5)} {shifted(3)}\")\n\
-         }\n",
-    );
-
-    let binary = dir.join("program");
-    let compiled = common::compile(
-        &dir.join("main.rs"),
-        &[
-            "--crate-type",
-            "bin",
-            "-C",
-            "overflow-checks=on",
-            "-o",
-            binary.to_str().expect("utf-8 path"),
-        ],
-    );
-    assert!(
-        compiled.status.success(),
-        "the emitted Rust did not compile:\n{}\n--- emitted ---\n{rust}",
-        String::from_utf8_lossy(&compiled.stderr)
-    );
-
-    let ran = Command::new(&binary).output().expect("run the program");
-    assert!(
-        ran.status.success(),
-        "none of these may abort, and this one did:\n{}",
-        String::from_utf8_lossy(&ran.stderr)
-    );
-    assert_eq!(
-        String::from_utf8_lossy(&ran.stdout).trim(),
-        "2147483624 2147483647 12",
-        "wrapped, saturated, shifted"
-    );
-    let _ = std::fs::remove_dir_all(&dir);
-}
-
-/// And the same multiplication with `*` aborts, which is what makes the names
-/// above worth having rather than decoration.
+/// The same multiplication with `*` aborts, which is what makes the names
+/// `wrapping_mul` and `saturating_add` worth having rather than decoration
+/// (what they answer is `tests/language/src/overflow.nika`).
 #[test]
 fn the_same_arithmetic_with_an_operator_aborts() {
     let dir = common::scratch_dir("overflow-contrast");
@@ -553,29 +497,6 @@ fn a_length_is_an_i64_and_the_conversions_are_emitted() {
     assert!(rust.contains("xs.len() < 2"), "{rust}");
     // And so is a sum that ends in one (#125).
     assert!(rust.contains("(1 + xs.len() as i64) < 5"), "{rust}");
-
-    let binary = dir.join("program");
-    let compiled = common::compile(
-        &dir.join("main.rs"),
-        &[
-            "--crate-type",
-            "bin",
-            "-o",
-            binary.to_str().expect("utf-8 path"),
-        ],
-    );
-    assert!(
-        compiled.status.success(),
-        "{}\n{rust}",
-        String::from_utf8_lossy(&compiled.stderr)
-    );
-    let ran = std::process::Command::new(&binary)
-        .output()
-        .expect("run it");
-    assert_eq!(
-        String::from_utf8_lossy(&ran.stdout).trim(),
-        "60 30 false true 3"
-    );
     let _ = std::fs::remove_dir_all(dir);
 }
 
@@ -653,26 +574,6 @@ fn a_count_is_written_as_an_i64_and_the_conversion_is_emitted() {
         rust.contains("\"-\".repeat(3)"),
         "and a literal needs none and can take none:\n{rust}"
     );
-
-    let binary = dir.join("program");
-    let compiled = common::compile(
-        &dir.join("main.rs"),
-        &[
-            "--crate-type",
-            "bin",
-            "-o",
-            binary.to_str().expect("utf-8 path"),
-        ],
-    );
-    assert!(
-        compiled.status.success(),
-        "{}\n{rust}",
-        String::from_utf8_lossy(&compiled.stderr)
-    );
-    let ran = std::process::Command::new(&binary)
-        .output()
-        .expect("run it");
-    assert_eq!(String::from_utf8_lossy(&ran.stdout).trim(), "[    ][---]");
     let _ = std::fs::remove_dir_all(dir);
 }
 
@@ -821,24 +722,5 @@ fn a_named_method_on_a_written_number_takes_the_type_its_use_asks() {
     );
     assert!(rust.contains("(-7i32).wrapping_add(2)"), "{rust}");
     assert!(!rust.contains("async fn f"), "{rust}");
-    let binary = dir.join("program");
-    let compiled = common::compile(
-        &dir.join("main.rs"),
-        &[
-            "--crate-type",
-            "bin",
-            "-C",
-            "overflow-checks=on",
-            "-o",
-            binary.to_str().expect("utf-8 path"),
-        ],
-    );
-    assert!(
-        compiled.status.success(),
-        "the emitted Rust did not compile:\n{}\n--- emitted ---\n{rust}",
-        String::from_utf8_lossy(&compiled.stderr)
-    );
-    let ran = Command::new(&binary).output().expect("run the program");
-    assert_eq!(String::from_utf8_lossy(&ran.stdout).trim(), "-5 21 8 7 21");
     let _ = std::fs::remove_dir_all(&dir);
 }

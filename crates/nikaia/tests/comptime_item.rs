@@ -12,6 +12,9 @@
 //! every body, filled before any of them is walked: this checker's scope is a
 //! stack pushed per function, and an item is visible in its whole scope — a
 //! function declared *above* the constant included.
+//!
+//! What the constants hold when the program runs is
+//! `tests/build-time/src/comptime_item.nika`.
 
 mod common;
 
@@ -36,9 +39,9 @@ fn lowered(source: &str) -> String {
         .rust
 }
 
-/// **The whole shape, compiled and run**: the four kinds of initialiser the
-/// body form takes, `pub`, and a function that reads a constant declared
-/// **below** it.
+/// **The whole shape, lowered**: the four kinds of initialiser the body form
+/// takes, `pub`, and a function that reads a constant declared **below** it.
+/// What it prints is `tests/build-time/src/comptime_item.nika`.
 #[test]
 fn an_item_constant_is_written_folded_and_read_from_anywhere() {
     let source = r#"
@@ -65,26 +68,6 @@ fn main() {
     ] {
         assert!(rust.contains(written), "`{written}` is written:\n{rust}");
     }
-
-    let dir = common::scratch_dir("comptime-item");
-    let file = dir.join("main.rs");
-    std::fs::write(&file, &rust).expect("write the Rust");
-    let binary = dir.join("program");
-    let out = common::compile(&file, &["-o", binary.to_str().expect("utf-8 path")]);
-    assert!(
-        out.status.success(),
-        "the lowering compiles:\n{}\n--- the Rust ---\n{rust}",
-        String::from_utf8_lossy(&out.stderr),
-    );
-    let ran = std::process::Command::new(&binary)
-        .output()
-        .expect("the program runs");
-    assert_eq!(
-        String::from_utf8_lossy(&ran.stdout).trim(),
-        "1000 4096 2000 true 4096",
-        "and `before()` read a constant declared below it"
-    );
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// **A constant declared after the function that reads it**, on its own,

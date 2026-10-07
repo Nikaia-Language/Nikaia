@@ -5,6 +5,10 @@
 //! absent from the parser ([ADR-023](../../../docs/specification/adr/adr-023.md)
 //! §1). A program could propagate what `std` handed it and never raise one of
 //! its own.
+//!
+//! What such programs compute is `tests/language/src/errors_lowering.nika`;
+//! here stay what they lower to, the ledger, and the trace `NIKAIA_TRACE`
+//! switches on.
 
 mod common;
 
@@ -131,8 +135,9 @@ fn main() { let p = cli::args().nth(1) ?? "x" }"#,
     assert!(rust.contains("nikaia_std::index::or("), "{rust}");
 }
 
-/// The whole chapter in one program, compiled and run: an error type with a
-/// payload, raised, caught, and its message printed.
+/// The whole chapter in one program: an error type with a payload, raised,
+/// caught, and its message printed - lowered here, run in
+/// `tests/language/src/errors_lowering.nika`.
 #[test]
 fn an_error_is_declared_raised_caught_and_printed() {
     let source = r#"
@@ -173,31 +178,6 @@ fn an_error_is_declared_raised_caught_and_printed() {
         rust.contains("impl std::error::Error for ConfigError"),
         "{rust}"
     );
-
-    let dir = common::scratch_dir("errors");
-    let path = dir.join("prog.rs");
-    std::fs::write(&path, &rust).expect("write the emitted Rust");
-    let binary = dir.join("prog");
-    let compiled = common::compile(
-        &path,
-        &[
-            "--crate-type",
-            "bin",
-            "-o",
-            binary.to_str().expect("utf-8 path"),
-        ],
-    );
-    assert!(
-        compiled.status.success(),
-        "the emitted Rust did not compile:\n{}\n--- emitted ---\n{rust}",
-        String::from_utf8_lossy(&compiled.stderr)
-    );
-
-    let run = std::process::Command::new(&binary)
-        .output()
-        .expect("run the program");
-    let out = String::from_utf8_lossy(&run.stdout);
-    assert_eq!(out.trim(), "no config at app.conf", "stdout was: {out:?}");
 }
 
 /// ADR-023 D8: `throws` propagates on its own, and the lowering is where that
@@ -209,8 +189,9 @@ fn an_error_is_declared_raised_caught_and_printed() {
 /// was a `catch` at the call. The whole corpus uses one, which is why no test
 /// found it.
 ///
-/// Compiled and run, because "the emitted Rust is what `rustc` then rejects"
-/// is exactly what an assertion about the text would not have caught.
+/// Run in `tests/language/src/errors_lowering.nika`, because "the emitted Rust
+/// is what `rustc` then rejects" is exactly what an assertion about the text
+/// would not have caught.
 #[test]
 fn a_written_call_propagates_its_failure() {
     let source = r#"
@@ -247,35 +228,6 @@ fn a_written_call_propagates_its_failure() {
     // handles the failure.
     assert!(rust.contains("match ruft("), "{rust}");
     assert!(!rust.contains("ruft(\"app.conf\".to_string())?"), "{rust}");
-
-    let dir = common::scratch_dir("propagate");
-    let path = dir.join("prog.rs");
-    std::fs::write(&path, &rust).expect("write the emitted Rust");
-    let binary = dir.join("prog");
-    let compiled = common::compile(
-        &path,
-        &[
-            "--crate-type",
-            "bin",
-            "-o",
-            binary.to_str().expect("utf-8 path"),
-        ],
-    );
-    assert!(
-        compiled.status.success(),
-        "the emitted Rust did not compile:\n{}\n--- emitted ---\n{rust}",
-        String::from_utf8_lossy(&compiled.stderr)
-    );
-
-    let run = std::process::Command::new(&binary)
-        .output()
-        .expect("run the program");
-    let out = String::from_utf8_lossy(&run.stdout);
-    assert_eq!(
-        out.trim(),
-        "no config at app.conf",
-        "the failure has to have travelled through `ruft`; stdout was: {out:?}"
-    );
 }
 
 /// The same, for a call on a **receiver**: `s.add(1)` takes the `?` too.
@@ -291,8 +243,8 @@ fn a_written_call_propagates_its_failure() {
 /// `check::Checked::fallible_methods` and the emitter looks it up, exactly as
 /// `fallible_loops` has been handed over since ADR-025 D7.
 ///
-/// Compiled and run, because `Ok(s.add(1))` is a `Result` inside an `Ok` and
-/// only `rustc` says so.
+/// Run in `tests/language/src/errors_lowering.nika`, because `Ok(s.add(1))` is
+/// a `Result` inside an `Ok` and only `rustc` says so.
 #[test]
 fn a_method_call_propagates_its_failure() {
     let source = r#"
@@ -331,35 +283,6 @@ fn a_method_call_propagates_its_failure() {
     "#;
     let rust = emit(source);
     assert!(rust.contains("Ok(s.add(1)?)"), "{rust}");
-
-    let dir = common::scratch_dir("propagate-method");
-    let path = dir.join("prog.rs");
-    std::fs::write(&path, &rust).expect("write the emitted Rust");
-    let binary = dir.join("prog");
-    let compiled = common::compile(
-        &path,
-        &[
-            "--crate-type",
-            "bin",
-            "-o",
-            binary.to_str().expect("utf-8 path"),
-        ],
-    );
-    assert!(
-        compiled.status.success(),
-        "the emitted Rust did not compile:\n{}\n--- emitted ---\n{rust}",
-        String::from_utf8_lossy(&compiled.stderr)
-    );
-
-    let run = std::process::Command::new(&binary)
-        .output()
-        .expect("run the program");
-    let out = String::from_utf8_lossy(&run.stdout);
-    assert_eq!(
-        out.trim(),
-        "3\ntoo full",
-        "the failure has to have travelled out of `record`; stdout was: {out:?}"
-    );
 }
 
 /// And the guarded half of a `catch` still does not take one.

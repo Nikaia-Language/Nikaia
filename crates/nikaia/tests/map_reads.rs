@@ -10,6 +10,10 @@
 //! index outside it ends the program as
 //! [Part III A.2](../../../docs/specification/30-nikaia-tooling.md) says. The
 //! line between the two containers is the line between arithmetic and data.
+//!
+//! What the reads answer while a program runs is
+//! `tests/language/src/map_reads.nika`; this file keeps what is refused, what
+//! is lowered, and the `panic` that ends a program.
 
 mod common;
 
@@ -32,55 +36,9 @@ fn lowered(source: &str) -> String {
         .rust
 }
 
-/// Lower it, compile it, run it. A read that answers the wrong shape is a
-/// `rustc` error about a generated file, so reading the Rust is not enough.
-fn output(purpose: &str, source: &str) -> String {
-    assert!(findings(source).is_empty(), "{:#?}", findings(source));
-    let rust = lowered(source);
-    let dir = common::scratch_dir(purpose);
-    let file = dir.join("main.rs");
-    std::fs::write(&file, &rust).expect("write the Rust");
-    let binary = dir.join("program");
-    let out = common::compile(&file, &["-o", binary.to_str().expect("utf-8 path")]);
-    assert!(
-        out.status.success(),
-        "the lowering compiles:\n{}\n--- the Rust ---\n{rust}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    let ran = std::process::Command::new(&binary)
-        .output()
-        .expect("run the program");
-    let _ = std::fs::remove_dir_all(&dir);
-    assert!(
-        ran.status.success(),
-        "the program runs:\n{}",
-        String::from_utf8_lossy(&ran.stderr)
-    );
-    String::from_utf8_lossy(&ran.stdout).trim().to_string()
-}
-
 // ---------------------------------------------------------------------------
 // D1: the read
 // ---------------------------------------------------------------------------
-
-/// **An absent key is a value and not an abort** (D1), which is the whole of
-/// the record: before it, this program ended.
-#[test]
-fn an_absent_key_is_a_value() {
-    let printed = output(
-        "map-absent",
-        "use std::collections\n\
-         fn main() {\n\
-         \x20   let mut counts = collections::HashMap()\n\
-         \x20   counts[\"a\"] = 1\n\
-         \x20   let there = counts[\"a\"] ?? 0\n\
-         \x20   let absent = counts[\"b\"] ?? -1\n\
-         \x20   println(f\"{there}\")\n\
-         \x20   println(f\"{absent}\")\n\
-         }\n",
-    );
-    assert_eq!(printed, "1\n-1");
-}
 
 /// **And the read is a `T?` the checker knows about**, so reaching a member off
 /// one with a plain `.` is `NK1125` rather than a `rustc` error about the
@@ -124,25 +82,6 @@ fn a_view_of_a_map_read_is_still_nullable() {
     assert_eq!(found.len(), 1, "{found:#?}");
 }
 
-/// **A value that does not copy is reached as a view** (D4), which is what lets
-/// a map of structs be read without an allocation the program did not write
-/// ([ADR-283](../../../docs/specification/adr/adr-283.md) D3).
-#[test]
-fn a_value_that_does_not_copy_is_a_view() {
-    let printed = output(
-        "map-view",
-        "use std::collections\n\
-         struct Stats { min: i64, max: i64 }\n\
-         fn main() {\n\
-         \x20   let mut m = collections::HashMap()\n\
-         \x20   m[\"a\"] = Stats { min: 1, max: 9 }\n\
-         \x20   let s = m[\"a\"] ?? panic(f\"a was a key a moment ago\")\n\
-         \x20   println(f\"{s.min}/{s.max}\")\n\
-         }\n",
-    );
-    assert_eq!(printed, "1/9");
-}
-
 // ---------------------------------------------------------------------------
 // D2: writing
 // ---------------------------------------------------------------------------
@@ -183,42 +122,9 @@ fn a_compound_write_to_a_map_is_refused() {
     assert!(help.contains("?? 0"), "{help}");
 }
 
-/// **And the form the message hands over is a program that runs.**
-#[test]
-fn the_written_out_form_runs() {
-    let printed = output(
-        "map-counted",
-        "use std::collections\n\
-         fn main() {\n\
-         \x20   let mut counts = collections::HashMap()\n\
-         \x20   counts[\"a\"] = (counts[\"a\"] ?? 0) + 1\n\
-         \x20   counts[\"a\"] = (counts[\"a\"] ?? 0) + 1\n\
-         \x20   let n = counts[\"a\"] ?? 0\n\
-         \x20   println(f\"{n}\")\n\
-         }\n",
-    );
-    assert_eq!(printed, "2");
-}
-
 // ---------------------------------------------------------------------------
 // D3: a list keeps its abort
 // ---------------------------------------------------------------------------
-
-/// **A list is untouched** (D3): `xs[i]` is a `T`, needing no `??` at all.
-#[test]
-fn a_list_read_is_a_value() {
-    let printed = output(
-        "list-read",
-        "fn main() {\n\
-         \x20   let xs = [10, 20, 30]\n\
-         \x20   println(f\"{xs[1]}\")\n\
-         \x20   let mut ys = [1, 2]\n\
-         \x20   ys[0] = 5\n\
-         \x20   println(f\"{ys[0] + ys[1]}\")\n\
-         }\n",
-    );
-    assert_eq!(printed, "20\n7");
-}
 
 /// **And a compound assignment on a list is not `NK1162`'s**, because the read
 /// is a `T` and there is no absent case to say anything about.
@@ -328,51 +234,6 @@ fn a_read_of_a_map_whose_values_are_unknown_names_no_operator() {
     );
 }
 
-/// **A map keyed by numbers can be read** (0.0.235, issue #169).
-///
-/// Two ways it was not, both `rustc` about a file nobody wrote. A lookup
-/// method's key went below by value, where Rust's `get`, `contains_key`,
-/// `contains` and `remove` take it by reference - the checker now records the
-/// `&` for exactly those `std` entries, and a key of no known type goes
-/// through `index::AsKey`, which lends a number and passes a view through.
-/// And on a map whose key type nothing pinned, `m[1] = 2` and `m[k]` went
-/// through `index::at`, which is for a list position: the key is now handed
-/// over as it is on a write and read through `index::key` - neither side is a
-/// position on a map. A `String` key looked up is lent and not handed over,
-/// so it is still there to use after.
-#[test]
-fn a_map_keyed_by_numbers_is_read() {
-    let source = "use std::collections\n\
-                  \n\
-                  fn main() {\n\
-                  \x20   let mut m = collections::HashMap()\n\
-                  \x20   m[1] = 2\n\
-                  \x20   m.insert(5, 6)\n\
-                  \x20   let k = 1\n\
-                  \x20   println(f\"{m[k] ?? 0} {m[5] ?? 0} {m[9] ?? -1} {m.get(k) ?? 0} {m.contains_key(k)} {m.len()}\")\n\
-                  \x20   let mut t = collections::HashMap()\n\
-                  \x20   t[\"a\"] = 10\n\
-                  \x20   let name = \"a\"\n\
-                  \x20   println(f\"{t[name] ?? 0} {t.get(name) ?? 0} {t.contains_key(name)}\")\n\
-                  \x20   let mut owned: collections::HashMap[String, i64] = collections::HashMap()\n\
-                  \x20   let who: String = \"b\"\n\
-                  \x20   owned[who.clone()] = 3\n\
-                  \x20   println(f\"{owned[who] ?? 0} {owned.get(who) ?? 0} {owned.contains_key(who)}\")\n\
-                  \x20   let mut typed: collections::HashMap[i64, i64] = collections::HashMap()\n\
-                  \x20   typed[4] = 40\n\
-                  \x20   let four: i64 = 4\n\
-                  \x20   println(f\"{typed[four] ?? 0} {typed.get(four) ?? 0} {typed.contains_key(four)}\")\n\
-                  \x20   let mut seen = collections::HashSet()\n\
-                  \x20   seen.insert(7)\n\
-                  \x20   let seven = 7\n\
-                  \x20   println(f\"{seen.contains(seven)} {seen.remove(seven)} {seen.len()}\")\n\
-                  }\n";
-    assert_eq!(
-        output("number-keys", source),
-        "2 6 -1 2 true 2\n10 10 true\n3 3 true\n40 40 true\ntrue true 0"
-    );
-}
-
 // ---------------------------------------------------------------------------
 // ADR-293: a map of `T?` values
 // ---------------------------------------------------------------------------
@@ -417,37 +278,14 @@ fn main() {
 ";
     let rust = lowered(source);
     assert!(rust.contains("nikaia_std::index::flat("), "{rust}");
-    assert_eq!(
-        output("map-of-maybes", source),
-        "false true true\na b b b\ntrue false 3\nAnn - -\n3 0 0"
-    );
 }
 
 /// **A map's read kept where a `T?` of its own is wanted** (D4): a value that
 /// copies is copied out, from a map of `T` and from a map of `T?` alike; one
-/// that does not is refused with the copy to write, `?.clone()`, which then
-/// runs.
+/// that does not is refused with the copy to write, `?.clone()`. What the
+/// copies and the written-out clone hold is `map_reads.nika`'s.
 #[test]
 fn a_map_read_kept_is_copied_out_or_refused() {
-    let copied = "\
-use std::collections
-enum Kind { A, B }
-fn main() {
-    let mut plain: collections::BTreeMap[i64, Kind] = collections::BTreeMap()
-    plain[1] = Kind::A
-    let mut maybe: collections::BTreeMap[i64, Kind?] = collections::BTreeMap()
-    maybe[1] = Kind::B
-    maybe[2] = null
-    let a: Kind? = plain[1]
-    let b: Kind? = maybe[1]
-    let c: Kind? = maybe[2]
-    let mut kept: Vec[Kind?] = []
-    kept.push(maybe[1])
-    println(f\"{a == null} {b == null} {c == null} {kept.len()} {maybe.len()}\")
-}
-";
-    assert_eq!(output("map-read-copied", copied), "false false true 1 2");
-
     let refused = "\
 use std::collections
 struct User { name: String }
@@ -466,38 +304,6 @@ fn main() {
                 && f.help.as_deref().is_some_and(|h| h.contains("?.clone()"))),
         "{found:#?}"
     );
-    let written = refused.replace("users[1]\n", "users[1]?.clone()\n");
-    assert_eq!(output("map-read-cloned", &written), "false");
-}
-
-/// **A map's read bound by a `let` and handed to a `ref V?` parameter**
-/// (0.0.387): the lend in front of the read cancelled its `*`, and the binding
-/// was `index::Found` - which no `ref V?` takes - where the checker had a
-/// `ref V?`. A map's read keeps its `*`. Found moving `sharing`'s leaves into
-/// Nikaia (#125).
-#[test]
-fn a_map_read_bound_and_handed_on_is_the_option() {
-    let source = "\
-use std::collections
-struct Entry { size: i64 }
-fn size_of(entry: ref Entry?) -> i64 {
-    let found = entry ?? return -1
-    return found.size
-}
-fn lookup(m: ref collections::BTreeMap[String, Entry], key: ref String) -> i64 {
-    let exact = m[key]
-    if exact != null {
-        return size_of(exact)
-    }
-    return 0
-}
-fn main() {
-    let mut m: collections::BTreeMap[String, Entry] = collections::BTreeMap()
-    m[\"a\"] = Entry { size: 3 }
-    println(f\"{lookup(m, \"a\")} {lookup(m, \"b\")}\")
-}
-";
-    assert_eq!(output("map-read-bound", source), "3 0");
 }
 
 /// **A name of the map's value type after `??` is lent** (ADR-279 D7):
@@ -527,92 +333,6 @@ fn main() {
     let lowered = lowered(source);
     assert!(lowered.contains("|| &none"), "{lowered}");
     assert!(!lowered.contains("clone()"), "nothing is copied: {lowered}");
-    assert_eq!(output("map-fallback-lent", source), "a 2 2\nb 0 0");
-}
-
-/// **A name bound to a map read beside a jump is a view, and is handed on
-/// as one**: `let at = m[k] ?? continue` binds a `&String`, so the next map
-/// read, a `contains_key` and a call that only reads it take it as it is - a
-/// `&` in front was a `&&String` with no `Borrow` (#125).
-#[test]
-fn a_view_bound_beside_a_jump_is_handed_on_as_it_is() {
-    let source = "\
-use std::collections
-fn shout(text: ref String) -> String {
-    return f\"{text}!\"
-}
-fn main() {
-    let mut names: collections::BTreeMap[String, String] = collections::BTreeMap()
-    names[\"a\"] = \"alpha\"
-    names[\"b\"] = \"beta\"
-    let mut sizes: collections::BTreeMap[String, i64] = collections::BTreeMap()
-    sizes[\"alpha\"] = 5
-    let keys: Vec[String] = [\"a\", \"b\", \"c\"]
-    for key in keys {
-        let at = names[key] ?? continue
-        let size = sizes[at] ?? -1
-        println(f\"{shout(at)} {size} {sizes.contains_key(at)}\")
-    }
-}
-";
-    assert!(findings(source).is_empty(), "{:?}", findings(source));
-    assert_eq!(
-        output("view-beside-a-jump", source),
-        "alpha! 5 true\nbeta! -1 false"
-    );
-}
-
-/// **A parameter the function is lent is a key as it is**: `place: (i64,
-/// String)` that the body only reads is a `&(i64, String)` below, and a `&` in
-/// front of it was a key the map has no `Borrow` for (found moving
-/// `contracts::keep`'s plan into Nikaia, #125).
-#[test]
-fn a_lent_parameter_is_a_map_key_as_it_is() {
-    let source = "\
-use std::collections
-fn width(place: (i64, String), widths: ref collections::BTreeMap[(i64, String), i64]) -> i64 {
-    return widths[place] ?? 0
-}
-fn main() {
-    let a: String = \"a\"
-    let b: String = \"b\"
-    let one: i64 = 1
-    let two: i64 = 2
-    let mut widths: collections::BTreeMap[(i64, String), i64] = collections::BTreeMap()
-    widths.insert((one, a.clone()), 3)
-    println(f\"{width((one, a), widths)} {width((two, b), widths)}\")
-}
-";
-    assert!(findings(source).is_empty(), "{:?}", findings(source));
-    assert_eq!(output("lent-parameter-key", source), "3 0");
-}
-
-/// **A read past a jump, assigned to a name that owns its value** (#492,
-/// D15): `chosen = spans[name] ?? return -1` reads a view of what the map
-/// keeps. A value that copies is copied out; it reached `rustc` as
-/// *mismatched types*.
-#[test]
-fn a_read_past_a_jump_assigned_is_copied_out() {
-    let source = "\
-use std::collections
-struct Span {
-    lo: i64,
-    hi: i64,
-}
-fn pick(spans: ref collections::BTreeMap[String, Span], name: ref String) -> i64 {
-    let mut chosen = Span { lo: 0, hi: 0 }
-    if name.len() > 1 {
-        chosen = spans[name] ?? return -1
-    }
-    return chosen.hi - chosen.lo
-}
-fn main() {
-    let mut spans: collections::BTreeMap[String, Span] = collections::BTreeMap()
-    spans.insert(\"ab\", Span { lo: 2, hi: 7 })
-    println(f\"{pick(spans, \"ab\")} {pick(spans, \"cd\")} {pick(spans, \"x\")}\")
-}
-";
-    assert_eq!(output("assigned-past-a-jump", source), "5 -1 0");
 }
 
 /// …and one that does not copy is refused with the copy to write, as a `T?`

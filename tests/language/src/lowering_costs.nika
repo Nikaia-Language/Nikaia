@@ -1,0 +1,49 @@
+// What the solver's kernels found the lowering paying for (ADR-270 D8 step 1):
+// each cheaper shape has to mean what the program said, and these are the
+// programs, computed. The shapes themselves are
+// `crates/nikaia/tests/lowering_costs.rs`.
+
+fn lowering_costs_sum(xs: ref Vec[i64], mut out: Vec[i64]) -> i64 {
+    let mut total = 0
+    for x in xs {
+        total += x
+    }
+    out.push(total)
+    return total
+}
+
+// A list the body only reads is a slice; a list the body changes stays
+// `&mut Vec<T>`.
+test "a list the body only reads is a slice" {
+    let xs = [1, 2, 3]
+    let mut out: Vec[i64] = []
+    let total = lowering_costs_sum(xs, out)
+    let len = out.len()
+    assert(total == 6)
+    assert(len == 1)
+}
+
+// An empty list resized right away is one allocation: `vec![v; n]`, as a
+// person writes it, rather than an empty `Vec` grown afterwards.
+test "an empty list resized at once is allocated at its length" {
+    let n = 4
+    let mut xs: Vec[i64] = []
+    xs.resize(n, 7)
+    let len = xs.len()
+    let last = xs[3]
+    assert(len == 4)
+    assert(last == 7)
+}
+
+// A counter that starts at zero and only grows is never negative, so it
+// indexes and compares as it is: no sign test on every read.
+test "a counter that only grows indexes without a sign test" {
+    let xs = [5, 6, 7]
+    let mut i = 0
+    let mut sum = 0
+    while i < xs.len() {
+        sum += xs[i]
+        i += 1
+    }
+    assert(sum == 18)
+}

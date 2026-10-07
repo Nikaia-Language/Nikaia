@@ -18,6 +18,10 @@
 //! | `mapped` | one line of a mapped file is handed back | the caller's frame, the mapping included |
 //!
 //! Not one of them writes anything about lifetimes, buffers or keeps.
+//!
+//! The programs that need no files - a buffer moved, copied or assigned again -
+//! are run as behaviour tests in `tests/language/src/tether_keep.nika`; here
+//! only what their lowering writes is checked.
 
 mod common;
 
@@ -726,7 +730,6 @@ fn main() {
         !lowered(source, Build::default()).contains("put("),
         "nothing is kept: the buffer moves"
     );
-    runs("assigned-whole", source, "bc");
 }
 
 /// **A copy of a trimmed text holds nothing of it**, with no type written on
@@ -764,7 +767,6 @@ fn main() {
         !lowered(source, Build::default()).contains("put("),
         "nothing is kept: every copy is text of its own"
     );
-    runs("untyped-view-copied", source, "3 c");
 }
 
 /// **A kept buffer assigned again puts its new value into the keep too**
@@ -787,5 +789,4 @@ fn main() {
 ";
     let rust = lowered(source, Build::default());
     assert!(rust.contains("current = __keep_frame.put("), "{rust}");
-    runs("kept-reassigned", source, "old new");
 }

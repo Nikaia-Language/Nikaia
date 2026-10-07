@@ -1,0 +1,15 @@
+// A `let` takes one name, or a flat tuple of them (ADR-291): what the parts
+// hold. How it lowers and what is refused is `crates/nikaia/tests/tuple_let.rs`.
+
+fn tuple_let_pair() -> (i64, String) {
+    return (7, "seven".to_string())
+}
+
+// **The whole shape, run** - and the parts keep their types, which is what
+// says they were taken apart rather than left as `?`.
+test "a tuple of names binds the parts and runs" {
+    let (n, word) = tuple_let_pair()
+    let (a, b, c) = (1, 2, 3)
+    let line = f"{n} {word} {a} {b} {c}"
+    assert(line == "7 seven 1 2 3")
+}

@@ -11,6 +11,10 @@
 //! So what these tests hold is a `std` surface and a runtime promise — five
 //! names on either integer type, and a `sleep` that gives the thread up rather
 //! than holding it.
+//!
+//! What a span reads back as and what a wait lets run are
+//! `tests/language/src/duration.nika`; this file keeps what is refused, what is
+//! lowered, and the waits that are timed.
 
 mod common;
 
@@ -200,29 +204,6 @@ fn a_sleeping_program_compiles_and_runs() {
     );
 }
 
-/// **The thread is given up rather than held**, which is the whole difference
-/// between this and the language below's `thread::sleep`.
-///
-/// A task started before the wait has its value by the time the wait is over,
-/// on the **one** thread `user_parallelism = no` gives the program — so the
-/// only way the join below can answer is if the executor kept polling while
-/// `main` was asleep.
-#[test]
-fn a_sleep_lets_the_other_task_run() {
-    let (printed, _) = output(
-        "duration-yields",
-        "use std::time\n\
-         \n\
-         fn main() {\n\
-         \x20   let handle = spawn fn { 21 * 2 }\n\
-         \x20   time::sleep(80.millis())\n\
-         \x20   let answer = handle.join()\n\
-         \x20   println(f\"{answer}\")\n\
-         }\n",
-    );
-    assert_eq!(printed, "42");
-}
-
 /// **A count below zero is no time at all**, rather than an abort on a
 /// subtraction that came out the wrong way: a duration is unsigned below, and
 /// what a program asking to wait wants is to carry on.
@@ -266,23 +247,6 @@ fn nothing_here_is_a_keyword() {
     );
 }
 
-/// **D5: a span is read back by the unit it was made in**, in whole units and
-/// as an `i64` — `in_seconds` beside `seconds`, a program that runs.
-#[test]
-fn a_span_reads_back_as_a_count() {
-    let (printed, _) = output(
-        "duration-reads-back",
-        "use std::time\n\
-         \n\
-         fn main() {\n\
-         \x20   let timeout = 90.seconds()\n\
-         \x20   let whole: i64 = timeout.in_minutes()\n\
-         \x20   println(f\"{timeout.in_seconds()} {whole} {timeout.in_millis()}\")\n\
-         }\n",
-    );
-    assert_eq!(printed, "90 1 90000");
-}
-
 /// **The answer's type is the ledger's**: the entries are what the checker
 /// reads, so an `i64` put where a `String` goes is refused in this language's
 /// words rather than in `rustc`'s.
@@ -295,22 +259,4 @@ fn a_count_read_back_is_an_i64() {
          \x20   println(wrong)\n\
          }\n";
     assert!(!findings(source).is_empty(), "the ledger types the answer");
-}
-
-/// **D1: a span copies**, so it is still there after it was handed to
-/// `time::sleep`. The ledger's type entry says `copies = true`; without it the
-/// checker refused the next line with `NK2105`.
-#[test]
-fn a_span_handed_over_is_still_there() {
-    let (printed, _) = output(
-        "duration-copies",
-        "use std::time\n\
-         \n\
-         fn main() {\n\
-         \x20   let timeout = 90.millis()\n\
-         \x20   time::sleep(timeout)\n\
-         \x20   println(f\"{timeout.in_millis()}\")\n\
-         }\n",
-    );
-    assert_eq!(printed, "90");
 }

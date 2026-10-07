@@ -1,0 +1,80 @@
+// A view that outlives its buffer is tethered (ADR-283): what a program that
+// moves, copies or reassigns a viewed buffer computes. The programs that read
+// real files, and what the lowering writes, stay in
+// `crates/nikaia/tests/tether_keep.rs`.
+
+fn tether_keep_cut(written: ref String, front: i64) -> String {
+    let c: Vec[char] = written.chars().collect()
+    let mut out: String = ""
+    for k in front..<c.len() {
+        out.push(c[k])
+    }
+    return out
+}
+
+fn tether_keep_pick(rest: ref String) -> String {
+    let mut inner: String = ""
+    if rest.starts_with("a") {
+        let args = tether_keep_cut(rest, 1)
+        if args.len() > 1 {
+            inner = args
+        }
+    }
+    return inner
+}
+
+// A buffer assigned whole is moved, not viewed: `inner = args` takes the text
+// along, as a `return args` and a `let other = args` already did.
+test "a buffer assigned whole is moved" {
+    let a = tether_keep_pick("abc")
+    let b = tether_keep_pick("ax")
+    let c = tether_keep_pick("zzz")
+    assert(a == "bc")
+    assert(b == "")
+    assert(c == "")
+}
+
+fn tether_keep_pieces(text: ref String) -> Vec[String] {
+    let mut out: Vec[String] = []
+    let mut current: String = ""
+    for c in text.chars() {
+        if c == ',' {
+            out.push(current.trim().clone())
+            current = ""
+            continue
+        }
+        current.push(c)
+    }
+    let last = current.trim()
+    if !last.is_empty() {
+        out.push(last.clone())
+    }
+    return out
+}
+
+// A copy of a trimmed text holds nothing of it, with no type written on the
+// view (#293): `last.clone()` is text of its own.
+test "a copy of an untyped view keeps nothing" {
+    let p = tether_keep_pieces("a, b,c")
+    let n = p.len()
+    let third = p[2].clone()
+    assert(n == 3)
+    assert(third == "c")
+}
+
+fn tether_keep_first_then(text: ref String) -> String {
+    let mut views: Vec[ref String] = []
+    let mut current: String = "old"
+    views.push(current.trim())
+    current = text.clone()
+    views.push(current.trim())
+    return f"{views[0]} {views[1]}"
+}
+
+// A kept buffer assigned again puts its new value into the keep too (#293):
+// the view taken before still reads the old text, which the keep goes on
+// holding.
+test "a kept buffer assigned again is kept again" {
+    let both = tether_keep_first_then("new")
+    assert(both == "old new")
+}

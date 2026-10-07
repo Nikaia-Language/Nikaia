@@ -9,11 +9,11 @@
 //!
 //! **A declared `struct` or `enum` has none either**, under the same
 //! code: `a -= 30` on an `Account` reached `rustc` as E0368.
-
-mod common;
+//!
+//! That what keeps its operators still computes is in
+//! `tests/language/src/list_operators.nika`.
 
 use nikaia::contracts::{Ledger, LedgerOps, STD};
-use nikaia::emit::{Build, emit_program};
 use nikaia::parser::parse_to_ast;
 
 fn findings(source: &str) -> Vec<nikaia::check::Finding> {
@@ -21,33 +21,6 @@ fn findings(source: &str) -> Vec<nikaia::check::Finding> {
     let own = Ledger::infer(&parsed);
     let library = Ledger::parse(STD).expect("std's ledger");
     nikaia::check::check(&parsed, &own, &library).findings
-}
-
-fn ran(purpose: &str, source: &str) -> String {
-    let parsed = parse_to_ast(source).expect("the source parses");
-    let rust = emit_program(&parsed, Build::default())
-        .expect("it lowers")
-        .rust;
-    let dir = common::scratch_dir(purpose);
-    let file = dir.join("main.rs");
-    std::fs::write(&file, &rust).expect("write the Rust");
-    let binary = dir.join("program");
-    let built = common::compile(&file, &["-o", &binary.to_string_lossy()]);
-    assert!(
-        built.status.success(),
-        "{}\n--- emitted ---\n{rust}",
-        String::from_utf8_lossy(&built.stderr)
-    );
-    let out = std::process::Command::new(&binary)
-        .output()
-        .expect("run it");
-    assert!(
-        out.status.success(),
-        "{}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    std::fs::remove_dir_all(&dir).ok();
-    String::from_utf8_lossy(&out.stdout).to_string()
 }
 
 #[test]
@@ -91,30 +64,6 @@ fn arithmetic_on_a_map_is_refused_too() {
         "{found:#?}"
     );
     assert_eq!(found[0].help, None);
-}
-
-/// **Numbers and text keep their operators**, and the way the refusal names
-/// runs.
-///
-/// And **text read out of a list joins without being taken out of it**
-/// (0.0.234): `w[0] + w[2]` over a `Vec[String]` moved the element out, and
-/// `rustc` refused it; each side is now lent, and `w[0]` is still there to
-/// print afterwards. A list of views joins the same way.
-#[test]
-fn numbers_and_text_are_untouched_and_extend_joins_two_lists() {
-    let source = "fn main() {\n\
-                  \x20   let mut a = [1, 2]\n\
-                  \x20   a.extend([3])\n\
-                  \x20   let mut w: Vec[String] = [\"x\"]\n\
-                  \x20   w.extend([\"y\", \"z\"])\n\
-                  \x20   let n = a[0] + a[2] * 2\n\
-                  \x20   let t = w[0] + w[2]\n\
-                  \x20   let v = [\"p\", \"q\"]\n\
-                  \x20   let u = v[1] + v[0] + w[1]\n\
-                  \x20   println(f\"{a.len()} {w.len()} {n} {t} {u} {w[0]}\")\n\
-                  }\n";
-    assert!(findings(source).is_empty(), "{:#?}", findings(source));
-    assert_eq!(ran("list-extend", source), "3 3 7 xz qpy x\n");
 }
 
 /// **`xs += [3]` is `+` on a list too**: a compound assignment was
@@ -199,22 +148,4 @@ fn a_struct_with_two_numbers_and_an_enum_are_refused_without_a_guess() {
         found[1].notes[0].contains("an `enum` has no arithmetic"),
         "{found:#?}"
     );
-}
-
-/// **What has operators keeps them**: a struct's numeric field, and text
-/// joined with `+` and `+=`, are not refused, and the program runs.
-#[test]
-fn a_structs_fields_and_text_keep_their_operators() {
-    let source = "struct Account { balance: i32, owner: String }\n\
-                  \n\
-                  fn main() {\n\
-                  \x20   let mut a = Account { balance: 1, owner: \"ada\" }\n\
-                  \x20   a.balance -= 30\n\
-                  \x20   let b = a.balance * 2\n\
-                  \x20   let mut t = a.owner + \"!\"\n\
-                  \x20   t += \"?\"\n\
-                  \x20   println(f\"{a.balance} {b} {t}\")\n\
-                  }\n";
-    assert!(findings(source).is_empty(), "{:#?}", findings(source));
-    assert_eq!(ran("struct-fields", source), "-29 -58 ada!?\n");
 }

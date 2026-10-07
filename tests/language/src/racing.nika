@@ -1,0 +1,62 @@
+// `select { … }` keeps the first arm to finish (ADR-292). What it lowers to,
+// its refusals, and what depends on how long a task sleeps stay in
+// `crates/nikaia/tests/racing.rs`.
+
+use std::time
+
+fn racing_quick() -> i64 { return 42 }
+
+// The first to finish wins, and it runs the arm that named it. The other arm
+// sleeps, so which one that is, is not a race the test has to win.
+test "the first to finish is the one that is kept" {
+    let got = select {
+        answer = racing_quick() => { answer }
+        _ = time::sleep(5.seconds()) => { -1 }
+    }
+    assert(got == 42)
+}
+
+enum RacingTimeout { TooSlow }
+
+impl Error for RacingTimeout {
+    fn message(ref self) -> String {
+        match self {
+            RacingTimeout::TooSlow => { return "too slow" }
+        }
+    }
+}
+
+fn racing_heavy_math() -> i64 { return 6 * 7 }
+
+// Part II 12.4's own example, as a program that runs (§5 step 4) - with a
+// timeout short enough that a test does not wait five seconds for it.
+//
+// The error a branch throws is an enum variant, because an error type is an
+// `enum` (ADR-023 D1).
+test "the pages own example runs" {
+    let got = select {
+        result = racing_heavy_math() => { result }
+        _ = time::sleep(5.millis()) => { throw RacingTimeout::TooSlow }
+    }
+    assert(got == 42)
+}
+
+fn racing_risky() -> i64 throws { return 3 }
+
+// An arm that can fail propagates from the arm that won, and not from the
+// `match`: only the winner has a value.
+test "a failing arm propagates from its own body" {
+    let got = select {
+        n = racing_risky() => { n }
+        _ = time::sleep(5.seconds()) => { -1 }
+    }
+    assert(got == 3)
+}
+
+// D3: a handle has `cancel()`, and it takes the handle.
+test "a handle can be cancelled" {
+    let handle = spawn fn { 1 + 1 }
+    handle.cancel()
+    let stopped = true
+    assert(stopped)
+}

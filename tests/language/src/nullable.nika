@@ -1,0 +1,734 @@
+// Part I 2.3's nullable types and Part I 3.5's `?.` and `??` over one: what a
+// program that reaches through, falls back from and hands on a `T?` computes.
+// Where the wraps land in the lowering, and what is refused, stays in
+// `crates/nikaia/tests/nullable.rs`.
+
+use std::collections
+
+// Hands back the text it was lent: a reading position, as `println`'s is.
+fn nullable_said(text: ref String) -> String {
+    return text.clone()
+}
+
+struct NullableGreeter { name: String }
+
+impl NullableGreeter {
+    fn greet(ref self, greeting: ref String) -> String {
+        return f"{greeting}, {self.name}"
+    }
+}
+
+fn nullable_find_greeter(id: i64) -> NullableGreeter? {
+    if id > 0 {
+        return NullableGreeter { name: "Ada" }
+    }
+    return null
+}
+
+// `?.` reaches a method, because Part I 3.5 says it reaches a *member* and a
+// method is one (ADR-278): the arguments reach it, the receiver is reached
+// exactly once, and short-circuiting still answers `null`.
+test "a safe reach calls a method and short circuits" {
+    let here = nullable_find_greeter(1)?.greet("Hallo") ?? "nobody"
+    let gone = nullable_find_greeter(0)?.greet("Hallo") ?? "nobody"
+    assert(here == "Hallo, Ada")
+    assert(gone == "nobody")
+}
+
+struct NullableNicked { name: String }
+
+fn nullable_long_enough(name: String) -> String? {
+    if name.len() > 3 {
+        return name
+    }
+    return null
+}
+
+impl NullableNicked {
+    fn nickname(ref self) -> String? {
+        return nullable_long_enough(self.name.clone())
+    }
+}
+
+fn nullable_find_nicked(name: ref String) -> NullableNicked? {
+    return NullableNicked { name: name.clone() }
+}
+
+// A method whose own result is a `T?` flattens, exactly as a field of that
+// shape does (ADR-278 D9): without it `a?.b()?.c` would reach through a
+// nullable of a nullable.
+test "a reached method that answers a nullable does not nest" {
+    let long = nullable_find_nicked("Alexandra")?.nickname() ?? "none"
+    let short = nullable_find_nicked("Ada")?.nickname() ?? "none"
+    assert(long == "Alexandra")
+    assert(short == "none")
+}
+
+fn nullable_a() -> String? { return null }
+fn nullable_b() -> String? { return null }
+fn nullable_c() -> String? { return "third" }
+
+// `??` chains, right-associative: `a ?? (b ?? c)`, which is what the types ask
+// for (ADR-278).
+test "a chain of fallbacks takes the first one that has a value" {
+    let none = nullable_a() ?? nullable_b() ?? "last"
+    let third = nullable_a() ?? nullable_b() ?? nullable_c() ?? "last"
+    assert(none == "last")
+    assert(third == "third")
+}
+
+struct NullableHi { name: String }
+
+impl NullableHi {
+    fn greet(ref self) -> String { return f"hi, {self.name}" }
+}
+
+fn nullable_find_hi(id: i64) -> NullableHi? {
+    if id > 0 {
+        return NullableHi { name: "Ada" }
+    }
+    return null
+}
+
+// The two operators of 3.5, in one expression: a reach that answers `null`
+// falls through to the next one, and the chain ends in the plain value.
+test "a reach that answers null falls through to the next fallback" {
+    let found = nullable_find_hi(0)?.greet() ?? nullable_find_hi(1)?.greet() ?? "nobody"
+    let neither = nullable_find_hi(0)?.greet() ?? nullable_find_hi(0)?.greet() ?? "nobody"
+    assert(found == "hi, Ada")
+    assert(neither == "nobody")
+}
+
+struct NullableInner { c: i64 }
+struct NullableOuter { b: NullableInner }
+
+fn nullable_find_outer(id: i64) -> NullableOuter? {
+    if id > 0 { return NullableOuter { b: NullableInner { c: 7 } } }
+    return null
+}
+
+// The guarded chain runs, and short-circuits: `find(0)` answers `null` and the
+// rest of the chain is never reached. The third takes the value with `??`
+// first and then reaches into it plainly.
+test "a guarded chain reaches through and short circuits" {
+    let there = nullable_find_outer(1)?.b?.c ?? 0
+    let gone = nullable_find_outer(0)?.b?.c ?? 0
+    let taken = (nullable_find_outer(1) ?? NullableOuter { b: NullableInner { c: 1 } }).b.c
+    assert(there == 7)
+    assert(gone == 0)
+    assert(taken == 7)
+}
+
+struct NullableU { name: String }
+
+impl NullableU {
+    fn copy(ref self) -> String? { return self.name.clone() }
+    fn rest(ref self) -> ref String? { return self.name.strip_prefix("A") }
+}
+
+// A value this checker cannot type gets `.into()` and not `Some(…)` (ADR-278):
+// one value is a plain `String`, the other already an `Option<&str>`, and one
+// rule is the wrap for the first and the identity for the second.
+test "a value of unknown type is converted rather than left alone" {
+    let u = NullableU { name: "Ada" }
+    let v = NullableU { name: "zzz" }
+    let first = f"{u.copy() ?? "none"}"
+    let second = f"{u.rest() ?? "no prefix"}"
+    let third = f"{v.rest() ?? "no prefix"}"
+    assert(first == "Ada")
+    assert(second == "da")
+    assert(third == "no prefix")
+}
+
+struct NullableP {
+    x: i64?,
+}
+
+fn nullable_pick(a: i64?) -> i64 {
+    return a ?? 7
+}
+
+fn nullable_hold(p: NullableP) -> i64 {
+    return p.x ?? 9
+}
+
+// One statement, two wraps: the wraps are in the right places, so the program
+// means what it says. 1 + 7, and 2 + 9.
+test "a statement with two wraps runs" {
+    let r = nullable_pick(1) + nullable_pick(null)
+    let s = nullable_hold(NullableP { x: 2 }) + nullable_hold(NullableP { x: null })
+    assert(r == 8)
+    assert(s == 11)
+}
+
+struct NullableIdUser { name: String, id: i64 }
+
+// `user?.id` leaves `user` where it was (ADR-278 D16), so a second reach reads
+// the same value.
+test "a reached field that copies leaves the receiver where it was" {
+    let user: NullableIdUser? = NullableIdUser { name: "Ada", id: 7 }
+    let first = user?.id ?? 0
+    let again = user?.id ?? 0
+    assert(first == 7)
+    assert(again == 7)
+}
+
+struct NullableWordUser { name: String }
+
+impl NullableWordUser {
+    fn greet(ref self, word: ref String) -> String {
+        return f"{word}, {self.name}"
+    }
+}
+
+// And for a method: what comes out of a reached method is the call's result
+// rather than a view of the receiver.
+test "a reached method leaves the receiver where it was" {
+    let u: NullableWordUser? = NullableWordUser { name: "Ada" }
+    let first = u?.greet("Hallo") ?? "nobody"
+    let again = u?.greet("Servus") ?? "nobody"
+    assert(first == "Hallo, Ada")
+    assert(again == "Servus, Ada")
+}
+
+struct NullableTagged { name: String, tags: Vec[i64] }
+
+// A member that does not copy is a view of the receiver (ADR-278 D17, D19),
+// with the receiver read on both sides of the view.
+test "a reached field that moves over a place is a view" {
+    let user: NullableTagged? = NullableTagged { name: "Ada", tags: [1, 2, 3] }
+    let name = user?.name ?? "nobody"
+    let many = user?.tags?.len() ?? 0
+    let line = f"{name} {many}"
+    assert(line == "Ada 3")
+}
+
+struct NullableHeld {
+    name: String,
+    tags: Vec[String],
+}
+
+impl NullableHeld {
+    fn first(ref self) -> ref String {
+        return self.tags[0]
+    }
+    fn label(ref self) -> ref String {
+        return self.name
+    }
+}
+
+fn nullable_find_held(id: i64) -> NullableHeld? {
+    if id == 1 {
+        return NullableHeld { name: f"ada", tags: [f"a", f"b"] }
+    }
+    return null
+}
+
+// A `?.` view out of a temporary is held for the rest of the block (ADR-278
+// D21): `find(1)` is bound on the line before, and the view the reach hands
+// back points into that binding.
+test "a view out of a temporary is held for the rest of the block" {
+    let a = nullable_find_held(1)?.label() ?? "none"
+    let b = nullable_find_held(2)?.first() ?? "none"
+    let c = nullable_find_held(1)?.first()
+    let line = f"{a} {b} {c ?? "-"}"
+    assert(line == "ada none a")
+}
+
+struct NullableC { name: String?, n: i64 }
+enum NullableR { Value(NullableC), Nothing }
+
+fn nullable_make(n: i64) -> NullableR {
+    return if n > 0 { NullableR::Value(NullableC { name: "a", n: n }) } else { NullableR::Nothing }
+}
+
+fn nullable_both(n: i64) -> NullableR {
+    let a = match nullable_make(n) {
+        NullableR::Value(c) => c,
+        other => return other,
+    }
+    let b = match nullable_make(n + 1) {
+        NullableR::Value(c) => c,
+        other => return other,
+    }
+    let pinned: String? = if a.name == null { b.name?.clone() } else { a.name?.clone() }
+    return NullableR::Value(NullableC { name: pinned, n: a.n + b.n })
+}
+
+// What a `match` over a call binds has the variant's type (issue #171): `a`
+// is typed, so `a.name?.clone()` reads the field in place.
+test "a part of a matched call is typed and read in place" {
+    let n = match nullable_both(1) {
+        NullableR::Value(c) => c.n,
+        NullableR::Nothing => -1,
+    }
+    assert(n == 3)
+}
+
+fn nullable_either(a: ref String?, b: ref String?) -> String? {
+    return b?.clone() if a == null
+    return a?.clone()
+}
+
+struct NullableHolder { name: String? }
+
+// A nullable view is lent inside its option, and a copy of it is text of its
+// own (issue #171): a `ref String?` parameter is an `Option<&str>`.
+test "a nullable view is handed and copied" {
+    let x: String? = "x"
+    let y: String? = null
+    let h = NullableHolder { name: "h" }
+    let got = nullable_either(y, x) ?? "-"
+    let from = nullable_either(h.name, null) ?? "-"
+    let none = nullable_either(null, null) ?? "-"
+    let kept = x ?? "?"
+    assert(got == "x")
+    assert(from == "h")
+    assert(none == "-")
+    assert(kept == "x")
+}
+
+enum NullableW { A, B }
+
+fn nullable_f(b: bool) -> i64? {
+    return if b { 1 } else { null }
+}
+
+fn nullable_g(n: i64) -> NullableW? {
+    return match n {
+        0 => if n == 0 { NullableW::B } else { null },
+        else => null,
+    }
+}
+
+// A plain arm beside a `null` is `Some`: the conversion belongs to the arm,
+// and the arm is a plain value.
+test "a plain arm beside a null is the value" {
+    let x = nullable_f(true) ?? 0
+    let y = nullable_f(false) ?? 7
+    let w = nullable_g(0) ?? NullableW::A
+    let z = match w {
+        NullableW::B => 2,
+        else => 3,
+    }
+    assert(x == 1)
+    assert(y == 7)
+    assert(z == 2)
+}
+
+fn nullable_g_if(n: i64) -> NullableW? {
+    return if n == 0 { NullableW::B } else { null }
+}
+
+// `NK1205`'s way out, `??` first, compiles and matches the variant (issue
+// #180); the refusal itself is in `nullable.rs`.
+test "a variant matched after a fallback" {
+    let w = nullable_g_if(0) ?? NullableW::A
+    let z = match w {
+        NullableW::B => 2,
+        else => 3,
+    }
+    assert(z == 2)
+}
+
+pub struct NullableRow {
+    pub id: i64,
+}
+
+pub enum NullableShape {
+    Named { name: String?, count: i64 },
+    Held { row: NullableRow? },
+    Nothing,
+}
+
+fn nullable_shown_name(name: ref String?) -> String {
+    return name ?? "none"
+}
+
+fn nullable_id_of(row: ref NullableRow?) -> i64 {
+    if row == null {
+        return 0
+    }
+    return row?.id ?? 0
+}
+
+fn nullable_describe(s: ref NullableShape) -> String {
+    return match s {
+        NullableShape::Named { name, count } => f"{nullable_shown_name(name)} {count}",
+        NullableShape::Held { row } => f"row {nullable_id_of(row)}",
+        NullableShape::Nothing => "nothing",
+    }
+}
+
+// A nullable part of a lent value, handed to a `ref T?`: `name` in
+// `Shape::Named { name, .. }` over a `ref Shape` is a view of an `Option`
+// below, and the parameter is an option of a view.
+test "a nullable part of a lent value is opened for a nullable view" {
+    let a = nullable_describe(NullableShape::Named { name: "a", count: 2 })
+    let b = nullable_describe(NullableShape::Named { name: null, count: 3 })
+    let c = nullable_describe(NullableShape::Held { row: NullableRow { id: 7 } })
+    let d = nullable_describe(NullableShape::Held { row: null })
+    let e = nullable_describe(NullableShape::Nothing)
+    assert(a == "a 2")
+    assert(b == "none 3")
+    assert(c == "row 7")
+    assert(d == "row 0")
+    assert(e == "nothing")
+}
+
+pub enum NullableSquare {
+    Square,
+    Nothing,
+}
+
+fn nullable_find_text(n: i64) -> String? {
+    if n > 0 {
+        return "some"
+    }
+    return null
+}
+
+fn nullable_row(n: i64) -> NullableRow? {
+    if n > 0 {
+        return NullableRow { id: n }
+    }
+    return null
+}
+
+fn nullable_square(n: i64) -> NullableSquare? {
+    if n > 0 {
+        return NullableSquare::Square
+    }
+    return null
+}
+
+fn nullable_bracketed(text: ref String) -> String {
+    return f"<{text}>"
+}
+
+fn nullable_row_id(r: ref NullableRow) -> i64 {
+    return r.id
+}
+
+fn nullable_square_named(s: ref NullableSquare) -> String {
+    return match s {
+        NullableSquare::Square => "square",
+        NullableSquare::Nothing => "nothing",
+    }
+}
+
+fn nullable_kept(n: i64) -> String {
+    let user = nullable_find_text(n)
+    return user ?? "x"
+}
+
+// `??` lends its left side where the answer is only read, and takes it where
+// the answer is kept (ADR-279 D5): each read shape leaves the name usable
+// after the line; a `return` and a `let` take it, as `let b = a` does.
+test "a coalesce lends where it is read and takes where it is kept" {
+    let user = nullable_find_text(1)
+    let l1 = nullable_said(user ?? "guest")
+    let l2 = nullable_bracketed(user ?? "guest")
+    let other: String = "other"
+    let nobody = nullable_find_text(0)
+    let l3 = nullable_bracketed(nobody ?? other)
+    let l4 = nullable_said(other)
+    let r = nullable_row(3)
+    let spare = NullableRow { id: 0 }
+    let l5 = f"{nullable_row_id(r ?? spare)}"
+    let s = nullable_square(0)
+    let l6 = nullable_square_named(s ?? NullableSquare::Nothing)
+    let mut still = false
+    if user != null && r != null && s == null {
+        still = true
+    }
+    let l7 = nullable_kept(1)
+    let name = user ?? "guest"
+    let l8 = nullable_said(name)
+    assert(l1 == "some")
+    assert(l2 == "<some>")
+    assert(l3 == "<other>")
+    assert(l4 == "other")
+    assert(l5 == "3")
+    assert(l6 == "nothing")
+    assert(still)
+    assert(l7 == "some")
+    assert(l8 == "some")
+}
+
+pub struct NullableTouch {
+    pub kind: String,
+    pub parameter: String?,
+}
+
+impl NullableTouch {
+    fn read(ref self) -> String {
+        return nullable_bracketed(self.parameter ?? "none")
+    }
+}
+
+// A field on the left of `??` is a place, as a name is (ADR-279 D5): over a
+// `ref self`, `self.parameter ?? "none"` handed to a reading position lends
+// the field.
+test "a field on the left of a coalesce is a place" {
+    let t = NullableTouch { kind: "file", parameter: "path" }
+    let u = NullableTouch { kind: "lock", parameter: null }
+    let a = t.read()
+    let b = u.read()
+    assert(a == "<path>")
+    assert(b == "<none>")
+}
+
+struct NullableTag {
+    word: String,
+}
+
+impl NullableTag {
+    fn shown(ref self) -> String {
+        return f"<{self.word}>"
+    }
+}
+
+fn nullable_find_found(n: i64) -> String? {
+    if n > 0 {
+        return "found"
+    }
+    return null
+}
+
+fn nullable_tag(n: i64) -> NullableTag? {
+    if n > 0 {
+        return NullableTag { word: "b" }
+    }
+    return null
+}
+
+// The other positions that only read a `??` (issue #98): an `f"…"` hole, a
+// comparison of text and the receiver of a method that only reads it. Each
+// lends the left side, so the name is used again after the line.
+test "a coalesce lends in a hole a comparison and a receiver" {
+    let name = nullable_find_found(1)
+    let none = nullable_find_found(0)
+    let fallback = NullableTag { word: "none" }
+    let t = nullable_tag(1)
+    let guest = "guest"
+    let l1 = f"hole: {name ?? guest} {none ?? guest}"
+    let mut compared = false
+    if (name ?? "guest") == "found" {
+        compared = true
+    }
+    let length = (name ?? "guest").len()
+    let shown = (t ?? fallback).shown()
+    let l2 = f"{length} {shown}"
+    let l3 = f"{name ?? guest} {none ?? guest}"
+    let mut kept = false
+    if t != null {
+        kept = true
+    }
+    assert(l1 == "hole: found guest")
+    assert(compared)
+    assert(l2 == "5 <b>")
+    assert(l3 == "found guest")
+    assert(kept)
+}
+
+fn nullable_pick_words(n: i64) -> Vec[String]? {
+    if n > 0 { return ["xy", "z"] }
+    return null
+}
+
+// `NK1206`'s ways out: a `for` over `pick(1) ?? []` and over a copy of a map
+// read both count the letters, not the list.
+test "a loop over a fallback or a copy counts the letters" {
+    let mut m: collections::BTreeMap[String, Vec[String]] = collections::BTreeMap()
+    m.insert("a", ["xyz"])
+    let mut total = 0
+    for word in nullable_pick_words(1) ?? [] {
+        total += word.len()
+    }
+    let mut copied = 0
+    for word in m["a"]?.clone() ?? [] {
+        copied += word.len()
+    }
+    assert(total == 3)
+    assert(copied == 3)
+}
+
+fn nullable_count_calls(key: ref String, calls: ref collections::BTreeMap[String, Vec[String]]) -> i64 {
+    let found = calls.get(key)
+    let mut n = 0
+    for call in found?.clone() ?? [] {
+        n += call.len()
+    }
+    return n
+}
+
+fn nullable_resolve(call: ref String, imports: ref collections::BTreeMap[String, String]) -> String {
+    let full = imports.get(call) ?? call
+    return full.clone()
+}
+
+// A name bound to a map read is the map read (#297): the copy `NK1185` asks
+// for runs, and a map's text beside a view of text is a view whichever side
+// answers.
+test "a name bound to a map read is read as one" {
+    let mut m: collections::BTreeMap[String, Vec[String]] = collections::BTreeMap()
+    m.insert("a", ["xy", "z"])
+    let mut i: collections::BTreeMap[String, String] = collections::BTreeMap()
+    i.insert("spawn", "tokio::spawn")
+    let n = nullable_count_calls("a", m)
+    let line = f"{n} {nullable_resolve("spawn", i)} {nullable_resolve("x", i)}"
+    assert(line == "3 tokio::spawn x")
+}
+
+enum NullableKind { A, B }
+struct NullableGrid { cells: Array[f64, 8] }
+
+fn nullable_kind_named(k: ref NullableKind) -> String {
+    return match k {
+        NullableKind::A => "a",
+        NullableKind::B => "b",
+    }
+}
+
+fn nullable_grid_total(g: ref NullableGrid) -> f64 {
+    let mut sum = 0.0
+    for c in g.cells {
+        sum += c
+    }
+    return sum
+}
+
+fn nullable_kind_of(n: i64) -> NullableKind? {
+    if n > 0 {
+        return NullableKind::A
+    }
+    return null
+}
+
+fn nullable_grid_of(n: i64) -> NullableGrid? {
+    if n > 0 {
+        return NullableGrid { cells: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0] }
+    }
+    return null
+}
+
+// A value that is a word by its kind is copied, a type made of parts is lent
+// (ADR-279 D8), where `??`'s answer is only read.
+test "a word by its kind is copied and a struct is lent" {
+    let kind = nullable_kind_of(0)
+    let found = nullable_grid_of(1)
+    let spare = NullableGrid { cells: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0] }
+    let l1 = nullable_kind_named(kind ?? NullableKind::B)
+    let l2 = f"{nullable_grid_total(found ?? spare)}"
+    let l3 = f"{kind == null} {found == null}"
+    assert(l1 == "b")
+    assert(l2 == "8")
+    assert(l3 == "true false")
+}
+
+struct NullableSig { names: Vec[String] }
+struct NullableContract { signature: NullableSig?, label: String? }
+
+fn nullable_signature_count(c: ref NullableContract) -> i64 {
+    let signature = c.signature ?? return -1
+    return signature.names.len()
+}
+
+fn nullable_labels(cs: ref Vec[NullableContract]) -> i64 {
+    let mut total = 0
+    for c in cs {
+        let label = c.label ?? continue
+        total += label.len()
+    }
+    return total
+}
+
+// A loan on the left of `??` and a jump on the right is a view (ADR-279 D10):
+// `let s = c.signature ?? return -1` over a lent `c` binds a view of the field.
+test "a loan beside a jump binds a view" {
+    let a = NullableContract { signature: NullableSig { names: ["x", "y"] }, label: "ab" }
+    let b = NullableContract { signature: null, label: null }
+    let line = f"{nullable_signature_count(a)} {nullable_signature_count(b)} {nullable_labels([a, b])}"
+    assert(line == "2 -1 2")
+}
+
+struct NullablePerson { name: String }
+
+fn nullable_pick_name(user: ref NullablePerson?, who: ref String) -> i64 {
+    let name = user?.name ?? who.to_string()
+    return name.len()
+}
+
+// `.to_string()` of text is the text itself, so it is no copy beside `??`
+// (ADR-282 D8, Part I 2.3): the literal and the view both join the view on
+// the left, and both run.
+test "the text form of text beside a view is the text itself" {
+    let user: NullablePerson? = NullablePerson { name: "Ada" }
+    let none: NullablePerson? = null
+    let name = user?.name ?? "nobody".to_string()
+    let other = none?.name ?? "nobody".to_string()
+    let who: String = "someone"
+    let line = f"{name} {other} {nullable_pick_name(none, who)}"
+    assert(line == "Ada nobody 7")
+}
+
+enum NullableLabelKind { A(String?), B }
+struct NullableLabelled { label: String }
+
+fn nullable_name_of(k: ref NullableLabelKind?) -> String {
+    let known = k ?? return "none"
+    return match known {
+        NullableLabelKind::A(_) => "a",
+        NullableLabelKind::B => "b",
+    }
+}
+
+fn nullable_label_of(b: ref NullableLabelled?) -> String {
+    let known = b ?? return "-"
+    return known.label.clone()
+}
+
+fn nullable_text_of(t: ref String?) -> String {
+    let known = t ?? return "-"
+    return known.clone()
+}
+
+// A plain value lent to a `ref T?` is put in the option (Part I 2.3), and only
+// a value that is a `T?` already is opened with `.as_ref()` (#125).
+test "a plain value lent to a nullable view is put in the option" {
+    let found: NullableLabelKind? = null
+    let boxed = NullableLabelled { label: "x" }
+    let owned: String = "own"
+    let l1 = f"{nullable_name_of(NullableLabelKind::A(null))} {nullable_name_of(found)} {nullable_name_of(NullableLabelKind::B)} {nullable_label_of(boxed)} {nullable_text_of(owned)}"
+    let l2 = f"{nullable_label_of(boxed)} {nullable_text_of(owned)}"
+    assert(l1 == "a none b x own")
+    assert(l2 == "x own")
+}
+
+enum NullableArgShape {
+    Named(String, Vec[String]),
+    Other,
+}
+
+fn nullable_first_arg(shape: ref NullableArgShape) -> String? {
+    return match shape {
+        NullableArgShape::Named(name, args) => if name == "Vec" { if args.len() > 0 { args[0].clone() } else { "?" } } else { null },
+        else => null,
+    }
+}
+
+// A nested choice beside a `null` is `Some(…)` where its values are made
+// (#410): the wrap reaches the inner `if`'s branches.
+test "a nested choice beside a null wraps its inner branches" {
+    let args: Vec[String] = ["i64"]
+    let none: Vec[String] = []
+    let a = nullable_said(nullable_first_arg(NullableArgShape::Named("Vec", args)) ?? "none")
+    let b = nullable_said(nullable_first_arg(NullableArgShape::Named("Vec", none)) ?? "none")
+    let c = nullable_said(nullable_first_arg(NullableArgShape::Named("Map", [])) ?? "none")
+    let d = nullable_said(nullable_first_arg(NullableArgShape::Other) ?? "none")
+    assert(a == "i64")
+    assert(b == "?")
+    assert(c == "none")
+    assert(d == "none")
+}

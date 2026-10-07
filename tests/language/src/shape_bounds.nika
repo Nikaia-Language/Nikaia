@@ -1,0 +1,26 @@
+// The two bounds that ask what a type is (Part II 10.3, ADR-304 D2, D3): a
+// program with them runs. The refusals and what reaches the language below
+// stay in `crates/nikaia/tests/shape_bounds.rs`.
+
+struct ShapeBoundsPoint { x: i64, y: i64 }
+enum ShapeBoundsOp { Add, Sub }
+
+fn shape_bounds_describe[T: Struct](_value: T) -> ref String {
+    return "a struct"
+}
+
+fn shape_bounds_name_it[T: Enum](_value: T) -> ref String {
+    return "an enum"
+}
+
+// The bound is legal and the program runs, which is the whole of D2 for this
+// package: `NK1135` used to refuse `Struct` as a trait nothing declares, which
+// was true and not the answer.
+test "a shape bound is a bound and the program runs" {
+    let s = shape_bounds_describe(ShapeBoundsPoint { x: 1, y: 2 })
+    let e = shape_bounds_name_it(ShapeBoundsOp::Add)
+    let other = shape_bounds_name_it(ShapeBoundsOp::Sub)
+    assert(s == "a struct")
+    assert(e == "an enum")
+    assert(other == "an enum")
+}

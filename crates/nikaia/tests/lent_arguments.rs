@@ -19,10 +19,11 @@
 //! that is already a view, a method's argument, a callee no ledger describes.
 //! A version of this rule that lent everywhere would compile this file's first
 //! test and break the language.
-
-mod common;
-
-use std::process::Command;
+//!
+//! **What the programs compute** with their arguments lent is
+//! `tests/language/src/lent_arguments.nika`, run by `nikaia test`: that the
+//! declaration and the call agree is shown by the language below accepting
+//! both at once. Here stay where the `&` is written and what is refused.
 
 use nikaia::contracts::LedgerOps;
 use nikaia::emit::{Build, emit_program};
@@ -34,40 +35,6 @@ fn lowered(source: &str) -> String {
     emit_program(&parsed, Build::default())
         .expect("the source lowers")
         .rust
-}
-
-/// Compile the lowering and run it. The declaration and the call are written by
-/// two different passes off one column, and the only proof that they agree is
-/// the language below accepting both at once.
-fn ran(purpose: &str, source: &str) -> String {
-    let rust = lowered(source);
-    let dir = common::scratch_dir(&format!("lent-args-{purpose}"));
-    let path = dir.join("program.rs");
-    std::fs::write(&path, &rust).expect("write the Rust");
-    let binary = dir.join("program");
-    let compiled = common::compile(
-        &path,
-        &[
-            "--crate-type",
-            "bin",
-            "-o",
-            binary.to_str().expect("utf-8 path"),
-        ],
-    );
-    assert!(
-        compiled.status.success(),
-        "{purpose} did not compile:\n{}\n--- emitted ---\n{rust}",
-        String::from_utf8_lossy(&compiled.stderr)
-    );
-    let out = Command::new(&binary).output().expect("run it");
-    assert!(
-        out.status.success(),
-        "{purpose} failed:\n{}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    let printed = String::from_utf8_lossy(&out.stdout).to_string();
-    std::fs::remove_dir_all(&dir).ok();
-    printed
 }
 
 /// Every finding the checker has about a source.
@@ -83,23 +50,6 @@ fn findings(source: &str) -> Vec<nikaia::check::Finding> {
 /// Whether the source is refused with `NK1137`.
 fn refused(source: &str) -> bool {
     findings(source).iter().any(|f| f.code == "NK1137")
-}
-
-/// **The line the record was written for.** `width(text)` reads `text` and
-/// hands it back, and the caller still has it on the next line — no `&`
-/// anywhere in the source, and the value never moved.
-#[test]
-fn a_parameter_that_is_only_read_is_lent_at_the_call() {
-    let printed = ran(
-        "reads",
-        "fn width(text: String) -> i64 { return text.len() as i64 }\n\
-         \n\
-         fn main() {\n\
-         \x20   let text = \"hello\"\n\
-         \x20   println(f\"{width(text)} {text}\")\n\
-         }\n",
-    );
-    assert_eq!(printed.trim(), "5 hello");
 }
 
 /// **Both halves off one column.** The declaration gains its `&` and so does
@@ -167,50 +117,6 @@ fn a_copy_type_is_not_lent() {
     );
     assert!(rust.contains("fn twice(n: i64)"), "{rust}");
     assert!(!rust.contains("&i64"), "{rust}");
-}
-
-/// **A `String` reaching a `&str` is still the one rewrite Part I 6.5 makes.**
-///
-/// The parameter is a view in the declaration already, so what has to fit is
-/// the argument *with* the reference the compiler writes. Asking the other
-/// question refused `count(dna)` for a `dna` every caller had been writing
-/// `count(&dna)` for — `examples/k-nucleotide/src/main.nika`, where that was met.
-#[test]
-fn an_owned_string_reaches_a_view_parameter_without_a_written_ampersand() {
-    let printed = ran(
-        "string-to-str",
-        "fn count(dna: ref String) -> i64 { return dna.len() as i64 }\n\
-         \n\
-         fn main() {\n\
-         \x20   let dna = \"acgt\"\n\
-         \x20   println(f\"{count(dna)} {dna}\")\n\
-         }\n",
-    );
-    assert_eq!(printed.trim(), "4 acgt");
-}
-
-/// **An argument that is already a view gets no second one.** The declaration
-/// and the argument agree without it, and a `&&Vec<i64>` does not fit.
-#[test]
-fn an_argument_that_is_already_a_view_is_passed_through() {
-    let printed = ran(
-        "already-a-view",
-        "fn total(xs: ref Vec[i64]) -> i64 {\n\
-         \x20   let mut sum = 0\n\
-         \x20   for x in xs { sum += x }\n\
-         \x20   return sum\n\
-         }\n\
-         \n\
-         fn hand(xs: ref Vec[i64]) -> i64 { return total(xs) }\n\
-         \n\
-         fn main() {\n\
-         \x20   let mut xs = Vec()\n\
-         \x20   xs.push(4)\n\
-         \x20   xs.push(5)\n\
-         \x20   println(f\"{hand(xs)}\")\n\
-         }\n",
-    );
-    assert_eq!(printed.trim(), "9");
 }
 
 /// **A method's argument is not lent**, which is `touches`' reason for asking a
@@ -297,24 +203,6 @@ fn a_wrong_argument_is_a_type_error_and_not_this_one() {
     );
 }
 
-/// **It travels through the call graph**, because the column does: `measure`
-/// lends `text` onward only because `width` lends it, and both declarations and
-/// both calls are written off the one answer.
-#[test]
-fn a_parameter_passed_on_to_a_lending_callee_is_lent_too() {
-    let printed = ran(
-        "through",
-        "fn width(text: String) -> i64 { return text.len() as i64 }\n\
-         fn measure(text: String) -> i64 { return width(text) + 1 }\n\
-         \n\
-         fn main() {\n\
-         \x20   let t = \"hello\"\n\
-         \x20   println(f\"{measure(t)} {t}\")\n\
-         }\n",
-    );
-    assert_eq!(printed.trim(), "6 hello");
-}
-
 /// **A type the checker could not pin still gets its `&` at the call**, which
 /// is the invariant the two halves rest on rather than a nicety.
 ///
@@ -364,8 +252,6 @@ fn an_argument_whose_type_is_not_known_is_still_lent() {
     assert!(!refused(
         &source.replace("total(entries)", "total(ref entries)")
     ));
-
-    assert_eq!(ran("unknown-argument", source).trim(), "4");
 }
 
 /// **A parameter a method *changes* is not lent**
@@ -387,22 +273,8 @@ fn an_argument_whose_type_is_not_known_is_still_lent() {
 /// one word. Without the column this test compiled to `&Vec<i64>`.
 #[test]
 fn a_parameter_a_method_changes_in_place_is_not_lent() {
-    let printed = ran(
-        "mutated-receiver",
-        "fn fill(mut out: Vec[i64]) -> i64 {\n\
-         \x20   out.push(1)\n\
-         \x20   out.push(2)\n\
-         \x20   return out.len() as i64\n\
-         }\n\
-         \n\
-         fn main() {\n\
-         \x20   let mut xs = Vec()\n\
-         \x20   println(f\"{fill(xs)} {xs.len()}\")\n\
-         }\n",
-    );
-    assert_eq!(printed.trim(), "2 2");
-
-    // And the reading twin beside it, which is the half that says the column
+    // The changing half runs in `tests/language/src/lent_arguments.nika`. Here
+    // is the reading twin beside it, which is the half that says the column
     // is about *changing* the receiver and not about calling a method on one.
     let rust = lowered(
         "fn width(xs: Vec[i64]) -> i64 { return xs.len() as i64 }\n\
@@ -521,5 +393,4 @@ fn main() {
 ";
     let lowered = lowered(source);
     assert!(lowered.contains("else if !has(&r.items, x)"), "{lowered}");
-    assert_eq!(ran("else-if-lends", source), "2 true\n");
 }

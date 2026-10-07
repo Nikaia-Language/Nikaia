@@ -1,0 +1,39 @@
+// `update` takes `mut v` and changes the value in place (ADR-281 D12): what a
+// lock holds after its doors ran. What the lowering writes, what is refused
+// and a lambda kept in a field are `crates/nikaia/tests/update_doors.rs`.
+
+// **Part II 12.2's own counter**, which stopped lowering the day the page was
+// rewritten to D1's form, because a lambda's parameter did not take `mut`.
+test "the specifications counter compiles and runs" {
+    let counter = SharedMut(0)
+    counter.update fn(mut n) { n += 1 }
+    counter.update fn(mut n) { n += 1 }
+    let n = counter.get()
+    assert(n == 2)
+}
+
+// **A value that is not a word takes the address and is not copied**, which is
+// what the `Option` was in the way of: a ten-thousand-entry list is changed
+// where it lies.
+test "a list is changed where it lies" {
+    let log = SharedMut(Vec())
+    log.update fn(mut entries) { entries.push(1) }
+    log.update fn(mut entries) { entries.push(2) }
+    let n = log.access fn(e) { e.len() }
+    assert(n == 2)
+}
+
+// **`update_all` is D1 widened** (ADR-281 D6): one `mut` per lock, nothing
+// returned, both held for the whole of the block.
+test "update all takes one mut per lock" {
+    let payer = SharedMut(100)
+    let payee = SharedMut(0)
+    update_all(payer, payee) fn(mut a, mut b) {
+        a -= 30
+        b += 30
+    }
+    let paid = payer.get()
+    let received = payee.get()
+    assert(paid == 70)
+    assert(received == 30)
+}

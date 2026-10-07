@@ -18,10 +18,10 @@
 //! I saw* — and if it does, every decision taken on what was seen still holds,
 //! which is why the witness covers both shapes `NK2205` refuses: the stamped
 //! value and the stamped condition.
-
-mod common;
-
-use std::process::Command;
+//!
+//! What the door stores, and leaves alone, is
+//! `tests/language/src/witness_door.nika`; this file keeps what is refused and
+//! how it lowers.
 
 use nikaia::contracts::{Ledger, LedgerOps, STD};
 use nikaia::emit::{Build, emit_program};
@@ -44,40 +44,6 @@ fn lowered(source: &str) -> String {
     emit_program(&parsed, Build::default())
         .expect("the source lowers")
         .rust
-}
-
-/// Compile the lowering and run it. The door is a `std` function and a
-/// comparison in the language below, so nothing but running it says the two
-/// halves agree.
-fn ran(purpose: &str, source: &str) -> String {
-    let rust = lowered(source);
-    let dir = common::scratch_dir(&format!("witness-{purpose}"));
-    let path = dir.join("program.rs");
-    std::fs::write(&path, &rust).expect("write the Rust");
-    let binary = dir.join("program");
-    let compiled = common::compile(
-        &path,
-        &[
-            "--crate-type",
-            "bin",
-            "-o",
-            binary.to_str().expect("utf-8 path"),
-        ],
-    );
-    assert!(
-        compiled.status.success(),
-        "{purpose} did not compile:\n{}\n--- emitted ---\n{rust}",
-        String::from_utf8_lossy(&compiled.stderr)
-    );
-    let out = Command::new(&binary).output().expect("run it");
-    assert!(
-        out.status.success(),
-        "{purpose} failed:\n{}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    let printed = String::from_utf8_lossy(&out.stdout).to_string();
-    std::fs::remove_dir_all(&dir).ok();
-    printed
 }
 
 /// **The stamped value goes through** (D5). The same two lines `NK2205`
@@ -190,63 +156,6 @@ fn it_lowers_to_one_call_with_the_witness_as_an_argument() {
     assert_eq!(rust.matches("after").count(), 1, "{rust}");
 }
 
-/// **It stores, and the value is the one that was computed outside.**
-#[test]
-fn the_store_happens_when_nothing_moved() {
-    let printed = ran(
-        "stores",
-        "fn main() throws {\n\
-         \x20   let kasse = SharedMut(100)\n\
-         \x20   let stand = kasse.get()\n\
-         \x20   kasse.set(stand + 23; after: stand)\n\
-         \x20   println(f\"{kasse.get()}\")\n\
-         }\n",
-    );
-    assert_eq!(printed.trim(), "123");
-}
-
-/// **And when something did move it fails rather than overwriting it**, which
-/// is the failure the whole record exists for: the second store is written
-/// against a witness the lock no longer holds.
-#[test]
-fn an_overtaken_witness_leaves_the_value_alone() {
-    let printed = ran(
-        "overtaken",
-        "fn main() {\n\
-         \x20   let kasse = SharedMut(0)\n\
-         \x20   let stand = kasse.get()\n\
-         \x20   kasse.set(1; after: stand) catch { println(\"first\") }\n\
-         \x20   kasse.set(2; after: stand) catch { println(f\"overtaken: {error}\") }\n\
-         \x20   println(f\"{kasse.get()}\")\n\
-         }\n",
-    );
-    assert!(printed.contains("overtaken:"), "{printed}");
-    assert!(
-        printed.contains("the lock no longer holds the value that was seen"),
-        "{printed}"
-    );
-    assert!(
-        printed.trim().ends_with("1"),
-        "the second store did not happen: {printed}"
-    );
-}
-
-/// **`Locked[T]` is the same door**, which is what one surface over two shapes
-/// means ([ADR-281](../../../docs/specification/adr/adr-281.md) D9).
-#[test]
-fn the_local_shape_has_the_same_door() {
-    let printed = ran(
-        "locked",
-        "fn main() throws {\n\
-         \x20   let kasse = Locked(7)\n\
-         \x20   let stand = kasse.get()\n\
-         \x20   kasse.set(stand * 6; after: stand)\n\
-         \x20   println(f\"{kasse.get()}\")\n\
-         }\n",
-    );
-    assert_eq!(printed.trim(), "42");
-}
-
 /// **The door opens a lock like any other**, so a program that reaches it with
 /// one already held is `NK2203` — and the message names the entry it read.
 #[test]
@@ -320,30 +229,6 @@ fn the_door_is_the_same_door_through_a_reach() {
     assert!(findings(source).is_empty(), "{:#?}", findings(source));
     let rust = lowered(source);
     assert!(rust.contains("set_after(stand + 1, &stand)?"), "{rust}");
-}
-
-/// **The witness is a view and the value is not**, which is the difference
-/// between what is stored and what is only read.
-///
-/// The case that says it: a witness larger than a word, read *again* after the
-/// door has been asked whether it still holds. A witness taken by value would
-/// have been moved out of the caller, and `rustc` would have said so about a
-/// file nobody wrote ([Part III C.1](../../../docs/specification/30-nikaia-tooling.md)) —
-/// which is what this did before the ledger said `seen: &$T`.
-#[test]
-fn a_witness_is_lent_and_can_be_read_again() {
-    let printed = ran(
-        "lent",
-        "fn main() throws {\n\
-         \x20   let start: Vec[i64] = Vec()\n\
-         \x20   let xs = Locked(start)\n\
-         \x20   let seen = xs.get()\n\
-         \x20   let neu: Vec[i64] = Vec()\n\
-         \x20   xs.set(neu; after: seen)\n\
-         \x20   println(f\"{seen.len()}\")\n\
-         }\n",
-    );
-    assert_eq!(printed.trim(), "0");
 }
 
 /// **And the `&` that makes it one is the compiler's to write** (ADR-094 D1).

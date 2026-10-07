@@ -1,0 +1,20 @@
+// `a + b` where one side is text (ADR-081): every shape a program can write
+// concatenates. What a `+` lowers to and what the checker says is
+// `crates/nikaia/tests/concatenation.rs`.
+
+// All four shapes, run. Three of them did not compile at all.
+test "every shape concatenates and prints" {
+    let s = "left-".to_string()
+    let t = "right".to_string()
+    let u = "p".to_string()
+    let v = "q".to_string()
+
+    let both_literals = "x" + "y"
+    let literal_left = "x" + t
+    let literal_right = s + "y"
+    let neither = u + v
+    assert(both_literals == "xy")
+    assert(literal_left == "xright")
+    assert(literal_right == "left-y")
+    assert(neither == "pq")
+}

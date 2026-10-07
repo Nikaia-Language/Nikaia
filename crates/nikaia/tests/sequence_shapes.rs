@@ -11,13 +11,11 @@
 //! * `map` whose elements were `?`, and no `rev`, `zip`, `take`, `skip`,
 //!   `step_by`, `chunks` or `windows` at all (D5).
 //!
-//! Every program here is compiled and run at both settings of
-//! `user_parallelism`, and every refusal is asked of the checker.
-
-mod common;
+//! What the programs compute is in `tests/language/src/sequence_shapes.nika`,
+//! run at both settings of `user_parallelism`; every refusal is asked of the
+//! checker here.
 
 use nikaia::contracts::LedgerOps;
-use std::process::Command;
 
 use nikaia::contracts::ty::Ty;
 use nikaia::contracts::ty::TyOps;
@@ -27,37 +25,6 @@ use nikaia::parser::parse_to_ast;
 fn lowered(source: &str, how: Build) -> String {
     let parsed = parse_to_ast(source).expect("the source parses");
     emit_program(&parsed, how).expect("the source lowers").rust
-}
-
-fn ran(purpose: &str, source: &str, how: Build) -> String {
-    let rust = lowered(source, how);
-    let dir = common::scratch_dir(&format!("shapes-{purpose}"));
-    let path = dir.join("program.rs");
-    std::fs::write(&path, &rust).expect("write the Rust");
-    let binary = dir.join("program");
-    let compiled = common::compile(
-        &path,
-        &[
-            "--crate-type",
-            "bin",
-            "-o",
-            binary.to_str().expect("utf-8 path"),
-        ],
-    );
-    assert!(
-        compiled.status.success(),
-        "{purpose} did not compile:\n{}\n--- emitted ---\n{rust}",
-        String::from_utf8_lossy(&compiled.stderr)
-    );
-    let out = Command::new(&binary).output().expect("run it");
-    assert!(
-        out.status.success(),
-        "{purpose} failed:\n{}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    let printed = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    std::fs::remove_dir_all(&dir).ok();
-    printed
 }
 
 fn findings(source: &str) -> Vec<nikaia::check::Finding> {
@@ -74,18 +41,6 @@ fn findings(source: &str) -> Vec<nikaia::check::Finding> {
 
 fn codes(source: &str) -> Vec<&'static str> {
     findings(source).iter().map(|f| f.code).collect()
-}
-
-/// Both settings, the same output, and no refusal on the way.
-fn runs(purpose: &str, source: &str, expected: &str) {
-    assert!(
-        findings(source).is_empty(),
-        "{purpose}: {:#?}",
-        findings(source)
-    );
-    for how in [Build::default(), Build::parallel()] {
-        assert_eq!(ran(purpose, source, how), expected, "{purpose} at {how:?}");
-    }
 }
 
 // --- D1: the words ------------------------------------------------------------
@@ -121,40 +76,6 @@ fn a_demand_is_met_only_by_a_sequence_that_has_the_word() {
 
 // --- D3: a range is a value ------------------------------------------------
 
-/// **The wall this package began with**: a range in a name, walked twice.
-#[test]
-fn a_range_in_a_name_is_walked_twice() {
-    runs(
-        "range-twice",
-        "fn main() {\n\
-         \x20   let r = 0..<3\n\
-         \x20   for i in r { print(f\"{i}\") }\n\
-         \x20   for i in r { print(f\"{i}\") }\n\
-         \x20   println(f\" {r.count()} {r.count()}\")\n\
-         }\n",
-        "012012 3 3",
-    );
-}
-
-/// **And from the back, and in steps**, with the bound an `i64` - which the
-/// language below's own `Range<i64>` cannot walk backwards in steps, having no
-/// length for a 64-bit range.
-#[test]
-fn a_range_goes_backwards_and_in_steps() {
-    runs(
-        "range-back",
-        "fn main() {\n\
-         \x20   let n = 10\n\
-         \x20   for i in (0..<n).rev() { print(f\"{i}\") }\n\
-         \x20   println(\"\")\n\
-         \x20   for i in (0..<n).step_by(3).rev() { print(f\"{i}\") }\n\
-         \x20   println(\"\")\n\
-         \x20   for i in (1..3).rev() { print(f\"{i}\") }\n\
-         }\n",
-        "9876543210\n9630\n321",
-    );
-}
-
 /// **A range written into a `for` or into brackets stays Rust's own**: it is
 /// walked once where it stands, or it is a slice.
 #[test]
@@ -176,26 +97,6 @@ fn a_range_written_in_place_stays_the_language_belows() {
 }
 
 // --- D4: every place a sequence is taken ------------------------------------
-
-/// **A named sequence in a `for` is handed over, not lent**: `keys()` and
-/// `drain()` in a name were *no method named `iter`* below.
-#[test]
-fn a_named_sequence_is_walked_by_value() {
-    runs(
-        "named-seq",
-        "use std::collections\n\n\
-         fn main() {\n\
-         \x20   let mut m: collections::HashMap[ref String, i64] = collections::HashMap()\n\
-         \x20   m[\"a\"] = 1\n\
-         \x20   let ks = m.keys()\n\
-         \x20   for k in ks { print(k) }\n\
-         \x20   let mut xs = [3, 1, 2]\n\
-         \x20   let d = xs.drain()\n\
-         \x20   for x in d { print(f\"{x}\") }\n\
-         }\n",
-        "a312",
-    );
-}
 
 /// **A `let` that names a sequence again takes it.**
 #[test]
@@ -356,50 +257,6 @@ fn a_map_knows_what_its_elements_are() {
     );
 }
 
-/// **The whole pipeline, walked from the back**, with a count held in an
-/// `i64` - which the language below takes in `usize`, converted by entry.
-#[test]
-fn the_pipeline_runs() {
-    runs(
-        "pipeline",
-        "fn main() {\n\
-         \x20   let xs = [1, 2, 3, 4, 5, 6, 7]\n\
-         \x20   let n = 3\n\
-         \x20   let back: Vec[i64] = xs.iter().map(fn(x) { x * 2 }).rev().collect()\n\
-         \x20   println(f\"{back[0]} {back.len()}\")\n\
-         \x20   let few: Vec[i64] = xs.iter().map(fn(x) { x + 1 }).take(n).rev().collect()\n\
-         \x20   println(f\"{few[0]} {few.len()}\")\n\
-         \x20   for (a, b) in xs.iter().zip(xs.iter().skip(n)).rev().take(2) { print(f\"{a}{b} \") }\n\
-         \x20   println(\"\")\n\
-         \x20   for w in xs.windows(n) { print(f\"{w.len()}\") }\n\
-         \x20   println(\"\")\n\
-         \x20   for c in xs.chunks(n) { print(f\"{c.len()}\") }\n\
-         \x20   println(\"\")\n\
-         \x20   println(f\"{xs.iter().nth(n) ?? 0}\")\n\
-         }\n",
-        "14 7\n4 3\n47 36 \n33333\n331\n4",
-    );
-}
-
-/// **A method of the program's own called `take` is not converted**: the count
-/// is named by the entry the call resolved to, not by the method's name.
-#[test]
-fn a_programs_own_take_keeps_its_i64() {
-    runs(
-        "own-take",
-        "struct Stock {\n    n: i64,\n}\n\n\
-         impl Stock {\n\
-         \x20   fn take(self, k: i64) -> i64 { return self.n - k }\n\
-         }\n\n\
-         fn main() {\n\
-         \x20   let s = Stock { n: 10 }\n\
-         \x20   let k = 3\n\
-         \x20   println(f\"{s.take(k)}\")\n\
-         }\n",
-        "7",
-    );
-}
-
 /// **Two arms of one choice are not one after the other**: a sequence taken in
 /// the `then` and read in the `else` was taken on neither's way to the other.
 /// Ordered by statement alone, `NK2702` refused this correct program - and
@@ -453,50 +310,6 @@ fn two_walks_in_one_statement_are_refused() {
              }\n"
         ),
         ["NK2702"]
-    );
-}
-
-/// **A slice has a type** (ADR-293 D23): a run of the list, `ref Array[T]`,
-/// which is what a function writes to take one - and what `windows` hands
-/// out. Sliced through a range written in the brackets or kept in a name,
-/// literal ends included.
-#[test]
-fn a_slice_is_a_run_a_function_can_take() {
-    runs(
-        "slices",
-        "fn total(xs: ref Array[i64]) -> i64 {\n\
-         \x20   let mut t = 0\n\
-         \x20   for x in xs {\n\
-         \x20       t += x\n\
-         \x20   }\n\
-         \x20   return t\n\
-         }\n\n\
-         fn main() {\n\
-         \x20   let xs = [1, 2, 3, 4, 5]\n\
-         \x20   let part = ref xs[1..<3]\n\
-         \x20   let q = 1..2\n\
-         \x20   let named = ref xs[q]\n\
-         \x20   let t = \"hello\"\n\
-         \x20   let word = ref t[0..<1]\n\
-         \x20   println(f\"{total(part)} {total(named)} {total(xs)} {word}\")\n\
-         \x20   for w in xs.windows(2) { print(f\"{total(w)} \") }\n\
-         }\n",
-        "5 5 15 h\n3 5 7 9",
-    );
-}
-
-/// **`str::chars` is a sequence**, as `String::chars` was: a view of text can
-/// be walked from the back, and counted.
-#[test]
-fn the_characters_of_a_view_are_a_sequence() {
-    runs(
-        "str-chars",
-        "fn main() {\n\
-         \x20   let t = \"héllo\"\n\
-         \x20   let back: Vec[char] = t.chars().rev().collect()\n\
-         \x20   println(f\"{t.chars().count()} {back[0]}\")\n\
-         }\n",
-        "5 o",
     );
 }
 

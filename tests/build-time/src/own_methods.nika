@@ -1,0 +1,22 @@
+// A type's own methods are its declarer's (#375), and what was found on the
+// way: a list of text asked about an owned text. Which `impl` is refused, and
+// that the lookup does not pause, is `crates/nikaia/tests/own_methods.rs`.
+
+// **Found writing the check in Nikaia**: `NAMES.contains(name)` for a
+// `comptime NAMES: Array[ref String, N]` and an owned `name` took a `&&str`
+// below and was given a `String`; and a `let` from an `if` whose `else`
+// returns had no type at all, so the call was not seen as a lookup. Both
+// compile and answer now.
+comptime OWN_METHODS_NAMES: Array[ref String, 2] = ["a", "b"]
+
+fn own_methods_known(x: i64) -> bool {
+    let name = if x > 0 { "b".to_string() } else { return false }
+    return OWN_METHODS_NAMES.contains(name)
+}
+
+test "an owned text is looked up in an array of views" {
+    let known = own_methods_known(1)
+    let unknown = own_methods_known(0)
+    assert(known)
+    assert(!unknown)
+}

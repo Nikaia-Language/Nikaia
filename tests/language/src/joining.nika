@@ -1,0 +1,126 @@
+// A block that joins on the executor pauses, and its branches travel in the
+// function's own channel (ADR-292): what `overlap` and `select` compute. The
+// `sync` column, what they lower to, a failure that leaves `main` and what
+// `rustc` says stay in `crates/nikaia/tests/joining.rs`.
+
+fn joining_twice(n: i64) -> i64 {
+    return n * 2
+}
+
+// D1: an `overlap` of branches that cannot pause is still a pause.
+test "an overlap of branches that cannot pause is a pause" {
+    let pair = overlap {
+        joining_twice(3)
+        joining_twice(4)
+    }
+    assert(pair.0 == 6)
+    assert(pair.1 == 8)
+}
+
+fn joining_a() -> i64 { return 1 }
+fn joining_b() -> i64 { return 2 }
+
+// The same for a `select`, because it is the same mechanism. One of the two
+// arms wins and the other is dropped; which one is the executor's to say, so
+// this asserts that an arm answered.
+test "a select of arms that cannot pause is a pause" {
+    let got = select {
+        x = joining_a() => { x }
+        y = joining_b() => { y }
+    }
+    assert(got == 1 || got == 2)
+}
+
+// An error type of this program's own, so the channel is a `Thrown<E>`.
+enum JoiningLoadError {
+    Missing(String),
+    Broken(String),
+}
+
+impl Error for JoiningLoadError {
+    fn message(ref self) -> String {
+        match self {
+            JoiningLoadError::Missing(w) => { return f"{w} is missing" }
+            JoiningLoadError::Broken(w) => { return f"{w} is broken" }
+        }
+    }
+}
+
+fn joining_load(which: String) -> String throws {
+    if which == "a" {
+        throw JoiningLoadError::Missing(which)
+    }
+    if which == "b" {
+        throw JoiningLoadError::Broken(which)
+    }
+    return which
+}
+
+fn joining_own_channel() -> String throws {
+    let pair = overlap {
+        joining_load("c")
+        joining_load("d")
+    }
+    return f"{pair.0} {pair.1}"
+}
+
+// D2: a branch travels in the function's own channel.
+test "a branch travels in the functions own channel" {
+    let got = joining_own_channel()
+    assert(got == "c d")
+}
+
+fn joining_catch_on_the_block() -> String {
+    let pair = overlap {
+        joining_load("a")
+        joining_load("b")
+    } catch {
+        return f"caught: {error}"
+    }
+    return f"{pair.0} {pair.1}"
+}
+
+// D1: `overlap { … } catch { … }` lowers - ADR-292 D4's own written example,
+// which did not.
+test "a handler on the block gets the blocks outcome" {
+    let got = joining_catch_on_the_block()
+    assert(got == "caught: a is missing")
+}
+
+fn joining_match_on_the_block() -> String {
+    let pair = overlap {
+        joining_load("a")
+        joining_load("b")
+    } catch {
+        match error {
+            JoiningLoadError::Missing(w) => { return f"missing {w}" }
+            JoiningLoadError::Broken(w) => { return f"broken {w}" }
+        }
+    }
+    return f"{pair.0} {pair.1}"
+}
+
+// D2: and the handler binds what the branches threw. The first failure in
+// written order is what the handler is handed.
+test "a handler on the block matches the branches variants" {
+    let got = joining_match_on_the_block()
+    assert(got == "missing a")
+}
+
+fn joining_catch_on_a_select() -> String {
+    let mut got = ""
+    select {
+        x = joining_load("a") => { got = f"a {x}" }
+        y = joining_load("b") => { got = f"b {y}" }
+    } catch {
+        got = f"caught: {error}"
+    }
+    return got
+}
+
+// The same for a `select`, whose arms take their failure apart themselves
+// where the handler is on the block - a `?` there would leave the function.
+test "a handler on a select gets the blocks outcome" {
+    let got = joining_catch_on_a_select()
+    assert(got == "caught: a is missing" || got == "b b")
+}

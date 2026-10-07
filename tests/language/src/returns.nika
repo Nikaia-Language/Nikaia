@@ -1,0 +1,70 @@
+// What `return` means where it is not the last thing a function does (Part I
+// 7.1): it leaves the function, also from a `match` arm or an `if` used as a
+// value. Both readings type-check, so the only witness is what the program
+// computes. The catch handler that reads a file, and the lowering, are
+// `crates/nikaia/tests/returns.rs`.
+
+fn returns_note(n: i64, mut log: Vec[String]) {
+    log.push(f"nothing to announce for {n}")
+}
+
+fn returns_announce(n: i64, mut log: Vec[String]) {
+    match n {
+        0 => { return returns_note(n, log) }
+        else => { log.push(f"n is {n}") }
+    }
+    log.push("checked")
+}
+
+// The silent case, and the reason this topic exists. A function with no
+// return value, one `match` arm that leaves it, and a statement after the
+// `match` that the arm was written to skip. Dropping the `return` makes the
+// arm's value the arm's value and nothing else, so the function runs on - and
+// because both readings type-check, nothing complains.
+test "a return in a match arm leaves a function that returns nothing" {
+    let mut log: Vec[String] = []
+    // `announce(0)` takes the arm that returns, so it never reaches `checked`.
+    // `announce(7)` takes the other one and does.
+    returns_announce(0, log)
+    returns_announce(7, log)
+    let count = log.len()
+    let first = log[0]
+    let second = log[1]
+    let third = log[2]
+    assert(count == 3)
+    assert(first == "nothing to announce for 0")
+    assert(second == "n is 7")
+    assert(third == "checked")
+}
+
+fn returns_pick_match(n: i64) -> i64 {
+    match n {
+        1 => { return 10 }
+        else => { 20 }
+    }
+    30
+}
+
+// The same in a function that does return a value, where the arms happen to
+// agree on a type - so this one is silent too, rather than the `E0308` the
+// mismatched shape gives.
+test "a return in a match arm leaves a function that returns a value" {
+    let one = returns_pick_match(1)
+    let two = returns_pick_match(2)
+    assert(one == 10)
+    assert(two == 30)
+}
+
+fn returns_pick_if(c: bool) -> i64 {
+    let x = if c { return 1 } else { 2 }
+    x + 100
+}
+
+// An `if` whose value is taken - `let x = if c { ... } else { ... }` - is the
+// same situation with a different keyword, and had the same defect.
+test "a return in an if used as a value leaves the function" {
+    let yes = returns_pick_if(true)
+    let no = returns_pick_if(false)
+    assert(yes == 1)
+    assert(no == 102)
+}

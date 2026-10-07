@@ -1,0 +1,77 @@
+// `==` on a declared type (ADR-204): what the comparisons answer when they run,
+// which is what says the derives are the right ones rather than merely
+// present. The derives and the refusals are `crates/nikaia/tests/comparison.rs`.
+
+enum ComparisonKind { Get, Post }
+
+struct ComparisonP { x: i64, name: String }
+
+struct ComparisonReading { temp: f64 }
+
+// **And the whole of it runs**, which is what says the derives are the right
+// ones rather than merely present.
+test "the comparisons run" {
+    let mut seen: Vec[String] = []
+    let k = ComparisonKind::Post
+    if k == ComparisonKind::Post { seen.push("enum") }
+    if k != ComparisonKind::Get { seen.push("not") }
+    let a = ComparisonP { x: 1, name: "a" }
+    let b = ComparisonP { x: 1, name: "a" }
+    if a == b { seen.push("struct") }
+    let one = ComparisonReading { temp: 1.5 }
+    let two = ComparisonReading { temp: 1.5 }
+    if one == two { seen.push("float") }
+    assert(seen == ["enum", "not", "struct", "float"])
+}
+
+// **A view compared with a value is read, whatever the type** (issue #171,
+// found moving `fold` into Nikaia): `op == Op::Neg` for an `op: ref Op`
+// compared a `&Op` with an `Op` below. And two comparisons of one name in one
+// statement are told apart - only the one against a value reads it.
+enum ComparisonOp { Add, Neg }
+
+fn comparison_is_neg(op: ref ComparisonOp) -> bool {
+    return op == ComparisonOp::Neg
+}
+
+fn comparison_both(a: ref ComparisonOp, b: ref ComparisonOp) -> bool {
+    return a == b && ComparisonOp::Add != a
+}
+
+test "a view of a declared type compares with a value" {
+    let o = ComparisonOp::Neg
+    let neg = comparison_is_neg(o)
+    let both = comparison_both(o, o)
+    assert(neg)
+    assert(both)
+}
+
+// **A name a `for` lends over a list of text compares with text of its own**:
+// `for one in words` binds a `&String` below, and `one == named` for a
+// `named: String` compared a `&String` with a `String`, which has no impl
+// there - `rustc` about a file nobody wrote (found moving `describe` into
+// Nikaia, #124). Against a literal and against a view it stays as written.
+fn comparison_has(words: ref Vec[String], wanted: ref String) -> bool {
+    let named = wanted.trim().clone()
+    for one in words {
+        if one == named { return true }
+    }
+    return false
+}
+
+fn comparison_literal(words: ref Vec[String]) -> bool {
+    for one in words {
+        if one == "b" || one == words[0] { return true }
+    }
+    return false
+}
+
+test "a lent text compares with owned text" {
+    let words: Vec[String] = ["a", "b"]
+    let found = comparison_has(words, " b ")
+    let missing = comparison_has(words, "c")
+    let lit = comparison_literal(words)
+    assert(found)
+    assert(!missing)
+    assert(lit)
+}

@@ -10,8 +10,10 @@
 //! **Both directions are the point.** A type whose parts compare must compare, or
 //! a correct program is refused (C.4); and a type whose parts do not must be
 //! refused **here**, in this language's words, or C.1 stays open one type over.
-
-mod common;
+//!
+//! What the comparisons answer when they run is
+//! `tests/language/src/comparison.nika`; this file keeps the derives and the
+//! refusals.
 
 use nikaia::contracts::{Ledger, LedgerOps, STD};
 use nikaia::emit::{Build, emit_program};
@@ -26,27 +28,6 @@ fn refusals(source: &str) -> Vec<nikaia::check::Finding> {
         .into_iter()
         .filter(|f| f.code == "NK1188")
         .collect()
-}
-
-/// The lowering, compiled and run — the way `borrowed_subject.rs` does it.
-fn ran(purpose: &str, source: &str) -> String {
-    let rust = lowered(source);
-    let dir = common::scratch_dir(purpose);
-    let file = dir.join("main.rs");
-    std::fs::write(&file, &rust).expect("write the Rust");
-    let binary = dir.join("program");
-    let out = common::compile(&file, &["-o", binary.to_str().expect("utf-8 path")]);
-    assert!(
-        out.status.success(),
-        "the lowering does not compile:\n{}\n--- the Rust ---\n{rust}",
-        String::from_utf8_lossy(&out.stderr),
-    );
-    let ran = std::process::Command::new(&binary)
-        .output()
-        .expect("the program runs");
-    let printed = String::from_utf8_lossy(&ran.stdout).into_owned();
-    let _ = std::fs::remove_dir_all(&dir);
-    printed
 }
 
 fn lowered(source: &str) -> String {
@@ -220,94 +201,4 @@ fn a_known_name_without_the_column_is_still_refused() {
          fn same(a: ref fs::Mapped, b: ref fs::Mapped) -> bool { return a == b }\n",
     );
     assert_eq!(mapped.len(), 1, "{mapped:#?}");
-}
-
-/// **And the whole of it runs**, which is what says the derives are the right
-/// ones rather than merely present.
-#[test]
-fn the_comparisons_run() {
-    let printed = ran(
-        "comparison",
-        "enum Kind { Get, Post }\n\
-         \n\
-         struct P { x: i64, name: String }\n\
-         \n\
-         struct Reading { temp: f64 }\n\
-         \n\
-         fn main() {\n\
-         \x20   let k = Kind::Post\n\
-         \x20   if k == Kind::Post { print(\"enum \") }\n\
-         \x20   if k != Kind::Get { print(\"not \") }\n\
-         \x20   let a = P { x: 1, name: \"a\" }\n\
-         \x20   let b = P { x: 1, name: \"a\" }\n\
-         \x20   if a == b { print(\"struct \") }\n\
-         \x20   let one = Reading { temp: 1.5 }\n\
-         \x20   let two = Reading { temp: 1.5 }\n\
-         \x20   if one == two { print(\"float\") }\n\
-         }\n",
-    );
-    assert_eq!(printed.trim(), "enum not struct float");
-}
-
-/// **A view compared with a value is read, whatever the type**
-/// (issue #171, found moving `fold` into Nikaia): `op == Op::Neg`
-/// for an `op: ref Op` compared a `&Op` with an `Op` below. And two
-/// comparisons of one name in one statement are told apart - only the one
-/// against a value reads it.
-#[test]
-fn a_view_of_a_declared_type_compares_with_a_value() {
-    let printed = ran(
-        "view-compared",
-        "enum Op { Add, Neg }\n\
-         \n\
-         fn is_neg(op: ref Op) -> bool {\n\
-         \x20   return op == Op::Neg\n\
-         }\n\
-         \n\
-         fn both(a: ref Op, b: ref Op) -> bool {\n\
-         \x20   return a == b && Op::Add != a\n\
-         }\n\
-         \n\
-         fn main() {\n\
-         \x20   let o = Op::Neg\n\
-         \x20   if is_neg(o) { print(\"neg \") }\n\
-         \x20   if both(o, o) { print(\"both\") }\n\
-         }\n",
-    );
-    assert_eq!(printed.trim(), "neg both");
-}
-
-/// **A name a `for` lends over a list of text compares with text of its own**:
-/// `for one in words` binds a `&String` below, and `one == named` for a
-/// `named: String` compared a `&String` with a `String`, which has no impl
-/// there - `rustc` about a file nobody wrote (found moving `describe` into
-/// Nikaia, #124). Against a literal and against a view it stays as written.
-#[test]
-fn a_lent_text_compares_with_owned_text() {
-    let printed = ran(
-        "lent-text-compared",
-        "fn has(words: ref Vec[String], wanted: ref String) -> bool {\n\
-         \x20   let named = wanted.trim().clone()\n\
-         \x20   for one in words {\n\
-         \x20       if one == named { return true }\n\
-         \x20   }\n\
-         \x20   return false\n\
-         }\n\
-         \n\
-         fn literal(words: ref Vec[String]) -> bool {\n\
-         \x20   for one in words {\n\
-         \x20       if one == \"b\" || one == words[0] { return true }\n\
-         \x20   }\n\
-         \x20   return false\n\
-         }\n\
-         \n\
-         fn main() {\n\
-         \x20   let words: Vec[String] = [\"a\", \"b\"]\n\
-         \x20   let found = has(words, \" b \")\n\
-         \x20   let missing = has(words, \"c\")\n\
-         \x20   let lit = literal(words)\n\
-         \x20   println(f\"{found} {missing} {lit}\")\n\
-         }\n",
-    );
-    assert_eq!(printed.trim(), "true false true");
 }

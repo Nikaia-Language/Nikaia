@@ -1,0 +1,81 @@
+// `ref Array[T]`, a view of a run of elements (ADR-179): what a program reads
+// through one, since what a view points at is not a question a string
+// comparison answers. What the lowering writes and the refusals are
+// `crates/nikaia/tests/slices.rs`.
+
+// **The whole of D1 in one program**: a run of `struct`s a build computed, a
+// byte buffer, and every way a program reads one. `ROWS` is the shape that
+// could not cross before this: two `Row`s whose count is not in the type, so
+// `Array[Row, N]` would have had to name a number the declaration has no
+// business knowing.
+struct SlicesRow { a: i64, name: ref String }
+
+comptime SLICES_ROWS: ref Array[SlicesRow] = [SlicesRow { a: 1, name: "one" }, SlicesRow { a: 2, name: "two" }]
+comptime SLICES_NS: ref Array[i64] = [10, 20, 30]
+comptime SLICES_MAGIC: ref Array[u8] = [0x7F, 0x45, 0x4C, 0x46]
+
+test "a run crosses and the program reads it" {
+    let sizes = f"{SLICES_ROWS.len()} {SLICES_NS.len()} {SLICES_MAGIC.len()}"
+    assert(sizes == "2 3 4")
+    assert(SLICES_NS[1] == 20)
+    assert(SLICES_ROWS[0].name == "one")
+    let mut seen: Vec[String] = []
+    for r in SLICES_ROWS { seen.push(f"{r.a}={r.name}") }
+    assert(seen == ["1=one", "2=two"])
+}
+
+// **A `struct` field may be one**, which is the whole reason this type exists.
+// `Array[Setting, N]` cannot type a field whose run is a different length per
+// value, and a `Vec` owns memory a `const` cannot hold. This is the shape both
+// corpus grammars produce (ADR-177 §5's measurement).
+struct SlicesSetting { key: ref String, value: ref String }
+struct SlicesSection { name: ref String, settings: ref Array[SlicesSetting] }
+
+comptime SLICES_MAIN: SlicesSection = SlicesSection {
+    name: "main",
+    settings: [SlicesSetting { key: "host", value: "h" }, SlicesSetting { key: "port", value: "8080" }],
+}
+
+test "a field may view a run" {
+    let head = f"{SLICES_MAIN.name} {SLICES_MAIN.settings.len()}"
+    assert(head == "main 2")
+    let mut seen: Vec[String] = []
+    for s in SLICES_MAIN.settings { seen.push(f"{s.key}={s.value}") }
+    assert(seen == ["host=h", "port=8080"])
+}
+
+// **A `Vec` is lent to a parameter and the caller writes nothing** (ADR-094
+// D1, the rule `&str` already had): the callee reads and the caller keeps.
+fn slices_total(xs: ref Array[i64]) -> i64 {
+    let mut sum = 0
+    for n in xs { sum = sum + n }
+    return sum
+}
+
+comptime SLICES_SMALL: ref Array[i64] = [1, 2, 3]
+
+test "a run is lent to a parameter" {
+    let mut built: Vec[i64] = []
+    built.push(10)
+    built.push(20)
+    let line = f"{slices_total(built)} {slices_total(SLICES_SMALL)}"
+    assert(line == "30 6")
+}
+
+// **A cut with an open end** (Part I 2.6, #527): `[..<b]` and `[..b]` start
+// at `0`, `[a..]` runs to the end - on text after `find`, and on a list.
+fn slices_cuts() -> String {
+    let line = "Hamburg;12.0"
+    let sep = line.find(";") ?? return ""
+    let name = line[..<sep]
+    let rest = line[sep + 1..]
+    let head = line[..2]
+    let xs = [1, 2, 3, 4]
+    let tail = xs[1..]
+    return f"{name} {rest} {head} {tail.len()}"
+}
+
+test "a cut with an open end" {
+    let line = slices_cuts()
+    assert(line == "Hamburg 12.0 Ham 3")
+}

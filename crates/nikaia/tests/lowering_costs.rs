@@ -3,7 +3,9 @@
 //! `docs/solver-workload.md` §8): each shape below cost instructions the same
 //! program written in Rust by hand does not retire, and each is now written the
 //! way a person would write it. Each program is run as well, because a cheaper
-//! shape that means something else is not cheaper.
+//! shape that means something else is not cheaper: in
+//! `tests/language/src/lowering_costs.nika`, except the one about `main`, which
+//! a test block is not.
 
 mod common;
 
@@ -66,7 +68,6 @@ fn main() {
         rust.contains("fn sum(xs: &[i64], out: &mut Vec<i64>)"),
         "{rust}"
     );
-    prints("slice", source, "6 1\n");
 }
 
 /// **An empty list resized right away is one allocation**: `vec![v; n]`, as
@@ -84,7 +85,6 @@ fn main() {
     let rust = lowered(source);
     assert!(rust.contains("= vec![7; "), "{rust}");
     assert!(!rust.contains(".resize("), "{rust}");
-    prints("resize", source, "4 7\n");
 }
 
 /// **A `main` that cannot pause starts the runtime only when asked**: no I/O
@@ -122,5 +122,4 @@ fn main() {
     assert!(rust.contains("((i) as usize) < xs.len()"), "{rust}");
     assert!(rust.contains("(i) as usize)"), "{rust}");
     assert!(!rust.contains("index::at(i)"), "{rust}");
-    prints("counter", source, "18\n");
 }

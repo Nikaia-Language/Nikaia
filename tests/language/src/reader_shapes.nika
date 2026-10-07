@@ -1,0 +1,113 @@
+// Shapes the ledger's reader met when it moved into Nikaia (0.0.292, ADR-294
+// step (c)), each a compiler defect a program could meet the same way: what the
+// programs compute. What the lowering writes is
+// `crates/nikaia/tests/reader_shapes.rs`.
+
+use std::collections
+
+// **`x == null` asks whether there is one**, and nothing of what `x` holds is
+// compared: the lowering is `x.is_none()`. A type that does not compare
+// (`NK1188`) was refused there all the same.
+struct ReaderShapesStep {
+    apply: fn(i64) -> i64,
+}
+
+fn reader_shapes_found(n: i64) -> ReaderShapesStep? {
+    if n > 0 {
+        return ReaderShapesStep { apply: fn(x) { x + n } }
+    }
+    return null
+}
+
+fn reader_shapes_applied(step: ref ReaderShapesStep?, x: i64) -> i64 {
+    let s = step ?? return 0
+    return s.apply(x)
+}
+
+test "null is asked of a type that does not compare" {
+    let none = reader_shapes_found(0)
+    let some = reader_shapes_found(2)
+    let asked = none == null && some != null
+    assert(asked)
+    let applied = reader_shapes_applied(some, 1)
+    assert(applied == 3)
+}
+
+// **A `match` in statement position hands nothing back**, so an arm's block
+// ends with a statement: a map's `insert` there answers the old value, and
+// written as the arm's value it made the arms disagree with the empty one.
+test "an arm of a statement match ends in a statement" {
+    let mut seen: collections::HashMap[String, i64] = collections::HashMap()
+    for n in 0..<3 {
+        match n {
+            1 => {
+                seen.insert("one", n)
+            }
+            else => {}
+        }
+    }
+    let size = seen.len()
+    assert(size == 1)
+}
+
+// **A text's characters are listed at their count**: `nikaia_std::list::chars`
+// asks for the room once, where `collect` over `Chars` grew the list step by
+// step - the largest single cost of reading a ledger in Nikaia.
+test "the characters of a text are listed at their size" {
+    let word = "héllo"
+    let c: Vec[char] = word.chars().collect()
+    let size = c.len()
+    assert(size == 5)
+    assert(c[1] == 'é')
+}
+
+// **A part an arm binds `ref` is handed on as it is** (issue #270): ADR-291
+// binds `key` as a view where the arm only reads it, so a call that lends it
+// writes `key` and not `&key`, a view of a view.
+enum ReaderShapesLine {
+    Pair { key: String, value: String },
+    Skip,
+}
+
+fn reader_shapes_shout(text: ref String) -> String {
+    return text.to_uppercase()
+}
+
+test "a part bound as a view is lent as it is" {
+    let lines = [ReaderShapesLine::Pair { key: "a", value: "b" }, ReaderShapesLine::Skip]
+    let mut seen: Vec[String] = []
+    for one in lines.drain() {
+        match one {
+            ReaderShapesLine::Pair { key, value } => {
+                let said = reader_shapes_shout(key)
+                seen.push(f"{said}={reader_shapes_shout(value)}")
+            }
+            ReaderShapesLine::Skip => {}
+        }
+    }
+    assert(seen == ["A=B"])
+}
+
+// **An element of a view of a run is its item** (ADR-179 D1): `xs[0]` for an
+// `xs: ref Array[Row]` is a `Row`, so a method on it is one the ledger
+// describes. It was `?`, and a method nothing describes may pause: the
+// function around it became `async` (found moving `Ty::fits` into Nikaia).
+struct ReaderShapesRow {
+    value: i64,
+}
+
+impl ReaderShapesRow {
+    fn doubled(ref self) -> i64 {
+        return self.value * 2
+    }
+}
+
+fn reader_shapes_first(rows: ref Array[ReaderShapesRow]) -> i64 {
+    return rows[0].doubled() + rows[1..<2][0].doubled()
+}
+
+test "an element of a view of a run is its item" {
+    let rows = [ReaderShapesRow { value: 1 }, ReaderShapesRow { value: 5 }]
+    let n = reader_shapes_first(rows)
+    assert(n == 12)
+}

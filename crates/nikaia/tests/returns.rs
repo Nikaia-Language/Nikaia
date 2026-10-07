@@ -9,13 +9,12 @@
 //!
 //! **These are run and not read, wherever there is something to run.** The
 //! lowering turned `1 => { return 10 }` into `1 => { 10 }`, which is not a
-//! broken-looking program: where the types line up it compiles, prints
+//! broken-looking program: where the types line up it compiles, computes
 //! something, and is simply a different program from the one that was written.
-//! A test that only compiled it would have passed, and a test that compared
-//! emitted text would have been asserting the emitter agrees with itself. So
-//! each shape is lowered, compiled as Rust, run, and its output compared against
-//! what the source means. The one exception says in its own comment why it
-//! cannot be run.
+//! A test that compared emitted text would have been asserting the emitter
+//! agrees with itself. So the shapes are run, in
+//! `tests/language/src/returns.nika`; the one here that reads a file is run
+//! here, and the rest are read, each saying why.
 
 mod common;
 
@@ -62,77 +61,6 @@ fn output_of(purpose: &str, source: &str, files: &[(&str, &str)]) -> String {
     // artefacts are what diagnoses it.
     let _ = std::fs::remove_dir_all(&dir);
     printed
-}
-
-/// **The silent case, and the reason this file exists.**
-///
-/// A function with no return value, one `match` arm that leaves it, and a
-/// statement after the `match` that the arm was written to skip. Dropping the
-/// `return` makes the arm's value the arm's value and nothing else, so the
-/// function runs on - and because both readings type-check, *nothing*
-/// complains. The only witness is what it prints.
-const VOID_MATCH: &str = "fn note(n: i64) {\n\
-     \x20   println(f\"nothing to announce for {n}\")\n\
-     }\n\
-     \n\
-     fn announce(n: i64) {\n\
-     \x20   match n {\n\
-     \x20       0 => { return note(n) }\n\
-     \x20       else => { println(f\"n is {n}\") }\n\
-     \x20   }\n\
-     \x20   println(\"checked\")\n\
-     }\n\
-     \n\
-     fn main() {\n\
-     \x20   announce(0)\n\
-     \x20   announce(7)\n\
-     }\n";
-
-#[test]
-fn a_return_in_a_match_arm_leaves_a_function_that_returns_nothing() {
-    // `announce(0)` takes the arm that returns, so it never reaches `checked`.
-    // `announce(7)` takes the other one and does.
-    assert_eq!(
-        output_of("return-void-match", VOID_MATCH, &[]),
-        "nothing to announce for 0\nn is 7\nchecked\n"
-    );
-}
-
-/// The same in a function that *does* return a value, where the arms happen to
-/// agree on a type - so this one is silent too, rather than the `E0308` the
-/// mismatched shape gives.
-const VALUE_MATCH: &str = "fn pick(n: i64) -> i64 {\n\
-     \x20   match n {\n\
-     \x20       1 => { return 10 }\n\
-     \x20       else => { 20 }\n\
-     \x20   }\n\
-     \x20   30\n\
-     }\n\
-     \n\
-     fn main() {\n\
-     \x20   println(f\"{pick(1)} {pick(2)}\")\n\
-     }\n";
-
-#[test]
-fn a_return_in_a_match_arm_leaves_a_function_that_returns_a_value() {
-    assert_eq!(output_of("return-value-match", VALUE_MATCH, &[]), "10 30\n");
-}
-
-/// An `if` whose value is taken - `let x = if c { … } else { … }` - is the same
-/// situation with a different keyword, and had the same defect. The `if` in
-/// *statement* position was already right; this is the half that was not.
-const IF_AS_VALUE: &str = "fn pick(c: bool) -> i64 {\n\
-     \x20   let x = if c { return 1 } else { 2 }\n\
-     \x20   x + 100\n\
-     }\n\
-     \n\
-     fn main() {\n\
-     \x20   println(f\"{pick(true)} {pick(false)}\")\n\
-     }\n";
-
-#[test]
-fn a_return_in_an_if_used_as_a_value_leaves_the_function() {
-    assert_eq!(output_of("return-if-value", IF_AS_VALUE, &[]), "1 102\n");
 }
 
 /// A block used as a value, and a `seq` block - which is a block that has

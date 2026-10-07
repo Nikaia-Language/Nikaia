@@ -22,11 +22,12 @@
 //! `NK1138`, and half the tests here are about it landing only where the change
 //! is **certain** — the other half of C.1 is C.4, and a correct program refused
 //! is the worse of the two mistakes.
-
-mod common;
+//!
+//! **What the programs compute** - a caller's value changed through a `mut`
+//! parameter, a `mut` receiver, a `mut let` - is
+//! `tests/language/src/mut_bindings.nika`, run by `nikaia test`.
 
 use nikaia::contracts::LedgerOps;
-use std::process::Command;
 
 use nikaia::contracts::ty::TyOps;
 use nikaia::emit::{Build, emit_program};
@@ -38,40 +39,6 @@ fn lowered(source: &str) -> String {
     emit_program(&parsed, Build::default())
         .expect("the source lowers")
         .rust
-}
-
-/// Compile the lowering and run it. The declaration and the call are written by
-/// two passes off one word, and only the language below accepting both at once
-/// says they agree.
-fn ran(purpose: &str, source: &str) -> String {
-    let rust = lowered(source);
-    let dir = common::scratch_dir(&format!("mut-bindings-{purpose}"));
-    let path = dir.join("program.rs");
-    std::fs::write(&path, &rust).expect("write the Rust");
-    let binary = dir.join("program");
-    let compiled = common::compile(
-        &path,
-        &[
-            "--crate-type",
-            "bin",
-            "-o",
-            binary.to_str().expect("utf-8 path"),
-        ],
-    );
-    assert!(
-        compiled.status.success(),
-        "{purpose} did not compile:\n{}\n--- emitted ---\n{rust}",
-        String::from_utf8_lossy(&compiled.stderr)
-    );
-    let out = Command::new(&binary).output().expect("run it");
-    assert!(
-        out.status.success(),
-        "{purpose} failed:\n{}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    let printed = String::from_utf8_lossy(&out.stdout).to_string();
-    std::fs::remove_dir_all(&dir).ok();
-    printed
 }
 
 /// Every finding the checker has about a source.
@@ -87,26 +54,6 @@ fn findings(source: &str) -> Vec<nikaia::check::Finding> {
 /// Whether the source is refused with `NK1138`.
 fn refused(source: &str) -> bool {
     findings(source).iter().any(|f| f.code == "NK1138")
-}
-
-/// **The line the decision was written for.** The callee changes the caller's
-/// list, the call says nothing about it, and `xs.len()` afterwards sees two.
-#[test]
-fn a_mut_parameter_changes_the_callers_value() {
-    let printed = ran(
-        "fills",
-        "fn fill(mut out: Vec[i64]) {\n\
-         \x20   out.push(1)\n\
-         \x20   out.push(2)\n\
-         }\n\
-         \n\
-         fn main() {\n\
-         \x20   let mut xs = Vec()\n\
-         \x20   fill(xs)\n\
-         \x20   println(f\"{xs.len()}\")\n\
-         }\n",
-    );
-    assert_eq!(printed.trim(), "2");
 }
 
 /// **Both halves off one word**, which is the invariant: the declaration gains
@@ -235,25 +182,6 @@ fn a_method_nothing_describes_is_not_refused() {
     ));
 }
 
-/// **The receiver is untouched.** `&mut self` was always how a method said it,
-/// and D6 says nothing in this record reaches a declaration's own `&`.
-#[test]
-fn a_mut_receiver_is_what_it_always_was() {
-    let printed = ran(
-        "receiver",
-        "struct Stats { n: i64 }\n\
-         impl Stats {\n\
-         \x20   fn add(ref mut self, by: i64) sync { self.n += by }\n\
-         }\n\
-         fn main() {\n\
-         \x20   let mut s = Stats { n: 0 }\n\
-         \x20   s.add(2)\n\
-         \x20   println(f\"{s.n}\")\n\
-         }\n",
-    );
-    assert_eq!(printed.trim(), "2");
-}
-
 /// **It is said once per parameter.** A body that changes one usually does so
 /// several times, and three carets on one declaration is noise rather than
 /// information.
@@ -331,24 +259,6 @@ fn a_changed_let_without_the_word_is_refused() {
          \x20   xs.push(1)\n\
          }\n"
     ));
-}
-
-/// **And it runs**, which is the half that says the refusal was standing in for
-/// `rustc` rather than adding a rule of its own.
-#[test]
-fn a_mut_let_compiles_and_runs() {
-    let printed = ran(
-        "mut-let",
-        "fn main() {\n\
-         \x20   let mut xs = Vec()\n\
-         \x20   xs.push(1)\n\
-         \x20   xs.push(2)\n\
-         \x20   let mut n = 0\n\
-         \x20   n += 1\n\
-         \x20   println(f\"{xs.len()} {n}\")\n\
-         }\n",
-    );
-    assert_eq!(printed.trim(), "2 1");
 }
 
 /// **The scope is the one `scope` already keeps**, which is why the answer lives

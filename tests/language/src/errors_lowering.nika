@@ -1,0 +1,94 @@
+// Part I 7.1: how a program declares an error, raises one, and catches it -
+// what such a program computes. What it lowers to, the ledger, and the trace
+// an environment variable switches on stay in
+// `crates/nikaia/tests/errors_lowering.rs`.
+
+enum ErrorsLoweringConfigError { NotFound(String) }
+
+impl Error for ErrorsLoweringConfigError {
+    fn message(ref self) -> String {
+        match self {
+            ErrorsLoweringConfigError::NotFound(p) => { return f"no config at {p}" }
+        }
+    }
+}
+
+fn errors_lowering_load(path: String) -> String throws {
+    throw ErrorsLoweringConfigError::NotFound(path)
+}
+
+fn errors_lowering_caught() -> String {
+    let text = errors_lowering_load("app.conf".to_string()) catch {
+        return f"{error}"
+    }
+    return f"{text}"
+}
+
+// The whole chapter in one program: an error type with a payload, raised,
+// caught, and its message printed.
+test "an error is declared raised caught and printed" {
+    let said = errors_lowering_caught()
+    assert(said == "no config at app.conf")
+}
+
+fn errors_lowering_ruft(path: String) -> String throws {
+    return errors_lowering_load(path)
+}
+
+fn errors_lowering_through() -> String {
+    let text = errors_lowering_ruft("app.conf".to_string()) catch {
+        return f"{error}"
+    }
+    return text
+}
+
+// ADR-023 D8: `throws` propagates on its own, and the lowering is where that
+// becomes true rather than merely said. The failure has to have travelled
+// through the caller.
+test "a written call propagates its failure" {
+    let said = errors_lowering_through()
+    assert(said == "no config at app.conf")
+}
+
+enum ErrorsLoweringZuVoll { Voll }
+
+impl Error for ErrorsLoweringZuVoll {
+    fn message(ref self) -> String { return "too full".to_string() }
+}
+
+struct ErrorsLoweringStats { n: i64 }
+
+impl ErrorsLoweringStats {
+    fn(n: i64) -> ErrorsLoweringStats { return ErrorsLoweringStats { n: n } }
+    fn add(ref self, v: i64) -> i64 throws {
+        if self.n + v > 100 { throw ErrorsLoweringZuVoll::Voll }
+        return self.n + v
+    }
+}
+
+fn errors_lowering_record(s: ErrorsLoweringStats) -> i64 throws {
+    return s.add(1)
+}
+
+fn errors_lowering_both(mut said: Vec[String]) {
+    let first = errors_lowering_record(ErrorsLoweringStats(2)) catch {
+        said.push(f"{error}")
+        return
+    }
+    said.push(f"{first}")
+    let second = errors_lowering_record(ErrorsLoweringStats(500)) catch {
+        said.push(f"{error}")
+        return
+    }
+    said.push(f"{second}")
+}
+
+// The same, for a call on a receiver: `s.add(1)` propagates too, and the
+// failure has to have travelled out of the caller.
+test "a method call propagates its failure" {
+    let mut said: Vec[String] = []
+    errors_lowering_both(said)
+    assert(said.len() == 2)
+    assert(said[0] == "3")
+    assert(said[1] == "too full")
+}

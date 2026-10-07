@@ -1,0 +1,44 @@
+// What is changed says `mut`, for a parameter (ADR-094 D3) and a `let`
+// (Part I 2.1): the caller's value is what a `mut` parameter changes. Where
+// the word is asked for, and what is refused, stays in
+// `crates/nikaia/tests/mut_bindings.rs`.
+
+fn mut_bindings_fill(mut out: Vec[i64]) {
+    out.push(1)
+    out.push(2)
+}
+
+// The line the decision was written for. The callee changes the caller's list,
+// the call says nothing about it, and `xs.len()` afterwards sees two.
+test "a mut parameter changes the callers value" {
+    let mut xs = Vec()
+    mut_bindings_fill(xs)
+    let n = xs.len()
+    assert(n == 2)
+}
+
+struct MutBindingsStats { n: i64 }
+
+impl MutBindingsStats {
+    fn add(ref mut self, by: i64) sync { self.n += by }
+}
+
+// The receiver is untouched: `&mut self` was always how a method said it.
+test "a mut receiver is what it always was" {
+    let mut s = MutBindingsStats { n: 0 }
+    s.add(2)
+    let n = s.n
+    assert(n == 2)
+}
+
+// A `mut let` compiles and runs, which is the half that says the refusal was
+// standing in for `rustc` rather than adding a rule of its own.
+test "a mut let compiles and runs" {
+    let mut xs = Vec()
+    xs.push(1)
+    xs.push(2)
+    let mut n = 0
+    n += 1
+    let line = f"{xs.len()} {n}"
+    assert(line == "2 1")
+}

@@ -9,7 +9,11 @@
 //! **These tests run programs.** What an unrolling produces is a question the
 //! language below answers: a test that compared the emitted Rust against a
 //! string would pass for a copy that read the wrong field, and one that asked
-//! the checker would pass for a loop that was never unrolled at all.
+//! the checker would pass for a loop that was never unrolled at all. Part II
+//! 10.3's own example runs in `tests/language/src/reflection.nika`, by `nikaia
+//! test`; the walk over variants runs here, because its lowering still draws
+//! a warning from the language below (unnecessary braces around the unrolled
+//! turns), which `nikaia test` would print.
 
 mod common;
 
@@ -54,8 +58,8 @@ fn ran(purpose: &str, source: &str) -> String {
     printed
 }
 
-/// **Part II 10.3's own example, compiled and run** — the first time anything
-/// in that section was.
+/// **Part II 10.3's own example**, lowered here and run in
+/// `tests/language/src/reflection.nika`.
 ///
 /// Two types, so the unrolling is per **instantiation** and not per function:
 /// `describe__User` prints two fields and `describe__Point` prints two others,
@@ -86,11 +90,6 @@ fn the_specifications_own_example_runs() {
     assert!(rust.contains("fn describe__User("), "{rust}");
     assert!(rust.contains("fn describe__Point("), "{rust}");
     assert!(rust.contains("\"name\", value.name"), "{rust}");
-
-    assert_eq!(
-        ran("the describe example", source),
-        "name = ada\nage = 36\nx = 1\ny = 2\n"
-    );
 }
 
 /// **A body wrong for one field is right for the others, and the message says

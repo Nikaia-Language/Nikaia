@@ -10,8 +10,11 @@
 //! waits behind. [ADR-287](../../../docs/specification/adr/adr-287.md) answered
 //! Q4, and three records have been waiting on this since
 //! (issue #178).
-
-mod common;
+//!
+//! What a built program reads back from its constants - the run half of the
+//! tests below whose value crosses into the program - is
+//! `tests/build-time/src/build_time.nika`; this file keeps what is refused and
+//! what is lowered.
 
 use nikaia::contracts::{Ledger, LedgerOps, STD};
 use nikaia::emit::Build;
@@ -38,32 +41,6 @@ fn findings(source: &str) -> Vec<nikaia::check::Finding> {
         &reads(),
     )
     .findings
-}
-
-/// Compile the lowering as a binary, run it, hand back what it printed.
-///
-/// **Some questions only a run answers.** A decoder that agrees with this
-/// compiler's own re-encoder proves nothing; what settles it is the backend
-/// reading the same literal and printing the same bytes.
-fn ran(purpose: &str, source: &str) -> String {
-    assert!(findings(source).is_empty(), "{:#?}", findings(source));
-    let rust = lowered(source);
-    let dir = common::scratch_dir(purpose);
-    let file = dir.join("main.rs");
-    std::fs::write(&file, &rust).expect("write the Rust");
-    let binary = dir.join("program");
-    let out = common::compile(&file, &["-o", binary.to_str().expect("utf-8 path")]);
-    assert!(
-        out.status.success(),
-        "the lowering of {purpose} does not compile:\n{}\n--- the Rust ---\n{rust}",
-        String::from_utf8_lossy(&out.stderr),
-    );
-    let ran = std::process::Command::new(&binary)
-        .output()
-        .expect("the program runs");
-    let printed = String::from_utf8_lossy(&ran.stdout).into_owned();
-    let _ = std::fs::remove_dir_all(&dir);
-    printed
 }
 
 fn lowered(source: &str) -> String {
@@ -770,28 +747,6 @@ fn a_question_about_the_value_is_answered() {
     );
 }
 
-/// **The pair is held to the only standard that settles it**: the same literal,
-/// read while the program is built and while it runs, is the same bytes.
-///
-/// A decoder and its inverse are two implementations of one meaning, which is
-/// the hazard issue #178 argues about one
-/// construct over. What makes this one safe is not care, it is this test — and
-/// it **runs** the program, because a decoder that agrees with itself proves
-/// nothing.
-#[test]
-fn the_build_and_the_run_read_a_literal_the_same_way() {
-    let printed = ran(
-        "the decoder against the backend",
-        "comptime BUILT: ref String = \"a\\tb\\nc \\\"q\\\" \\u{0041} \\u{20AC}\"\n\
-         comptime BUILT_LEN: i64 = \"a\\tb\\nc \\\"q\\\" \\u{0041} \\u{20AC}\".len()\n\
-         fn main() {\n\
-         \x20   let at_run_time = \"a\\tb\\nc \\\"q\\\" \\u{0041} \\u{20AC}\"\n\
-         \x20   println(f\"{BUILT == at_run_time} {BUILT_LEN == at_run_time.len()}\")\n\
-         }\n",
-    );
-    assert_eq!(printed.trim(), "true true");
-}
-
 /// An escape `rustc` would reject is not given a meaning here either: the
 /// program does not compile whichever stage reads it, and this says *cannot
 /// evaluate* rather than inventing one.
@@ -900,7 +855,6 @@ fn a_field_a_const_cannot_hold_is_named_and_the_way_out_works() {
                  comptime TOTAL: i64 = B.total()\n\
                  fn main() { println(f\"{B.label} {TOTAL}\") }\n";
     assert!(findings(taken).is_empty(), "{:#?}", findings(taken));
-    assert_eq!(ran("a struct that crosses", taken).trim(), "bag 6");
 }
 
 /// **A constant is an item, so it is visible wherever its file is** (0.0.116).
@@ -973,7 +927,6 @@ fn a_float_crosses_as_the_bits_the_build_had() {
     let rust = lowered(source);
     assert!(rust.contains("const R: f64 = 1.5;"), "{rust}");
     assert!(rust.contains("const H: f64 = 0.75;"), "{rust}");
-    assert_eq!(ran("a float that crosses", source).trim(), "1.5 0.75");
 }
 
 /// **A list of lists crosses as an array of arrays** (0.0.125).
@@ -992,7 +945,6 @@ fn a_nested_list_crosses_as_a_nested_array() {
         "{}",
         lowered(source)
     );
-    assert_eq!(ran("a nested array", source).trim(), "3");
 }
 
 /// **And a `struct` may hold one** (0.0.125).
@@ -1015,7 +967,6 @@ fn a_struct_field_may_be_a_fixed_array() {
         "{}",
         lowered(source)
     );
-    assert_eq!(ran("a struct holding an array", source).trim(), "3");
 }
 
 /// **An `enum` crosses, by the variant the value *is*** (0.0.125).
@@ -1054,7 +1005,6 @@ fn an_enum_variant_crosses_with_what_it_carries() {
         rust.contains("const C: [Shape; 2] = [Shape::Empty, Shape::Num(2.0)];"),
         "{rust}"
     );
-    assert_eq!(ran("an enum that crosses", source).trim(), "7x\n1.5\n2");
 }
 
 /// **`NK1167` asks the value and not the type**, which is what an `enum` makes
@@ -1122,7 +1072,6 @@ fn a_variant_with_named_fields_is_its_enum() {
         "{}",
         lowered(source)
     );
-    assert_eq!(ran("a named-field variant", source).trim(), "3\n4");
 }
 
 /// …and its fields are checked, which is the half that was silent.
@@ -1141,29 +1090,6 @@ fn a_variant_field_of_the_wrong_type_is_refused() {
             .contains("`Shape::Spot.x` holds `i64`, but you're giving it `ref String`"),
         "{}",
         found[0].message
-    );
-}
-
-/// **An integer while the program is built is a magnitude and a sign**
-/// (`tools/integers.nika`), the shape a literal already has: the smallest
-/// `i64` is one, the bit operators read the two's complement of a negative
-/// number, a right shift of one rounds down, and a remainder takes the sign of
-/// what is divided - each the value the running program would have printed.
-#[test]
-fn build_time_integers_are_a_magnitude_and_a_sign() {
-    let source = "comptime LOWEST: i64 = -9223372036854775807 - 1\n\
-                  comptime HIGHEST: u64 = 18446744073709551615\n\
-                  comptime MASKED: i64 = -6 & 7\n\
-                  comptime HALVED: i64 = -7 >> 1\n\
-                  comptime SHIFTED: i64 = 3 << 4\n\
-                  comptime LEFT: i64 = -7 % 3\n\
-                  comptime ORDER: bool = -2 < 1\n\
-                  fn main() {\n\
-                  println(f\"{LOWEST} {HIGHEST} {MASKED} {HALVED} {SHIFTED} {LEFT} {ORDER}\")\n\
-                  }\n";
-    assert_eq!(
-        ran("build-time-integers", source),
-        "-9223372036854775808 18446744073709551615 2 -4 48 -1 true\n"
     );
 }
 
@@ -1188,9 +1114,5 @@ fn build_time_integers_through_a_call() {
         lowered(source).contains("const MASKED"),
         "{}",
         lowered(source)
-    );
-    assert_eq!(
-        ran("build-time-integers-call", source),
-        "2 -4 -1 true -9223372036854775808\n"
     );
 }

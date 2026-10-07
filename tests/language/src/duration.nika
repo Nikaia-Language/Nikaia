@@ -1,0 +1,41 @@
+// A span of time, and the call that waits one out (ADR-150): what a span
+// reads back as and what a wait lets run. What is refused, what is lowered and
+// how long a wait takes is `crates/nikaia/tests/duration.rs`.
+
+use std::time
+
+// **The thread is given up rather than held**, which is the whole difference
+// between this and the language below's `thread::sleep`.
+//
+// A task started before the wait has its value by the time the wait is over,
+// on the **one** thread `user_parallelism = no` gives the program — so the
+// only way the join below can answer is if the executor kept polling while
+// the waiting task was asleep.
+test "a sleep lets the other task run" {
+    let handle = spawn fn { 21 * 2 }
+    time::sleep(80.millis())
+    let answer = handle.join()
+    assert(answer == 42)
+}
+
+// **D5: a span is read back by the unit it was made in**, in whole units and
+// as an `i64` — `in_seconds` beside `seconds`, a program that runs.
+test "a span reads back as a count" {
+    let timeout = 90.seconds()
+    let whole: i64 = timeout.in_minutes()
+    let seconds = timeout.in_seconds()
+    let millis = timeout.in_millis()
+    assert(seconds == 90)
+    assert(whole == 1)
+    assert(millis == 90000)
+}
+
+// **D1: a span copies**, so it is still there after it was handed to
+// `time::sleep`. The ledger's type entry says `copies = true`; without it the
+// checker refused the next line with `NK2105`.
+test "a span handed over is still there" {
+    let timeout = 90.millis()
+    time::sleep(timeout)
+    let millis = timeout.in_millis()
+    assert(millis == 90)
+}

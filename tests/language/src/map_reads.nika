@@ -1,0 +1,290 @@
+// Reading a map through the brackets is a `T?` (ADR-293), and a list's read is
+// a `T` (D3): what each read answers while the program runs. What is refused,
+// what is lowered and the `panic` way out are `crates/nikaia/tests/map_reads.rs`.
+
+use std::collections
+
+// **An absent key is a value and not an abort** (D1), which is the whole of
+// the record: before it, this program ended.
+test "an absent key is a value" {
+    let mut counts = collections::HashMap()
+    counts["a"] = 1
+    let there = counts["a"] ?? 0
+    let absent = counts["b"] ?? -1
+    assert(there == 1)
+    assert(absent == -1)
+}
+
+// **A value that does not copy is reached as a view** (D4), which is what lets
+// a map of structs be read without an allocation the program did not write
+// (ADR-283 D3).
+struct MapReadsStats { min: i64, max: i64 }
+
+test "a value that does not copy is a view" {
+    let mut m = collections::HashMap()
+    m["a"] = MapReadsStats { min: 1, max: 9 }
+    let s = m["a"] ?? panic(f"a was a key a moment ago")
+    let printed = f"{s.min}/{s.max}"
+    assert(printed == "1/9")
+}
+
+// **And the form the message hands over is a program that runs.**
+test "the written out form runs" {
+    let mut counts = collections::HashMap()
+    counts["a"] = (counts["a"] ?? 0) + 1
+    counts["a"] = (counts["a"] ?? 0) + 1
+    let n = counts["a"] ?? 0
+    assert(n == 2)
+}
+
+// **A list is untouched** (D3): `xs[i]` is a `T`, needing no `??` at all.
+test "a list read is a value" {
+    let xs = [10, 20, 30]
+    let second = xs[1]
+    let mut ys = [1, 2]
+    ys[0] = 5
+    let sum = ys[0] + ys[1]
+    assert(second == 20)
+    assert(sum == 7)
+}
+
+// **A map keyed by numbers can be read** (0.0.235, issue #169).
+//
+// Two ways it was not, both `rustc` about a file nobody wrote. A lookup
+// method's key went below by value, where Rust's `get`, `contains_key`,
+// `contains` and `remove` take it by reference - the checker now records the
+// `&` for exactly those `std` entries, and a key of no known type goes
+// through `index::AsKey`, which lends a number and passes a view through.
+// And on a map whose key type nothing pinned, `m[1] = 2` and `m[k]` went
+// through `index::at`, which is for a list position: the key is now handed
+// over as it is on a write and read through `index::key` - neither side is a
+// position on a map. A `String` key looked up is lent and not handed over,
+// so it is still there to use after.
+test "a map keyed by numbers is read" {
+    let mut m = collections::HashMap()
+    m[1] = 2
+    m.insert(5, 6)
+    let k = 1
+    let first = f"{m[k] ?? 0} {m[5] ?? 0} {m[9] ?? -1} {m.get(k) ?? 0} {m.contains_key(k)} {m.len()}"
+    let mut t = collections::HashMap()
+    t["a"] = 10
+    let name = "a"
+    let second = f"{t[name] ?? 0} {t.get(name) ?? 0} {t.contains_key(name)}"
+    let mut owned: collections::HashMap[String, i64] = collections::HashMap()
+    let who: String = "b"
+    owned[who.clone()] = 3
+    let third = f"{owned[who] ?? 0} {owned.get(who) ?? 0} {owned.contains_key(who)}"
+    let mut typed: collections::HashMap[i64, i64] = collections::HashMap()
+    typed[4] = 40
+    let four: i64 = 4
+    let fourth = f"{typed[four] ?? 0} {typed.get(four) ?? 0} {typed.contains_key(four)}"
+    let mut seen = collections::HashSet()
+    seen.insert(7)
+    let seven = 7
+    let fifth = f"{seen.contains(seven)} {seen.remove(seven)} {seen.len()}"
+    assert(first == "2 6 -1 2 true 2")
+    assert(second == "10 10 true")
+    assert(third == "3 3 true")
+    assert(fourth == "40 40 true")
+    assert(fifth == "true true 0")
+}
+
+// **A map of `T?` reads one `T?`** (ADR-293 D1): a stored `null` and an absent
+// key both answer `null`, through the brackets and through `get`, and
+// `contains_key` tells them apart. **`m[k] = null` stores** (D2): the key is
+// there afterwards and `len` counts it.
+enum MapReadsKind { A, B }
+struct MapReadsUser { name: String }
+
+fn map_reads_label(k: ref MapReadsKind?) -> String {
+    let known = k ?? MapReadsKind::B
+    return match known {
+        MapReadsKind::A => "a",
+        MapReadsKind::B => "b",
+    }
+}
+
+test "a map of maybes reads one maybe" {
+    let mut m: collections::BTreeMap[i64, MapReadsKind?] = collections::BTreeMap()
+    m[1] = MapReadsKind::A
+    m[2] = null
+    m.insert(3, MapReadsKind::B)
+    let present = m[1]
+    let stored = m[2]
+    let absent = m[9]
+    let nulls = f"{present == null} {stored == null} {absent == null}"
+    let labels = f"{map_reads_label(m[1])} {map_reads_label(m[2])} {map_reads_label(m[9])} {map_reads_label(m.get(3))}"
+    let keys = f"{m.contains_key(2)} {m.contains_key(9)} {m.len()}"
+    let mut users: collections::HashMap[String, MapReadsUser?] = collections::HashMap()
+    users["ann"] = MapReadsUser { name: "Ann" }
+    users["bob"] = null
+    let names = f"{users["ann"]?.name ?? "-"} {users["bob"]?.name ?? "-"} {users["cy"]?.name ?? "-"}"
+    let mut counts: collections::BTreeMap[String, i64?] = collections::BTreeMap()
+    counts["x"] = 3
+    counts["y"] = null
+    let numbers = f"{counts["x"] ?? 0} {counts["y"] ?? 0} {counts["z"] ?? 0}"
+    assert(nulls == "false true true")
+    assert(labels == "a b b b")
+    assert(keys == "true false 3")
+    assert(names == "Ann - -")
+    assert(numbers == "3 0 0")
+}
+
+// **A map's read kept where a `T?` of its own is wanted** (D4): a value that
+// copies is copied out, from a map of `T` and from a map of `T?` alike; one
+// that does not is refused with the copy to write, `?.clone()` (the refusal is
+// `map_reads.rs`'s), which then runs.
+test "a map read kept is copied out" {
+    let mut plain: collections::BTreeMap[i64, MapReadsKind] = collections::BTreeMap()
+    plain[1] = MapReadsKind::A
+    let mut maybe: collections::BTreeMap[i64, MapReadsKind?] = collections::BTreeMap()
+    maybe[1] = MapReadsKind::B
+    maybe[2] = null
+    let a: MapReadsKind? = plain[1]
+    let b: MapReadsKind? = maybe[1]
+    let c: MapReadsKind? = maybe[2]
+    let mut kept: Vec[MapReadsKind?] = []
+    kept.push(maybe[1])
+    let printed = f"{a == null} {b == null} {c == null} {kept.len()} {maybe.len()}"
+    assert(printed == "false false true 1 2")
+}
+
+test "a map read that does not copy is cloned out" {
+    let mut users: collections::BTreeMap[i64, MapReadsUser?] = collections::BTreeMap()
+    users[1] = MapReadsUser { name: "Ann" }
+    let u: MapReadsUser? = users[1]?.clone()
+    let missing = u == null
+    assert(!missing)
+}
+
+// **A map's read bound by a `let` and handed to a `ref V?` parameter**
+// (0.0.387): the lend in front of the read cancelled its `*`, and the binding
+// was `index::Found` - which no `ref V?` takes - where the checker had a
+// `ref V?`. A map's read keeps its `*`. Found moving `sharing`'s leaves into
+// Nikaia (#125).
+struct MapReadsEntry { size: i64 }
+
+fn map_reads_size_of(entry: ref MapReadsEntry?) -> i64 {
+    let found = entry ?? return -1
+    return found.size
+}
+
+fn map_reads_lookup(m: ref collections::BTreeMap[String, MapReadsEntry], key: ref String) -> i64 {
+    let exact = m[key]
+    if exact != null {
+        return map_reads_size_of(exact)
+    }
+    return 0
+}
+
+test "a map read bound and handed on is the option" {
+    let mut m: collections::BTreeMap[String, MapReadsEntry] = collections::BTreeMap()
+    m["a"] = MapReadsEntry { size: 3 }
+    let a = map_reads_lookup(m, "a")
+    let b = map_reads_lookup(m, "b")
+    assert(a == 3)
+    assert(b == 0)
+}
+
+// **A name of the map's value type after `??` is lent** (ADR-279 D7):
+// `m[k] ?? spare` over a map of lists is a view whichever side answers, as
+// `r ?? spare` is over a `ref T?`. It was `NK1185`, which sent a program to
+// copy the map's list to read it (found moving `describe`'s draft into
+// Nikaia, #125).
+fn map_reads_count(items: ref Vec[String]) -> i64 {
+    return items.len()
+}
+
+test "a named fallback beside a map read is lent" {
+    let mut m: collections::BTreeMap[String, Vec[String]] = collections::BTreeMap()
+    m["a"] = ["x", "y"]
+    let none: Vec[String] = []
+    let keys: Vec[String] = ["a", "b"]
+    let mut printed: Vec[String] = []
+    for key in keys {
+        let items = m[key] ?? none
+        printed.push(f"{key} {map_reads_count(items)} {map_reads_count(m[key] ?? none)}")
+    }
+    let first = printed[0] == "a 2 2"
+    let second = printed[1] == "b 0 0"
+    assert(printed.len() == 2)
+    assert(first)
+    assert(second)
+}
+
+// **A name bound to a map read beside a jump is a view, and is handed on
+// as one**: `let at = m[k] ?? continue` binds a `&String`, so the next map
+// read, a `contains_key` and a call that only reads it take it as it is - a
+// `&` in front was a `&&String` with no `Borrow` (#125).
+fn map_reads_shout(text: ref String) -> String {
+    return f"{text}!"
+}
+
+test "a view bound beside a jump is handed on as it is" {
+    let mut names: collections::BTreeMap[String, String] = collections::BTreeMap()
+    names["a"] = "alpha"
+    names["b"] = "beta"
+    let mut sizes: collections::BTreeMap[String, i64] = collections::BTreeMap()
+    sizes["alpha"] = 5
+    let keys: Vec[String] = ["a", "b", "c"]
+    let mut printed: Vec[String] = []
+    for key in keys {
+        let at = names[key] ?? continue
+        let size = sizes[at] ?? -1
+        printed.push(f"{map_reads_shout(at)} {size} {sizes.contains_key(at)}")
+    }
+    let first = printed[0] == "alpha! 5 true"
+    let second = printed[1] == "beta! -1 false"
+    assert(printed.len() == 2)
+    assert(first)
+    assert(second)
+}
+
+// **A parameter the function is lent is a key as it is**: `place: (i64,
+// String)` that the body only reads is a `&(i64, String)` below, and a `&` in
+// front of it was a key the map has no `Borrow` for (found moving
+// `contracts::keep`'s plan into Nikaia, #125).
+fn map_reads_width(place: (i64, String), widths: ref collections::BTreeMap[(i64, String), i64]) -> i64 {
+    return widths[place] ?? 0
+}
+
+test "a lent parameter is a map key as it is" {
+    let a: String = "a"
+    let b: String = "b"
+    let one: i64 = 1
+    let two: i64 = 2
+    let mut widths: collections::BTreeMap[(i64, String), i64] = collections::BTreeMap()
+    widths.insert((one, a.clone()), 3)
+    let first = map_reads_width((one, a), widths)
+    let second = map_reads_width((two, b), widths)
+    assert(first == 3)
+    assert(second == 0)
+}
+
+// **A read past a jump, assigned to a name that owns its value** (#492,
+// D15): `chosen = spans[name] ?? return -1` reads a view of what the map
+// keeps. A value that copies is copied out; it reached `rustc` as
+// *mismatched types*.
+struct MapReadsSpan {
+    lo: i64,
+    hi: i64,
+}
+
+fn map_reads_pick(spans: ref collections::BTreeMap[String, MapReadsSpan], name: ref String) -> i64 {
+    let mut chosen = MapReadsSpan { lo: 0, hi: 0 }
+    if name.len() > 1 {
+        chosen = spans[name] ?? return -1
+    }
+    return chosen.hi - chosen.lo
+}
+
+test "a read past a jump assigned is copied out" {
+    let mut spans: collections::BTreeMap[String, MapReadsSpan] = collections::BTreeMap()
+    spans.insert("ab", MapReadsSpan { lo: 2, hi: 7 })
+    let ab = map_reads_pick(spans, "ab")
+    let cd = map_reads_pick(spans, "cd")
+    let x = map_reads_pick(spans, "x")
+    assert(ab == 5)
+    assert(cd == -1)
+    assert(x == 0)
+}
