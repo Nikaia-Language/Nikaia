@@ -11,9 +11,11 @@
 //! interning, spans) and would present as *this file parsed while the program
 //! was built and fails while it runs*, for the same file and the same grammar.
 //!
-//! So the tests here **run programs**. A test that compared the emitted `const`
-//! against a string would pass for a parser that read the file wrongly, and a
-//! test that asked the checker would pass for one that never ran at all.
+//! So the tests of what it computes **run programs**, and they are Nikaia
+//! tests: `tests/build-time/src/grammar_at_build_time.nika`. A test that
+//! compared the emitted `const` against a string would pass for a parser that
+//! read the file wrongly. Here stay the `const` each is written as, and the
+//! refusals.
 //!
 //! **They are slow on purpose**: each one compiles a small Cargo project. That
 //! is the cost [ADR-310](../../../docs/specification/adr/adr-310.md) Q4 named,
@@ -26,8 +28,7 @@ use nikaia::check::{self, Finding};
 use nikaia::contracts::{Ledger, LedgerOps, STD};
 use nikaia::parser::parse_to_ast;
 use std::collections::BTreeSet;
-use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::path::PathBuf;
 
 /// A scratch directory with somewhere to compile a parser.
 fn workshop(purpose: &str) -> (PathBuf, Reads) {
@@ -56,34 +57,6 @@ fn one(source: &str, reads: &Reads) -> Finding {
     let mut found = findings_in(source, reads);
     assert_eq!(found.len(), 1, "{found:#?}");
     found.remove(0)
-}
-
-/// Lowers and runs, which is the only way to see that the parse happened and
-/// landed in the program.
-fn run(dir: &Path, reads: &Reads, source: &str) -> String {
-    let parsed = parse_to_ast(source).expect("the source parses");
-    let rust = nikaia::emit::emit_program_reading(&parsed, Default::default(), reads)
-        .expect("it lowers")
-        .rust;
-    let file = dir.join("main.rs");
-    std::fs::write(&file, &rust).expect("write the Rust");
-    let binary = dir.join("program");
-    let built = common::compile(&file, &["-o", &binary.to_string_lossy()]);
-    assert!(
-        built.status.success(),
-        "{}\n--- emitted ---\n{rust}",
-        String::from_utf8_lossy(&built.stderr)
-    );
-    let ran = Command::new(&binary)
-        .current_dir(dir)
-        .output()
-        .expect("run it");
-    assert!(
-        ran.status.success(),
-        "{}",
-        String::from_utf8_lossy(&ran.stderr)
-    );
-    String::from_utf8_lossy(&ran.stdout).to_string()
 }
 
 /// A grammar whose result **crosses**: a list of structs whose fields are text.
@@ -144,7 +117,6 @@ fn a_grammar_runs_while_the_program_is_built_and_the_answer_is_a_const() {
     // And nothing of the parse is left to happen at run time.
     assert!(!rust.contains("parse_file()"), "{rust}");
 
-    assert_eq!(run(&dir, &reads, &source), "host=example.com\nport=8080\n");
     std::fs::remove_dir_all(&dir).ok();
 }
 
@@ -205,10 +177,9 @@ const SHADES: &str = "enum Shade { Odd, Even, Named(ref String), Weight(f64) }\n
 /// ([ADR-311](../../../docs/specification/adr/adr-311.md) D1's set), and with
 /// one the dump is a `match` the generator writes an arm per variant of.
 ///
-/// The test **runs** the program, because that is the only thing that says
-/// the arm bound the payload the parser actually built: a `const` compared
-/// against a string would pass for a dumper that wrote the first variant every
-/// time.
+/// What the program reads is `tests/build-time/src/grammar_at_build_time.nika`,
+/// which runs it: only that says the arm bound the payload the parser actually
+/// built.
 #[test]
 fn an_enum_crosses_from_a_grammar_by_the_variant_the_value_is() {
     let (dir, reads) = workshop("grammar-enum");
@@ -244,38 +215,6 @@ fn an_enum_crosses_from_a_grammar_by_the_variant_the_value_is() {
         ),
         "{rust}"
     );
-
-    assert_eq!(
-        run(&dir, &reads, &source),
-        "odd\neven\nnamed blue\nweight 2.5\n"
-    );
-    std::fs::remove_dir_all(&dir).ok();
-}
-
-/// **And a float crosses as itself**, which was the other half of the same
-/// absence.
-///
-/// The dump writes it with `{:?}` rather than `{}` — Rust's `Debug` for a
-/// float is the shortest text that reads back as the same bits, and what this
-/// build hands the program has to be the number the parser had, not a rounding
-/// of it.
-#[test]
-fn a_float_crosses_from_a_grammar_as_the_bits_the_parser_had() {
-    let (dir, reads) = workshop("grammar-float");
-    let source = "grammar Num {\n\
-         \x20   rule WS = multispace0 { }\n\
-         \x20   entry rule one -> f64 = n:dec[f64](text(digit+ (\".\" digit+)?)) { n }\n\
-         }\n\
-         \n\
-         comptime N: f64 = Num::one(\"0.1\")\n\
-         \n\
-         fn main() { println(f\"{N}\") }";
-    assert!(
-        findings_in(source, &reads).is_empty(),
-        "{:#?}",
-        findings_in(source, &reads)
-    );
-    assert_eq!(run(&dir, &reads, source), "0.1\n");
     std::fs::remove_dir_all(&dir).ok();
 }
 
@@ -443,11 +382,6 @@ fn a_rule_that_hands_back_a_run_crosses_as_a_view() {
     assert!(
         rust.contains("const SETTINGS: &[Setting] = &[Setting { key: \"host\""),
         "{rust}"
-    );
-
-    assert_eq!(
-        run(&dir, &reads, &source),
-        "3\nhost=example.com\nport=8080\nuser=ada\n"
     );
     std::fs::remove_dir_all(&dir).ok();
 }

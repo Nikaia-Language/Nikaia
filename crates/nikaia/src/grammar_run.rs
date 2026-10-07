@@ -304,22 +304,45 @@ fn manifest(key: &str, program: &str) -> String {
 /// The whole sub-program: the file's items without its `fn main` and without
 /// its item-level `comptime`s, then the dump, then a `main` that parses.
 fn driver(parsed: &Parsed, ask: &Ask<'_>) -> Result<String, Wall> {
-    let items = parsed.keeping(|item| match item {
-        // **The program's `main` is not this program's** — the driver below is.
-        Item::Fn { name, .. } => name.map(|n| parsed.text(n) != "main").unwrap_or(true),
-        // **And its constants are not needed**, which is also what stops this
-        // recursing: a grammar run happens in a `comptime` initialiser, and the
-        // sub-project has none to evaluate.
-        Item::Comptime { .. } => false,
-        _ => true,
-    });
-    // **The sub-program owns what the program views**
-    // ([ADR-179](../../../docs/specification/adr/adr-179.md) D3): a rule action
-    // builds a `Vec`, so a struct field the program declares `&[T]` is a
-    // `Vec[T]` here. The dump below is generated from the **program's**
-    // declaration and reads a run either way, which is what keeps the two
-    // sides one crossing rather than two opinions.
-    let items = items.growing();
+    let without_main_and_constants = |unit: &Parsed| {
+        unit.keeping(|item| match item {
+            // **The program's `main` is not this program's** — the driver
+            // below is.
+            Item::Fn { name, .. } => name.map(|n| unit.text(n) != "main").unwrap_or(true),
+            // **And its constants are not needed**, which is also what stops
+            // this recursing: a grammar run happens in a `comptime`
+            // initialiser, and the sub-project has none to evaluate.
+            Item::Comptime { .. } => false,
+            _ => true,
+        })
+        // **The sub-program owns what the program views**
+        // ([ADR-179](../../../docs/specification/adr/adr-179.md) D3): a rule
+        // action builds a `Vec`, so a struct field the program declares
+        // `&[T]` is a `Vec[T]` here. The dump below is generated from the
+        // **program's** declaration and reads a run either way, which is what
+        // keeps the two sides one crossing rather than two opinions.
+        .growing()
+    };
+    // **The package's other files** (ADR-321 D13): a package is one
+    // namespace (Part I 9.1), so an action may call a function a file beside
+    // the grammar's declares. Each without its `main` and its `comptime`s, as
+    // the grammar's own file is.
+    let package: Vec<&Parsed> = ask
+        .units
+        .iter()
+        .copied()
+        .filter(|u| u.package == parsed.package && !std::ptr::eq(*u, parsed))
+        .collect();
+    let mut all: Vec<Parsed> = std::iter::once(parsed)
+        .chain(package.iter().copied())
+        .map(without_main_and_constants)
+        .collect();
+    // **And without what reads a constant** (#528): a function or a test that
+    // names one would name what this program does not declare.
+    let constants = crate::comptime_run::constants_of(std::iter::once(parsed).chain(package));
+    crate::comptime_run::without_readers(&mut all, constants);
+    let beside = all.split_off(1);
+    let items = all.pop().expect("the grammar's own file");
     let lowered = crate::emit::emit_program(&items, crate::emit::Build::default())
         .map_err(|error| Wall::DidNotBuild {
             detail: format!("lowering the grammar: {error:#}"),
@@ -334,24 +357,6 @@ fn driver(parsed: &Parsed, ask: &Ask<'_>) -> Result<String, Wall> {
         .to_string();
 
     let mut out = body;
-    // **The package's other files** (ADR-321 D13): a package is one
-    // namespace (Part I 9.1), so an action may call a function a file beside
-    // the grammar's declares. Each without its `main` and its `comptime`s, as
-    // the grammar's own file is.
-    let beside: Vec<Parsed> = ask
-        .units
-        .iter()
-        .copied()
-        .filter(|u| u.package == parsed.package && !std::ptr::eq(*u, parsed))
-        .map(|u| {
-            u.keeping(|item| match item {
-                Item::Fn { name, .. } => name.map(|n| u.text(n) != "main").unwrap_or(true),
-                Item::Comptime { .. } => false,
-                _ => true,
-            })
-            .growing()
-        })
-        .collect();
     if !beside.is_empty() {
         use crate::contracts::LedgerOps;
         let mut all: Vec<&Parsed> = vec![&items];

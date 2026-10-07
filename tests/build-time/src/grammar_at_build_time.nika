@@ -1,0 +1,97 @@
+// A grammar runs while the program is built (Part II 10.2 A, #178): the
+// parser it generates is compiled and run, and what the program holds is the
+// answer. The emitted `const`s and the refusals stay in
+// `crates/nikaia/tests/grammar_at_build_time.rs`.
+
+pub struct GrammarSetting {
+    key: ref String,
+    value: ref String,
+}
+
+grammar GrammarCfg {
+    rule WSE = multispace1 { }
+    rule WS = (WSE | COMMENT)* { }
+    rule COMMENT = "#" until(line_ending) { }
+    rule NAME -> ref String = s:raw_ident { s }
+    rule VALUE -> ref String = s:until("#" | line_ending) { s.trim() }
+    rule setting -> GrammarSetting = key:NAME "=" value:VALUE { GrammarSetting { key, value } }
+    entry rule file -> Vec[GrammarSetting] = settings:setting* { settings }
+}
+
+comptime GRAMMAR_SETTINGS: Array[GrammarSetting, 2] = GrammarCfg::file("host = example.com\nport = 8080  # the usual one\n")
+
+fn grammar_joined(settings: ref Array[GrammarSetting]) -> String {
+    let mut out = ""
+    for s in settings {
+        out = out + f"{s.key}={s.value};"
+    }
+    return out
+}
+
+// The parse happened while the program was built, and the grammar's own
+// action - `s.trim()` on the value - has already run: `8080  # the usual one`
+// is `8080`.
+test "a grammar runs while the program is built" {
+    let joined = grammar_joined(GRAMMAR_SETTINGS)
+    assert(joined == "host=example.com;port=8080;")
+}
+
+// A rule handing back a run crosses into a view (ADR-179 D1, D3): the count is
+// not in the type.
+comptime GRAMMAR_RUN: ref Array[GrammarSetting] = GrammarCfg::file("host = example.com\nport = 8080\nuser = ada\n")
+
+test "a rule that hands back a run crosses as a view" {
+    let count = GRAMMAR_RUN.len()
+    let joined = grammar_joined(GRAMMAR_RUN)
+    assert(count == 3)
+    assert(joined == "host=example.com;port=8080;user=ada;")
+}
+
+enum GrammarShade { Odd, Even, Named(ref String), Weight(f64) }
+
+grammar GrammarPick {
+    rule WSE = multispace1 { }
+    rule WS = WSE* { }
+    rule NUM -> f64 = n:dec[f64](text(digit+ ("." digit+)?)) { n }
+    rule ONE -> GrammarShade = "odd" { GrammarShade::Odd }
+    rule TWO -> GrammarShade = "even" { GrammarShade::Even }
+    rule THREE -> GrammarShade = "n:" s:raw_ident { GrammarShade::Named(s) }
+    rule FOUR -> GrammarShade = "w:" n:NUM { GrammarShade::Weight(n) }
+    rule SHADE -> GrammarShade = s:(ONE | TWO | THREE | FOUR) { s }
+    entry rule many -> Vec[GrammarShade] = shades:SHADE* { shades }
+}
+
+comptime GRAMMAR_SHADES: Array[GrammarShade, 4] = GrammarPick::many("odd even n:blue w:2.5")
+
+// An `enum` crosses by the variant the value is, its payload bound.
+test "an enum crosses from a grammar by the variant the value is" {
+    let mut out = ""
+    for s in GRAMMAR_SHADES {
+        match s {
+            GrammarShade::Odd => { out = out + "odd;" }
+            GrammarShade::Even => { out = out + "even;" }
+            GrammarShade::Named(n) => { out = out + f"named {n};" }
+            GrammarShade::Weight(w) => { out = out + f"weight {w};" }
+        }
+    }
+    assert(out == "odd;even;named blue;weight 2.5;")
+}
+
+grammar GrammarNum {
+    rule WS = multispace0 { }
+    entry rule one -> f64 = n:dec[f64](text(digit+ ("." digit+)?)) { n }
+}
+
+comptime GRAMMAR_TENTH: f64 = GrammarNum::one("0.1")
+
+fn grammar_tenth() -> f64 {
+    return GRAMMAR_TENTH
+}
+
+// A float crosses as the bits the parser had, read by a test and by a
+// function other than `main` (#528).
+test "a float crosses from a grammar as the bits the parser had" {
+    let through = grammar_tenth()
+    assert(GRAMMAR_TENTH == 0.1)
+    assert(through == 0.1)
+}
