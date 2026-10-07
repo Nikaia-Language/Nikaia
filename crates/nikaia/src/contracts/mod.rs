@@ -642,6 +642,16 @@ impl LedgerOps for Ledger {
                                     // **The grammar's `pub` is each entry's**
                                     // (ADR-296 D25, #520).
                                     public: def.public,
+                                    // **Driven in pieces where its body is a
+                                    // `par_fold`** (ADR-296 D19, #521), which a
+                                    // consumer in another package cannot see.
+                                    pieces: rule.alts.iter().any(|alt| {
+                                        matches!(&alt.pattern.node,
+                                            crate::ast::Pattern::Fold(spec) if spec.parallel)
+                                            || matches!(&alt.pattern.node,
+                                                crate::ast::Pattern::Bind { pat, .. }
+                                                    if matches!(&pat.node, crate::ast::Pattern::Fold(spec) if spec.parallel))
+                                    }),
                                     fails_with: vec![PARSE_ERROR.to_string()],
                                     // **An action may not pause**
                                     // ([ADR-296](../../../docs/specification/adr/adr-296.md)

@@ -871,3 +871,75 @@ fn main() {
     let parsed = parse_to_ast(source).expect("`entry` as a rule name and a variable parses");
     emit_program(&parsed, Build::default()).expect("and lowers");
 }
+
+/// **A `par_fold` entry of a package's grammar is driven in pieces** (#521):
+/// the ledger says `pieces = true`, and the consumer writes what the
+/// grammar's own file would.
+#[test]
+fn a_par_fold_entry_is_entered_from_another_package() {
+    let dir = common::scratch_dir("pub-grammar-pieces");
+    let lib = "pub grammar Sum {\n\
+               \x20   rule NUM -> i64 = d:dec[i64](digit+) { d }\n\
+               \n\
+               \x20   @frame(boundary: \"\\n\")\n\
+               \x20   rule LINE -> i64 = n:NUM frame_end { n }\n\
+               \n\
+               \x20   entry rule total -> Total =\n\
+               \x20       par_fold(LINE, Total, fn(acc, n) { acc.add(n) }, Total::merge)\n\
+               }\n\
+               \n\
+               pub struct Total {\n\
+               \x20   pub n: i64,\n\
+               }\n\
+               \n\
+               impl Total {\n\
+               \x20   fn() -> Total {\n\
+               \x20       return Total { n: 0 }\n\
+               \x20   }\n\
+               \n\
+               \x20   fn add(ref mut self, n: i64) {\n\
+               \x20       self.n += n\n\
+               \x20   }\n\
+               \n\
+               \x20   fn merge(ref mut self, other: Total) {\n\
+               \x20       self.n += other.n\n\
+               \x20   }\n\
+               }\n\
+               \n\
+               fn main() {\n\
+               }\n";
+    let app = "fn main() throws {\n\
+               \x20   let t = lib::Sum::total(\"1\\n2\\n3\\n\")\n\
+               \x20   println(f\"{t.n}\")\n\
+               }\n";
+    for (package, source, manifest) in [
+        (
+            "lib",
+            lib,
+            "[package]\nname = \"lib\"\nversion = \"0.1.0\"\n",
+        ),
+        (
+            "app",
+            app,
+            "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n[dependencies]\nlib = { path = \"../lib\" }\n",
+        ),
+    ] {
+        std::fs::create_dir_all(dir.join(package).join("src")).expect("the package");
+        std::fs::write(dir.join(package).join("nikaia.toml"), manifest).expect("a manifest");
+        std::fs::write(dir.join(package).join("src/main.nika"), source).expect("a source");
+    }
+    let ran = std::process::Command::new(env!("CARGO_BIN_EXE_nikaia"))
+        .current_dir(dir.join("app"))
+        .arg("run")
+        .output()
+        .expect("the nikaia binary runs");
+    let ledger = std::fs::read_to_string(dir.join("lib/nikaia.contracts")).unwrap_or_default();
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(ledger.contains("pieces = true"), "{ledger}");
+    assert_eq!(
+        String::from_utf8_lossy(&ran.stdout),
+        "6\n",
+        "{}",
+        String::from_utf8_lossy(&ran.stderr)
+    );
+}

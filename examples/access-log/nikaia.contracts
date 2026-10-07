@@ -29,11 +29,11 @@ touches = []
 signature = "(bytes: i64) -> Counts"
 
 [fn."Log::file"]
-pub = true
 sync = true
 throws = ["ParseError"]
 keeps = ["input"]
 views = ["input: borrowed", "<result>: borrowed"]
+pieces = true
 signature = "(input: ?) -> Report"
 
 [fn."Report::merge"]

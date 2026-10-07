@@ -10,7 +10,6 @@
 version = 3
 
 [fn."Fasta::file"]
-pub = true
 sync = true
 throws = ["ParseError"]
 keeps = ["input"]

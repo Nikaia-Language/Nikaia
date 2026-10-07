@@ -1070,6 +1070,10 @@ pub struct FnContract {
     pub views: Vec[Held],
     pub sharing: Vec[Class],
     pub ends_by_length: bool,
+    /// **A grammar entry whose body is a `par_fold`** (ADR-296 D19, #521):
+    /// a consumer in another package drives it in pieces, as the grammar's own
+    /// file does. Written only where it holds.
+    pub pieces: bool,
     /// **What a caller has to establish**: the function's preconditions, each
     /// an `assert` of its body carried back to the entry, in the language's
     /// syntax over the parameters
@@ -1103,6 +1107,7 @@ impl FnContract {
             views: [],
             sharing: [],
             ends_by_length: false,
+            pieces: false,
             requires: [],
             ensures: [],
             from: [],

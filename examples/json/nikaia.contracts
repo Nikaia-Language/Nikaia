@@ -10,7 +10,6 @@
 version = 3
 
 [fn."Json_::value"]
-pub = true
 sync = true
 throws = ["ParseError"]
 keeps = ["input"]

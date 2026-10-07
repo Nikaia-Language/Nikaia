@@ -10034,13 +10034,31 @@ impl<'p> Emitter<'p> {
                 false => "?",
                 true => "",
             };
+            let (package, grammar, rule) =
+                (self.text(*package), self.text(*grammar), self.text(*rule));
+            // **A `par_fold` entry is driven in pieces** (#521), as its own
+            // file drives it, with this build's parallelism.
+            let pieces = self
+                .own_contracts
+                .functions
+                .get(&format!("{package}::{grammar}::{rule}"))
+                .is_some_and(|contract| contract.pieces);
+            if pieces {
+                out.push("nikaia_std::grammar::parse_pieces(&*");
+                self.expr(out, &args[0], depth, flow)?;
+                // Spelled out: this file has no `par_fold` of its own, so the
+                // two names are not imported here.
+                out.push(&format!(
+                    ", |source| {package}::{grammar}::parse_{rule}_pieces(source, \
+                     &winnow_grammar::ParseContext::<()>::default(), winnow_grammar::rt::{})){question}",
+                    self.build.parallelism()
+                ));
+                return Ok(());
+            }
             out.push("nikaia_std::grammar::parse(&*");
             self.expr(out, &args[0], depth, flow)?;
             out.push(&format!(
-                ", {}::{}::parse_{}()){question}",
-                self.text(*package),
-                self.text(*grammar),
-                self.text(*rule)
+                ", {package}::{grammar}::parse_{rule}()){question}"
             ));
             return Ok(());
         }

@@ -241,6 +241,9 @@ fn function_text(name: ref String, contract: ref FnContract) -> String {
     if contract.ends_by_length {
         out.push_str("ends_by_length = true\n")
     }
+    if contract.pieces {
+        out.push_str("pieces = true\n")
+    }
     // **The function's contract from its `assert`s** (ADR-269 D18): what a
     // caller establishes, what it may rely on, and the `assert` each came
     // from.

@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part III: Tooling, Ecosystem & Interoperability**
-**Version:** 0.0.621 (Draft)
+**Version:** 0.0.622 (Draft)
 **Date:** 2026-10-07
 
 ---
@@ -301,6 +301,7 @@ error[NK2401]: a change in `longest` broke its caller `report`
 | `compares` | type | two values of it can be compared with `==` (`true`), for a type whose parts are the library's; a Nikaia type compares where its fields or variants do. **Absent means it does not** (`NK1188`) |
 | `iterates` | type | a `for` over a value of it can **fail**, so the function holding the loop declares `throws` ([ADR-025](adr/adr-025.md) D6) |
 | `ends_by_length` | fn | a sequence entry's result can be walked from the back only where every input's length is known (below) |
+| `pieces` | fn | a grammar entry whose body is a `par_fold`: a caller in another package drives it in pieces (Part II 10.7) |
 | `threads` | fn | a described foreign call **may start threads of its own** (`true`), **may not** (`false`), or nobody said (absent); `NK2502` fires on the claim, never on its absence ([ADR-290](adr/adr-290.md) D6) |
 | `provenance` | fn | the function is a **source**: its result is bytes that entered the program from outside, and this names who chose them ([ADR-010](adr/adr-010.md) D2). Absent means *not a source*, which is what almost every function is |
 | `trait."…"` | table | a trait, with its methods as ordinary `fn` entries (signature, `sync`, `throws`) and no `fields`; a bound and an `impl … for` must name one. The table carries the name and nothing else. The methods are the `fn` entries beside it, under `Handler::handle`, the key shape `NK1130` compares against. |

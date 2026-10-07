@@ -4,6 +4,17 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.622] — 2026-10-07
+
+**A `par_fold` entry of a package's grammar is driven in pieces** (#521).
+- The ledger's new `pieces` column (Part III 13.5) marks a grammar entry whose
+  body is a `par_fold`. A consumer in another package writes
+  `grammar::parse_pieces` with its build's parallelism, as the grammar's own
+  file does. It used to write a sequential parse, which `rustc` refused.
+- The examples' committed ledgers are regenerated: `pieces = true` on
+  `access-log`'s `Log::file`, and no `pub = true` on the entries of a grammar
+  without `pub` (0.0.618).
+
 ## [0.0.621] — 2026-10-07
 
 **Two `dsl` blocks over a grammar in one statement are two values** (#518).
