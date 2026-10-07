@@ -4,6 +4,13 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.607] — 2026-10-07
+
+**`benches/envelope` builds again** (fixes `develop`, red since 0.0.604).
+- It built `IoError::NotFound(String::new())`, and the variant holds an
+  `fs::Path` since 0.0.604 (#449). It builds an empty name now; a `PathBuf`
+  is a `String`'s size, so what the bench counts is unchanged.
+
 ## [0.0.606] — 2026-10-07
 
 **Part I 7.1's error type carries an `fs::Path`** (ADR-319, #449 step 10).

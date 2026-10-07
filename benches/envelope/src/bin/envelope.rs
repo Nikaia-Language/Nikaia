@@ -31,7 +31,7 @@ use nikaia_std::io::IoError;
 #[inline(never)]
 fn bare_leaf(i: i64, fail: bool) -> Result<i64, IoError> {
     match fail && black_box(true) {
-        true => Err(IoError::NotFound(String::new())),
+        true => Err(IoError::NotFound(Default::default())),
         false => Ok(black_box(i).wrapping_mul(3)),
     }
 }
@@ -49,7 +49,7 @@ fn bare_top(i: i64, fail: bool) -> Result<i64, IoError> {
 #[inline(never)]
 fn wrapped_leaf(i: i64, fail: bool) -> Result<i64, Thrown<IoError>> {
     match fail && black_box(true) {
-        true => Err(Thrown::from(IoError::NotFound(String::new()))),
+        true => Err(Thrown::from(IoError::NotFound(Default::default()))),
         false => Ok(black_box(i).wrapping_mul(3)),
     }
 }
