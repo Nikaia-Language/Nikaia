@@ -16119,7 +16119,10 @@ fn sharing_expression(expr: &Expr, asked: &Asked<'_>, holes_of: &impl Fn(&Expr) 
             for field in fields.iter() { struct_field(&owner, field, asked, holes_of, ty_of, walk); }
         },
         Expr::LitInterpolated { .. } => { for hole in holes_of(expr) { sharing_expression(&hole, asked, holes_of, ty_of, walk); } },
-        Expr::Closure { body, .. } => sharing_block(body, asked, holes_of, ty_of, walk),
+        Expr::Closure { body, .. } => {
+            a_kept_lambda_uses(expr, asked, walk);
+            sharing_block(body, asked, holes_of, ty_of, walk);
+        },
         Expr::Block(block) => sharing_block(block, asked, holes_of, ty_of, walk),
         Expr::Overlap(block) => sharing_block(block, asked, holes_of, ty_of, walk),
         Expr::If { cond, then_branch, else_branch } => {
@@ -16166,6 +16169,13 @@ fn sharing_expression(expr: &Expr, asked: &Asked<'_>, holes_of: &impl Fn(&Expr) 
             sharing_expression(end, asked, holes_of, ty_of, walk);
         },
         _ => { },
+    }
+}
+
+fn a_kept_lambda_uses(lambda: &Expr, asked: &Asked<'_>, walk: &mut SharingWalk) {
+    for named in names_used_by(lambda, asked) {
+        if a_handle_by_value(&named, &walk) { walk.slots.duplicates(&walk.function, &named, String::from("used by a kept lambda, which takes a handle of its own")); }
+        a_crossing_reaches(&named, "a kept lambda uses it, and a kept function may be called on any thread", None, asked, walk);
     }
 }
 
@@ -16242,7 +16252,7 @@ fn sharing_arguments(called: &SharingCall, args: &[Expr], config: &[ConfigArg], 
         let handle = named_handle(&arg, asked.names, &walk.scope);
         if handle.is_none() {
             an_argument_that_is_not_a_handle(called, (described).as_ref(), at, &arg, asked, walk);
-            sharing_expression(&arg, asked, holes_of, ty_of, walk);
+            a_lambda_handed_on((described).as_ref(), at, &arg, asked, holes_of, ty_of, walk);
             continue;
         }
         a_handle_handed_on(called, (described).as_ref(), at, nikaia_std::index::or(handle.as_deref(), || ""), walk);
@@ -16256,6 +16266,18 @@ fn sharing_arguments(called: &SharingCall, args: &[Expr], config: &[ConfigArg], 
         sharing_expression(&setting.value, asked, holes_of, ty_of, walk);
     }
 }
+
+fn a_lambda_handed_on(described: Option<&Described>, at: i64, arg: &Expr, asked: &Asked<'_>, holes_of: &impl Fn(&Expr) -> Vec<Expr>, ty_of: &impl Fn(&Type) -> Ty, walk: &mut SharingWalk) {
+    match arg {
+        Expr::Closure { body, .. } => {
+            if described.is_some() && a_kept_position(match described { Some(__nikaia_value) => __nikaia_value, None => return }, at) { a_kept_lambda_uses(arg, asked, walk); }
+            sharing_block(body, asked, holes_of, ty_of, walk);
+        },
+        _ => sharing_expression(arg, asked, holes_of, ty_of, walk),
+    }
+}
+
+fn a_kept_position(known: &Described, at: i64) -> bool { at < known.params.len() as i64 && known.keeps.contains(&nikaia_std::index::get(&known.params, nikaia_std::index::at(at)).0) }
 
 fn an_argument_that_is_not_a_handle(called: &SharingCall, described: Option<&Described>, at: i64, arg: &Expr, asked: &Asked<'_>, walk: &mut SharingWalk) {
     if described.is_none() {
@@ -16302,6 +16324,7 @@ fn unseen_kind(called: &SharingCall) -> Fallback {
 struct Described {
     key: String,
     params: Vec<(String, Ty)>,
+    keeps: Vec<String>,
 }
 
 fn parameters_of(callee: Option<&str>, asked: &Asked<'_>) -> Option<Described> {
@@ -16328,7 +16351,7 @@ fn described_by(key: &str, ledger: &Ledger) -> Option<Described> {
         if !(first && name == "self") { params.push((name.to_owned(), ty.clone())); }
         first = false;
     }
-    Some(Described { key: key.to_owned(), params })
+    Some(Described { key: key.to_owned(), params, keeps: contract.keeps.to_owned() })
 }
 
 

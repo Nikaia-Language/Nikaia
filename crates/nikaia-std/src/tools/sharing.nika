@@ -1288,7 +1288,16 @@ fn sharing_expression(expr: ref Expr, asked: ref Asked, holes_of: fn(ref Expr) -
                 sharing_expression(hole, asked, holes_of, ty_of, walk)
             }
         }
-        Expr::Closure { body, .. } => sharing_block(body, asked, holes_of, ty_of, walk),
+        // **A lambda kept as a value goes wherever what holds it goes**
+        // (#532): a field, a `let`, a result or a list element holds it as one
+        // shared closure, and at `user-parallelism = yes` that closure may be
+        // called on any thread. It takes a handle of its own of each hull it
+        // uses (ADR-230 D4). A lambda handed straight to a call is the call's
+        // (`sharing_arguments`).
+        Expr::Closure { body, .. } => {
+            a_kept_lambda_uses(expr, asked, walk)
+            sharing_block(body, asked, holes_of, ty_of, walk)
+        }
         Expr::Block(block) => sharing_block(block, asked, holes_of, ty_of, walk),
         Expr::Overlap(block) => sharing_block(block, asked, holes_of, ty_of, walk),
         Expr::If { cond, then_branch, else_branch } => {
@@ -1334,6 +1343,15 @@ fn sharing_expression(expr: ref Expr, asked: ref Asked, holes_of: fn(ref Expr) -
             sharing_expression(end, asked, holes_of, ty_of, walk)
         }
         else => {}
+    }
+}
+
+fn a_kept_lambda_uses(lambda: ref Expr, asked: ref Asked, mut walk: SharingWalk) {
+    for named in names_used_by(lambda, asked) {
+        if a_handle_by_value(named, walk) {
+            walk.slots.duplicates(walk.function, named, "used by a kept lambda, which takes a handle of its own")
+        }
+        a_crossing_reaches(named, "a kept lambda uses it, and a kept function may be called on any thread", null, asked, walk)
     }
 }
 
@@ -1429,7 +1447,7 @@ fn sharing_arguments(called: ref SharingCall, args: ref Vec[Expr], config: ref V
         let handle = named_handle(arg, asked.names, walk.scope)
         if handle == null {
             an_argument_that_is_not_a_handle(called, described, at, arg, asked, walk)
-            sharing_expression(arg, asked, holes_of, ty_of, walk)
+            a_lambda_handed_on(described, at, arg, asked, holes_of, ty_of, walk)
             continue
         }
         a_handle_handed_on(called, described, at, handle ?? "", walk)
@@ -1441,6 +1459,26 @@ fn sharing_arguments(called: ref SharingCall, args: ref Vec[Expr], config: ref V
         }
         sharing_expression(setting.value, asked, holes_of, ty_of, walk)
     }
+}
+
+// **A lambda handed to a call is kept only where the callee keeps it**
+// (ADR-277 D11): a parameter the contract's `keeps` names is the field a kept
+// lambda is, and one it does not name runs during the call. A callee nothing
+// describes has crossed every name in it already.
+fn a_lambda_handed_on(described: ref Described?, at: i64, arg: ref Expr, asked: ref Asked, holes_of: fn(ref Expr) -> Vec[Expr] sync, ty_of: fn(ref Type) -> Ty sync, mut walk: SharingWalk) {
+    match arg {
+        Expr::Closure { body, .. } => {
+            if described != null && a_kept_position(described ?? return, at) {
+                a_kept_lambda_uses(arg, asked, walk)
+            }
+            sharing_block(body, asked, holes_of, ty_of, walk)
+        }
+        else => sharing_expression(arg, asked, holes_of, ty_of, walk),
+    }
+}
+
+fn a_kept_position(known: ref Described, at: i64) -> bool {
+    return at < known.params.len() && known.keeps.contains(ref known.params[at].0)
 }
 
 // Not a handle itself: it may hold one, capture one, or have one inside it,
@@ -1506,6 +1544,7 @@ fn unseen_kind(called: ref SharingCall) -> Fallback {
 struct Described {
     key: String,
     params: Vec[(String, Ty)],
+    keeps: Vec[String],
 }
 
 fn parameters_of(callee: ref String?, asked: ref Asked) -> Described? {
@@ -1544,5 +1583,5 @@ fn described_by(key: ref String, ledger: ref Ledger) -> Described? {
         }
         first = false
     }
-    return Described { key: key.clone(), params: params }
+    return Described { key: key.clone(), params: params, keeps: contract.keeps.clone() }
 }

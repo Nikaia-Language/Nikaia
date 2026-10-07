@@ -786,10 +786,17 @@ impl LedgerOps for Ledger {
         // `throws` for no reason but tidiness: it reads the same bodies through
         // the same walk and needs nothing either of the two produced.
         touch::infer(&mut ledger, units, library, &resolved);
-        // ADR-037 D7: which count each `Shared` class gets. Last, because it
-        // resolves a callee's parameters against the `signature` step 1 wrote
-        // and a type's parts against its `fields`, and reads nothing the two
-        // inferences above produced.
+        // **The fifth derived column** ([ADR-094](../../../docs/specification/adr/adr-094.md)
+        // D2). After the item loop, because its fixpoint reads a callee's
+        // `signature` — which the item loop wrote — and a callee's own
+        // `keeps`, which is itself;
+        // nothing above produces anything it needs, and nothing above reads
+        // what it writes.
+        keeps::infer(&mut ledger, units, library, &resolved);
+        // ADR-037 D7: which count each `Shared` class gets. After `keeps`,
+        // because a lambda handed to a parameter the callee keeps is a kept one
+        // (#532); and it resolves a callee's parameters against the
+        // `signature` step 1 wrote and a type's parts against its `fields`.
         //
         // **A unit at a time, against the package's ledger.** It summarises the
         // `Shared` values a body holds rather than folding a call graph, so
@@ -799,12 +806,6 @@ impl LedgerOps for Ledger {
         for parsed in units.iter().copied() {
             sharing::infer(&mut ledger, parsed, library);
         }
-        // **The fifth derived column** ([ADR-094](../../../docs/specification/adr/adr-094.md)
-        // D2). Last, because its fixpoint reads a callee's `signature` — which
-        // the item loop wrote — and a callee's own `keeps`, which is itself;
-        // nothing above produces anything it needs, and nothing above reads
-        // what it writes.
-        keeps::infer(&mut ledger, units, library, &resolved);
         // Beside `keeps`, and for the same reason it runs here: it reads the
         // checker's method answers and the entries the item loop wrote.
         let stored: BTreeMap<String, crate::check::StoredCode> = checked

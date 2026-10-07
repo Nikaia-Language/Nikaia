@@ -19,15 +19,10 @@
 //! more than once is a licence, not a requirement — and what is left is speed.
 //!
 //! What a lock holds after its doors ran is
-//! `tests/language/src/update_doors.nika`; this file keeps the lowering, the
-//! refusals, and the lambda kept in a field, which builds at the default
-//! setting only.
-
-mod common;
+//! `tests/language/src/update_doors.nika`, the lambda kept in a field
+//! included; this file keeps the lowering and the refusals.
 
 use nikaia::contracts::LedgerOps;
-use std::process::Command;
-
 use nikaia::emit::{Build, emit_program};
 use nikaia::parser::parse_to_ast;
 
@@ -36,39 +31,6 @@ fn lowered(source: &str) -> String {
     emit_program(&parsed, Build::default())
         .expect("the source lowers")
         .rust
-}
-
-/// Compile the lowering and run it, which is the only proof that the address
-/// the block is handed is one the language below accepts.
-fn ran(purpose: &str, source: &str) -> String {
-    let rust = lowered(source);
-    let dir = common::scratch_dir(&format!("update-{purpose}"));
-    let path = dir.join("program.rs");
-    std::fs::write(&path, &rust).expect("write the Rust");
-    let binary = dir.join("program");
-    let compiled = common::compile(
-        &path,
-        &[
-            "--crate-type",
-            "bin",
-            "-o",
-            binary.to_str().expect("utf-8 path"),
-        ],
-    );
-    assert!(
-        compiled.status.success(),
-        "{purpose} did not compile:\n{}\n--- emitted ---\n{rust}",
-        String::from_utf8_lossy(&compiled.stderr)
-    );
-    let out = Command::new(&binary).output().expect("run it");
-    assert!(
-        out.status.success(),
-        "{purpose} failed:\n{}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    let printed = String::from_utf8_lossy(&out.stdout).to_string();
-    std::fs::remove_dir_all(&dir).ok();
-    printed
 }
 
 /// **The `mut` parameter is an address below**, so every mention of it is
@@ -236,26 +198,6 @@ fn the_read_door_is_untouched() {
             .any(|f| f.code == "NK1141" || f.code == "NK1138"),
         "{found:#?}"
     );
-}
-
-/// **A lambda kept in a function field takes a handle of the lock it uses**
-/// ([ADR-230](../../../docs/specification/adr/adr-230.md) D4, ADR-312 D5): the
-/// name it was written beside stays usable on the next line. The capture used
-/// to move it, and `rustc` said *use of moved value* about a file nobody wrote.
-#[test]
-fn a_kept_lambda_takes_its_own_handle_of_a_lock() {
-    let printed = ran(
-        "kept-handle",
-        "struct Button {\n    on_click: fn() sync,\n}\n\n\
-         fn main() {\n\
-         \x20   let a = SharedMut(0)\n\
-         \x20   let button = Button { on_click: fn() { a.update fn(mut n) { n += 1 } } }\n\
-         \x20   button.on_click()\n\
-         \x20   button.on_click()\n\
-         \x20   println(f\"{a.get()}\")\n\
-         }\n",
-    );
-    assert_eq!(printed.trim(), "2");
 }
 
 /// **A function field that may pause, called inside a lambda**, is refused as a

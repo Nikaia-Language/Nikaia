@@ -1,6 +1,6 @@
 // `update` takes `mut v` and changes the value in place (ADR-281 D12): what a
-// lock holds after its doors ran. What the lowering writes, what is refused
-// and a lambda kept in a field are `crates/nikaia/tests/update_doors.rs`.
+// lock holds after its doors ran. What the lowering writes and what is refused
+// are `crates/nikaia/tests/update_doors.rs`.
 
 // **Part II 12.2's own counter**, which stopped lowering the day the page was
 // rewritten to D1's form, because a lambda's parameter did not take `mut`.
@@ -36,4 +36,21 @@ test "update all takes one mut per lock" {
     let received = payee.get()
     assert(paid == 70)
     assert(received == 30)
+}
+
+// **A lambda kept in a function field takes a handle of the lock it uses**
+// (ADR-230 D4, ADR-312 D5): the name it was written beside stays usable on the
+// next line. And the lock is the thread-safe one where the field may be called
+// on any thread (#532): a kept function may be.
+struct UpdateDoorsButton {
+    on_click: fn() sync,
+}
+
+test "a kept lambda takes its own handle of a lock" {
+    let a = SharedMut(0)
+    let button = UpdateDoorsButton { on_click: fn() { a.update fn(mut n) { n += 1 } } }
+    button.on_click()
+    button.on_click()
+    let n = a.get()
+    assert(n == 2)
 }
