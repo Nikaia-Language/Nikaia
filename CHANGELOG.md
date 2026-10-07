@@ -4,6 +4,18 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.644] — 2026-10-07
+
+**A value parameter is marked `comptime`; a function may take one, written as any other argument** (ADR-333, #121).
+- `struct Decimal[comptime precision: i64, comptime scale: i64]`: the word tells
+  a value parameter from a bounded type parameter (`[T: Summarize]`) where it
+  is written.
+- `fn get[F: Fn](self, comptime path: String, handler: F)`: the call writes
+  `.get("/orders/{id}")`, the argument is held to a `comptime` initialiser's
+  rule (`NK1127`, `NK1152` at the argument), the function is emitted once per
+  value, and a grammar's refusal of the path points at the string in the call.
+  Changes ADR-330 §3. ADR-332's open question of `route`'s signature is closed.
+
 ## [0.0.643] — 2026-10-07
 
 **Routes name their values; a type takes values in its brackets** (ADR-332 revised, ADR-333, #121).

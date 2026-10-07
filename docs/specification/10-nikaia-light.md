@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part I: The Language Core**
-**Version:** 0.0.643 (Draft)
+**Version:** 0.0.644 (Draft)
 **Date:** 2026-10-07
 
 ---
@@ -1431,11 +1431,11 @@ the types fill the type parameters in order, and the call is warned with
 `NK1233` ([ADR-330](adr/adr-330.md) D9).
 
 **A type may take values as well as types in its brackets** ([ADR-333](adr/adr-333.md)), as
-`Array[f64, 3]` takes its length. A value parameter is written with its type, `name: Type`; those
-after a `;` are named at the use and have a default, as a function's options do (5.1):
+`Array[f64, 3]` takes its length. A value parameter is marked `comptime` and written with its
+type; those after a `;` are named at the use and have a default, as a function's options do (5.1):
 
 ```nika
-pub struct Decimal[precision: i64, scale: i64; rounding: Rounding = Rounding::HalfEven] { … }
+pub struct Decimal[comptime precision: i64, comptime scale: i64; comptime rounding: Rounding = Rounding::HalfEven] { … }
 
 let price: Decimal[10, 2] = …
 ```
@@ -1444,6 +1444,18 @@ An argument is a build-time value (Part II 10.2), refused with the codes a `comp
 with where it is not one. Two uses name the same type when their arguments are equal. Inside the
 declaration a value parameter is a constant: `precision` is an `i64` known while the program is
 built.
+
+**A function's parameter may be `comptime` as well.** The call writes its argument as any other,
+and the argument must be a build-time value; inside, the parameter is a constant, and the function
+is emitted once per value:
+
+```nika
+pub fn get[F: Fn](self, comptime path: String, handler: F) -> Server { … }
+
+server.get("/orders/{id}") fn(id: i64) { … }       // "/orders/{id}" is read while building
+```
+
+A caller that passes its own parameter on declares it `comptime` too.
 
 A `T` on its own has no members:
 

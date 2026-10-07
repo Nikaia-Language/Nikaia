@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part III: Tooling, Ecosystem & Interoperability**
-**Version:** 0.0.643 (Draft)
+**Version:** 0.0.644 (Draft)
 **Date:** 2026-10-07
 
 ---
@@ -974,7 +974,9 @@ What a handler returns is what answers the request:
 
 **A handler gets only what its signature declares** ([ADR-332](adr/adr-332.md)). The method is
 the call - `.get`, `.post`, `.put`, `.patch`, `.delete`, and `.route(methods, path)` for several -
-and the path names the values it carries:
+and the path, a `comptime` parameter (`fn get[F: Fn](self, comptime path: String, handler: F)`,
+Part I 4.6), names the values it carries; a path that does not read is refused at the string in the
+call:
 
 | In the path | Means |
 | :--- | :--- |

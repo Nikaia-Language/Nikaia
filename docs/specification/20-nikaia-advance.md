@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part II: Advanced Features & Metaprogramming**
-**Version:** 0.0.643 (Draft)
+**Version:** 0.0.644 (Draft)
 **Date:** 2026-10-07
 
 ---
@@ -108,7 +108,9 @@ is built. A callee that fails either condition is refused with
 `NK1152`. `NK1127` says *not yet*; `NK1152` says *not allowed*.
 
 **`comptime` marks the name.** It is not an expression: `let x = comptime f()`
-does not parse, and a function is never marked.
+does not parse, and a function is never marked. A parameter marked `comptime`,
+of a function or in a type's brackets, takes an argument held to the same rule
+as an initialiser (Part I 4.6, [ADR-333](adr/adr-333.md)).
 
 **An integer `comptime` without a written type is an open number** (Part I
 2.4): each use takes it in the type the use asks for, and the value is checked
