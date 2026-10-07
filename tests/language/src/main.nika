@@ -1,0 +1,5 @@
+// What the language means, as tests of its own (ADR-269): one package, a file
+// per topic, built once by `nikaia test` and each test run in a process of its
+// own. `crates/nikaia/tests/language.rs` runs it as part of the suite.
+fn main() {
+}

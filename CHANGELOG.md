@@ -4,6 +4,18 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.650] — 2026-10-07
+
+**What the language means is tested in the language.** `tests/language` is one
+Nikaia package, a file per topic, whose `test` blocks run programs and assert
+what they computed (ADR-269). `nikaia test` builds it once per setting and runs
+each test in a process of its own; `crates/nikaia/tests/language.rs` runs it in
+place, so an unchanged package compiles nothing.
+- The first topic is `jumps`: its thirteen tests that lowered a program,
+  compiled it with `rustc`, linked `std` and ran it, one program at a time, are
+  `test` blocks now, and run at both settings. What `jumps.rs` keeps is where a
+  jump may not stand and how it is lowered.
+
 ## [0.0.649] — 2026-10-07
 
 **The test suite builds `std` once and keeps it, and runs its compiler

@@ -1,0 +1,169 @@
+// `break` and `continue`, Part I 3.3, unlabelled: what a jump does is visible
+// in what the program computes and nowhere else, since both readings of one
+// type-check. Where a jump may not stand is `crates/nikaia/tests/jumps.rs`.
+
+use std::fs
+
+// A `break` leaves the loop and not the function: the line after the loop runs.
+test "a break leaves the loop and the function goes on" {
+    let mut total = 0
+    for i in 0..<10 {
+        if i == 4 {
+            break
+        }
+        total += i
+    }
+    let after = true
+    assert(total == 6)
+    assert(after)
+}
+
+// A `continue` skips the rest of the turn and not the turns after it.
+test "a continue skips one turn" {
+    let mut total = 0
+    for i in 0..<10 {
+        if i % 2 == 0 {
+            continue
+        }
+        total += i
+    }
+    assert(total == 25)
+}
+
+// The innermost loop, and nothing further out.
+test "a break leaves the innermost loop" {
+    let mut total = 0
+    for _ in 0..<3 {
+        for j in 0..<10 {
+            if j == 2 {
+                break
+            }
+            total += 1
+        }
+        total += 100
+    }
+    assert(total == 306)
+}
+
+test "a break is how an unconditional loop ends" {
+    let mut n = 0
+    while true {
+        n += 1
+        if n == 5 {
+            break
+        }
+    }
+    assert(n == 5)
+}
+
+// A `break` in a `catch` handler leaves the loop the handler stands in.
+fn jumps_read_them(paths: Vec[ref String]) -> i64 {
+    let mut seen = 0
+    for p in paths {
+        let text = fs::read_to_string(p, fs::Root::Anywhere) catch {
+            break
+        }
+        seen += text.len()
+    }
+    return seen
+}
+
+test "a break in a catch handler leaves the loop" {
+    let mut paths = Vec()
+    paths.push("nothing-here.txt")
+    let seen = jumps_read_them(paths)
+    assert(seen == 0)
+}
+
+test "a break may stand where a value is expected" {
+    let mut total = 0
+    for i in 0..<10 {
+        let step = if i > 3 { break } else { i }
+        total += step
+    }
+    assert(total == 6)
+}
+
+// `while true` is lowered to `loop`, and still means what it meant.
+test "an unconditional loop still means what it meant" {
+    let mut n = 0
+    while true {
+        n += 1
+        if n == 5 {
+            break
+        }
+    }
+    let after = true
+    assert(n == 5)
+    assert(after)
+}
+
+test "a while head takes both connectives" {
+    let mut i = 0
+    let mut total = 0
+    let mut running = true
+    while i < 10 && running {
+        total += i
+        if total > 20 || i > 8 {
+            running = false
+        }
+        i += 1
+    }
+    assert(total == 21)
+}
+
+fn jumps_and_or(a: bool, b: bool, c: bool) -> i64 {
+    if a || b && c {
+        return 1
+    }
+    return 0
+}
+
+test "a head binds and tighter than or" {
+    assert(jumps_and_or(false, true, true) == 1)
+    assert(jumps_and_or(false, true, false) == 0)
+}
+
+test "a range head still binds loosest" {
+    let mut t = 0
+    for i in 0..<5 - 1 {
+        t += i
+    }
+    assert(t == 6)
+}
+
+fn jumps_heads(a: i64?, b: i32) -> i64 {
+    if (a ?? 0) > 3 {
+        return 1
+    }
+    if b as i64 > 3 {
+        return 2
+    }
+    if a == null {
+        return 3
+    }
+    return 4
+}
+
+test "a head holds every expression that is not brace led" {
+    assert(jumps_heads(9, 0) == 1)
+    assert(jumps_heads(null, 9) == 2)
+    assert(jumps_heads(null, 0) == 3)
+    assert(jumps_heads(1, 0) == 4)
+}
+
+test "a head holds a tuple" {
+    let a = 1
+    let b = 2
+    let mut pair = false
+    if (a, b) == (1, 2) {
+        pair = true
+    }
+    assert(pair)
+}
+
+test "a brace led form reaches a head through parentheses" {
+    let n = 1
+    let low = if (match n { 1 => 10, else => 20 }) > 15 { false } else { true }
+    assert(low)
+}

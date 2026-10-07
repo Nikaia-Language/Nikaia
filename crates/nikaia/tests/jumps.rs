@@ -2,11 +2,9 @@
 //!
 //! Two halves, and they are the two halves of what the construct is:
 //!
-//! **What it means.** Lowered, compiled as Rust and *run*, for the reason
-//! `returns.rs` gives in its own header: both readings of a jump type-check, so
-//! a test that only compiled the output would be asserting that the emitter
-//! agrees with itself. What a `break` does is visible in what the program
-//! prints and nowhere else.
+//! **What it means** is `tests/language/src/jumps.nika`: both readings of a
+//! jump type-check, so what a `break` does is visible only in what a program
+//! computes, and those are tests of the language, run by `nikaia test`.
 //!
 //! **Where it may not stand.** A jump is a machine instruction that moves to a
 //! label, and a label in another function is not reachable — so a `break` whose
@@ -48,161 +46,7 @@ fn one(source: &str) -> (String, String) {
     (found[0].code.to_string(), found[0].message.clone())
 }
 
-/// Lower, compile, run, and hand back what it printed.
-fn output_of(purpose: &str, source: &str) -> String {
-    assert_eq!(
-        findings(source)
-            .iter()
-            .map(|f| f.message.as_str())
-            .collect::<Vec<_>>(),
-        Vec::<&str>::new(),
-        "{purpose} is meant to be a correct program"
-    );
-
-    let dir = common::scratch_dir(purpose);
-    let rust = dir.join(format!("{purpose}.rs"));
-    std::fs::write(&rust, lowered(source)).expect("write the Rust");
-
-    let binary = dir.join(purpose);
-    let built = common::compile(&rust, &["-o", &binary.to_string_lossy()]);
-    assert!(
-        built.status.success(),
-        "the lowering of {purpose} does not compile:\n{}\n--- the Rust ---\n{}",
-        String::from_utf8_lossy(&built.stderr),
-        lowered(source)
-    );
-
-    let run = std::process::Command::new(&binary)
-        .current_dir(&dir)
-        .output()
-        .expect("run it");
-    assert!(
-        run.status.success(),
-        "{}",
-        String::from_utf8_lossy(&run.stderr)
-    );
-    let printed = String::from_utf8_lossy(&run.stdout).to_string();
-    let _ = std::fs::remove_dir_all(&dir);
-    printed
-}
-
-// --- what they mean ----------------------------------------------------------
-
-/// A `break` leaves the loop and not the function: the line after the loop runs.
-#[test]
-fn a_break_leaves_the_loop_and_the_function_goes_on() {
-    let source = "fn main() {\n\
-         \x20   let mut total = 0\n\
-         \x20   for i in 0..<10 {\n\
-         \x20       if i == 4 {\n\
-         \x20           break\n\
-         \x20       }\n\
-         \x20       total += i\n\
-         \x20   }\n\
-         \x20   println(f\"{total}\")\n\
-         \x20   println(\"after\")\n\
-         }\n";
-    assert_eq!(output_of("break-leaves-the-loop", source), "6\nafter\n");
-}
-
-/// A `continue` skips the rest of the turn and not the turns after it.
-#[test]
-fn a_continue_skips_one_turn() {
-    let source = "fn main() {\n\
-         \x20   let mut total = 0\n\
-         \x20   for i in 0..<10 {\n\
-         \x20       if i % 2 == 0 {\n\
-         \x20           continue\n\
-         \x20       }\n\
-         \x20       total += i\n\
-         \x20   }\n\
-         \x20   println(f\"{total}\")\n\
-         }\n";
-    assert_eq!(output_of("continue-skips-a-turn", source), "25\n");
-}
-
-/// **The innermost loop, and nothing further out** — which is the whole of what
-/// an unlabelled jump promises, and the one thing a label would change.
-#[test]
-fn a_break_leaves_the_innermost_loop() {
-    let source = "fn main() {\n\
-         \x20   let mut total = 0\n\
-         \x20   for i in 0..<3 {\n\
-         \x20       for j in 0..<10 {\n\
-         \x20           if j == 2 {\n\
-         \x20               break\n\
-         \x20           }\n\
-         \x20           total += 1\n\
-         \x20       }\n\
-         \x20       total += 100\n\
-         \x20   }\n\
-         \x20   println(f\"{total}\")\n\
-         }\n";
-    // Two turns of the inner loop per outer turn, three outer turns that all
-    // reach the `+= 100`: the outer loop is untouched by the inner `break`.
-    assert_eq!(output_of("break-innermost", source), "306\n");
-}
-
-/// `while true { … break … }` — the unconditional loop
-/// ([ADR-276](../../../docs/specification/adr/adr-276.md) D1) with the exit
-/// D2 said it did not have.
-#[test]
-fn a_break_is_how_an_unconditional_loop_ends() {
-    let source = "fn main() {\n\
-         \x20   let mut n = 0\n\
-         \x20   while true {\n\
-         \x20       n += 1\n\
-         \x20       if n == 5 {\n\
-         \x20           break\n\
-         \x20       }\n\
-         \x20   }\n\
-         \x20   println(f\"{n}\")\n\
-         }\n";
-    assert_eq!(output_of("break-while-true", source), "5\n");
-}
-
-/// **A `catch` handler is not a function**, so a jump in one reaches the loop
-/// around it. The handler lowers to a `match` arm (Kap 7.1), which is why this
-/// works where a lambda's does not — and why it is worth a test of its own
-/// rather than an assumption.
-#[test]
-fn a_break_in_a_catch_handler_leaves_the_loop() {
-    let source = "use std::fs\n\
-         \n\
-         fn read_them(paths: Vec[ref String]) -> i64 {\n\
-         \x20   let mut seen = 0\n\
-         \x20   for p in paths {\n\
-         \x20       let text = fs::read_to_string(p, fs::Root::Anywhere) catch {\n\
-         \x20           break\n\
-         \x20       }\n\
-         \x20       seen += text.len()\n\
-         \x20   }\n\
-         \x20   return seen\n\
-         }\n\
-         \n\
-         fn main() {\n\
-         \x20   let mut paths = Vec()\n\
-         \x20   paths.push(\"nothing-here.txt\")\n\
-         \x20   println(f\"{read_them(paths)}\")\n\
-         }\n";
-    assert_eq!(output_of("break-in-a-catch", source), "0\n");
-}
-
-/// A jump in **value position**: the language below reads a block that ends in
-/// one as the `!` it is, so the other half of the `if` decides the type and
-/// nothing has to be said about it here.
-#[test]
-fn a_break_may_stand_where_a_value_is_expected() {
-    let source = "fn main() {\n\
-         \x20   let mut total = 0\n\
-         \x20   for i in 0..<10 {\n\
-         \x20       let step = if i > 3 { break } else { i }\n\
-         \x20       total += step\n\
-         \x20   }\n\
-         \x20   println(f\"{total}\")\n\
-         }\n";
-    assert_eq!(output_of("break-as-a-value", source), "6\n");
-}
+// --- how they are lowered ------------------------------------------------
 
 /// The lowering is name for name (ADR-296 D17), and this is what says so — the
 /// one assertion in this file about emitted text rather than about behaviour,
@@ -510,23 +354,6 @@ fn a_condition_that_is_not_the_literal_stays_a_while() {
     assert!(rust.contains("while running {"), "{rust}");
 }
 
-/// And it is the same program: the loop is left by its `break`, and what comes
-/// after the loop still runs.
-#[test]
-fn an_unconditional_loop_still_means_what_it_meant() {
-    let source = "fn main() {\n\
-         \x20   let mut n = 0\n\
-         \x20   while true {\n\
-         \x20       n += 1\n\
-         \x20       if n == 5 {\n\
-         \x20           break\n\
-         \x20       }\n\
-         \x20   }\n\
-         \x20   println(f\"{n}\")\n\
-         \x20   println(\"after\")\n\
-         }\n";
-    assert_eq!(output_of("loop-lowering", source), "5\nafter\n");
-}
 
 // --- the head grammar (ADR-301) ----------------------------------------------
 //
@@ -536,64 +363,8 @@ fn an_unconditional_loop_still_means_what_it_meant() {
 // about jumps, and the record says so; the tests stay beside the work that
 // turned them up.
 
-/// `&&` and `||` in a `while` head — run, because *"it parses"* is not the
-/// claim. The claim is that it means what it says.
-#[test]
-fn a_while_head_takes_both_connectives() {
-    let source = "fn main() {\n\
-         \x20   let mut i = 0\n\
-         \x20   let mut total = 0\n\
-         \x20   let mut running = true\n\
-         \x20   while i < 10 && running {\n\
-         \x20       total += i\n\
-         \x20       if total > 20 || i > 8 {\n\
-         \x20           running = false\n\
-         \x20       }\n\
-         \x20       i += 1\n\
-         \x20   }\n\
-         \x20   println(f\"{total}\")\n\
-         }\n";
-    // 0+1+…+6 = 21, which is the first total over 20; the turn that reaches it
-    // still finishes, so `i` becomes 7 and the head then stops the loop.
-    assert_eq!(output_of("head-and-or", source), "21\n");
-}
 
-/// **The precedence is the ordinary one** ([ADR-301](../../../docs/specification/adr/adr-301.md)
-/// D1): `a || b && c` is `a || (b && c)`, not `(a || b) && c`. The two disagree
-/// exactly where the first operand is false and the last one is, which is what
-/// the second call checks.
-#[test]
-fn a_head_binds_and_tighter_than_or() {
-    let source = "fn pick(a: bool, b: bool, c: bool) -> i64 {\n\
-         \x20   if a || b && c {\n\
-         \x20       return 1\n\
-         \x20   }\n\
-         \x20   return 0\n\
-         }\n\
-         \n\
-         fn main() {\n\
-         \x20   println(f\"{pick(false, true, true)}{pick(false, true, false)}\")\n\
-         }\n";
-    // `(false || true) && false` would be 0 and 0; `false || (true && false)`
-    // is 1 and 0.
-    assert_eq!(output_of("head-precedence", source), "10\n");
-}
 
-/// A range in a head still binds looser than everything in it — `head_range_tail`
-/// moved down to the new top of the chain, and this is what says the move was
-/// harmless.
-#[test]
-fn a_range_head_still_binds_loosest() {
-    let source = "fn main() {\n\
-         \x20   let mut t = 0\n\
-         \x20   for i in 0..<5 - 1 {\n\
-         \x20       t += i\n\
-         \x20   }\n\
-         \x20   println(f\"{t}\")\n\
-         }\n";
-    // `0..(5 - 1)` is 0,1,2,3 and sums to 6; `(0..5) - 1` is not a program.
-    assert_eq!(output_of("head-range", source), "6\n");
-}
 
 /// And the restriction the head chain exists for is **unchanged**: a brace-led
 /// form still may not stand in a head, because the `{` is the body's.
@@ -615,35 +386,6 @@ fn a_head_still_refuses_a_brace_led_form() {
     );
 }
 
-/// **`??`, `as`, `null` and a tuple in a head** — the four forms
-/// [ADR-301](../../../docs/specification/adr/adr-301.md) added, in one program,
-/// run rather than read.
-#[test]
-fn a_head_holds_every_expression_that_is_not_brace_led() {
-    let source = "fn pick(a: i64?, b: i32) -> i64 {\n\
-         \x20   if (a ?? 0) > 3 {\n\
-         \x20       return 1\n\
-         \x20   }\n\
-         \x20   if b as i64 > 3 {\n\
-         \x20       return 2\n\
-         \x20   }\n\
-         \x20   if a == null {\n\
-         \x20       return 3\n\
-         \x20   }\n\
-         \x20   return 4\n\
-         }\n\
-         \n\
-         fn main() {\n\
-         \x20   println(f\"{pick(9, 0)}\")\n\
-         \x20   println(f\"{pick(null, 9)}\")\n\
-         \x20   println(f\"{pick(null, 0)}\")\n\
-         \x20   println(f\"{pick(1, 0)}\")\n\
-         }\n";
-    // One hole per `println`: several in one `f"…"` walks into a defect that
-    // has nothing to do with heads — the second `null` comes out `Some(None)`
-    // — and it is on issue #225 with its own reproduction.
-    assert_eq!(output_of("head-complete", source), "1\n2\n3\n4\n");
-}
 
 /// **The claim itself, checked directly**: a head parses what a body parses.
 ///
@@ -719,36 +461,7 @@ fn a_bare_binary_fallback_is_refused_in_a_head_too() {
     }
 }
 
-/// A tuple in a head, which needed `tuple_expr` *before* `paren_expr` for the
-/// same reason `primary_expr` needs it: a tuple is a parenthesised expression
-/// until the comma.
-#[test]
-fn a_head_holds_a_tuple() {
-    let source = "fn main() {\n\
-         \x20   let a = 1\n\
-         \x20   let b = 2\n\
-         \x20   if (a, b) == (1, 2) {\n\
-         \x20       println(\"pair\")\n\
-         \x20   }\n\
-         }\n";
-    assert_eq!(output_of("head-tuple", source), "pair\n");
-}
 
-/// **And the one restriction that remains is reachable through parentheses**
-/// ([ADR-301](../../../docs/specification/adr/adr-301.md) D5), which is what
-/// makes it a restriction on *spelling* rather than on meaning.
-#[test]
-fn a_brace_led_form_reaches_a_head_through_parentheses() {
-    let source = "fn main() {\n\
-         \x20   let n = 1\n\
-         \x20   if (match n { 1 => 10, else => 20 }) > 15 {\n\
-         \x20       println(\"high\")\n\
-         \x20   } else {\n\
-         \x20       println(\"low\")\n\
-         \x20   }\n\
-         }\n";
-    assert_eq!(output_of("head-parenthesised", source), "low\n");
-}
 
 /// The restriction itself, unchanged: without the parentheses the `{` is the
 /// body's, and the program does not parse.

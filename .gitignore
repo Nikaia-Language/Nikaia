@@ -57,3 +57,11 @@ node_modules/
 /.sass-cache/
 /.wrangler/
 /scripts/site-jekyll/Gemfile.lock
+
+# The language package builds in place, so a test run of it reuses its build;
+# what a build writes beside it changes with the compiler and is not committed.
+/tests/language/target
+/tests/language/nikaia.lock
+/tests/language/nikaia.contracts
+/tests/language/nikaia.derived
+/tests/language/nikaia.proofs
