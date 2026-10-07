@@ -4,6 +4,13 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.623] — 2026-10-07
+
+**`develop` green again** (red since 0.0.616): `anonymous_constructors`
+expected `take(&S::new)` for a parameter that may pause. Since #516 that is
+an `async` closure around the constructor, the only form that fits the
+`AsyncFn` the parameter is.
+
 ## [0.0.622] — 2026-10-07
 
 **A `par_fold` entry of a package's grammar is driven in pieces** (#521).
