@@ -1678,6 +1678,8 @@ struct Emitter<'p> {
     wrapped: std::collections::BTreeMap<usize, crate::check::Wrap>,
     /// `check::Checked::compared_views` (0.0.238).
     compared_views: std::collections::BTreeSet<(usize, String)>,
+    /// `check::Checked::compared_numbers` (#531).
+    compared_numbers: std::collections::BTreeSet<(usize, String)>,
     /// `check::Checked::claims` ([ADR-269](../../docs/specification/adr/adr-269.md) D2).
     claims: std::collections::BTreeMap<(usize, String), crate::check::Claim>,
     /// `check::Checked::entries` ([ADR-269](../../docs/specification/adr/adr-269.md) D20).
@@ -2874,6 +2876,7 @@ impl<'p> Emitter<'p> {
             lent_options: propagation.lent_options,
             wrapped: propagation.wrapped,
             compared_views: propagation.compared_views,
+            compared_numbers: propagation.compared_numbers,
             claims: propagation.claims,
             entries: propagation.entries,
             reaches: propagation.reaches,
@@ -9371,6 +9374,26 @@ impl<'p> Emitter<'p> {
                 // **A view compared with a value is read** (0.0.238,
                 // `check::Checked::compared_views`).
                 let read = |side: &str| self.compared_views.contains(&(at.at(), side.to_string()));
+                // **And a lent name of a type only the language below knows,
+                // beside a number, is read as the number** (#531,
+                // `check::Checked::compared_numbers`): `num::value` is the
+                // identity on a number and reads one out of a view.
+                let number =
+                    |side: &str| self.compared_numbers.contains(&(at.at(), side.to_string()));
+                if number("lhs") {
+                    out.push("nikaia_std::num::value(");
+                    self.expr(out, lhs, depth, flow)?;
+                    out.push(&format!(") {} ", binary_op(*op)));
+                    self.nested(out, rhs, here + 1, depth, flow)?;
+                    return Ok(());
+                }
+                if number("rhs") {
+                    self.nested(out, lhs, here, depth, flow)?;
+                    out.push(&format!(" {} nikaia_std::num::value(", binary_op(*op)));
+                    self.expr(out, rhs, depth, flow)?;
+                    out.push(")");
+                    return Ok(());
+                }
                 if read("lhs") {
                     out.push("*");
                 }

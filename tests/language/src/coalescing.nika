@@ -42,6 +42,22 @@ test "panic is the third spelling and the value goes on" {
     let mut m = collections::HashMap()
     m["a"] = 7
     let n = m["a"] ?? panic("a was a key a moment ago")
-    let shown = f"{n}"
-    assert(shown == "7")
+    assert(n == 7)
+}
+
+// A map whose element type only the language below decides, read past a jump,
+// compares with a number on either side and with an ordering (#531): the name
+// is read as the number, whether it arrived as one or as a view of one.
+fn coalescing_compared(key: ref String) -> bool {
+    let mut m = collections::HashMap()
+    m["a"] = 7
+    let n = m[key] ?? return false
+    return 7 == n && n < 8 && n != 6
+}
+
+test "a read past a jump compares with a number" {
+    let found = coalescing_compared("a")
+    let missing = coalescing_compared("b")
+    assert(found)
+    assert(!missing)
 }

@@ -969,6 +969,12 @@ pub struct Checked {
     /// `char` with a `char` and not with a `&char`, so the emitter reads the
     /// view (`*c`).
     pub compared_views: BTreeSet<(usize, String)>,
+    /// **A lent name whose type this checker does not know, compared with a
+    /// number** (#531), by the operator's span and the side: `let n = m["a"]
+    /// ?? panic(…)` over a map whose element type only the language below
+    /// decides binds a view or a value, and the side is read as the number
+    /// either is (`num::value(n)`).
+    pub compared_numbers: BTreeSet<(usize, String)>,
     /// **Every `assert`, and what its failure shows**
     /// ([ADR-269](../../docs/specification/adr/adr-269.md) D2), by statement
     /// and the shape of its condition, and how each is held
@@ -2344,6 +2350,8 @@ pub struct Propagation {
     pub wrapped: BTreeMap<usize, Wrap>,
     /// [`Checked::compared_views`].
     pub compared_views: BTreeSet<(usize, String)>,
+    /// [`Checked::compared_numbers`].
+    pub compared_numbers: BTreeSet<(usize, String)>,
     /// [`Checked::claims`].
     pub claims: BTreeMap<(usize, String), Claim>,
     /// [`Checked::entries`].
@@ -2607,6 +2615,7 @@ fn propagation(
         lent_options: checked.lent_options,
         wrapped: checked.wrapped,
         compared_views: checked.compared_views,
+        compared_numbers: checked.compared_numbers,
         claims: checked.claims,
         entries: checked.entries,
         reaches: checked.reaches,
@@ -6937,6 +6946,35 @@ impl<'a> Checker<'a> {
         };
         let read_left = is_view(lhs, left) && is_value(rhs, right);
         let read_right = is_view(rhs, right) && is_value(lhs, left);
+        // **And a lent name whose type is not known here, beside a number**
+        // (#531): `let n = m["a"] ?? panic(…)` over a map whose element type
+        // the language below decides from `m["a"] = 7`. The other side says it
+        // is a number, and whether `n` arrived as one or as a view of one is
+        // not this checker's to know - so it is read as the number either is.
+        // A literal has no type of its own here (`Unknown`), so it is asked by
+        // its form.
+        let a_number = |side: &Expr, ty: &Ty| {
+            (copied(ty) && is_value(side, ty))
+                || matches!(
+                    side,
+                    Expr::LitInt { .. } | Expr::LitFloat(_) | Expr::LitChar(_)
+                )
+                || matches!(side, Expr::Unary { op: UnaryOp::Neg, expr }
+                    if matches!(**expr, Expr::LitInt { .. } | Expr::LitFloat(_)))
+        };
+        let unknown = |side: &Expr, ty: &Ty| lent(side) && ty.is_unknown();
+        let number_left = unknown(lhs, left) && a_number(rhs, right);
+        let number_right = unknown(rhs, right) && a_number(lhs, left);
+        if number_left {
+            self.checked
+                .compared_numbers
+                .insert((at.at(), "lhs".to_string()));
+        }
+        if number_right {
+            self.checked
+                .compared_numbers
+                .insert((at.at(), "rhs".to_string()));
+        }
         // **By the operator's own span and the side**: a statement may hold
         // two comparisons of one name, `a == b && Op::Not != a`, and only the
         // second reads `a` (ADR-081 D1's key, for its reason).
