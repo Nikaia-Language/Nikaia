@@ -500,6 +500,28 @@ fn type_key(mut entry: TypeContract, key: ref String, value: ref String, n: i64)
             fields.push(field_of(one))
         }
         entry.fields = fields
+    } else if key == "attributes" {
+        entry.attributes = entries(value, n)
+    } else if key == "variant_attributes" {
+        // `Spot: Tag { text: "s" }`, after `variants` (ADR-331 D8).
+        for one in entries(value, n) {
+            let c: Vec[char] = one.chars().collect()
+            let colon = find(c, 0, ':')
+            if colon < 0 {
+                throw Refused::Because(f"line {n}: a variant's attribute is `Variant: Value {{ … }}`, not `{one}`")
+            }
+            let named = slice(c, 0, colon).trim().clone()
+            let held = slice(c, colon + 1, c.len()).trim().clone()
+            let mut updated: Vec[VariantContract] = []
+            for one_variant in entry.variants {
+                let mut changed = one_variant.clone()
+                if changed.name == named {
+                    changed.attributes.push(held.clone())
+                }
+                updated.push(changed)
+            }
+            entry.variants = updated
+        }
     } else if key == "field_attributes" {
         // `created_at: Name { value: "createdAt" }`, after `fields`
         // (ADR-331 D8): the value goes to the field the name before the
@@ -701,7 +723,7 @@ pub fn variant_of(written: ref String) -> VariantContract {
             holds.push(FieldContract { name: f"{at}", ty: parse(part), public: true, default: "", attributes: [] })
             at += 1
         }
-        return VariantContract { name: named.trim().clone(), holds: holds, positional: true }
+        return VariantContract { name: named.trim().clone(), holds: holds, positional: true, attributes: [] }
     }
     let brace = find(c, 0, '{')
     if brace >= 0 {
@@ -717,10 +739,10 @@ pub fn variant_of(written: ref String) -> VariantContract {
                 holds.push(FieldContract { name: field.trim().clone(), ty: parse(slice(p, colon + 1, p.len())), public: true, default: "", attributes: [] })
             }
         }
-        return VariantContract { name: named.trim().clone(), holds: holds, positional: false }
+        return VariantContract { name: named.trim().clone(), holds: holds, positional: false, attributes: [] }
     }
     let nothing: Vec[FieldContract] = []
-    return VariantContract { name: whole.clone(), holds: nothing, positional: false }
+    return VariantContract { name: whole.clone(), holds: nothing, positional: false, attributes: [] }
 }
 
 // A field back from `pub name: T`. `pub ` is optional, so a ledger written

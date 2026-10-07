@@ -147,6 +147,25 @@ pub fn absorb_into(mut ledger: Ledger, module: ref String?, renames: ref collect
             fields.push(changed)
         }
         entry.fields = fields
+        // The type's and its variants' attributes, as its fields' are.
+        if qualified {
+            let mut attributes: Vec[String] = []
+            for attribute in contract.attributes {
+                attributes.push(qualified_default(attribute, prefix, declared))
+            }
+            entry.attributes = attributes
+            let mut variants: Vec[VariantContract] = []
+            for variant in contract.variants {
+                let mut changed = variant.clone()
+                let mut held: Vec[String] = []
+                for attribute in variant.attributes {
+                    held.push(qualified_default(attribute, prefix, declared))
+                }
+                changed.attributes = held
+                variants.push(changed)
+            }
+            entry.variants = variants
+        }
         ledger.types.insert(key_under(name, prefix, qualified), entry)
     }
     // A trait's implementations, under **both spellings, on both sides**:

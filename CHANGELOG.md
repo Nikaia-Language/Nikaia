@@ -4,6 +4,18 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.632] — 2026-10-07
+
+**A type's and a variant's attributes are read too** (#496, ADR-331 D6, D8).
+- `T::attribute(X)` and `T::attributes(X)` read the walked type's own
+  attributes. A function that asks is copied per type, as a walk over
+  `T::fields` is.
+- A variant from `T::variants` answers `.attribute(X)` and `.attributes(X)`.
+  `NK1180`'s help lists them.
+- The ledger writes a type's attributes (`attributes = [...]`) and its
+  variants' (`variant_attributes = ["Add: Tag { … }"]`), qualified for a
+  consumer as a field's are.
+
 ## [0.0.631] — 2026-10-07
 
 **A field's attributes and its default are read while the program is built**,

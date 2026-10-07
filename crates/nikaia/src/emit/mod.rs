@@ -8289,33 +8289,17 @@ impl<'p> Emitter<'p> {
                     if let Some(field) = self.reflected(receiver, *method, wanted)
                         && let Some((_, on)) = self.specialising.borrow().clone()
                     {
-                        let asked = match args.first() {
-                            Some(Expr::Variable(name)) => self.text(*name).to_string(),
-                            Some(Expr::Path(segments)) => segments
-                                .iter()
-                                .map(|s| self.text(*s))
-                                .collect::<Vec<_>>()
-                                .join("::"),
-                            _ => String::new(),
+                        // A field's, or a variant's where the walk is over
+                        // `T::variants`.
+                        let texts = match self.field_contract(&on, &field) {
+                            Some(f) => f.attributes,
+                            None => self
+                                .type_contract(&on)
+                                .and_then(|c| c.variants.into_iter().find(|v| v.name == field))
+                                .map(|v| v.attributes)
+                                .unwrap_or_default(),
                         };
-                        let asked = self.parsed.unaliased(&asked);
-                        let values: Vec<String> = self
-                            .field_contract(&on, &field)
-                            .map(|f| f.attributes)
-                            .unwrap_or_default()
-                            .iter()
-                            .filter(|text| text.split(" { ").next() == Some(asked.as_str()))
-                            .map(|text| self.attribute_in_rust(text))
-                            .collect();
-                        // Typed where it is empty: nothing else on the line
-                        // says what it would hold.
-                        let written = match (wanted, values.is_empty()) {
-                            ("attribute", false) => format!("Some({})", values[0]),
-                            ("attribute", true) => format!("None::<{asked}>"),
-                            (_, false) => format!("vec![{}]", values.join(", ")),
-                            (_, true) => format!("Vec::<{asked}>::new()"),
-                        };
-                        out.push(&written);
+                        out.push(&self.attributes_read(wanted, args, &texts));
                         return Ok(());
                     }
                 }
@@ -9926,6 +9910,21 @@ impl<'p> Emitter<'p> {
         depth: usize,
         flow: Flow<'_>,
     ) -> Result<()> {
+        // **`T::attribute(X)` on the type this copy is of** (ADR-331 D6): its
+        // own attributes, as a field's are read.
+        if let Expr::Path(segments) = func
+            && let [parameter, member] = segments.as_slice()
+            && matches!(self.text(*member), "attribute" | "attributes")
+            && let Some((walked, on)) = self.specialising.borrow().clone()
+            && walked == self.text(*parameter)
+        {
+            let texts = self
+                .type_contract(&on)
+                .map(|c| c.attributes)
+                .unwrap_or_default();
+            out.push(&self.attributes_read(self.text(*member), args, &texts));
+            return Ok(());
+        }
         // **A call to a function with a precondition** reaches its checked
         // entry unless the prover saw this call prove it, or check it here
         // with the call's arguments in place of the parameters, so that a
@@ -12065,6 +12064,49 @@ impl<'p> Emitter<'p> {
     /// resolution here uses. `None` where the callee has none, and where the
     /// callee cannot be resolved at all: an unresolvable call has no options to
     /// fill in, and the type checker is what says so in Nikaia's words.
+    /// **What `.attribute(X)` or `.attributes(X)` comes to** over the values
+    /// `texts` (ADR-331 D6): `Some(…)` or `None`, or the list. Typed where it
+    /// is empty: nothing else on the line says what it would hold.
+    fn attributes_read(&self, wanted: &str, args: &[Expr], texts: &[String]) -> String {
+        let asked = match args.first() {
+            Some(Expr::Variable(name)) => self.text(*name).to_string(),
+            Some(Expr::Path(segments)) => segments
+                .iter()
+                .map(|s| self.text(*s))
+                .collect::<Vec<_>>()
+                .join("::"),
+            _ => String::new(),
+        };
+        let asked = self.parsed.unaliased(&asked);
+        let values: Vec<String> = texts
+            .iter()
+            .filter(|text| text.split(" { ").next() == Some(asked.as_str()))
+            .map(|text| self.attribute_in_rust(text))
+            .collect();
+        match (wanted, values.is_empty()) {
+            ("attribute", false) => format!("Some({})", values[0]),
+            ("attribute", true) => format!("None::<{asked}>"),
+            (_, false) => format!("vec![{}]", values.join(", ")),
+            (_, true) => format!("Vec::<{asked}>::new()"),
+        }
+    }
+
+    /// A type's contract, from this package's ledger or a dependency's.
+    fn type_contract(&self, owner: &str) -> Option<crate::contracts::TypeContract> {
+        let suffix = format!("::{owner}");
+        self.own_contracts
+            .types
+            .get(owner)
+            .or_else(|| {
+                self.library
+                    .types
+                    .iter()
+                    .find(|(key, _)| *key == owner || key.ends_with(&suffix))
+                    .map(|(_, contract)| contract)
+            })
+            .cloned()
+    }
+
     /// **A reflected field's contract**, from this package's ledger or a
     /// dependency's: what `.attribute(X)` and `.default` read (ADR-331 D5-D6).
     fn field_contract(&self, owner: &str, field: &str) -> Option<crate::contracts::FieldContract> {

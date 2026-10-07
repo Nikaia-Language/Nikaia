@@ -307,6 +307,15 @@ fn type_text(contract: ref TypeContract) -> String {
             variants.push(variant.text())
         }
         out.push_str(f"variants = [{quoted_all(variants)}]\n")
+        let mut attributes: Vec[String] = []
+        for variant in contract.variants {
+            for attribute in variant.attributes {
+                attributes.push(ledger_escaped(f"{variant.name}: {attribute}"))
+            }
+        }
+        if attributes.len() > 0 {
+            out.push_str(f"variant_attributes = [{quoted_all(attributes)}]\n")
+        }
     }
     // Both claims are written and the third is silence, which is what makes
     // every ledger already on disk mean what it meant (ADR-123 D1).
@@ -329,6 +338,13 @@ fn type_text(contract: ref TypeContract) -> String {
     }
     if contract.tethered.len() > 0 {
         out.push_str(f"tethered = [{quoted_all(contract.tethered)}]\n")
+    }
+    if contract.attributes.len() > 0 {
+        let mut escaped: Vec[String] = []
+        for attribute in contract.attributes {
+            escaped.push(ledger_escaped(attribute))
+        }
+        out.push_str(f"attributes = [{quoted_all(escaped)}]\n")
     }
     if contract.mark.len() > 0 {
         out.push_str(f"attribute = \"{contract.mark}\"\n")

@@ -539,6 +539,8 @@ impl LedgerOps for Ledger {
                                     variant.fields,
                                     crate::ast::VariantFields::Tuple(_)
                                 ),
+                                // `attribute_values` fills them.
+                                attributes: Vec::new(),
                             })
                             .collect();
                         ledger.types.insert(
@@ -565,6 +567,7 @@ impl LedgerOps for Ledger {
                                 // A declared type is walked by its parts.
                                 constant: String::new(),
                                 mark: String::new(),
+                                attributes: Vec::new(),
                             },
                         );
                     }
@@ -656,6 +659,7 @@ impl LedgerOps for Ledger {
                                     })
                                     .map(|a| crate::check::attributes::mark_of(parsed, a).text())
                                     .unwrap_or_default(),
+                                attributes: Vec::new(),
                             },
                         );
                     }
@@ -1214,34 +1218,66 @@ fn computed_defaults<'a>(
 /// arguments are not literals or variants is the checker's to refuse, and is
 /// left out here.
 fn attribute_values(ledger: &mut Ledger, units: &[&Parsed], library: &Ledger) {
-    let mut found: Vec<(String, usize, String)> = Vec::new();
+    // Where each value goes: the type itself, a field or a variant.
+    enum At {
+        Type,
+        Field(usize),
+        Variant(usize),
+    }
+    let mut found: Vec<(String, At, String)> = Vec::new();
+    let values = |parsed: &Parsed, attributes: &[crate::ast::Attribute]| -> Vec<String> {
+        attributes
+            .iter()
+            .filter_map(|attribute| {
+                let named = parsed.unaliased(parsed.text(attribute.name));
+                if named == crate::check::attributes::MARK {
+                    return None;
+                }
+                attribute_value(ledger, library, parsed, &named, attribute)
+            })
+            .collect()
+    };
     for parsed in units.iter().copied() {
         for item in &parsed.program.items {
-            let Item::Struct { name, fields, .. } = &item.node else {
-                continue;
+            let owner = match &item.node {
+                Item::Struct { name, .. } | Item::Enum { name, .. } => {
+                    parsed.text(*name).to_string()
+                }
+                _ => continue,
             };
-            for (at, field) in fields.iter().enumerate() {
-                for attribute in &field.attributes {
-                    let attribute_name = parsed.unaliased(parsed.text(attribute.name));
-                    if attribute_name == "meta::Attribute" {
-                        continue;
-                    }
-                    if let Some(text) =
-                        attribute_value(ledger, library, parsed, &attribute_name, attribute)
-                    {
-                        found.push((parsed.text(*name).to_string(), at, text));
+            for text in values(parsed, &item.attributes) {
+                found.push((owner.clone(), At::Type, text));
+            }
+            match &item.node {
+                Item::Struct { fields, .. } => {
+                    for (at, field) in fields.iter().enumerate() {
+                        for text in values(parsed, &field.attributes) {
+                            found.push((owner.clone(), At::Field(at), text));
+                        }
                     }
                 }
+                Item::Enum { variants, .. } => {
+                    for (at, variant) in variants.iter().enumerate() {
+                        for text in values(parsed, &variant.attributes) {
+                            found.push((owner.clone(), At::Variant(at), text));
+                        }
+                    }
+                }
+                _ => {}
             }
         }
     }
     for (owner, at, text) in found {
-        if let Some(field) = ledger
-            .types
-            .get_mut(&owner)
-            .and_then(|t| t.fields.get_mut(at))
-        {
-            field.attributes.push(text);
+        let Some(entry) = ledger.types.get_mut(&owner) else {
+            continue;
+        };
+        let held = match at {
+            At::Type => Some(&mut entry.attributes),
+            At::Field(at) => entry.fields.get_mut(at).map(|f| &mut f.attributes),
+            At::Variant(at) => entry.variants.get_mut(at).map(|v| &mut v.attributes),
+        };
+        if let Some(held) = held {
+            held.push(text);
         }
     }
 }

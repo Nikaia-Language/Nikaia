@@ -9067,6 +9067,21 @@ fn type_key(entry: &mut TypeContract, key: &str, value: &str, n: i64) -> Result<
         let mut fields: Vec<FieldContract> = vec![];
         for one in entries(value, n)? { fields.push(field_of(&one)); }
         entry.fields = fields;
+    } else if key == "attributes" { entry.attributes = entries(value, n)?; } else if key == "variant_attributes" {
+        for one in entries(value, n)? {
+            let c: Vec<char> = nikaia_std::list::chars(one.chars());
+            let colon = find(&c, 0, ':');
+            if colon < 0 { return Err(nikaia_std::error::throwing(Refused::Because(format!("line {}: a variant's attribute is `Variant: Value {{ … }}`, not `{}`", n, one)), &"type_key")); }
+            let named = slice(&c, 0, colon).trim().to_owned();
+            let held = slice(&c, colon + 1, c.len() as i64).trim().to_owned();
+            let mut updated: Vec<VariantContract> = vec![];
+            for one_variant in entry.variants.iter() {
+                let mut changed = one_variant.clone();
+                if changed.name == named { changed.attributes.push(held.to_owned()); }
+                updated.push(changed);
+            }
+            entry.variants = updated;
+        }
     } else if key == "field_attributes" {
         for one in entries(value, n)? {
             let c: Vec<char> = nikaia_std::list::chars(one.chars());
@@ -9204,7 +9219,7 @@ pub fn variant_of(written: &str) -> VariantContract {
             holds.push(FieldContract { name: format!("{}", at), ty: parse(&part), public: true, default: String::from(""), attributes: vec![] });
             at += 1;
         }
-        return VariantContract { name: named.trim().to_owned(), holds, positional: true };
+        return VariantContract { name: named.trim().to_owned(), holds, positional: true, attributes: vec![] };
     }
     let brace = find(&c, 0, '{');
     if brace >= 0 {
@@ -9220,10 +9235,10 @@ pub fn variant_of(written: &str) -> VariantContract {
                 holds.push(FieldContract { name: field.trim().to_owned(), ty: parse(&slice(&p, colon + 1, p.len() as i64)), public: true, default: String::from(""), attributes: vec![] });
             }
         }
-        return VariantContract { name: named.trim().to_owned(), holds, positional: false };
+        return VariantContract { name: named.trim().to_owned(), holds, positional: false, attributes: vec![] };
     }
     let nothing: Vec<FieldContract> = vec![];
-    VariantContract { name: whole.to_owned(), holds: nothing, positional: false }
+    VariantContract { name: whole.to_owned(), holds: nothing, positional: false, attributes: vec![] }
 }
 
 fn field_of(written: &str) -> FieldContract {
@@ -9920,6 +9935,20 @@ pub fn absorb_into(ledger: &mut Ledger, module: Option<&str>, renames: &collecti
             fields.push(changed);
         }
         entry.fields = fields;
+        if qualified {
+            let mut attributes: Vec<String> = vec![];
+            for attribute in contract.attributes.iter() { attributes.push(qualified_default(attribute, &prefix, &declared)); }
+            entry.attributes = attributes;
+            let mut variants: Vec<VariantContract> = vec![];
+            for variant in contract.variants.iter() {
+                let mut changed = variant.clone();
+                let mut held: Vec<String> = vec![];
+                for attribute in variant.attributes.iter() { held.push(qualified_default(attribute, &prefix, &declared)); }
+                changed.attributes = held;
+                variants.push(changed);
+            }
+            entry.variants = variants;
+        }
         ledger.types.insert(key_under(name, &prefix, qualified), entry);
     }
     for (trait_name, types) in other.implementations.iter() {
@@ -10188,6 +10217,9 @@ fn type_text(contract: &TypeContract) -> String {
         let mut variants: Vec<String> = vec![];
         for variant in contract.variants.iter() { variants.push(variant.text()); }
         out.push_str(&format!("variants = [{}]\n", quoted_all(&variants)));
+        let mut attributes: Vec<String> = vec![];
+        for variant in contract.variants.iter() { for attribute in variant.attributes.iter() { attributes.push(ledger_escaped(&format!("{}: {}", variant.name, attribute))); } }
+        if !attributes.is_empty() { out.push_str(&format!("variant_attributes = [{}]\n", quoted_all(&attributes))); }
     }
     match contract.crosses {
         Crosses::May => out.push_str("crosses = true\n"),
@@ -10199,6 +10231,11 @@ fn type_text(contract: &TypeContract) -> String {
     if contract.iterates_fallibly { out.push_str("iterates = \"throws\"\n"); }
     if !contract.touches.is_empty() { out.push_str(&format!("touches = [{}]\n", quoted_all(&contract.touches))); }
     if !contract.tethered.is_empty() { out.push_str(&format!("tethered = [{}]\n", quoted_all(&contract.tethered))); }
+    if !contract.attributes.is_empty() {
+        let mut escaped: Vec<String> = vec![];
+        for attribute in contract.attributes.iter() { escaped.push(ledger_escaped(attribute)); }
+        out.push_str(&format!("attributes = [{}]\n", quoted_all(&escaped)));
+    }
     if !contract.mark.is_empty() { out.push_str(&format!("attribute = \"{}\"\n", contract.mark)); }
     if !contract.constant.is_empty() { out.push_str(&format!("constant = \"{}\"\n", contract.constant)); }
     out
@@ -20685,6 +20722,7 @@ pub struct VariantContract {
     pub name: String,
     pub holds: Vec<FieldContract>,
     pub positional: bool,
+    pub attributes: Vec<String>,
 }
 
 impl VariantContract {
@@ -20808,10 +20846,11 @@ pub struct TypeContract {
     pub tethered: Vec<String>,
     pub constant: String,
     pub mark: String,
+    pub attributes: Vec<String>,
 }
 
 impl TypeContract {
-    pub fn empty() -> TypeContract { TypeContract { public: false, fields: vec![], variants: vec![], crosses: Crosses::Undecided, iterates_fallibly: false, compares: false, copies: false, touches: vec![], tethered: vec![], constant: String::from(""), mark: String::from("") } }
+    pub fn empty() -> TypeContract { TypeContract { public: false, fields: vec![], variants: vec![], crosses: Crosses::Undecided, iterates_fallibly: false, compares: false, copies: false, touches: vec![], tethered: vec![], constant: String::from(""), mark: String::from(""), attributes: vec![] } }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

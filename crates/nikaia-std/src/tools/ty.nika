@@ -931,6 +931,8 @@ pub struct VariantContract {
     pub holds: Vec[FieldContract],
     /// `Write(String)` rather than `Move { x: i32 }`: read by position.
     pub positional: bool,
+    /// Its attributes' values, as a field's are (ADR-331 D6, D8).
+    pub attributes: Vec[String],
 }
 
 impl VariantContract {
@@ -1144,6 +1146,8 @@ pub struct TypeContract {
     /// (ADR-331 D2, D8): the places, and `; repeatable` where it may stand
     /// twice - `field, struct; repeatable`. Empty where it is none.
     pub mark: String,
+    /// The type's own attributes' values, as a field's are (ADR-331 D6, D8).
+    pub attributes: Vec[String],
 }
 
 impl TypeContract {
@@ -1161,6 +1165,7 @@ impl TypeContract {
             tethered: [],
             constant: "",
             mark: "",
+            attributes: [],
         }
     }
 }

@@ -2683,8 +2683,12 @@ fn walks_the_fields_of(
     crate::emit::visit_block(body, &mut |expr| {
         if let Expr::Path(segments) = expr {
             let names: Vec<&str> = segments.iter().map(|s| parsed.text(*s)).collect();
+            // **`T::attribute(X)` asks for the type too** (ADR-331 D6): its
+            // value is the type's own, so the function is copied per type as
+            // a walk is.
             if matches!(names.as_slice(), [ty, member]
-                if *ty == parameter && *member == shape)
+                if *ty == parameter
+                    && (*member == shape || *member == "attribute" || *member == "attributes"))
             {
                 found = true;
             }
@@ -12816,13 +12820,27 @@ impl<'a> Checker<'a> {
                 // has**: whether the value is that variant. A `bool` on every
                 // turn, so the generic walk and the unrolled one agree.
                 if matches!(&on, Ty::Named { name, .. } if name == ty::VARIANT) {
+                    // A variant's attributes are read as a field's are (D6).
+                    let named = self.parsed.text(*method).to_string();
+                    if matches!(named.as_str(), "attribute" | "attributes") {
+                        let Some(read) = self.an_attribute_read(args, span) else {
+                            return Ty::Unknown;
+                        };
+                        return match named.as_str() {
+                            "attribute" => Ty::Nullable(Box::new(Ty::named(&read))),
+                            _ => Ty::Named {
+                                name: "Vec".to_string(),
+                                args: vec![Ty::named(&read)],
+                                view: false,
+                            },
+                        };
+                    }
                     args.iter().for_each(|a| {
                         self.expr(a, span);
                     });
                     if let Some(at) = witness {
                         self.expr(&config[at].value, span);
                     }
-                    let named = self.parsed.text(*method).to_string();
                     if named != "is" || args.len() != 1 {
                         self.a_reflected_variant_has_two_members(&format!("{named}(…)"), span);
                         return Ty::Unknown;
@@ -16160,6 +16178,27 @@ impl<'a> Checker<'a> {
     }
 
     fn call(&mut self, func: &Expr, args: &[Expr], config: &[ast::ConfigArg], span: &Span) -> Ty {
+        // **`T::attribute(X)` and `T::attributes(X)`, a walked type's own**
+        // (ADR-331 D6): `X` is a type, not a value, and is not walked as one.
+        if let Expr::Path(segments) = func
+            && let [parameter, member] = segments.as_slice()
+            && self
+                .type_parameters
+                .contains_key(self.parsed.text(*parameter))
+            && matches!(self.parsed.text(*member), "attribute" | "attributes")
+        {
+            let Some(read) = self.an_attribute_read(args, span) else {
+                return Ty::Unknown;
+            };
+            return match self.parsed.text(*member) {
+                "attribute" => Ty::Nullable(Box::new(Ty::named(&read))),
+                _ => Ty::Named {
+                    name: "Vec".to_string(),
+                    args: vec![Ty::named(&read)],
+                    view: false,
+                },
+            };
+        }
         // **A door over several locks types its own lambda**
         // ([ADR-281](../../docs/specification/adr/adr-281.md) D17), and it has to
         // be answered before the arguments are walked: what the lambda is handed
@@ -23518,12 +23557,14 @@ impl<'a> Checker<'a> {
             code: "NK1180",
             message: format!("A variant from `T::variants` has no `{member}`."),
             notes: vec![
-                "A variant from `T::variants` has `.name`, its name as text, and \
-                 `.is(value)`, whether a value is that variant."
+                "A variant from `T::variants` has `.name`, its name as text, `.is(value)`, \
+                 whether a value is that variant, and `.attribute(X)` and `.attributes(X)`, \
+                 what its attributes say."
                     .to_string(),
             ],
             help: Some(
-                "Use `.name` or `.is(value)`. To read what a variant carries, use a `match`."
+                "Use `.name`, `.is(value)`, `.attribute(X)` or `.attributes(X)`. To read what a \
+                 variant carries, use a `match`."
                     .to_string(),
             ),
             labels: Vec::new(),

@@ -322,3 +322,53 @@ fn attributes_cross_into_another_package() {
     let _ = std::fs::remove_dir_all(&dir);
     assert_eq!(stdout, "itemId\ncreatedAt\nname\n", "{stderr}");
 }
+
+/// **A type's own attributes, and a variant's** (D6): `T::attribute(X)` makes
+/// a copy per type as a walk does, and `variant.attribute(X)` is read per
+/// turn of `T::variants`. The ledger writes both and reads them back (D8).
+#[test]
+fn a_types_and_a_variants_attributes_are_read() {
+    let source = "@meta::Attribute(struct, enum, variant)\n\
+         pub struct Tag {\n\
+         \x20   pub text: String,\n\
+         }\n\
+         \n\
+         @Tag(\"users\")\n\
+         struct User {\n\
+         \x20   name: String,\n\
+         }\n\
+         \n\
+         enum Op {\n\
+         \x20   @Tag(\"plus\")\n\
+         \x20   Add,\n\
+         \x20   Sub,\n\
+         }\n\
+         \n\
+         fn table[T: Struct](value: T) {\n\
+         \x20   println(T::attribute(Tag)?.text ?? \"none\")\n\
+         }\n\
+         \n\
+         fn ops[T: Enum](value: T) {\n\
+         \x20   for variant in T::variants {\n\
+         \x20       println(variant.attribute(Tag)?.text ?? variant.name)\n\
+         \x20   }\n\
+         }\n\
+         \n\
+         fn main() {\n\
+         \x20   table(User { name: \"x\" })\n\
+         \x20   ops(Op::Add)\n\
+         }\n";
+    assert_eq!(run_file("attributes-types", source), "users\nplus\nSub\n");
+    let parsed = parse_to_ast(source).expect("the source parses");
+    let written = common::infer(&parsed).render();
+    assert!(
+        written.contains("attributes = [\"Tag { text: \\\"users\\\" }\"]"),
+        "{written}"
+    );
+    assert!(
+        written.contains("variant_attributes = [\"Add: Tag { text: \\\"plus\\\" }\"]"),
+        "{written}"
+    );
+    let read = Ledger::parse(&written).expect("the ledger reads back");
+    assert_eq!(read.render(), written);
+}
