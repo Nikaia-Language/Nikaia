@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part I: The Language Core**
-**Version:** 0.0.646 (Draft)
+**Version:** 0.0.647 (Draft)
 **Date:** 2026-10-07
 
 ---
@@ -1456,6 +1456,19 @@ server.get("/orders/{id}") fn(id: i64) { … }       // "/orders/{id}" is read w
 ```
 
 A caller that passes its own parameter on declares it `comptime` too.
+
+**A `comptime` parameter in a function's brackets is read off its arguments' types**, as `T` is:
+
+```nika
+fn reversed[comptime N: i64](xs: Array[i64, N]) -> Array[i64, N] { … }
+fn dot[comptime N: i64](a: Array[f64, N], b: Array[f64, N]) -> f64 { … }
+
+dot([1.0, 2.0], [3.0, 4.0])          // N is 2
+dot([1.0, 2.0], [3.0, 4.0, 5.0])     // refused: N cannot be 2 and 3
+```
+
+The call writes nothing for it; inside it is a constant, and a result type may name it.
+`Array[T]` as a parameter (2.2) is such a length that nobody names.
 
 A `T` on its own has no members:
 

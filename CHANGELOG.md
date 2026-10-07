@@ -4,6 +4,15 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.647] — 2026-10-07
+
+**A function names an array's length: `fn f[comptime N: i64](xs: Array[i64, N]) -> Array[i64, N]`** (ADR-333 D4, #121).
+- A `comptime` parameter in a function's brackets is read off its arguments'
+  types, as `T` is; arguments that give it two values are refused; a result
+  type may name it. `Array[T]` as a parameter is such a length unnamed.
+  `NK1182`'s help offers it.
+- `comptime` stays the one word for a type's value parameters too.
+
 ## [0.0.646] — 2026-10-07
 
 **A grammar run's parsers share one target directory per machine** (issue
