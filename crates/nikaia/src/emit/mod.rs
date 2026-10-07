@@ -8145,11 +8145,12 @@ impl<'p> Emitter<'p> {
                 context: None,
                 ..
             } if self.grammars.contains_key(target)
-                && let Some((below, written)) = self
+                && self
                     .dsl_values
-                    .get(&crate::check::value_node(expr))
-                    .cloned() =>
+                    .contains_key(&crate::check::value_node(expr)) =>
             {
+                // Not an `if let` guard: the toolchain floor (1.88) has none.
+                let (below, written) = self.dsl_values[&crate::check::value_node(expr)].clone();
                 out.push(&format!(
                     "{{ const __NIKAIA_DSL: {below} = {written}; __NIKAIA_DSL }}"
                 ));
