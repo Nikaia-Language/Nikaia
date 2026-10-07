@@ -512,15 +512,11 @@ fn type_key(mut entry: TypeContract, key: ref String, value: ref String, n: i64)
             }
             let named = slice(c, 0, colon).trim().clone()
             let held = slice(c, colon + 1, c.len()).trim().clone()
-            let mut updated: Vec[VariantContract] = []
-            for one_variant in entry.variants {
-                let mut changed = one_variant.clone()
-                if changed.name == named {
-                    changed.attributes.push(held.clone())
+            for at in 0..<entry.variants.len() {
+                if entry.variants[at].name == named {
+                    entry.variants[at].attributes.push(held.clone())
                 }
-                updated.push(changed)
             }
-            entry.variants = updated
         }
     } else if key == "field_attributes" {
         // `created_at: Name { value: "createdAt" }`, after `fields`
@@ -535,15 +531,11 @@ fn type_key(mut entry: TypeContract, key: ref String, value: ref String, n: i64)
             let field = slice(c, 0, colon)
             let held = slice(c, colon + 1, c.len())
             let named = field.trim().clone()
-            let mut updated: Vec[FieldContract] = []
-            for one_field in entry.fields {
-                let mut changed = one_field.clone()
-                if changed.name == named {
-                    changed.attributes.push(held.trim().clone())
+            for at in 0..<entry.fields.len() {
+                if entry.fields[at].name == named {
+                    entry.fields[at].attributes.push(held.trim().clone())
                 }
-                updated.push(changed)
             }
-            entry.fields = updated
         }
     } else {
         throw Refused::Because(f"line {n}: unknown key `{key}` on a type")

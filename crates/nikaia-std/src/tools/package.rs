@@ -9074,13 +9074,7 @@ fn type_key(entry: &mut TypeContract, key: &str, value: &str, n: i64) -> Result<
             if colon < 0 { return Err(nikaia_std::error::throwing(Refused::Because(format!("line {}: a variant's attribute is `Variant: Value {{ … }}`, not `{}`", n, one)), &"type_key")); }
             let named = slice(&c, 0, colon).trim().to_owned();
             let held = slice(&c, colon + 1, c.len() as i64).trim().to_owned();
-            let mut updated: Vec<VariantContract> = vec![];
-            for one_variant in entry.variants.iter() {
-                let mut changed = one_variant.clone();
-                if changed.name == named { changed.attributes.push(held.to_owned()); }
-                updated.push(changed);
-            }
-            entry.variants = updated;
+            for at in 0..entry.variants.len() as i64 { if nikaia_std::index::get(&entry.variants, nikaia_std::index::at(at)).name == named { entry.variants[nikaia_std::index::at(at)].attributes.push(held.to_owned()); } }
         }
     } else if key == "field_attributes" {
         for one in entries(value, n)? {
@@ -9090,13 +9084,7 @@ fn type_key(entry: &mut TypeContract, key: &str, value: &str, n: i64) -> Result<
             let field = slice(&c, 0, colon);
             let held = slice(&c, colon + 1, c.len() as i64);
             let named = field.trim().to_owned();
-            let mut updated: Vec<FieldContract> = vec![];
-            for one_field in entry.fields.iter() {
-                let mut changed = one_field.clone();
-                if changed.name == named { changed.attributes.push(held.trim().to_owned()); }
-                updated.push(changed);
-            }
-            entry.fields = updated;
+            for at in 0..entry.fields.len() as i64 { if nikaia_std::index::get(&entry.fields, nikaia_std::index::at(at)).name == named { entry.fields[nikaia_std::index::at(at)].attributes.push(held.trim().to_owned()); } }
         }
     } else { return Err(nikaia_std::error::throwing(Refused::Because(format!("line {}: unknown key `{}` on a type", n, key)), &"type_key")); }
     Ok(())

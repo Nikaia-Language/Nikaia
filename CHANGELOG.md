@@ -4,6 +4,15 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.634] — 2026-10-07
+
+**A field of a list element is changed in place** (#526).
+`items[1].tags.push(x)` read the element through `index::get` and handed
+`rustc` a shared reference to change: E0596, about a file nobody wrote. A call
+that changes a field reached through an index now writes the element as the
+place it is (`items[1].tags.push(…)`), as `items[1].push(…)` already did. The
+ledger reader goes back to the direct form it was moved off.
+
 ## [0.0.633] — 2026-10-07
 
 **An attribute's argument is any build-time value** (#496, ADR-331 D1).

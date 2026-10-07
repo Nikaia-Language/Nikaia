@@ -1880,6 +1880,16 @@ fn default_written(default: &ast::FieldDefault) -> String {
     }
 }
 
+/// Whether `expr` is a list element, or a field reached through one
+/// (`items[1].tags`): a place a call that changes it writes through.
+fn an_element_beneath(expr: &Expr) -> bool {
+    match expr {
+        Expr::Index { index, .. } => !matches!(index.as_ref(), Expr::Range { .. }),
+        Expr::Field { base, .. } => an_element_beneath(base),
+        _ => false,
+    }
+}
+
 pub fn argument_shape(expr: &Expr) -> String {
     format!("{expr:?}")
 }
@@ -13030,9 +13040,9 @@ impl<'a> Checker<'a> {
                         // `by_bucket[b].push(x)` writes through the index, and
                         // the read `*get(…)` it was written as cannot be
                         // changed - `rustc` about the generated file.
-                        if matches!(receiver.as_ref(), Expr::Index { index, .. }
-                            if !matches!(index.as_ref(), Expr::Range { .. }))
-                        {
+                        // **And so is a field of one** (#526):
+                        // `items[1].tags.push(x)` changes the element too.
+                        if an_element_beneath(receiver) {
                             self.checked
                                 .changed_elements
                                 .insert((span.at(), argument_shape(receiver)));
