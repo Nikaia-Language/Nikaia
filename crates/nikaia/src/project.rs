@@ -69,6 +69,10 @@ const GEN_DIR_VAR: &str = "NIKAIA_GEN_DIR";
 /// target directory (#495), for the wrapper to take off again.
 const PROGRAM_TAG_VAR: &str = "NIKAIA_PROGRAM_TAG";
 const NO_CACHE_VAR: &str = "NIKAIA_NO_CACHE";
+/// **The file a loose `nikaia run` was given**, for the wrapper to name the
+/// entry by (#510): it lowers the copy in the cache, and a panic's location is
+/// written then.
+const SHOWN_AS_VAR: &str = "NIKAIA_SHOWN_AS";
 
 /// How `--allow-read-from-list` reaches the `rustc` wrapper
 /// ([ADR-310](../../docs/specification/adr/adr-310.md) D5, D9).
@@ -906,6 +910,7 @@ pub fn project_for_file(
     )?;
     let mut project = Project::open(&root, target, user_parallelism)?;
     project.warned = warned;
+    project.written = Some(file.to_path_buf());
     Ok(project)
 }
 
@@ -972,20 +977,15 @@ pub fn lower_reading(
             (false, false) => modules::Program::read_one(input),
         }
     })?;
+    let mut program = program;
+    program.entry_shown_as = SHOWN_AS.with(|cell| cell.borrow().clone());
     let key_source = program.sources().join("\n// --- unit ---\n");
     // **What the output names is part of the key** (0.0.239): the abort table
     // names each file as it was handed to the compiler (ADR-300 D9), so a
     // lowering cached for `/abs/one.nika` and reused for `one.nika` named the
     // first path in the second program's aborts. A choice, and not part of
     // the source, because the source's hash is the lockfile's.
-    let choices = choices.naming(
-        program
-            .units
-            .iter()
-            .map(|unit| unit.path.display().to_string())
-            .collect::<Vec<_>>()
-            .join("\n"),
-    );
+    let choices = choices.naming(program.shown_paths().join("\n"));
     let sources: Vec<PathBuf> = program.units.iter().map(|unit| unit.path.clone()).collect();
     // Read off the program, which every lowering builds - a cache hit too - so
     // the note is the same whether the emitter ran or not.
@@ -2176,11 +2176,18 @@ pub struct Project {
     /// lowers it where it stands first, so its findings name the file the
     /// author wrote, and the build of the copy then keeps them to itself.
     pub warned: bool,
+    /// **The file a loose `nikaia run` was given** (#510): the build is of a
+    /// copy in the cache, and a message the language below raised about it is
+    /// said against the file the author wrote, not the copy's path.
+    pub written: Option<PathBuf>,
 }
 
 thread_local! {
     /// Set while a build lowers what [`Project::warned`] said already.
     static WARNED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// Set while a build lowers the copy [`Project::written`] names: the entry
+    /// it lowers is said under that file's name (#510).
+    static SHOWN_AS: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
 }
 
 impl Project {
@@ -2229,6 +2236,7 @@ impl Project {
             manifest,
             settings,
             warned: false,
+            written: None,
         })
     }
 
@@ -2524,6 +2532,13 @@ impl Project {
         for at in order {
             let member = &members[at];
             let outer = WARNED.with(|warned| warned.replace(self.warned));
+            let shown = match &self.written {
+                Some(written) if canonical(&member.entry) == canonical(&self.entry()) => {
+                    Some(written.display().to_string())
+                }
+                _ => None,
+            };
+            let shown_outer = SHOWN_AS.with(|cell| cell.replace(shown));
             let lowered = lower_reading(
                 &member.entry,
                 &self.settings,
@@ -2531,6 +2546,7 @@ impl Project {
                 &member.dependencies,
                 allowlist,
             );
+            SHOWN_AS.with(|cell| cell.replace(shown_outer));
             WARNED.with(|warned| warned.set(outer));
             let lowered = lowered?;
             // **The libraries this package names, and how it finds them**
@@ -2668,6 +2684,18 @@ impl Project {
         ));
         if no_cache {
             env.push((NO_CACHE_VAR.to_string(), OsString::from("1")));
+        }
+        // The entry it names and the name, `\u{1f}` between: only that file is
+        // said under another name, not a package the program depends on.
+        if let Some(written) = &self.written {
+            env.push((
+                SHOWN_AS_VAR.to_string(),
+                OsString::from(format!(
+                    "{}\u{1f}{}",
+                    canonical(&self.entry()).display(),
+                    written.display()
+                )),
+            ));
         }
         // **Absolute**, because the wrapper runs in a directory Cargo chose.
         if let Some(list) = allowlist {
@@ -2815,10 +2843,14 @@ impl Project {
         program.described = foreign.descriptions.clone();
         let lowered = program.emit_reading(self.settings.build, &reads)?;
         let sources: Vec<&str> = program.sources();
+        let entry = canonical(&self.entry());
         let paths: Vec<String> = program
             .units
             .iter()
-            .map(|unit| unit.path.display().to_string())
+            .map(|unit| match &self.written {
+                Some(written) if canonical(&unit.path) == entry => written.display().to_string(),
+                _ => unit.path.display().to_string(),
+            })
             .collect();
         let generated = self.gen_dir().display().to_string();
 
@@ -3594,13 +3626,21 @@ pub fn wrapper_main() -> Result<i32> {
         None => Vec::new(),
     };
     let allowlist = std::env::var_os(READS_VAR).map(PathBuf::from);
+    let shown = std::env::var_os(SHOWN_AS_VAR).and_then(|value| {
+        let value = value.to_string_lossy().into_owned();
+        let (entry, written) = value.split_once('\u{1f}')?;
+        (canonical(&source).display().to_string() == entry).then(|| written.to_string())
+    });
+    let shown_outer = SHOWN_AS.with(|cell| cell.replace(shown));
     let lowered = lower_reading(
         &source,
         &settings,
         std::env::var_os(NO_CACHE_VAR).is_some(),
         &packages,
         allowlist.as_deref(),
-    )?;
+    );
+    SHOWN_AS.with(|cell| cell.replace(shown_outer));
+    let lowered = lowered?;
 
     let name = invocation.crate_name.clone().unwrap_or_else(|| {
         source

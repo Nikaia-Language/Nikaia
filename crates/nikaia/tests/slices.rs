@@ -196,11 +196,11 @@ fn a_run_this_body_owns_is_refused_by_name() {
 /// …and **inside a grammar action the sentence is a different one**
 /// ([ADR-179](../../../docs/specification/adr/adr-179.md) D4).
 ///
-/// A rule's binding has no type here, so the message may not print a `?` the
-/// reader would have to write ([Part III
+/// The message may not print a `?` the reader would have to write ([Part III
 /// C.2](../../../docs/specification/30-nikaia-tooling.md): *a way out that
-/// cannot be taken is not one*). What it names is `Vec[T]`, which is what a
-/// parse builds.
+/// cannot be taken is not one*). Since a rule's binding has its type (#500),
+/// `settings:setting*` is a `Vec[Setting]`, and that is what the sentence and
+/// the way out name.
 #[test]
 fn an_action_that_fills_a_view_names_the_vec() {
     let found = findings(
@@ -221,7 +221,8 @@ fn an_action_that_fills_a_view_names_the_vec() {
     let refused: Vec<_> = found.iter().filter(|f| f.code == "NK1179").collect();
     assert_eq!(refused.len(), 1, "{found:#?}");
     assert!(
-        refused[0].message.contains("a value this body owns"),
+        refused[0].message.contains("a `Vec[Setting]` this body owns")
+            && !refused[0].message.contains('?'),
         "no `?` in the sentence: {:#?}",
         refused[0]
     );
@@ -230,7 +231,7 @@ fn an_action_that_fills_a_view_names_the_vec() {
             .help
             .as_deref()
             .unwrap_or_default()
-            .contains("`Vec[T]`"),
+            .contains("`Vec[Setting]`"),
         "{:#?}",
         refused[0]
     );

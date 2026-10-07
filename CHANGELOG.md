@@ -4,6 +4,27 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.614] — 2026-10-07
+
+**`a` or `an` by the word a message names** (#511).
+- `check_words::article` decides by the sound: `an `io::IoError``, `an `i64``,
+  `an `f64``, `a `u8``, `a `usize``. About forty messages wrote the article by
+  hand before an interpolated type. The check now corrects every `a`/`an`
+  directly before a backticked word once, at its end. A word that starts with
+  a sign keeps what was written (`an `|` pattern`).
+
+**A grammar's bindings have the types Part II 10.8 gives them** (#500).
+- `t:term` is `term`'s declared result, and `tail:add_tail*` is a list of it.
+  `s:until(…)`, `text(…)`, `raw_ident`, `string`, `alpha1` and a run of
+  `digit` are text, a view of the input. `digit`, `any` and `char` are a
+  scalar, `x?` is a `T?`, and `list(item, sep)` is a list. An action's wrong
+  use of one is refused here, where it reached `rustc`.
+
+**`nikaia run f.nika` names `f.nika`** (#510).
+- A loose file is built as a copy in the cache. A `rustc` refusal mapped back
+  to the source, and a panic's location while it runs, named the copy's path
+  (`~/.cache/nikaia/run/…/src/main.nika`). Both name the file that was run.
+
 ## [0.0.613] — 2026-10-07
 
 **`f[T]()` is allowed, with a warning that asks for its use case** (ADR-330 D9, #514).

@@ -510,6 +510,11 @@ fn shipped_ledger(root: &Path) -> Option<crate::contracts::Ledger> {
 /// A whole program: one ledger, one Rust file, one source map.
 pub struct Program {
     pub units: Vec<Unit>,
+    /// **The name the entry file is said under, where it is not its path**
+    /// (#510): `nikaia run f.nika` builds a copy in the cache, and a panic's
+    /// location names `f.nika`, the file the author has open. `None` names
+    /// every unit by its path.
+    pub entry_shown_as: Option<String>,
     /// **What the manifest's described crates say about their boundary**
     /// ([ADR-290](../../../docs/specification/adr/adr-290.md) D1,
     /// [ADR-290](../../../docs/specification/adr/adr-290.md) D20): read by the
@@ -713,6 +718,7 @@ impl Program {
 
         Ok(Program {
             units,
+            entry_shown_as: None,
             described: crate::contracts::Ledger::blank(),
             contracts,
             as_its_own,
@@ -720,6 +726,19 @@ impl Program {
             paused_by_code,
             pauses,
         })
+    }
+
+    /// Each unit's path as a message says it: the entry under
+    /// [`Program::entry_shown_as`] where that is set.
+    pub fn shown_paths(&self) -> Vec<String> {
+        self.units
+            .iter()
+            .enumerate()
+            .map(|(at, unit)| match (&self.entry_shown_as, at) {
+                (Some(shown), 0) => shown.clone(),
+                _ => unit.path.display().to_string(),
+            })
+            .collect()
     }
 
     /// **[ADR-288](../../../docs/specification/adr/adr-288.md) D29's note**:
@@ -965,11 +984,7 @@ impl Program {
             matches!(&item.node, crate::ast::Item::Fn { name: Some(name), .. }
                 if self.units[0].parsed.text(*name) == "main")
         }) {
-            let paths: Vec<String> = self
-                .units
-                .iter()
-                .map(|unit| unit.path.display().to_string())
-                .collect();
+            let paths = self.shown_paths();
             let sources: Vec<&str> = self.units.iter().map(|u| u.source.as_str()).collect();
             rust.push_str(&crate::emit::abort_table(&rust, &map, &paths, &sources));
         }

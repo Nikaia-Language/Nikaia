@@ -116,7 +116,7 @@ struct Let {
 grammar Mini {
     rule WS = (" " | "\t")* { }
     rule NL = ("\n" | " " | "\t")* { }
-    rule NAME -> String = s:raw_ident { s.to_string() }
+    rule NAME -> String = s:raw_ident { s.clone() }
     rule NUM -> i64 = d:digit+ { text::parse_i64(d) ?? 0 }
     rule atom -> Expr = WS n:NUM WS { Expr::Num(n) } | WS s:NAME WS { Expr::Name(s) }
     rule term -> Expr = a:atom "*" b:term { Expr::Mul(a, b) } | a:atom { a }

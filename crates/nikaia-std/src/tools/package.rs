@@ -5541,14 +5541,35 @@ pub fn nearest_name(name: &str, among: &[String]) -> Option<String> {
     best
 }
 
-pub fn with_article(what: &str) -> String {
+// sync (Part II, 12.1): pure CPU, cannot pause. Checked before
+// this was written - see `contracts::sync`.
+pub fn with_article(what: &str) -> String { format!("{} {}", article(what), what) }
+
+// sync (Part II, 12.1): pure CPU, cannot pause. Checked before
+// this was written - see `contracts::sync`.
+pub fn article(what: &str) -> String {
+    let mut first = ' ';
+    let mut alone = true;
     for c in what.chars() {
-        if !c.is_alphanumeric() { continue; }
-        let lower = c.to_ascii_lowercase();
-        if lower == 'a' || lower == 'e' || lower == 'i' || lower == 'o' || lower == 'u' { return format!("an {}", what); }
-        return format!("a {}", what);
+        if first == ' ' {
+            if !c.is_alphanumeric() { continue; }
+            first = c.to_ascii_lowercase();
+            continue;
+        }
+        if !c.is_alphabetic() { break; }
+        alone = false;
+        if first == 'u' {
+            if c == 's' { return String::from("a"); }
+            return String::from("an");
+        }
+        break;
     }
-    format!("a {}", what)
+    if alone {
+        if "aefhilmnorsx".contains(first) { return String::from("an"); }
+        return String::from("a");
+    }
+    if "aeio".contains(first) { return String::from("an"); }
+    String::from("a")
 }
 
 pub fn counted(n: i64, what: &str) -> String {
@@ -22650,7 +22671,7 @@ pub mod check_types {
 }
 pub mod check_words {
     #[allow(unused_imports)]
-    pub use super::{reserved_elsewhere, nearest_name, with_article, counted, names_listed, indented_text, brace_groups, not_promised_note, is_a_lookup, boxed_member};
+    pub use super::{reserved_elsewhere, nearest_name, with_article, article, counted, names_listed, indented_text, brace_groups, not_promised_note, is_a_lookup, boxed_member};
 }
 pub mod claim_names {
     #[allow(unused_imports)]

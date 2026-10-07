@@ -1377,6 +1377,7 @@ fn walked<'a>(
         inside_a_door: false,
         stored_frames: Vec::new(),
         inside_an_action: None,
+        rule_results: BTreeMap::new(),
         inside_a_sync_function: None,
         std_in_scope: parsed
             .program
@@ -1569,6 +1570,21 @@ fn walked<'a>(
     // **What no function body held**, typed the same way (ADR-285).
     checker.numbers_typed_by_their_uses();
     checker.checked.findings.sort_by_key(|f| f.span.at());
+    // **`a` or `an` by the word that follows** (#511): forty messages write
+    // `a `{ty}`` by hand, and the type is known only when they are said - `a
+    // `io::IoError``. Corrected once, here, by the rule `an` follows.
+    for finding in &mut checker.checked.findings {
+        finding.message = articles(&finding.message);
+        for note in &mut finding.notes {
+            *note = articles(note);
+        }
+        if let Some(help) = &mut finding.help {
+            *help = articles(help);
+        }
+        for label in &mut finding.labels {
+            label.text = articles(&label.text);
+        }
+    }
     // Only the calls that provably fail, and only where the name is not also a
     // call that does not: the emitter writes a `?` for each of these, and a `?`
     // on something that is not a failure is a `rustc` error about a file the
@@ -3590,6 +3606,9 @@ struct Checker<'a> {
     /// needs the rule's name, because a grammar is a page of rules and a caret
     /// on a call inside one is not enough to find it.
     inside_an_action: Option<String>,
+    /// **Each rule of the grammar being walked, with the type it declares**
+    /// (#500): what a binding `t:term` holds is `term`'s result.
+    rule_results: BTreeMap<String, Ty>,
     /// The name of the enclosing function, where its declaration **writes**
     /// `sync` ([ADR-288](../../docs/specification/adr/adr-288.md) D4: an
     /// assertion is checked, never overwritten).
@@ -4921,6 +4940,14 @@ impl<'a> Checker<'a> {
 
     fn grammar(&mut self, grammar: &ast::GrammarDef) {
         let named = self.parsed.text(grammar.name).to_string();
+        self.rule_results = grammar
+            .rules
+            .iter()
+            .filter_map(|rule| {
+                let ty = Ty::from_ast(self.parsed, rule.ret_type.as_ref()?);
+                Some((self.parsed.text(rule.name).to_string(), ty))
+            })
+            .collect();
         for rule in &grammar.rules {
             for alt in &rule.alts {
                 self.a_name_the_page_does_not_have(&alt.pattern);
@@ -5167,68 +5194,7 @@ impl<'a> Checker<'a> {
     fn bindings_of(&self, pattern: &ast::Pattern, rules: &BTreeSet<&str>, out: &mut Vec<Local>) {
         match pattern {
             ast::Pattern::Bind { name, pat } => {
-                // **What `x?` binds may be absent**, whatever `x` is: put into
-                // a nullable field it is already the field's shape, and the
-                // `.into()` an unknown value gets there converted an `Option`
-                // into itself (found moving the ledger's reader onto grammars).
-                let ty = match &pat.node {
-                    ast::Pattern::Repeat {
-                        rep: ast::Repeat::Optional,
-                        ..
-                    } => Ty::Nullable(Box::new(Ty::Unknown)),
-                    // **A run of a character class is text** (Part II 10.8):
-                    // `digit{1,2}`, `digit+`, `hex_digit*`.
-                    ast::Pattern::Repeat {
-                        pat: run,
-                        rep:
-                            ast::Repeat::Plus
-                            | ast::Repeat::Star
-                            | ast::Repeat::Exactly(_)
-                            | ast::Repeat::AtLeast(_)
-                            | ast::Repeat::Between(..),
-                    } if matches!(&run.node, ast::Pattern::Ref { name: called, generics, args }
-                        if generics.is_empty()
-                            && args.is_empty()
-                            && matches!(self.parsed.text(*called), "digit" | "hex_digit")
-                            && !rules.contains(self.parsed.text(*called))) =>
-                    {
-                        Ty::Named {
-                            name: "String".to_string(),
-                            args: Vec::new(),
-                            view: true,
-                        }
-                    }
-                    ast::Pattern::Ref {
-                        name: called,
-                        generics,
-                        args,
-                    } => {
-                        let called = self.parsed.text(*called);
-                        let builtin = !rules.contains(called);
-                        match (called, generics.as_slice()) {
-                            ("dec", [ty])
-                                if builtin
-                                    && ty.generics.is_empty()
-                                    && INTEGERS.contains(&self.parsed.text(ty.name)) =>
-                            {
-                                Ty::Named {
-                                    name: self.parsed.text(ty.name).to_string(),
-                                    args: Vec::new(),
-                                    view: false,
-                                }
-                            }
-                            ("digit" | "hex_digit", []) if builtin && args.is_empty() => {
-                                Ty::Named {
-                                    name: "char".to_string(),
-                                    args: Vec::new(),
-                                    view: false,
-                                }
-                            }
-                            _ => Ty::Unknown,
-                        }
-                    }
-                    _ => Ty::Unknown,
-                };
+                let ty = self.pattern_type(&pat.node, rules);
                 out.push(Local::free(self.parsed.text(*name).to_string(), ty));
                 self.bindings_of(&pat.node, rules, out);
             }
@@ -5246,6 +5212,84 @@ impl<'a> Checker<'a> {
                 self.bindings_of(&pat.node, rules, out)
             }
             ast::Pattern::Literal(_) | ast::Pattern::Cut | ast::Pattern::Fold(_) => {}
+        }
+    }
+
+    /// **What a pattern yields, for the name bound to it** (Part II 10.8's
+    /// table, #500): a rule of this grammar its declared result, `until`,
+    /// `text` and the other text built-ins a view of the input, a repetition
+    /// a list of what it repeats - or the text where a character class runs -
+    /// and `p?` a `T?`. What the table does not type stays unknown.
+    fn pattern_type(&self, pattern: &ast::Pattern, rules: &BTreeSet<&str>) -> Ty {
+        // A view of the input, spelled as a written `ref String` is.
+        let text = || Ty::view(ty::TEXT_VIEW);
+        let scalar = || Ty::named("char");
+        match pattern {
+            ast::Pattern::Repeat {
+                pat,
+                rep: ast::Repeat::Optional,
+            } => match self.pattern_type(&pat.node, rules) {
+                Ty::Nullable(inner) => Ty::Nullable(inner),
+                inner => Ty::Nullable(Box::new(inner)),
+            },
+            // **A run of a character class is text** (Part II 10.8):
+            // `digit{1,2}`, `digit+`, `hex_digit*`.
+            ast::Pattern::Repeat { pat: run, .. }
+                if matches!(&run.node, ast::Pattern::Ref { name: called, generics, args }
+                    if generics.is_empty()
+                        && args.is_empty()
+                        && matches!(self.parsed.text(*called), "digit" | "hex_digit" | "any")
+                        && !rules.contains(self.parsed.text(*called))) =>
+            {
+                text()
+            }
+            ast::Pattern::Repeat { pat, .. } => match self.pattern_type(&pat.node, rules) {
+                Ty::Unknown => Ty::Unknown,
+                item => Ty::Named {
+                    name: "Vec".to_string(),
+                    args: vec![item],
+                    view: false,
+                },
+            },
+            ast::Pattern::Group(pat) => self.pattern_type(&pat.node, rules),
+            ast::Pattern::Ref {
+                name: called,
+                generics,
+                args,
+            } => {
+                let called = self.parsed.text(*called);
+                if rules.contains(called) {
+                    return self
+                        .rule_results
+                        .get(called)
+                        .cloned()
+                        .unwrap_or(Ty::Unknown);
+                }
+                match (called, generics.as_slice(), args.as_slice()) {
+                    ("dec", [ty], _)
+                        if ty.generics.is_empty()
+                            && INTEGERS.contains(&self.parsed.text(ty.name)) =>
+                    {
+                        Ty::named(self.parsed.text(ty.name))
+                    }
+                    ("digit" | "hex_digit" | "any" | "char", [], []) => scalar(),
+                    ("until" | "text", [], [_, ..])
+                    | ("raw_ident" | "string" | "alpha1" | "multispace0" | "multispace1", [], []) => {
+                        text()
+                    }
+                    ("peek", [], [inner]) => self.pattern_type(&inner.node, rules),
+                    ("list", [], [item, _]) => match self.pattern_type(&item.node, rules) {
+                        Ty::Unknown => Ty::Unknown,
+                        item => Ty::Named {
+                            name: "Vec".to_string(),
+                            args: vec![item],
+                            view: false,
+                        },
+                    },
+                    _ => Ty::Unknown,
+                }
+            }
+            _ => Ty::Unknown,
         }
     }
 
@@ -26265,6 +26309,54 @@ fn nearest<'n>(name: &str, among: &[&'n str]) -> Option<&'n str> {
 /// each of them means the next one is added in two places or in one.
 fn an(what: &str) -> String {
     nikaia_std::tools::check_words::with_article(what)
+}
+
+/// Every `a` or `an` in front of a word in backticks, chosen by that word
+/// (`check_words::article`): `a `i64`` becomes `an `i64``, and `an `u8`` `a
+/// `u8``. Only the article directly before a backtick, so prose and code
+/// samples are left as they are.
+fn articles(text: &str) -> String {
+    let mut out = String::with_capacity(text.len() + 8);
+    let mut rest = text;
+    while let Some(at) = rest.find('`') {
+        let (before, from) = rest.split_at(at);
+        let fixed = ["a ", "an ", "A ", "An "].iter().find_map(|article| {
+            let head = before.strip_suffix(article)?;
+            let starts_a_word = head
+                .chars()
+                .next_back()
+                .is_none_or(|c| !c.is_alphanumeric() && c != '`' && c != '_');
+            starts_a_word.then_some((head, *article))
+        });
+        match fixed {
+            // **A word that starts with a sign keeps what was written**: `an
+            // `|` pattern` is said *an or-pattern*, and no rule reads that.
+            Some((head, article))
+                if from[1..].chars().next().is_some_and(char::is_alphanumeric) =>
+            {
+                let word: String = from[1..].chars().take_while(|c| *c != '`').collect();
+                let right = nikaia_std::tools::check_words::article(&word);
+                let right = match article.starts_with('A') {
+                    true => {
+                        let mut capital = right[..1].to_uppercase();
+                        capital.push_str(&right[1..]);
+                        capital
+                    }
+                    false => right,
+                };
+                out.push_str(head);
+                out.push_str(&right);
+                out.push(' ');
+            }
+            _ => out.push_str(before),
+        }
+        // The backticked word itself, closing tick included, is copied as it is.
+        let close = from[1..].find('`').map_or(from.len(), |end| end + 2);
+        out.push_str(&from[..close]);
+        rest = &from[close..];
+    }
+    out.push_str(rest);
+    out
 }
 
 /// **The two forms of a root**, where that is the argument a call left out

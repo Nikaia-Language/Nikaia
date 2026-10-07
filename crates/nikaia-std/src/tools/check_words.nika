@@ -43,18 +43,48 @@ pub fn nearest_name(name: ref String, among: ref Vec[String]) -> String? {
 }
 
 /// `a` or `an` in front of a word, which may be spelled in backticks.
-pub fn with_article(what: ref String) -> String {
+pub fn with_article(what: ref String) -> String sync {
+    return f"{article(what)} {what}"
+}
+
+/// `a` or `an` for a word, which may be spelled in backticks, by the sound
+/// it starts with (#511). A letter standing alone or before a digit or a sign
+/// is said by its name: `an f64`, `an i64`, `an f"…"`, `a u8`. Otherwise a
+/// vowel takes `an` (`an io::IoError`), and a `u` said *you* does not (`a
+/// usize`).
+pub fn article(what: ref String) -> String sync {
+    let mut first = ' '
+    let mut alone = true
     for c in what.chars() {
-        if !c.is_alphanumeric() {
+        if first == ' ' {
+            if !c.is_alphanumeric() {
+                continue
+            }
+            first = c.to_ascii_lowercase()
             continue
         }
-        let lower = c.to_ascii_lowercase()
-        if lower == 'a' || lower == 'e' || lower == 'i' || lower == 'o' || lower == 'u' {
-            return f"an {what}"
+        if !c.is_alphabetic() {
+            break
         }
-        return f"a {what}"
+        alone = false
+        if first == 'u' {
+            if c == 's' {
+                return "a"
+            }
+            return "an"
+        }
+        break
     }
-    return f"a {what}"
+    if alone {
+        if "aefhilmnorsx".contains(first) {
+            return "an"
+        }
+        return "a"
+    }
+    if "aeio".contains(first) {
+        return "an"
+    }
+    return "a"
 }
 
 /// `1 field`, `2 fields`.
