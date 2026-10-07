@@ -5337,7 +5337,7 @@ pub fn unviewed_type(ty: &Ty) -> Ty {
 
 pub fn copies_as_a_view(ty: &Ty) -> bool {
     match ty {
-        Ty::Named { name, args, view } => { let view = *view; view && args.is_empty() && (a_number_name(name) || name == "bool" || name == "char") },
+        Ty::Named { name, args, view } => { let view = *view; view && args.is_empty() && (a_number_name(name) || name == "bool" || name == "char" || name == "scalar") },
         _ => false,
     }
 }
@@ -5356,14 +5356,14 @@ pub fn is_a_view_of_a_string(ty: &Ty) -> bool {
 
 pub fn a_copy_by_value(ty: &Ty) -> bool {
     match ty {
-        Ty::Named { name, args, view } => { let view = *view; !view && args.is_empty() && (a_number_name(name) || name == "bool" || name == "char") },
+        Ty::Named { name, args, view } => { let view = *view; !view && args.is_empty() && (a_number_name(name) || name == "bool" || name == "char" || name == "scalar") },
         _ => false,
     }
 }
 
 pub fn moves_away(ty: &Ty) -> bool {
     match ty {
-        Ty::Named { name, args, view } => { let view = *view; if name == ARRAY { any_moves_away(args) } else { !view && !a_number_name(name) && name != "bool" && name != "char" && name != "Shared" && name != "SharedMut" } },
+        Ty::Named { name, args, view } => { let view = *view; if name == ARRAY { any_moves_away(args) } else { !view && !a_number_name(name) && name != "bool" && name != "char" && name != "scalar" && name != "Shared" && name != "SharedMut" } },
         Ty::Nullable(inner) => { let inner = nikaia_std::boxed::open(inner); moves_away(inner) },
         Ty::Tuple(parts) => any_moves_away(parts),
         _ => false,
@@ -5377,7 +5377,7 @@ fn any_moves_away(types: &[Ty]) -> bool {
 
 pub fn copies_plainly(ty: &Ty) -> bool {
     match ty {
-        Ty::Named { name, args, view } => { let view = *view; if name == ARRAY { all_copy(args) } else { view || name == "i32" || name == "i64" || name == "u8" || name == "u32" || name == "u64" || name == "f64" || name == "bool" || name == "char" } },
+        Ty::Named { name, args, view } => { let view = *view; if name == ARRAY { all_copy(args) } else { view || name == "i32" || name == "i64" || name == "u8" || name == "u32" || name == "u64" || name == "f64" || name == "bool" || name == "char" || name == "scalar" } },
         _ => false,
     }
 }
@@ -5822,7 +5822,7 @@ const NOT_SENDABLE: [&str; 5] = ["Rc<", "rc::Rc<", "*const ", "*mut ", "NonNull<
 
 const PASSES_THROUGH: [&str; 4] = ["Vec", "Option", "Box", "VecDeque"];
 
-const PLAIN: [&str; 18] = ["bool", "char", "str", "i8", "i16", "i32", "i64", "i128", "isize", "u8", "u16", "u32", "u64", "u128", "usize", "f32", "f64", "()"];
+const PLAIN: [&str; 19] = ["bool", "char", "scalar", "str", "i8", "i16", "i32", "i64", "i128", "isize", "u8", "u16", "u32", "u64", "u128", "usize", "f32", "f64", "()"];
 
 const THREAD_SINKS: [&str; 15] = ["std::thread::spawn", "std::thread::Builder::spawn", "std::thread::scope", "thread::spawn", "thread::scope", "tokio::spawn", "tokio::task::spawn", "tokio::task::spawn_blocking", "tokio::task::spawn_local", "task::spawn_blocking", "rayon::spawn", "rayon::scope", "rayon::join", "async_std::task::spawn", "smol::spawn"];
 
@@ -6036,7 +6036,8 @@ pub fn written_ty(names: &winnow_grammar::InternerContext, aliases: &collections
         inner.is_nullable = false;
         return Ty::Nullable(Box::new(written_ty(names, aliases, &inner)));
     }
-    let name = unaliased_in(aliases, names.resolve(ty.name));
+    let written_name = unaliased_in(aliases, names.resolve(ty.name));
+    let name = if written_name == "char" { String::from("scalar") } else { written_name };
     if ty.either { return Ty::Named { name: TEXT.to_owned(), args: vec![], view: false }; }
     if ty.is_view && name == TEXT { return Ty::Named { name: TEXT_VIEW.to_owned(), args: written_all(names, aliases, &ty.generics), view: true }; }
     Ty::Named { name, args: written_all(names, aliases, &ty.generics), view: ty.is_view }
@@ -10232,7 +10233,7 @@ fn type_text(contract: &TypeContract) -> String {
 
 // --- lends.nika ---
 
-const COPIED: [&str; 18] = ["i8", "i16", "i32", "i64", "isize", "usize", "u8", "u16", "u32", "u64", "f32", "f64", "bool", "char", "Duration", "Shared", "SharedMut", "Locked"];
+const COPIED: [&str; 19] = ["i8", "i16", "i32", "i64", "isize", "usize", "u8", "u16", "u32", "u64", "f32", "f64", "bool", "char", "scalar", "Duration", "Shared", "SharedMut", "Locked"];
 
 pub fn lends_in(contract: &FnContract, at: i64, copying: &[&Ledger]) -> bool {
     let signature = match contract.signature.as_ref() { Some(__nikaia_value) => __nikaia_value, None => return false };
@@ -15365,7 +15366,7 @@ pub fn holds_a_word(ty: &Ty) -> bool {
     }
 }
 
-const WORD_TYPES: [&str; 12] = ["i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "f32", "f64", "bool", "char"];
+const WORD_TYPES: [&str; 13] = ["i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "f32", "f64", "bool", "char", "scalar"];
 
 fn a_word(ty: &Ty) -> bool {
     match ty {
@@ -15393,7 +15394,7 @@ pub fn literal_type(expr: &Expr) -> Option<String> {
         Expr::LitInt { .. } => Some(String::from("i64")),
         Expr::LitFloat(_) => Some(String::from("f64")),
         Expr::LitBool(_) => Some(String::from("bool")),
-        Expr::LitChar(_) => Some(String::from("char")),
+        Expr::LitChar(_) => Some(String::from("scalar")),
         Expr::Unary { expr, .. } => { let expr = nikaia_std::boxed::open(expr); literal_type(expr) },
         _ => None,
     }
@@ -17650,7 +17651,7 @@ pub fn a_parse_that_views(names: &winnow_grammar::InternerContext, result: Optio
     !package.named.contains(name) && !a_type_with_no_room_for_a_view(name)
 }
 
-const ROOMLESS: [&str; 27] = ["i8", "i16", "i32", "i64", "i128", "isize", "u8", "u16", "u32", "u64", "u128", "usize", "f32", "f64", "bool", "char", "String", "Duration", "Instant", "Vec", "List", "Array", "Option", "Map", "Set", "Shared", "SharedMut"];
+const ROOMLESS: [&str; 28] = ["i8", "i16", "i32", "i64", "i128", "isize", "u8", "u16", "u32", "u64", "u128", "usize", "f32", "f64", "bool", "char", "scalar", "String", "Duration", "Instant", "Vec", "List", "Array", "Option", "Map", "Set", "Shared", "SharedMut"];
 
 fn a_type_with_no_room_for_a_view(name: &str) -> bool {
     let base = base_name(name);
@@ -19047,7 +19048,7 @@ fn no_path() -> Vec<i64> { vec![] }
 
 // --- threads.nika ---
 
-const PLAIN_DATA: [&str; 18] = ["bool", "char", "str", "String", "i8", "i16", "i32", "i64", "i128", "isize", "u8", "u16", "u32", "u64", "u128", "usize", "f32", "f64"];
+const PLAIN_DATA: [&str; 19] = ["bool", "char", "scalar", "str", "String", "i8", "i16", "i32", "i64", "i128", "isize", "u8", "u16", "u32", "u64", "u128", "usize", "f32", "f64"];
 
 const CONTAINER_TYPES: [&str; 11] = ["BTreeMap", "BTreeSet", "HashMap", "HashSet", "List", "Option", "Receiver", "Result", "Sender", "Shared", "Vec"];
 
@@ -20506,6 +20507,7 @@ fn a_sequence(written: &str, word: &str, parallel: bool) -> Option<Ty> {
 fn a_name(rest: &str, view: bool) -> Ty {
     if rest.starts_with("$") && rest.len() > 1 { return Ty::Var { name: cut(rest, 1, 0), view }; }
     if view && rest == TEXT { return Ty::Named { name: TEXT_VIEW.to_owned(), args: vec![], view: true }; }
+    if rest == "char" { return Ty::Named { name: String::from("scalar"), args: vec![], view }; }
     if !rest.ends_with("]") { return Ty::Named { name: rest.to_owned(), args: vec![], view }; }
     let c: Vec<char> = nikaia_std::list::chars(rest.chars());
     let mut open: i64 = -1;
@@ -21323,7 +21325,7 @@ fn renamed_result(result: Option<&Ty>, renames: &collections::BTreeMap<String, S
 
 const SHAPE_BOUNDS: [&str; 2] = ["Struct", "Enum"];
 
-const BUILT_IN: [&str; 26] = ["i8", "i16", "i32", "i64", "i128", "isize", "u8", "u16", "u32", "u64", "u128", "usize", "f32", "f64", "bool", "char", "String", "str", "Self", "Vec", "Shared", "SharedMut", "Locked", "TaskHandle", "Array", "Bytes"];
+const BUILT_IN: [&str; 27] = ["i8", "i16", "i32", "i64", "i128", "isize", "u8", "u16", "u32", "u64", "u128", "usize", "f32", "f64", "bool", "char", "scalar", "String", "str", "Self", "Vec", "Shared", "SharedMut", "Locked", "TaskHandle", "Array", "Bytes"];
 
 const STD_MODULES: [&str; 7] = ["cli", "collections", "channel", "foreign", "fs", "io", "time"];
 

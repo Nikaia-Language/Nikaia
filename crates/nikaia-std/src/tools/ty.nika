@@ -623,6 +623,11 @@ fn a_name(rest: ref String, view: bool) -> Ty {
     if view && rest == TEXT {
         return Ty::Named { name: TEXT_VIEW.clone(), args: [], view: true }
     }
+    // **`char` is the old word for `scalar`** (ADR-320, #453 step 1): a ledger
+    // that writes it reads as the one type.
+    if rest == "char" {
+        return Ty::Named { name: "scalar", args: [], view: view }
+    }
     // Arguments only where the text ends in the bracket that closes them.
     if !rest.ends_with("]") {
         return Ty::Named { name: rest.clone(), args: [], view: view }

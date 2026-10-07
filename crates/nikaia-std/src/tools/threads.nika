@@ -19,7 +19,7 @@ use std::collections
 
 // Plain data: a value of one of these carries nothing that a second thread
 // could be wrong about.
-comptime PLAIN_DATA: Array[ref String, 18] = ["bool", "char", "str", "String", "i8", "i16", "i32", "i64", "i128", "isize", "u8", "u16", "u32", "u64", "u128", "usize", "f32", "f64"]
+comptime PLAIN_DATA: Array[ref String, 19] = ["bool", "char", "scalar", "str", "String", "i8", "i16", "i32", "i64", "i128", "isize", "u8", "u16", "u32", "u64", "u128", "usize", "f32", "f64"]
 
 // A container is whatever it holds: it may cross exactly when every one of
 // its arguments may. `Shared` since ADR-037 D6; the two ends of a channel

@@ -48,7 +48,7 @@ pub fn unviewed_type(ty: ref Ty) -> Ty {
 /// A view of a number, a `bool` or a `char`: read, it is the same value.
 pub fn copies_as_a_view(ty: ref Ty) -> bool {
     return match ty {
-        Ty::Named { name, args, view } => view && args.len() == 0 && (a_number_name(name) || name == "bool" || name == "char"),
+        Ty::Named { name, args, view } => view && args.len() == 0 && (a_number_name(name) || name == "bool" || name == "char" || name == "scalar"),
         else => false,
     }
 }
@@ -72,7 +72,7 @@ pub fn is_a_view_of_a_string(ty: ref Ty) -> bool {
 /// A number, a `bool` or a `char`, held and not viewed.
 pub fn a_copy_by_value(ty: ref Ty) -> bool {
     return match ty {
-        Ty::Named { name, args, view } => !view && args.len() == 0 && (a_number_name(name) || name == "bool" || name == "char"),
+        Ty::Named { name, args, view } => !view && args.len() == 0 && (a_number_name(name) || name == "bool" || name == "char" || name == "scalar"),
         else => false,
     }
 }
@@ -82,7 +82,7 @@ pub fn a_copy_by_value(ty: ref Ty) -> bool {
 /// and a `T?` by what they hold (ADR-152 D2).
 pub fn moves_away(ty: ref Ty) -> bool {
     return match ty {
-        Ty::Named { name, args, view } => if name == ARRAY { any_moves_away(args) } else { !view && !a_number_name(name) && name != "bool" && name != "char" && name != "Shared" && name != "SharedMut" },
+        Ty::Named { name, args, view } => if name == ARRAY { any_moves_away(args) } else { !view && !a_number_name(name) && name != "bool" && name != "char" && name != "scalar" && name != "Shared" && name != "SharedMut" },
         Ty::Nullable(inner) => moves_away(inner),
         Ty::Tuple(parts) => any_moves_away(parts),
         else => false,
@@ -102,7 +102,7 @@ fn any_moves_away(types: ref Array[Ty]) -> bool {
 /// 2.2's numbers, `bool`, `char` and any view - `moves_away`'s other half.
 pub fn copies_plainly(ty: ref Ty) -> bool {
     return match ty {
-        Ty::Named { name, args, view } => if name == ARRAY { all_copy(args) } else { view || name == "i32" || name == "i64" || name == "u8" || name == "u32" || name == "u64" || name == "f64" || name == "bool" || name == "char" },
+        Ty::Named { name, args, view } => if name == ARRAY { all_copy(args) } else { view || name == "i32" || name == "i64" || name == "u8" || name == "u32" || name == "u64" || name == "f64" || name == "bool" || name == "char" || name == "scalar" },
         else => false,
     }
 }

@@ -578,6 +578,11 @@ pub mod prelude {
     // `fs::read_to_string(p)` and the runtime is invisible.
     pub use crate::rt;
     pub use crate::text::digit_value;
+    // **`scalar`, one Unicode scalar value** (ADR-320, #453 step 1): the
+    // language's word for what the language below calls `char`, so that a
+    // type the compiler writes as `scalar` is one here.
+    #[allow(non_camel_case_types)]
+    pub type scalar = char;
     pub use std::collections::HashMap;
 
     // **The modules a `.nika` file reaches through a prefix**

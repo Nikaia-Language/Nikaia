@@ -15,7 +15,7 @@ use std::collections
 // The names whose values are copied when handed on: the numbers, the two
 // machine-width names (ADR-302 D6), a span of time (ADR-150 D1), and the
 // hulls, whose handing on duplicates a count (ADR-312 D1, D5).
-comptime COPIED: Array[ref String, 18] = ["i8", "i16", "i32", "i64", "isize", "usize", "u8", "u16", "u32", "u64", "f32", "f64", "bool", "char", "Duration", "Shared", "SharedMut", "Locked"]
+comptime COPIED: Array[ref String, 19] = ["i8", "i16", "i32", "i64", "isize", "usize", "u8", "u16", "u32", "u64", "f32", "f64", "bool", "char", "scalar", "Duration", "Shared", "SharedMut", "Locked"]
 
 /// Whether a callee lends the parameter at `at`. The position has to exist,
 /// not be the receiver and not be `mut` (ADR-094 D3); then either its type is

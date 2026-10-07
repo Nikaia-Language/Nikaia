@@ -257,7 +257,7 @@ pub fn holds_a_word(ty: ref Ty) -> bool {
     }
 }
 
-comptime WORD_TYPES: Array[ref String, 12] = ["i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "f32", "f64", "bool", "char"]
+comptime WORD_TYPES: Array[ref String, 13] = ["i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "f32", "f64", "bool", "char", "scalar"]
 
 fn a_word(ty: ref Ty) -> bool {
     return match ty {
@@ -290,7 +290,7 @@ pub fn literal_type(expr: ref Expr) -> String? {
         Expr::LitInt { .. } => "i64",
         Expr::LitFloat(_) => "f64",
         Expr::LitBool(_) => "bool",
-        Expr::LitChar(_) => "char",
+        Expr::LitChar(_) => "scalar",
         Expr::Unary { expr, .. } => literal_type(expr),
         else => null,
     }

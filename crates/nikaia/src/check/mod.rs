@@ -49,8 +49,8 @@ use winnow_grammar::Symbol as Ident;
 /// ([ADR-285](../../../docs/specification/adr/adr-285.md) D12), this one is which
 /// types a program may **write**. `bool`, `char`, `String` and `&str` are types
 /// of this language and no conversion between them narrows anything.
-const OFFERED: [&str; 10] = [
-    "i32", "i64", "u8", "u32", "u64", "f64", "bool", "char", "String", "str",
+const OFFERED: [&str; 11] = [
+    "i32", "i64", "u8", "u32", "u64", "f64", "bool", "char", "scalar", "String", "str",
 ];
 
 /// The number types a program writes (Part I 2.2,
@@ -1800,7 +1800,7 @@ fn element_kind(expr: &Expr, ty: &Ty) -> Option<&'static str> {
             Some("a number")
         }
         "str" | "String" => Some("text"),
-        "char" => Some("a character"),
+        "char" | "scalar" => Some("a character"),
         "bool" => Some("a `bool`"),
         _ => None,
     }
@@ -2641,7 +2641,7 @@ fn rust_constant_type(ty: &Ty) -> Option<String> {
         // integer would promise a surface Part I 2.2 does not offer, which is
         // the reason `constant_fits` gives for its own range table.
         Ty::Named { name, args, view } if args.is_empty() && !*view => match name.as_str() {
-            "i32" | "i64" | "u8" | "u32" | "u64" | "f32" | "f64" | "bool" | "char" => {
+            "i32" | "i64" | "u8" | "u32" | "u64" | "f32" | "f64" | "bool" | "char" | "scalar" => {
                 Some(name.clone())
             }
             // **A `std` type its ledger gives a `constant` constructor**
@@ -5312,7 +5312,7 @@ impl<'a> Checker<'a> {
     fn pattern_type(&self, pattern: &ast::Pattern, rules: &BTreeSet<&str>) -> Ty {
         // A view of the input, spelled as a written `ref String` is.
         let text = || Ty::view(ty::TEXT_VIEW);
-        let scalar = || Ty::named("char");
+        let scalar = || Ty::named("scalar");
         match pattern {
             ast::Pattern::Repeat {
                 pat,
@@ -6891,7 +6891,7 @@ impl<'a> Checker<'a> {
         };
         let copied = |ty: &Ty| -> bool {
             matches!(ty, Ty::Named { name, view: false, .. }
-                if is_number(name) || matches!(name.as_str(), "char" | "bool"))
+                if is_number(name) || matches!(name.as_str(), "char" | "scalar" | "bool"))
         };
         // **And a view of any other named type**, read the same way: `*op ==
         // UnaryOp::Neg` is `PartialEq::eq(&*op, …)` below and moves nothing,
@@ -7908,7 +7908,7 @@ impl<'a> Checker<'a> {
             Ty::Tuple(parts) => parts.iter().any(|p| self.takes_space(p, seen)),
             Ty::Named { name, args, .. } => {
                 let base = crate::contracts::ty::base(name);
-                if is_number(base) || matches!(base, "bool" | "char") {
+                if is_number(base) || matches!(base, "bool" | "char" | "scalar") {
                     return true;
                 }
                 if matches!(
@@ -9311,7 +9311,11 @@ impl<'a> Checker<'a> {
             match &on {
                 Ty::Tuple(_) => return on.clone(),
                 Ty::Named { name, args, .. }
-                    if args.is_empty() && (is_number(name) || name == "bool" || name == "char") =>
+                    if args.is_empty()
+                        && (is_number(name)
+                            || name == "bool"
+                            || name == "char"
+                            || name == "scalar") =>
                 {
                     return Ty::Named {
                         name: name.clone(),
@@ -12032,7 +12036,7 @@ impl<'a> Checker<'a> {
             // same refusal one literal over.
             Expr::LitChar(text) => {
                 self.an_escape_nothing_names(text, span);
-                Ty::named("char")
+                Ty::named("scalar")
             }
             Expr::LitBool(_) => Ty::named("bool"),
             // **A nullable of it-does-not-say.** `null` names the absence of a
@@ -14066,7 +14070,7 @@ impl<'a> Checker<'a> {
                     self.cast_names_a_foreign_type(name, span);
                 }
                 self.record_cast(&from, &into, span);
-                if matches!(&from, Ty::Named { name, .. } if name == "char")
+                if matches!(&from, Ty::Named { name, .. } if name == "char" || name == "scalar")
                     && matches!(&into, Ty::Named { name, .. } if INTEGERS.contains(&name.as_str()))
                 {
                     self.checked.char_codes.insert(value_node(expr));
@@ -18581,7 +18585,7 @@ impl<'a> Checker<'a> {
         };
         args.is_empty()
             && (is_number(name)
-                || matches!(name.as_str(), "bool" | "char")
+                || matches!(name.as_str(), "bool" | "char" | "scalar")
                 || (self.enums.contains_key(name)
                     && self
                         .enum_payloads
@@ -21643,7 +21647,7 @@ impl<'a> Checker<'a> {
             }
             ("HashSet" | "BTreeSet" | "TrustedSet", [element]) => item.fits(element),
             ("String", []) => {
-                *item == Ty::named("char")
+                (*item == Ty::named("char") || *item == Ty::named("scalar"))
                     || *item == Ty::view("str")
                     || *item == Ty::named("String")
             }
@@ -23521,7 +23525,9 @@ impl<'a> Checker<'a> {
         if *view {
             return;
         }
-        const NUMBERS: [&str; 8] = ["i32", "i64", "u8", "u32", "u64", "f64", "bool", "char"];
+        const NUMBERS: [&str; 9] = [
+            "i32", "i64", "u8", "u32", "u64", "f64", "bool", "char", "scalar",
+        ];
         if args.is_empty() && NUMBERS.contains(&want.as_str()) {
             self.a_cast_over_a_lent_binding(value, span);
             return;
@@ -26616,7 +26622,7 @@ fn indented(text: &str) -> String {
 /// This is the one half of a shape bound this compiler can refuse with
 /// certainty: everything else it has not read a declaration for fails open.
 fn is_one_of_part_one_2_2(name: &str) -> bool {
-    is_number(name) || matches!(name, "bool" | "char" | "String" | "str")
+    is_number(name) || matches!(name, "bool" | "char" | "scalar" | "String" | "str")
 }
 
 /// A view of a value that copies - a number, a truth value, a character - and
@@ -27098,9 +27104,8 @@ impl Comparable<'_> {
             // `NaN != NaN`. It is the one primitive the two questions differ on,
             // and every type holding one differs with it however far down.
             "f64" => how == Strength::Compares,
-            "i32" | "i64" | "u8" | "u32" | "u64" | "bool" | "char" | "String" | "str" | "Bytes" => {
-                true
-            }
+            "i32" | "i64" | "u8" | "u32" | "u64" | "bool" | "char" | "scalar" | "String"
+            | "str" | "Bytes" => true,
             // A container compares when what it holds does.
             "Vec"
             | "List"
@@ -27216,7 +27221,7 @@ fn a_copied_part(ty: &Ty, copies: &BTreeSet<String>) -> bool {
             args.is_empty()
                 && (matches!(
                     name.as_str(),
-                    "i32" | "i64" | "u8" | "u32" | "u64" | "f64" | "bool" | "char"
+                    "i32" | "i64" | "u8" | "u32" | "u64" | "f64" | "bool" | "char" | "scalar"
                 ) || copies.contains(name))
         }
         Ty::Nullable(inner) => a_copied_part(inner, copies),

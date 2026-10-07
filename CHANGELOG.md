@@ -4,6 +4,22 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.638] — 2026-10-07
+
+**`scalar` is a type, and `char` is read as it** (#453 step 1's first half,
+ADR-320, Part I 2.6).
+- A program and a ledger may write either word; the compiler reads both as
+  `scalar`, and a `'…'` literal is a `scalar`.
+- Messages name `scalar`: *This value is `scalar`, but the `let` declares
+  `i32`.*
+- In the language below `scalar` is `char`, through a type alias in
+  `nikaia_std::prelude`.
+- `std.contracts`' character methods are keyed `scalar::` (`is_whitespace`,
+  `to_ascii_lowercase` and the rest).
+
+The rest of step 1 is still to come: moving `std`, the grammar builtins and
+the self-hosted tools to the word, then refusing `char` with `NK1135`.
+
 ## [0.0.637] — 2026-10-07
 
 **A `Bytes` is read as a run of bytes** (#453 step 5, ADR-320 D6-D7, Part I

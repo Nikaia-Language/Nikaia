@@ -245,7 +245,7 @@ fn ensured(ledgers: &[&crate::contracts::Ledger]) -> BTreeMap<String, Ensured> {
             let chars = signature
                 .params
                 .iter()
-                .map(|(_, ty)| matches!(ty, crate::contracts::ty::Ty::Named { name, .. } if name == "char"))
+                .map(|(_, ty)| matches!(ty, crate::contracts::ty::Ty::Named { name, .. } if name == "char" || name == "scalar"))
                 .collect();
             let mut names: BTreeSet<String> = params.iter().cloned().collect();
             names.insert("result".to_string());

@@ -12,7 +12,7 @@ use std::collections
 comptime SHAPE_BOUNDS: Array[ref String, 2] = ["Struct", "Enum"]
 
 // Types every program has without declaring them.
-comptime BUILT_IN: Array[ref String, 26] = ["i8", "i16", "i32", "i64", "i128", "isize", "u8", "u16", "u32", "u64", "u128", "usize", "f32", "f64", "bool", "char", "String", "str", "Self", "Vec", "Shared", "SharedMut", "Locked", "TaskHandle", "Array", "Bytes"]
+comptime BUILT_IN: Array[ref String, 27] = ["i8", "i16", "i32", "i64", "i128", "isize", "u8", "u16", "u32", "u64", "u128", "usize", "f32", "f64", "bool", "char", "scalar", "String", "str", "Self", "Vec", "Shared", "SharedMut", "Locked", "TaskHandle", "Array", "Bytes"]
 
 // The modules of `std` a type may live in.
 comptime STD_MODULES: Array[ref String, 7] = ["cli", "collections", "channel", "foreign", "fs", "io", "time"]

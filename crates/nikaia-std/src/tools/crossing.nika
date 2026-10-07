@@ -30,7 +30,7 @@ comptime PASSES_THROUGH: Array[ref String, 4] = ["Vec", "Option", "Box", "VecDeq
 
 /// The scalar names that travel unchanged, plus `str` which is only ever seen
 /// behind a `&`.
-comptime PLAIN: Array[ref String, 18] = ["bool", "char", "str", "i8", "i16", "i32", "i64", "i128", "isize", "u8", "u16", "u32", "u64", "u128", "usize", "f32", "f64", "()"]
+comptime PLAIN: Array[ref String, 19] = ["bool", "char", "scalar", "str", "i8", "i16", "i32", "i64", "i128", "isize", "u8", "u16", "u32", "u64", "u128", "usize", "f32", "f64", "()"]
 
 /// The calls that hand work to another thread, as a crate writes them.
 ///

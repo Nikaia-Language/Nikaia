@@ -1098,7 +1098,7 @@ pub fn throws_text(throws: &[String]) -> String {
 /// `as` names a type this language has ([ADR-285](../../../docs/specification/adr/adr-285.md)
 /// D1), and whether an `impl`'s type argument is a parameter or a type.
 const OFFERED: &[&str] = &[
-    "i32", "i64", "u8", "u32", "u64", "f64", "bool", "char", "String", "str", "Self",
+    "i32", "i64", "u8", "u32", "u64", "f64", "bool", "char", "scalar", "String", "str", "Self",
 ];
 
 /// Every type name this file declares.

@@ -89,7 +89,7 @@ pub fn a_parse_that_views(names: ref winnow_grammar::InternerContext, result: re
 
 // The names the language below owns outright, and the containers whose
 // arguments the walk above already read.
-comptime ROOMLESS: Array[ref String, 27] = ["i8", "i16", "i32", "i64", "i128", "isize", "u8", "u16", "u32", "u64", "u128", "usize", "f32", "f64", "bool", "char", "String", "Duration", "Instant", "Vec", "List", "Array", "Option", "Map", "Set", "Shared", "SharedMut"]
+comptime ROOMLESS: Array[ref String, 28] = ["i8", "i16", "i32", "i64", "i128", "isize", "u8", "u16", "u32", "u64", "u128", "usize", "f32", "f64", "bool", "char", "scalar", "String", "Duration", "Instant", "Vec", "List", "Array", "Option", "Map", "Set", "Shared", "SharedMut"]
 
 fn a_type_with_no_room_for_a_view(name: ref String) -> bool {
     let base = base_name(name)

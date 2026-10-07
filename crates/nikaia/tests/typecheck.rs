@@ -159,7 +159,7 @@ fn a_let_annotation_that_disagrees_is_reported() {
     assert_eq!(code, "NK1103");
     assert_eq!(
         message,
-        "This value is `char`, but the `let` declares `i32`."
+        "This value is `scalar`, but the `let` declares `i32`."
     );
 }
 
@@ -194,7 +194,7 @@ fn an_assignment_of_the_wrong_type_is_reported() {
     assert_eq!(code, "NK1105");
     assert_eq!(
         message,
-        "You're assigning `char` to something that holds `i32`."
+        "You're assigning `scalar` to something that holds `i32`."
     );
 }
 

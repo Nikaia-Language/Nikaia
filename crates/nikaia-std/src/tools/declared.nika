@@ -64,7 +64,10 @@ pub fn written_ty(names: ref winnow_grammar::InternerContext, aliases: ref colle
     }
     // A type may be written with this file's own name for the package that
     // declares it (ADR-286 D12).
-    let name = unaliased_in(aliases, names.resolve(ty.name))
+    let written_name = unaliased_in(aliases, names.resolve(ty.name))
+    // **`char` is the old word for `scalar`** (ADR-320, #453 step 1): one
+    // type, whichever is written.
+    let name = if written_name == "char" { "scalar" } else { written_name }
     // **Text that is a view or its own per value is read as text of its own**
     // (ADR-282 D15).
     if ty.either {

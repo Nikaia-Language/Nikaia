@@ -1060,7 +1060,7 @@ touches = []
 signature = "(self) -> String"
 
 # The character, as text of its own.
-[fn."char::to_string"]
+[fn."scalar::to_string"]
 pub = true
 sync = true
 touches = []
@@ -2861,7 +2861,7 @@ signature = "(self: ref String, n: i64) -> String"
 # attribute's name is compared without its case.
 # Whether the character is a blank: a space, a tab, a line end, or any other
 # character Unicode counts as white space.
-[fn."char::is_whitespace"]
+[fn."scalar::is_whitespace"]
 pub = true
 sync = true
 touches = []
@@ -2870,7 +2870,7 @@ signature = "(self) -> bool"
 # **Asked for by `tools/crossing.nika`** (0.0.311): a bound names `Send` as a
 # word, and a word is letters, digits and `_`.
 # Whether the character is a letter or a digit, as Unicode counts them.
-[fn."char::is_alphanumeric"]
+[fn."scalar::is_alphanumeric"]
 pub = true
 sync = true
 touches = []
@@ -2879,7 +2879,7 @@ signature = "(self) -> bool"
 # **Asked for by `tools/specbook.nika`** (0.0.344): three dots against a name
 # are a typed spread, not an elision.
 # Whether the character is a letter, as Unicode counts them.
-[fn."char::is_alphabetic"]
+[fn."scalar::is_alphabetic"]
 pub = true
 sync = true
 touches = []
@@ -2887,7 +2887,7 @@ signature = "(self) -> bool"
 
 # The character in lower case where it is an ASCII letter, and itself
 # otherwise.
-[fn."char::to_ascii_lowercase"]
+[fn."scalar::to_ascii_lowercase"]
 pub = true
 sync = true
 touches = []
