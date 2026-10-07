@@ -4,6 +4,29 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.652] — 2026-10-07
+
+**Seven compiler faults the move to `tests/language` turned up are fixed**,
+each with its tests moved to the Nikaia packages.
+- **#528, #529**: a value computed while the package is built leaves out of
+  its run the functions and `test` blocks that read a constant the run does not
+  hold. A `test` block reading a `comptime` broke the build-time parser
+  program, and `nikaia test` refused a `comptime` such as `90.seconds()` that
+  `nikaia run` accepted. A value that reaches such a function is answered by
+  the interpreter, as before.
+- **#530**: an error sum whose member is declared in another file of the
+  package names the member's lifetime. The toolchain's lowered Rust is
+  re-lowered for it (`RustItem<'_>`).
+- **#531**: `m["a"] ?? …` read past a jump compares with a number. The map's
+  element type itself is still not inferred (#543).
+- **#532**: a handle a kept lambda uses gets the thread-safe count and lock at
+  `user-parallelism = yes`.
+- **#533**: `x?.f(1)` on a field of function type is the field's call, as
+  `x.f(1)` is.
+- **#536**: a lambda handed to a parameter the callee keeps takes its own
+  handle of each lock it uses.
+- Filed from the same work: #542, #543, #544, #545.
+
 ## [0.0.651] — 2026-10-07
 
 **375 tests of what a program computes are Nikaia tests now.** They were Rust
