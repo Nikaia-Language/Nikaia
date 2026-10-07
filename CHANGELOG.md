@@ -4,6 +4,14 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.624] — 2026-10-07
+
+**`sort_by_key` hands back nothing, and its key is the lambda's result** (#497).
+- The ledger wrote `[T](mut self: ref Vec[T], f: fn(ref T)) -> ?`: the call
+  was of an unknown type, and the key went unsaid. It is now
+  `[T, K](mut self: ref Vec[T], f: fn(ref T) -> K)`. A sort used as a value
+  is `NK1103` (*`()`*). The examples' ledgers are unchanged.
+
 ## [0.0.623] — 2026-10-07
 
 **`develop` green again** (red since 0.0.616): `anonymous_constructors`

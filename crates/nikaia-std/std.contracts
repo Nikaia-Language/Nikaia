@@ -2799,7 +2799,7 @@ sync = "sync(f)"
 [fn."Vec::sort_by_key"]
 pub = true
 sync = "sync(f)"
-signature = "[T](mut self: ref Vec[T], f: fn(ref T)) -> ?"
+signature = "[T, K](mut self: ref Vec[T], f: fn(ref T) -> K)"
 
 # The text's UTF-8, one byte at a time ([ADR-285](../../docs/specification/adr/adr-285.md) D4).
 #
