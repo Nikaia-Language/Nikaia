@@ -53,13 +53,28 @@ impl Bytes {
         &self.buffer
     }
 
-    /// The bytes as text, where they are text.
+    /// The bytes as text, where they are text (ADR-320 D7).
     ///
     /// A **view** and not a copy: it points into the buffer and lives as long
-    /// as the borrow does. `None` where the bytes are not UTF-8, which is the
-    /// same answer `fs::read_to_string` reports as a failure.
-    pub fn text(&self) -> Option<&str> {
-        std::str::from_utf8(&self.buffer).ok()
+    /// as the borrow does. `NotText` where the bytes are not UTF-8, the
+    /// failure `fs::read_to_string` reports for the same bytes.
+    pub fn text(&self) -> Result<&str, crate::io::IoError> {
+        std::str::from_utf8(&self.buffer).map_err(|at| {
+            crate::io::IoError::NotText(format!(
+                "bytes that are not UTF-8 from byte {}",
+                at.valid_up_to()
+            ))
+        })
+    }
+
+    /// The first `byte` at or after the position `from`, or `None`
+    /// (ADR-320 D6): a byte search of the kind `memchr` does. A `from` before
+    /// the start searches from the start; one past the end finds nothing.
+    pub fn find(&self, byte: u8, from: i64) -> Option<i64> {
+        let start = usize::try_from(from.max(0)).ok()?;
+        let rest = self.buffer.get(start..)?;
+        let at = rest.iter().position(|b| *b == byte)?;
+        i64::try_from(start + at).ok()
     }
 
     /// A copy of the bytes, owned by the caller.
@@ -155,8 +170,16 @@ mod tests {
     /// **Text is a view of it**, and only where the bytes are text.
     #[test]
     fn text_is_a_view_and_may_not_be_there() {
-        assert_eq!(Bytes::from("Ada").text(), Some("Ada"));
-        assert_eq!(Bytes::from(vec![0xff_u8]).text(), None);
+        assert_eq!(Bytes::from("Ada").text().ok(), Some("Ada"));
+        assert!(matches!(
+            Bytes::from(vec![0xff_u8]).text(),
+            Err(crate::io::IoError::NotText(_))
+        ));
+        let b = Bytes::from("a;b;c");
+        assert_eq!(b.find(b';', 0), Some(1));
+        assert_eq!(b.find(b';', 2), Some(3));
+        assert_eq!(b.find(b';', 4), None);
+        assert_eq!(b.find(b';', 9), None);
     }
 
     /// **And a copy is asked for**, never taken.

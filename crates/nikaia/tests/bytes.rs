@@ -12,6 +12,8 @@
 //! The alternative was lowering the function and letting `rustc` explain a file
 //! the author never wrote ([Part III C.1](../../../docs/specification/30-nikaia-tooling.md)).
 
+mod common;
+
 use nikaia::check::Finding;
 use nikaia::contracts::{Ledger, LedgerOps, STD};
 use nikaia::emit::{Build, emit_program};
@@ -292,4 +294,52 @@ fn the_corpus_needs_no_tether() {
         }
     }
     assert!(refused.is_empty(), "tethered:\n{}", refused.join("\n"));
+}
+
+// ---------------------------------------------------------------------------
+// ADR-320 D6-D7: a `Bytes` is read as a run of bytes (#453 step 5)
+// ---------------------------------------------------------------------------
+
+/// `b[i]` is a `u8`, `b[a..<b]` a run of them, `b.find(byte; from:)` the next
+/// position, and `b.text()` the text where the bytes are UTF-8 - `NotText`
+/// where they are not.
+#[test]
+fn a_bytes_is_read_as_a_run_of_bytes() {
+    let dir = common::scratch_dir("bytes-read");
+    std::fs::write(dir.join("x"), "Ha;mb;urg").expect("a file");
+    std::fs::write(dir.join("bad"), [0xff_u8, 0xfe, 0xfd]).expect("a file");
+    let source = "use std::fs\n\
+         \n\
+         fn report(path: ref String) throws {\n\
+         \x20   let b = fs::read(ref path, fs::Root::Anywhere)\n\
+         \x20   let first = b[0]\n\
+         \x20   let part = b[1..<3]\n\
+         \x20   let semi = b.find(59) ?? -1\n\
+         \x20   let next = b.find(59; from: semi + 1) ?? -1\n\
+         \x20   let text = b.text()\n\
+         \x20   println(f\"{first} {part.len()} {semi} {next} {text}\")\n\
+         }\n\
+         \n\
+         fn main() {\n\
+         \x20   report(\"x\") catch {\n\
+         \x20       println(\"failed\")\n\
+         \x20   }\n\
+         \x20   report(\"bad\") catch {\n\
+         \x20       println(\"not text\")\n\
+         \x20   }\n\
+         }\n";
+    std::fs::write(dir.join("main.nika"), source).expect("the source");
+    let run = std::process::Command::new(env!("CARGO_BIN_EXE_nikaia"))
+        .current_dir(&dir)
+        .arg("run")
+        .arg("main.nika")
+        .output()
+        .expect("the nikaia binary runs");
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(
+        String::from_utf8_lossy(&run.stdout),
+        "72 2 2 5 Ha;mb;urg\nnot text\n",
+        "{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
 }

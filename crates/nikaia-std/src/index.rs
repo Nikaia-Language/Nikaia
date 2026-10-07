@@ -239,6 +239,24 @@ where
 
 /// **Text is sliced by a range** and never indexed by a number: a byte of
 /// UTF-8 is not a character, which is why Part I 2.2 has no such read.
+/// **A `Bytes` is read as a run of bytes** (ADR-320 D7): `b[i]` is a `u8`,
+/// `b[a..<b]` a run of them, and an index outside stops the program as a
+/// list's does.
+impl<I> Get<I> for crate::bytes::Bytes
+where
+    I: std::slice::SliceIndex<[u8]> + 'static,
+{
+    type Out<'a>
+        = &'a I::Output
+    where
+        Self: 'a;
+
+    #[track_caller]
+    fn get(&self, key: I) -> &I::Output {
+        &self.as_slice()[key]
+    }
+}
+
 impl<I> Get<I> for str
 where
     I: std::slice::SliceIndex<str> + 'static,

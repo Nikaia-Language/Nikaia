@@ -4094,3 +4094,20 @@ pub = true
 sync = true
 touches = []
 signature = "(ref self) -> bool"
+
+# The bytes as text, where they are text (ADR-320 D7): a view into the
+# buffer, and `NotText` where the bytes are not UTF-8.
+[fn."Bytes::text"]
+pub = true
+sync = true
+touches = []
+throws = ["io::IoError"]
+signature = "(ref self) -> ref(self) String"
+
+# The first `byte` at or after `from`, or nothing (ADR-320 D6): a byte search
+# of the kind `memchr` does.
+[fn."Bytes::find"]
+pub = true
+sync = true
+touches = []
+signature = "(ref self, byte: u8; from: i64 = 0) -> i64?"

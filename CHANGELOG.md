@@ -4,6 +4,21 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.637] — 2026-10-07
+
+**A `Bytes` is read as a run of bytes** (#453 step 5, ADR-320 D6-D7, Part I
+2.6).
+- `b[i]` is a `u8`, and `b[a..<b]` is a run of them. An index outside stops
+  the program as a list's does (`index::Get` for `Bytes`).
+- `b.find(byte; from:)` gives the next position as an `i64?`.
+- `b.text()` gives the text where the bytes are UTF-8 (a view into the
+  buffer), and `NotText` where they are not.
+- `std.contracts` describes `Bytes::text` and `Bytes::find`. A socket read
+  is made text of and run (#489's test), and the #472 test compiles its
+  program.
+- `'…'` as a `u8` is step 2, so a byte is written as a number for now
+  (`b.find(59)`).
+
 ## [0.0.636] — 2026-10-07
 
 **A cut with an open end** (#527, Part I 2.6). Inside brackets, `[..<b]` and

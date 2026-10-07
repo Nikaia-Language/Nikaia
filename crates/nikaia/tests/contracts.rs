@@ -1003,7 +1003,7 @@ fn a_socket_read_through_a_method_is_untrusted() {
          fn main() throws {\n\
          \x20   let mut c = net::connect(\"127.0.0.1:1\")\n\
          \x20   let b = c.read()\n\
-         \x20   let text = b.to_text()\n\
+         \x20   let text = b.text()\n\
          \x20   let mut words = collections::HashMap()\n\
          \x20   for w in text.split(\" \") { words.insert(w, 1) }\n\
          \x20   println(f\"{words.len()}\")\n\
@@ -1022,6 +1022,22 @@ fn a_socket_read_through_a_method_is_untrusted() {
         .expect("it lowers")
         .rust;
     assert!(!rust.contains("TrustedMap"), "{rust}");
+    // **And it compiles** (#489): `b.text()` is described (`Bytes::text`), so
+    // the language below is not the first to hear of it.
+    let dir = common::scratch_dir("socket-text");
+    let file = dir.join("main.rs");
+    std::fs::write(&file, &rust).expect("write the Rust");
+    let meta = dir.join("m");
+    let out = common::compile(
+        &file,
+        &["--emit=metadata", "-o", meta.to_str().expect("utf-8")],
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(
+        out.status.success(),
+        "{}\n{rust}",
+        String::from_utf8_lossy(&out.stderr)
+    );
 }
 
 /// **A file beside a socket does not hide it**: both are listed, and the join

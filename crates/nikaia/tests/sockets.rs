@@ -132,3 +132,37 @@ fn nothing_in_the_program_says_how_it_waits() {
         );
     }
 }
+
+/// **What a socket read is made text of** (ADR-320 D7, #489): `b.text()` over
+/// the bytes the server read, compiled and run.
+#[test]
+fn the_bytes_a_socket_reads_are_made_text() {
+    let source = "\
+use std::net
+
+fn talk(address: String) throws {
+    let mut client = net::connect(address)
+    client.write(\"ping\")
+}
+
+fn main() throws {
+    let listener = net::listen(\"127.0.0.1:0\")
+    let address = listener.address()
+    let asking = spawn fn() { talk(address) catch { } }
+    let mut connection = listener.accept()
+    let asked = connection.read()
+    println(f\"server read {asked.text()}\")
+    asking.join()
+}
+";
+    let dir = common::scratch_dir("sockets-text");
+    let binary = build(&dir, source, &[]);
+    let out = Command::new(&binary).output().expect("the program runs");
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "server read ping\n",
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
