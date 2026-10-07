@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part II: Advanced Features & Metaprogramming**
-**Version:** 0.0.618 (Draft)
+**Version:** 0.0.619 (Draft)
 **Date:** 2026-10-07
 
 ---
@@ -237,8 +237,10 @@ error: `println` cannot format a `Vec[u8]`
 ```
 
 A reflected field answers `.name`, its name as text, `.of(value)`, what it
-holds on that value, `.ty`, its type, and `.doc`, the `///` lines before it as
-text ([ADR-329](adr/adr-329.md), [ADR-330](adr/adr-330.md)). `.name`, `.ty` and
+holds on that value, `.ty`, its type, `.doc`, the `///` lines before it as
+text, `.default`, its default as a `T?`, and `.attribute(X)` and
+`.attributes(X)`, its attributes of type `X` ([ADR-329](adr/adr-329.md),
+[ADR-330](adr/adr-330.md), [ADR-331](adr/adr-331.md)). `.name`, `.ty` and
 `.doc` are constants of each unrolled turn. `.doc` is empty where there is none
 and where the build has no source of the type's package. A reflected variant answers `.name` and `.is(value)`,
 whether the value is that variant; what a variant carries is read with a
@@ -297,6 +299,47 @@ reached is `T::access`, a `meta::Access`: `Owned`, `Ref`, `Shared` or
 be taken for, and every arm is checked. Each type's copy holds only the arm it
 takes. A `meta::Type` exists only while the program is built: one that would
 reach the running program is refused with `NK1231`.
+
+**An attribute says what a type does not** ([ADR-331](adr/adr-331.md)). It is a
+value of an ordinary struct, written with `@` after a declaration's `///` lines
+and before the declaration:
+
+```nika
+struct User {
+    /// When the user was created.
+    @json::Name("createdAt")
+    @openapi::Example("2024-01-01T00:00:00Z")
+    created_at: time::Instant,
+}
+```
+
+A struct is an attribute when `@meta::Attribute(…)` marks it, naming where it
+may stand: `field`, `struct`, `enum`, `variant`, `fn`, `parameter`, `trait`,
+`impl`. In an attribute's arguments a variant is written by its name alone.
+
+```nika
+@meta::Attribute(field)
+pub struct Name {
+    pub value: String,
+    pub case: Case = Case::Camel,
+}
+```
+
+The arguments follow Part I 5.1: the fields without a default by position, in
+declaration order, and those with one by name after `;`, as
+`@json::Name("created_at"; case: snake)`. Each is a build-time value. `@` with a
+struct not so marked, or before a declaration its mark does not name, is
+refused with `NK1235`. An attribute stands once unless its mark says
+`repeatable: true`; a second one is refused with `NK1236`.
+
+An attribute is read as a member, with its type as the argument:
+`field.attribute(json::Name)` is a `json::Name?`, and `T::attribute(X)` and a
+reflected variant's `.attribute(X)` read a type's and a variant's.
+`.attributes(X)` reads a repeatable one as a list, in written order. A
+function's, a parameter's, a trait's and an `impl`'s attributes are checked and
+carried, and nothing reads them yet. A type's attributes and its fields'
+defaults are in the ledger, so a dependency's types are read as the package's
+own.
 
 **What cannot be read is printed.** `--comptime` (on `nikaia build` and `nikaia lower`) prints what was
 unrolled, once for the program, for the types actually used, as `--overlaps`,

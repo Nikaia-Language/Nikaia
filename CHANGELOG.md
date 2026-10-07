@@ -4,6 +4,21 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.619] — 2026-10-07
+
+**Attributes, and defaults on struct fields** (ADR-331, #496).
+- `@json::Name("createdAt")` before a field: a value of an ordinary struct.
+  A struct is an attribute when `@meta::Attribute(field, …)` marks it; the
+  places are `field`, `struct`, `enum`, `variant`, `fn`, `parameter`, `trait`,
+  `impl`, and in an attribute's arguments a variant is its name alone.
+- Arguments follow Part I 5.1: fields without a default by position, fields
+  with one by name after `;`, so a field added with a default breaks no use.
+- A field of any struct may have a default; a literal may leave it out.
+- Read with `field.attribute(X)`, `T::attribute(X)`, a variant's
+  `.attribute(X)`; `repeatable: true` allows several, read by `.attributes(X)`.
+  A field answers `.default`. Attributes and defaults travel in the ledger.
+- New codes `NK1234`-`NK1236`; `NK1180` lists the new members.
+
 ## [0.0.618] — 2026-10-07
 
 **`pub grammar` offers its entries to other packages** (ADR-296 D25, #520).

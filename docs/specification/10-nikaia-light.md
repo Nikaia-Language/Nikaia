@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part I: The Language Core**
-**Version:** 0.0.618 (Draft)
+**Version:** 0.0.619 (Draft)
 **Date:** 2026-10-07
 
 ---
@@ -1147,6 +1147,21 @@ pub struct User {
     is_active: bool,
 }
 ```
+
+**A field may have a default**, a build-time value written after its type
+([ADR-331](adr/adr-331.md) D5, [ADR-318](adr/adr-318.md)):
+
+```nika
+pub struct Page {
+    pub size: i64 = 50,
+    pub cursor: String?,
+}
+```
+
+A struct literal may leave such a field out, and the field takes its default:
+`Page { cursor: null }` has a `size` of 50. A literal that leaves out a field
+without a default is refused with `NK1234`. The default is evaluated once,
+while the package that declares the struct is built.
 
 ### 4.2. Constructors and Instantiation
 A struct literal `Type { field: value }` names fields, and a private field
