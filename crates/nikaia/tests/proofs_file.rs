@@ -218,3 +218,52 @@ fn a_dependencys_questions_are_its_own() {
         String::from_utf8_lossy(&out.stderr)
     );
 }
+
+/// **The committed file is part of the cache key** (#448): a build that hits
+/// the cache asks nothing, so an edited `nikaia.proofs` has to be a miss - here
+/// the entry taken out of it is asked, and written, again.
+#[test]
+fn an_edited_proof_file_is_a_new_build() {
+    let dir = common::scratch_dir("proofs-file-key");
+    std::fs::create_dir_all(dir.join("src")).expect("the package");
+    std::fs::write(
+        dir.join("nikaia.toml"),
+        "[package]\nname = \"pk\"\nversion = \"0.1.0\"\n",
+    )
+    .expect("a manifest");
+    std::fs::write(dir.join("src/main.nika"), SOURCE).expect("a source");
+    let build = || {
+        let out = Command::new(env!("CARGO_BIN_EXE_nikaia"))
+            .current_dir(&dir)
+            .arg("build")
+            .output()
+            .expect("the nikaia binary runs");
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    };
+    build();
+    build();
+    let file = dir.join("nikaia.proofs");
+    let whole = std::fs::read_to_string(&file).expect("the file is written");
+    let taken = whole
+        .lines()
+        .find(|l| !l.starts_with('#'))
+        .expect("an entry")
+        .to_string();
+    let without: String = whole
+        .lines()
+        .filter(|l| *l != taken)
+        .map(|l| format!("{l}\n"))
+        .collect();
+    std::fs::write(&file, without).expect("edit the file");
+    build();
+    let again = std::fs::read_to_string(&file).expect("the file");
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(
+        again.lines().any(|l| l == taken),
+        "the entry was not asked again:\n{again}"
+    );
+}

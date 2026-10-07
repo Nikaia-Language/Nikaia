@@ -4,6 +4,14 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.628] — 2026-10-07
+
+**An edited `nikaia.proofs` is a new build** (#448): the build cache key
+carries a digest of the committed `nikaia.proofs` and of the files in
+`nikaia.proofs.d`, so removing or changing an entry no longer hands back the
+binary built under the old proofs. A project without such a file keeps the key
+it had.
+
 ## [0.0.627] — 2026-10-07
 
 **`develop` builds on the toolchain floor again** (`rust_floor`, red since

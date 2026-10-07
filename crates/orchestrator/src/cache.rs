@@ -90,6 +90,12 @@ pub struct Choices {
     /// lockfile records, and a path the checkout moves has no place there
     /// (D7).
     pub names: String,
+    /// **The committed proofs this build reads** (ADR-270 D19-D22, #448), as
+    /// one digest, empty where the project has no `nikaia.proofs`. A lowering
+    /// takes its answers from the file, so an edited or regenerated file is
+    /// a different build - once a search may differ between machines, the
+    /// recorded answer is what decides what is emitted.
+    pub proofs: String,
 }
 
 impl Choices {
@@ -100,6 +106,7 @@ impl Choices {
             reads: String::new(),
             describes: String::new(),
             names: String::new(),
+            proofs: String::new(),
         }
     }
 
@@ -115,6 +122,14 @@ impl Choices {
     pub fn naming(self, names: impl Into<String>) -> Self {
         Self {
             names: names.into(),
+            ..self
+        }
+    }
+
+    /// The same, with the committed proofs this build reads.
+    pub fn proving(self, digest: impl Into<String>) -> Self {
+        Self {
+            proofs: digest.into(),
             ..self
         }
     }
@@ -273,6 +288,10 @@ impl Key {
         // exists, one boundary over.
         b.field("describes", &choices.describes);
         b.field("names", &choices.names);
+        // Only where there is a file: a build without one keys as it did.
+        if !choices.proofs.is_empty() {
+            b.field("proofs", &choices.proofs);
+        }
         b.field("unit", unit);
         b.field("source", &record.source);
         // `BTreeMap` iterates in key order, so the same assets hash the same

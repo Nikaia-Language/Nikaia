@@ -939,6 +939,12 @@ pub fn lower_reading(
     // a file a person edits, so an edit has to reach the next build - which it
     // did not, and failed open while it did not.
     let choices = choices.describing(crate::describe::descriptions_digest(&layout.root));
+    // **The committed proofs are an input** (#448): a recorded answer is what
+    // the lowering uses, so the file belongs in the key once it exists.
+    let choices = match layout.in_project {
+        true => choices.proving(proofs_digest(&layout.root)),
+        false => choices,
+    };
 
     // A cache that cannot be opened is a slower build, never a failed one
     // (D12).
@@ -1427,6 +1433,29 @@ fn sources_that_moved(root: &Path, name: &str, ledger: &Ledger) -> Vec<String> {
         })
         .map(|(file, _)| file.clone())
         .collect()
+}
+
+/// The digest of `nikaia.proofs` and of every certificate in `nikaia.proofs.d/`,
+/// empty where there is no file (#448).
+fn proofs_digest(root: &Path) -> String {
+    let Ok(book) = std::fs::read(root.join("nikaia.proofs")) else {
+        return String::new();
+    };
+    let mut all = book;
+    if let Ok(entries) = std::fs::read_dir(root.join("nikaia.proofs.d")) {
+        let mut files: Vec<PathBuf> = entries.flatten().map(|e| e.path()).collect();
+        files.sort();
+        for file in files {
+            all.extend(
+                file.file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_default()
+                    .bytes(),
+            );
+            all.extend(std::fs::read(&file).unwrap_or_default());
+        }
+    }
+    orchestrator::cache::sha256_hex(&all)
 }
 
 /// `contracts/<crate>.contracts`, where it is there **and parses as a ledger**.
