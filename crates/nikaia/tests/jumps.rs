@@ -354,7 +354,6 @@ fn a_condition_that_is_not_the_literal_stays_a_while() {
     assert!(rust.contains("while running {"), "{rust}");
 }
 
-
 // --- the head grammar (ADR-301) ----------------------------------------------
 //
 // These sit here rather than in a file of their own because of how they were
@@ -362,9 +361,6 @@ fn a_condition_that_is_not_the_literal_stays_a_while() {
 // `while i < n && running`, and it did not parse. The gap is about heads and not
 // about jumps, and the record says so; the tests stay beside the work that
 // turned them up.
-
-
-
 
 /// And the restriction the head chain exists for is **unchanged**: a brace-led
 /// form still may not stand in a head, because the `{` is the body's.
@@ -385,7 +381,6 @@ fn a_head_still_refuses_a_brace_led_form() {
         "a struct literal in a head would take the body's brace"
     );
 }
-
 
 /// **The claim itself, checked directly**: a head parses what a body parses.
 ///
@@ -460,8 +455,6 @@ fn a_bare_binary_fallback_is_refused_in_a_head_too() {
         );
     }
 }
-
-
 
 /// The restriction itself, unchanged: without the parentheses the `{` is the
 /// body's, and the program does not parse.
