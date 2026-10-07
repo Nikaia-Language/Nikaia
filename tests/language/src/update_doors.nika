@@ -54,3 +54,18 @@ test "a kept lambda takes its own handle of a lock" {
     let n = a.get()
     assert(n == 2)
 }
+
+// **And so does one handed to a parameter the callee keeps** (#536): the
+// callee stores it as a field is stored, and the capture used to move the
+// name it was written beside.
+fn update_doors_button_of(on_click: fn() sync) -> UpdateDoorsButton {
+    return UpdateDoorsButton { on_click: on_click }
+}
+
+test "a lambda handed to a kept parameter takes its own handle of a lock" {
+    let a = SharedMut(0)
+    let button = update_doors_button_of(fn() { a.update fn(mut n) { n += 1 } })
+    button.on_click()
+    let n = a.get()
+    assert(n == 1)
+}

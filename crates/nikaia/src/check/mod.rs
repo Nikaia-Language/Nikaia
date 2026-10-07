@@ -21622,6 +21622,38 @@ impl<'a> Checker<'a> {
         Some(want.clone())
     }
 
+    /// **A hull a kept lambda captures, it captures a handle of** (ADR-230
+    /// D4, ADR-312 D5): handing a hull on duplicates the count, so the name
+    /// outside is still there on the next line. Asked wherever a lambda is
+    /// kept - a field, a `let`, and a parameter the callee keeps (#536).
+    fn a_kept_lambdas_hulls(&mut self, value: &Expr, span: &Span) {
+        let Expr::Closure { params, body, .. } = value else {
+            return;
+        };
+        let mut named: BTreeSet<String> = BTreeSet::new();
+        crate::emit::visit_block(body, &mut |e| {
+            if let Expr::Variable(name) = e {
+                named.insert(self.parsed.text(*name).to_string());
+            }
+        });
+        let own: BTreeSet<String> = params
+            .iter()
+            .map(|p| self.parsed.text(*p).to_string())
+            .collect();
+        let hulls: Vec<String> = named
+            .into_iter()
+            .filter(|name| !own.contains(name))
+            .filter(|name| {
+                matches!(self.lookup(name), Some(Ty::Named { name, .. }) if is_hull(ty::base(&name)))
+            })
+            .collect();
+        if !hulls.is_empty() {
+            self.checked
+                .kept_hulls
+                .insert((span.at(), argument_shape(value)), hulls);
+        }
+    }
+
     /// **A lambda where a function value is kept** is one shared closure
     /// below, and one that may pause hands back a boxed future.
     fn a_kept_lambda(&mut self, want: &Ty, value: &Expr, span: &Span) {
@@ -21655,33 +21687,7 @@ impl<'a> Checker<'a> {
                 .kept_lambdas
                 .insert((span.at(), argument_shape(value)), (!is_sync, *throws));
             self.a_lambdas_text_is_its_own(want, value);
-            // **A hull it captures, it captures a handle of** (ADR-230 D4,
-            // ADR-312 D5): handing a hull on duplicates the count, so the name
-            // outside is still there on the next line.
-            if let Expr::Closure { params, body, .. } = value {
-                let mut named: BTreeSet<String> = BTreeSet::new();
-                crate::emit::visit_block(body, &mut |e| {
-                    if let Expr::Variable(name) = e {
-                        named.insert(self.parsed.text(*name).to_string());
-                    }
-                });
-                let own: BTreeSet<String> = params
-                    .iter()
-                    .map(|p| self.parsed.text(*p).to_string())
-                    .collect();
-                let hulls: Vec<String> = named
-                    .into_iter()
-                    .filter(|name| !own.contains(name))
-                    .filter(|name| {
-                        matches!(self.lookup(name), Some(Ty::Named { name, .. }) if is_hull(ty::base(&name)))
-                    })
-                    .collect();
-                if !hulls.is_empty() {
-                    self.checked
-                        .kept_hulls
-                        .insert((span.at(), argument_shape(value)), hulls);
-                }
-            }
+            self.a_kept_lambdas_hulls(value, span);
         }
         // **A function of this program, named**, is the closure that calls it:
         // the call is typed here so that it is lowered as a written one is.
@@ -24148,6 +24154,7 @@ impl<'a> Checker<'a> {
                         self.checked
                             .kept_lambdas
                             .insert((span.at(), argument_shape(arg)), (!is_sync, *throws));
+                        self.a_kept_lambdas_hulls(arg, span);
                     }
                     if let Some(want) = expected.get(at) {
                         self.a_lambdas_text_is_its_own(want, arg);
