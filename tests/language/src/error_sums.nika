@@ -1,0 +1,97 @@
+// A set with more than one error type in it is a generated sum (ADR-280 D15),
+// and a `catch` matches on the members' variants (ADR-023 D4). The type and
+// the refusal of a `match` without `else` stay in
+// `crates/nikaia/tests/error_sums.rs`.
+//
+// The error type is declared here and the sum is written once, at the entry,
+// in `main.nika`: which of the two carries a lifetime is read from the
+// package's declarations, not the file's (#530).
+
+use std::fs
+use std::io
+
+enum ErrorSumsConfig {
+    Empty(ref String),
+    Unnamed
+}
+
+impl Error for ErrorSumsConfig {
+    fn message(ref self) -> String {
+        match self {
+            ErrorSumsConfig::Empty(p) => f"config at {p} is empty"
+            ErrorSumsConfig::Unnamed => "config has no name".clone()
+        }
+    }
+}
+
+// The shape: an error of the program's own, and a file read, in one function.
+fn error_sums_load(path: ref String) -> String throws {
+    if path == "" { throw ErrorSumsConfig::Unnamed }
+    let text = fs::read_to_string(ref path, fs::Root::Anywhere)
+    if text == "" { throw ErrorSumsConfig::Empty(path) }
+    return text
+}
+
+// A handler matches on the members' variants, in one block, and the failure
+// that arrives decides which arm runs. This one is the library's half.
+test "a library's member is matched by variant" {
+    let text = error_sums_load("nope.txt") catch {
+        match error {
+            ErrorSumsConfig::Empty(p) => f"empty: {p}"
+            io::IoError::NotFound(p) => f"missing: {p.display()}"
+            else => "other".clone()
+        }
+    }
+    assert(text == "missing: nope.txt")
+}
+
+// And this one is the program's own half, which also carries its site
+// (ADR-023 D6): the envelope inside the member, opened where the patterns need
+// the value.
+test "the program's own member is matched and keeps its site" {
+    let mut said = ""
+    let text = error_sums_load("") catch {
+        said = f"{error.full()}"
+        match error {
+            ErrorSumsConfig::Unnamed => "unnamed".clone()
+            else => "other".clone()
+        }
+    }
+    let message = said.contains("has no name")
+    let site = said.contains("raised at error_sums_load")
+    assert(message)
+    assert(site)
+    assert(text == "unnamed")
+}
+
+fn error_sums_again(path: ref String) -> String throws {
+    return error_sums_load(path) catch {
+        match error {
+            ErrorSumsConfig::Empty(p) => f"defaulted for {p}"
+            else => throw error
+        }
+    }
+}
+
+// `throw error` puts the failure back in the variant it came out of (D3). Two
+// function boundaries, and the message still names the file.
+test "a handler passes the rest on" {
+    let text = error_sums_again("nope.txt") catch { f"gave up: {error}" }
+    let gave_up = text.starts_with("gave up:")
+    let named = text.contains("nope.txt")
+    assert(gave_up)
+    assert(named)
+}
+
+// A member the handler says nothing about still gets an arm, because the sum
+// is an `enum` below and a `match` over one has to cover it. What runs there is
+// the catch-all, which is what the source meant by not naming it.
+test "a member the handler ignores falls through" {
+    let text = error_sums_load("nope.txt") catch {
+        match error {
+            ErrorSumsConfig::Empty(p) => f"empty: {p}"
+            else => "fell through".clone()
+        }
+    }
+    assert(text == "fell through")
+}

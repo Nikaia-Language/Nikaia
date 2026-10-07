@@ -13,6 +13,10 @@
 //! variants ([ADR-023](../../../docs/specification/adr/adr-023.md) D4), so
 //! `ConfigError::Empty(p)` and `io::IoError::NotFound(p)` stand in one block and
 //! the lowering takes the match apart by member.
+//!
+//! What a handler sees when the program runs is tested in the language:
+//! `tests/language/src/error_sums.nika`. What stays here is the type the
+//! lowering writes and the refusal.
 
 mod common;
 
@@ -33,34 +37,6 @@ fn lowered(source: &str) -> String {
     emit_program(&parsed, Build::default())
         .expect("the source lowers")
         .rust
-}
-
-/// Lower it, compile it, run it, and hand back what it printed. Reading the
-/// Rust is not enough for a channel: a sum that looks right and does not
-/// compile is the defect this closes.
-fn output(purpose: &str, source: &str) -> String {
-    assert!(findings(source).is_empty(), "{:#?}", findings(source));
-    let rust = lowered(source);
-    let dir = common::scratch_dir(purpose);
-    let file = dir.join("main.rs");
-    std::fs::write(&file, &rust).expect("write the Rust");
-    let binary = dir.join("program");
-    let out = common::compile(&file, &["-o", binary.to_str().expect("utf-8 path")]);
-    assert!(
-        out.status.success(),
-        "the lowering compiles:\n{}\n--- the Rust ---\n{rust}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    let ran = std::process::Command::new(&binary)
-        .output()
-        .expect("run the program");
-    assert!(
-        ran.status.success(),
-        "the program runs:\n{}",
-        String::from_utf8_lossy(&ran.stderr)
-    );
-    let _ = std::fs::remove_dir_all(&dir);
-    String::from_utf8_lossy(&ran.stdout).trim().to_string()
 }
 
 /// The shape: an error of the program's own, and a file read, in one function.
@@ -134,110 +110,6 @@ fn two_functions_with_one_set_share_a_type() {
     assert_eq!(rust.matches("enum __NikaiaThrows_").count(), 1, "{rust}");
     // And the propagation is the plain `?`, with nothing written around it.
     assert!(rust.contains("load(path).await?"), "{rust}");
-}
-
-// ---------------------------------------------------------------------------
-// D3: what a handler sees
-// ---------------------------------------------------------------------------
-
-/// **A handler matches on the members' variants**, in one block, and the
-/// failure that arrives decides which arm runs. This one is the library's half.
-#[test]
-fn a_librarys_member_is_matched_by_variant() {
-    let printed = output(
-        "sum-library-member",
-        &format!(
-            "{TWO_WAYS}fn main() {{\n\
-             \x20   let text = load(\"nope.txt\") catch {{\n\
-             \x20       match error {{\n\
-             \x20           ConfigError::Empty(p) => f\"empty: {{p}}\"\n\
-             \x20           io::IoError::NotFound(p) => f\"missing: {{p.display()}}\"\n\
-             \x20           else => \"other\".clone()\n\
-             \x20       }}\n\
-             \x20   }}\n\
-             \x20   println(f\"{{text}}\")\n\
-             }}\n"
-        ),
-    );
-    assert_eq!(printed, "missing: nope.txt");
-}
-
-/// **And this one is the program's own half**, which also has to carry its site
-/// ([ADR-023](../../../docs/specification/adr/adr-023.md) D6) — the envelope
-/// inside the member, opened where the patterns need the value.
-#[test]
-fn the_programs_own_member_is_matched_and_keeps_its_site() {
-    let dir = common::scratch_dir("sum-own-member");
-    let empty = dir.join("empty.conf");
-    std::fs::write(&empty, "").expect("write an empty file");
-    let printed = output(
-        "sum-own-member-run",
-        &format!(
-            "{TWO_WAYS}fn main() {{\n\
-             \x20   let text = load(\"{}\") catch {{\n\
-             \x20       println(f\"{{error.full()}}\")\n\
-             \x20       match error {{\n\
-             \x20           ConfigError::Empty(p) => \"empty\".clone()\n\
-             \x20           else => \"other\".clone()\n\
-             \x20       }}\n\
-             \x20   }}\n\
-             \x20   println(f\"{{text}}\")\n\
-             }}\n",
-            empty.display()
-        ),
-    );
-    assert!(printed.contains("is empty"), "{printed}");
-    assert!(printed.contains("raised at load"), "{printed}");
-    assert!(printed.ends_with("empty"), "{printed}");
-    let _ = std::fs::remove_dir_all(&dir);
-}
-
-/// **`throw error` puts the failure back in the variant it came out of** (D3),
-/// with the site it was raised at where there is one. Two function boundaries,
-/// and the message still names the file.
-#[test]
-fn a_handler_passes_the_rest_on() {
-    let printed = output(
-        "sum-passed-on",
-        &format!(
-            "{TWO_WAYS}fn again(path: ref String) -> String throws {{\n\
-             \x20   return load(path) catch {{\n\
-             \x20       match error {{\n\
-             \x20           ConfigError::Empty(p) => f\"defaulted for {{p}}\"\n\
-             \x20           else => throw error\n\
-             \x20       }}\n\
-             \x20   }}\n\
-             }}\n\
-             fn main() {{\n\
-             \x20   let text = again(\"nope.txt\") catch {{ f\"gave up: {{error}}\" }}\n\
-             \x20   println(f\"{{text}}\")\n\
-             }}\n"
-        ),
-    );
-    assert!(printed.starts_with("gave up:"), "{printed}");
-    assert!(printed.contains("nope.txt"), "{printed}");
-}
-
-/// **A member the handler says nothing about still gets an arm**, because the
-/// sum is an `enum` below and a `match` over one has to cover it. What runs
-/// there is the catch-all, which is what the source meant by not naming it.
-#[test]
-fn a_member_the_handler_ignores_falls_through() {
-    let printed = output(
-        "sum-unnamed-member",
-        &format!(
-            "{TWO_WAYS}fn main() {{\n\
-             \x20   let text = load(\"nope.txt\") catch {{\n\
-             \x20       match error {{\n\
-             \x20           ConfigError::Empty(p) => f\"empty: {{p}}\"\n\
-             \x20           else => \"fell through\".clone()\n\
-             \x20       }}\n\
-             \x20   }}\n\
-             \x20   println(f\"{{text}}\")\n\
-             }}\n"
-        ),
-    );
-    assert_eq!(printed, "fell through");
 }
 
 // ---------------------------------------------------------------------------

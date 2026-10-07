@@ -2693,7 +2693,20 @@ impl<'p> Emitter<'p> {
             build,
             described: described.clone(),
             borrowing: borrowing_structs(parsed),
-            tethered: tethered_types(&own_contracts),
+            // **A type another file of the package declares answers too**
+            // (Part I 9.1): the ledger records a tether for a struct's fields
+            // and for nothing an `enum` carries, so an error enum holding a
+            // view, declared beside this file, is read from its declaration.
+            // The generated sum is written once, at the entry, and names its
+            // members wherever they are declared.
+            tethered: tethered_types(&own_contracts)
+                .into_iter()
+                .chain(beside.iter().flat_map(|other| {
+                    borrowing_structs(other)
+                        .into_iter()
+                        .map(|s| other.text(s).to_string())
+                }))
+                .collect(),
             // **An error another file of the package declares is the
             // package's own** (Part I 9.1, ADR-294): its `impl Error` is in
             // that file, and a function here that throws it travels in its
