@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part I: The Language Core**
-**Version:** 0.0.612 (Draft)
+**Version:** 0.0.613 (Draft)
 **Date:** 2026-10-07
 
 ---
@@ -1411,6 +1411,9 @@ A type parameter is written, never inferred. **Inside the body it is a type**:
 `i64` hands back an `i64`, and `Box { item: n }` is a `Box[i64]`. A parameter
 list may hold the type itself, `fn schema[T](T)`; the call then writes a type
 there, `schema(User)`, and the function needs no value of it (Part II 10.3).
+A call may also name a function's type arguments in brackets, `parse[Config](text)`;
+the types fill the type parameters in order, and the call is warned with
+`NK1233` ([ADR-330](adr/adr-330.md) D9).
 
 A `T` on its own has no members:
 

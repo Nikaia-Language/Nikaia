@@ -4,6 +4,15 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.613] — 2026-10-07
+
+**`f[T]()` is allowed, with a warning that asks for its use case** (ADR-330 D9, #514).
+- A call may name a function's type arguments in brackets,
+  `parse[Config](text)`. Each such call draws `NK1233`, whose help points to
+  #514, where use cases are collected. A method's form is not decided. Changes
+  ADR-323 §3.
+- Aliases stay out until it is clear what they are needed for.
+
 ## [0.0.612] — 2026-10-07
 
 **Full names stay out** (ADR-330 §6, #121).
