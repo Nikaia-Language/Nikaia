@@ -13390,6 +13390,43 @@ impl<'p> Emitter<'p> {
         // **A key the map keeps nothing of is lent** (ADR-293 D27),
         // and a key is not a position, so `at` does not see it.
         let key = self.map_key(flow.statement, index, false);
+        // **`xs[a..<xs.len()]` is the language below's `a..`** (#527): the
+        // form `xs[a..]` comes to, and the base is read once.
+        if slicing
+            && key.is_none()
+            && let Expr::Range {
+                start,
+                end,
+                inclusive: false,
+            } = index
+            && let Expr::MethodCall {
+                receiver,
+                method,
+                args,
+                ..
+            } = &**end
+            && args.is_empty()
+            && self.text(*method) == "len"
+            && crate::check::argument_shape(receiver) == crate::check::argument_shape(base)
+        {
+            // A start in literals is handed over as written, for the reason
+            // a range in literals is (below): `at` has nothing to infer from.
+            match only_literals(start) {
+                true => {
+                    self.expr(out, start, depth, flow.inferred())?;
+                    out.push("..)");
+                }
+                false => {
+                    out.push("nikaia_std::index::at(");
+                    self.expr(out, start, depth, flow)?;
+                    out.push("..))");
+                }
+            }
+            if self.reads_through_handle(flow, base) {
+                out.push(".get()");
+            }
+            return Ok(());
+        }
         match (key, only_literals(index) && !counts_down) {
             (Some(form), _) => self.key(out, form, index, depth, flow)?,
             (None, true) => self.index_expr(out, index, depth, flow.inferred())?,

@@ -1374,6 +1374,8 @@ pub enum Postfix {
     SafeMethod(Symbol, Vec<ast::Expr>, Vec<ast::ConfigArg>),
     Method(Symbol, Vec<ast::Expr>, Vec<ast::ConfigArg>),
     Index(Box<ast::Expr>),
+    /// `[a..]`: from `a` to the end, and the word `len` the end is read with.
+    IndexFrom(Box<ast::Expr>, Symbol),
     /// `with { x: 1 }` — [ADR-118](../../../docs/specification/adr/adr-118.md)
     /// D1. The `usize` is the byte the `with` stands at, which is the key the
     /// checker records the operand's type under.
@@ -1466,6 +1468,21 @@ pub fn fold_postfix(base: ast::Expr, tail: Vec<Postfix>) -> ast::Expr {
         Postfix::Index(index) => ast::Expr::Index {
             base: Box::new(recv),
             index,
+        },
+        // **`xs[a..]` is `xs[a..<xs.len()]`** (#527). The emitter writes the
+        // language below's `a..` for it, so the base is evaluated once.
+        Postfix::IndexFrom(start, len) => ast::Expr::Index {
+            index: Box::new(ast::Expr::Range {
+                start,
+                end: Box::new(ast::Expr::MethodCall {
+                    receiver: Box::new(recv.clone()),
+                    method: len,
+                    args: Vec::new(),
+                    config: Vec::new(),
+                }),
+                inclusive: false,
+            }),
+            base: Box::new(recv),
         },
         Postfix::With(fields, at) => ast::Expr::With {
             base: Box::new(recv),
@@ -3405,6 +3422,26 @@ grammar! {
           // every reader of every list literal a moment of doubt. Rust and
           // JavaScript both chose the other way and both carry the footgun in
           // their style guides.
+          // **A cut with an open end** (Part I 2.6, #527): `[..<b]` and
+          // `[..b]` start at `0`, and `[a..]` runs to the end - which the
+          // fold writes as `a..<base.len()`, the one form a range has.
+          | same_line "[" "..<" end:or_expr "]" -> {
+                Postfix::Index(Box::new(Expr::Range {
+                    start: Box::new(Expr::LitInt { value: 0, negative: false }),
+                    end: Box::new(end),
+                    inclusive: false,
+                }))
+            }
+          | same_line "[" ".." end:or_expr "]" -> {
+                Postfix::Index(Box::new(Expr::Range {
+                    start: Box::new(Expr::LitInt { value: 0, negative: false }),
+                    end: Box::new(end),
+                    inclusive: true,
+                }))
+            }
+          | same_line "[" start:or_expr ".." "]" -> {
+                Postfix::IndexFrom(Box::new(start), _state.intern("len"))
+            }
           | same_line "[" index:expr "]" -> {
                 Postfix::Index(Box::new(index))
             }

@@ -73,6 +73,15 @@ macro_rules! signed {
                 }
             }
 
+            /// `xs[a..]` (#527): from `a` to the end.
+            impl At for std::ops::RangeFrom<$t> {
+                type Out = std::ops::RangeFrom<usize>;
+                #[track_caller]
+                fn at(self) -> std::ops::RangeFrom<usize> {
+                    self.start.at()..
+                }
+            }
+
             impl At for std::ops::RangeInclusive<$t> {
                 type Out = std::ops::RangeInclusive<usize>;
                 #[track_caller]
@@ -102,6 +111,13 @@ macro_rules! unsigned {
                 type Out = std::ops::Range<usize>;
                 fn at(self) -> std::ops::Range<usize> {
                     std::ops::Range { start: self.start.at(), end: self.end.at() }
+                }
+            }
+
+            impl At for std::ops::RangeFrom<$t> {
+                type Out = std::ops::RangeFrom<usize>;
+                fn at(self) -> std::ops::RangeFrom<usize> {
+                    self.start.at()..
                 }
             }
         )*

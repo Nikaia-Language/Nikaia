@@ -4,6 +4,16 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.636] — 2026-10-07
+
+**A cut with an open end** (#527, Part I 2.6). Inside brackets, `[..<b]` and
+`[..b]` start at `0`, and `[a..]` runs to the end.
+- `[a..]` is parsed as `[a..<base.len()]`, the one form a range has, and is
+  lowered as the language below's `a..` (`index::at` now takes a `RangeFrom`).
+  The base is read once.
+- Part I 2.6's example after `find` parses. As a body it is refused only for
+  the `line` it never declares.
+
 ## [0.0.635] — 2026-10-07
 
 **`s.find(needle; from:)` on text** (#453 step 4, ADR-320 D6, Part I 2.6).

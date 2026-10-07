@@ -14,7 +14,7 @@
 10-nikaia-light.md #14 lowered (a body) [sketch NK1111]  let name = "Nikaia"
 10-nikaia-light.md #15 lowered (a body)  print("{}")               // prints {}
 10-nikaia-light.md #16 fragment (as written) [sketch]  let preview = title.graphemes.take(10).collect()   // t…
-10-nikaia-light.md #17 fragment (as written)  let sep = line.find(";") ?? return
+10-nikaia-light.md #17 refused (a body) [NK1117]  let sep = line.find(";") ?? return
 10-nikaia-light.md #18 lowered (a body)  let result = {
 10-nikaia-light.md #19 lowered (a body)  let age = 18
 10-nikaia-light.md #20 refused (a body) [NK1117]  let grade = if score >= 90 {
