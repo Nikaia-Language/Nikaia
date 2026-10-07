@@ -518,13 +518,17 @@ fn computed(
         }
     }
     let carried = constants_of(&units);
-    let absent = constants_of(files.iter().copied())
+    let absent: BTreeSet<String> = constants_of(files.iter().copied())
         .into_iter()
         .filter(|name| !carried.contains(name))
         .collect();
-    let gone = without_readers(&mut units, absent);
-    // A value that reaches what went - a function reading a constant not worked
-    // out yet - is not this run's: the interpreter answers it from the body's
+    let left_out: BTreeSet<String> = without_readers(&mut units, absent.clone())
+        .difference(&absent)
+        .cloned()
+        .collect();
+    // A value that calls what went - a function reading a constant not worked
+    // out yet - is not this run's (the constants themselves it may name: those
+    // it holds are carried as `let`s): the interpreter answers it from the body's
     // own file, as it did before anything was left out.
     if units[here]
         .program
@@ -538,7 +542,7 @@ fn computed(
             } if units[here].text(*name) == VALUE_FN => {
                 let mut named = BTreeSet::new();
                 nikaia_std::tools::names::names_in_block(body, &units[here].interner, &mut named);
-                named.iter().any(|name| gone.contains(name))
+                named.iter().any(|name| left_out.contains(name))
             }
             _ => false,
         })
