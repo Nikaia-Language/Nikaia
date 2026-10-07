@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part I: The Language Core**
-**Version:** 0.0.642 (Draft)
+**Version:** 0.0.643 (Draft)
 **Date:** 2026-10-07
 
 ---
@@ -1430,6 +1430,21 @@ A call may also name a function's type arguments in brackets, `parse[Config](tex
 the types fill the type parameters in order, and the call is warned with
 `NK1233` ([ADR-330](adr/adr-330.md) D9).
 
+**A type may take values as well as types in its brackets** ([ADR-333](adr/adr-333.md)), as
+`Array[f64, 3]` takes its length. A value parameter is written with its type, `name: Type`; those
+after a `;` are named at the use and have a default, as a function's options do (5.1):
+
+```nika
+pub struct Decimal[precision: i64, scale: i64; rounding: Rounding = Rounding::HalfEven] { … }
+
+let price: Decimal[10, 2] = …
+```
+
+An argument is a build-time value (Part II 10.2), refused with the codes a `comptime` is refused
+with where it is not one. Two uses name the same type when their arguments are equal. Inside the
+declaration a value parameter is a constant: `precision` is an `i64` known while the program is
+built.
+
 A `T` on its own has no members:
 
 ```nika
@@ -1632,7 +1647,7 @@ A block ends at its `}`, so a chain continues after it and means what it reads a
 
 ```nika
 Server()
-    .route("/x") fn { handler(db) }
+    .get("/x") fn { handler(db) }
     .listen(":8080")
 ```
 

@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part III: Tooling, Ecosystem & Interoperability**
-**Version:** 0.0.642 (Draft)
+**Version:** 0.0.643 (Draft)
 **Date:** 2026-10-07
 
 ---
@@ -951,14 +951,14 @@ after its upgrade, is that protocol's.
 
 **Decided, not built yet** ([ADR-289](adr/adr-289.md) D14, D17-D19, D22-D29): what follows, to the
 end of this module's description, except the last paragraph on the request's views. A server is
-`http::Server()` with a handler per path, and a handler that does not need the request names
+`http::Server()` with a handler per method and path, and a handler that needs nothing names
 nothing:
 
 ```nika
 http::Server()
-    .route("/")         fn { "Hello World" }                    // names none, takes none
-    .route("/hello")    fn(request) { "Hello, " + (request.query("name") ?? "world") }
-    .route("/fortunes") fn(request) { render(request) }
+    .get("/")            fn { "Hello World" }                   // names none, takes none
+    .get("/hello?name")  fn(name: String = "world") { "Hello, " + name }
+    .get("/fortunes")    fn(request: http::Request) { render(request) }
     .listen("127.0.0.1:8080")
 ```
 
@@ -972,33 +972,50 @@ What a handler returns is what answers the request:
 | `Response` | itself |
 | `T throws` | the value on success; on failure **500 with a generic body**, the error logged |
 
-**A handler gets only what its signature declares** ([ADR-332](adr/adr-332.md)). A `{name}` in the
-path is the parameter of that name; any other parameter of a plain type is the query's, optional
-where it has a default. A value that does not convert answers `400`. Every other input is a type
-implementing `http::Extract`, whose `extract` declares its own inputs as typed parameters:
+**A handler gets only what its signature declares** ([ADR-332](adr/adr-332.md)). The method is
+the call - `.get`, `.post`, `.put`, `.patch`, `.delete`, and `.route(methods, path)` for several -
+and the path names the values it carries:
+
+| In the path | Means |
+| :--- | :--- |
+| `{id}` | a whole segment |
+| `{year}.pdf` | part of a segment |
+| `{path...}` | the rest of the path, last; its value without the leading `/`; `/files/` matches with `""` |
+| `?expand` | a query value named as the parameter |
+| `?page-size={page_size}` | a query value whose name on the wire differs |
+
+A parameter of that name gives the type and, with a default, makes the value optional; a value that
+does not convert answers `400`. A name the path gives no parameter, and a plain parameter the path
+does not name, are refused while the program is built. The raw path is split at `/` before each
+segment is decoded; a `.` or `..` segment or a `%2F` in a rest answers `400`, and nothing is
+normalised. A literal segment wins over a partial one, a partial one over `{name}`, `{name}` over
+`{name...}`; two routes as specific as each other are refused while the program is built, whatever
+their parameters' types. There are no optional segments.
+
+Every other input is a type implementing `http::Extract`, whose `extract` declares its own inputs
+as typed parameters:
 
 ```nika
-@http::Header("X-Api-Key")
-pub struct ApiKey { pub value: String }
-
-impl http::Extract for AuthUser {
-    fn extract(auth: http::Authorization) -> AuthUser throws http::Reject {
-        return sessions::verify(auth.bearer()) ?? throw http::Reject(401)
+impl http::Extract for Session {
+    fn extract(cookie: Cookie["session"]) -> Session throws http::Reject {
+        return sessions::load(cookie.value) ?? throw http::Reject(401)
     }
 }
 
-http::Server(; formats: [json::Format, form::Format])
-    .route("/users/{id}") fn(id: i64, fields: Vec[String] = [], user: AuthUser) -> User { … }
-    .route("/users")      fn(data: Body[CreateUser], key: ApiKey) -> User { … data.value … }
+http::Server(formats: [json::Format, form::Format])
+    .get("/orders/{id}?expand") fn(id: i64, expand: bool = false, session: Session) -> Order { … }
+    .post("/orders")            fn(data: Body[NewOrder], key: Header["X-Api-Key"]) -> Order { … data.value … }
+    .get("/files/{path...}")    fn(path: fs::Path, agent: Header[http::USER_AGENT]?) -> http::File { … }
 ```
 
-A header or a cookie is a type declared once, its name on the wire in an attribute; `http`
-declares the standard ones. Only `http`'s own extractors read the raw request; a failed one answers
-its `Reject`'s status and the handler does not run. `Body[T]` names no format: `Content-Type`
-chooses the one a body is read in and `Accept` the one a result is written in, among the server's
+`Header[name]` and `Cookie[name]` take the name on the wire as a value parameter (Part I 4.6);
+`http` declares the standard names as constants, and a name not of a header's form is refused while
+the program is built. Only `http`'s own extractors read the raw request; a failed one answers its
+`Reject`'s status and the handler does not run. `Body[T]` names no format: `Content-Type` chooses
+the one a body is read in and `Accept` the one a result is written in, among the server's
 `formats`, and another answers `415`. A format that cannot express `T` is refused while the program
 is built. A wrapper is read with `.value`. An input no parameter declares is not reachable; a
-handler that needs the raw request declares `req: http::Request`. The path, every parameter and
+handler that needs the raw request declares `request: http::Request`. The path, every parameter and
 every extractor's inputs are read while the program is built, through `F::params` (Part II 10.3),
 and an API description is made from them.
 
@@ -1018,7 +1035,7 @@ fn main() throws {
     let page = fs::map("index.html", fs::Root::Dir("site"))
 
     http::Server()
-        .route("/") fn { page }
+        .get("/") fn { page }
         .listen("127.0.0.1:8080")
 }
 ```

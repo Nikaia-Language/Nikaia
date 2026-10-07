@@ -4,6 +4,21 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.643] — 2026-10-07
+
+**Routes name their values; a type takes values in its brackets** (ADR-332 revised, ADR-333, #121).
+- The path names what it carries: `{id}`, `{year}.pdf`, `{path...}` (the rest,
+  split before decoding, `.`/`..`/`%2F` refused, nothing normalised),
+  `?expand`, `?page-size={page_size}`. The handler gives types and defaults; a
+  name without a parameter, and a plain parameter the path does not name, are
+  refused while building. Specificity decides, not order; no optional segments.
+- The method is the call: `.get`, `.post`, …, `.route(methods, path)`.
+- Headers and cookies are `Header["X-Api-Key"]`, `Cookie["session"]`, with the
+  standard names as constants (`http::USER_AGENT`); a header type per header
+  is gone. `http::Server(formats: …)` loses a wrong `;`.
+- A type declares value parameters in its brackets beside its type
+  parameters, `Decimal[10, 2]`; `Array[T, N]` was the first (ADR-333).
+
 ## [0.0.642] — 2026-10-07
 
 **The ceiling of unanswered method calls is 17, what the corpus measures**,
