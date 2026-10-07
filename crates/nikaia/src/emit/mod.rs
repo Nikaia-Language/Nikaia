@@ -14886,7 +14886,10 @@ pub(crate) fn visit_expr<'a>(expr: &'a Expr, f: &mut impl FnMut(&'a Expr)) {
 /// its own words, at the place it happens; an analysis has nothing to add.
 /// The same as [`literal_expressions`], with the names a template's `<for>`
 /// binds around each hole. Empty for anything that is not a template.
-pub(crate) fn literal_expressions_bound(parsed: &Parsed, expr: &Expr) -> Vec<(Expr, Vec<String>)> {
+pub(crate) fn literal_expressions_bound(
+    parsed: &Parsed,
+    expr: &Expr,
+) -> Vec<(Expr, Vec<(String, String)>)> {
     match expr {
         Expr::Dsl {
             target,
@@ -15022,7 +15025,10 @@ fn template_holes(segments: &[template::Segment]) -> Vec<String> {
 ///
 /// Innermost last, so a nested `<for>` shadowing the same word behaves the way
 /// a nested block does.
-pub(crate) fn template_holes_bound(segments: &[template::Segment]) -> Vec<(String, Vec<String>)> {
+/// Each name beside the collection it walks, as written after its `:` (#524).
+pub(crate) fn template_holes_bound(
+    segments: &[template::Segment],
+) -> Vec<(String, Vec<(String, String)>)> {
     let mut holes = Vec::new();
     walk_template_holes(segments, &mut Vec::new(), &mut holes);
     holes
@@ -15030,8 +15036,8 @@ pub(crate) fn template_holes_bound(segments: &[template::Segment]) -> Vec<(Strin
 
 fn walk_template_holes(
     segments: &[template::Segment],
-    bound: &mut Vec<String>,
-    out: &mut Vec<(String, Vec<String>)>,
+    bound: &mut Vec<(String, String)>,
+    out: &mut Vec<(String, Vec<(String, String)>)>,
 ) {
     for segment in segments {
         match segment {
@@ -15046,7 +15052,7 @@ fn walk_template_holes(
                 // (ADR-296 D4), and it is a name this program wrote - so it is
                 // read *outside* the binding, which is where it lives.
                 out.push((collection.clone(), bound.clone()));
-                bound.push(binding.clone());
+                bound.push((binding.clone(), collection.clone()));
                 walk_template_holes(body, bound, out);
                 bound.pop();
             }

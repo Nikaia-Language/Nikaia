@@ -302,3 +302,37 @@ fn an_html_block_is_text_to_the_checker() {
         "{found:#?}"
     );
 }
+
+/// **A `<for>`'s name is a view of the list's element** (#524): `{r.name}`
+/// checks, and a field `Row` does not have is `NK1107`, where it reached
+/// `rustc`.
+#[test]
+fn a_template_loop_name_has_the_element_type() {
+    use nikaia::contracts::{Ledger, LedgerOps, STD};
+    let findings = |source: &str| {
+        let parsed = parse_to_ast(source).expect("the source parses");
+        let own = Ledger::infer(&parsed);
+        let library = Ledger::parse(STD).expect("std's shipped ledger parses");
+        nikaia::check::check(&parsed, &own, &library).findings
+    };
+    let page = |hole: &str| {
+        format!(
+            "use std::html\n\
+             struct Row {{ name: String }}\n\
+             fn table(rows: Vec[Row]) -> String {{\n    \
+             return dsl html {{ <for r in :rows><td>{{{hole}}}</td></for> }} eod\n}}\n"
+        )
+    };
+    assert!(
+        findings(&page("r.name")).is_empty(),
+        "{:#?}",
+        findings(&page("r.name"))
+    );
+    let found = findings(&page("r.missing"));
+    assert!(
+        found
+            .iter()
+            .any(|f| f.code == "NK1107" && f.message.contains("`Row`")),
+        "{found:#?}"
+    );
+}

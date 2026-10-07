@@ -4,6 +4,13 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.626] — 2026-10-07
+
+**A `dsl html` `<for>` name has the list's element type** (#524).
+- In `<for r in :rows>{r.shade}</for>` over a `Vec[Row]`, `r` is a view of a
+  `Row`, as a `for` over a list binds its name. A field `Row` does not have is
+  `NK1107` where it reached `rustc`.
+
 ## [0.0.625] — 2026-10-07
 
 **A tuple pattern's parts and an empty list's elements are typed** (#522, #523).

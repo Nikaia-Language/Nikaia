@@ -15473,7 +15473,7 @@ impl<'a> Checker<'a> {
         // made by the emitter met only where the allocator happened to hand
         // back the same address (found moving `sharing`'s walk into Nikaia,
         // #125: `double(3000000000)` in a hole lost its `u32`).
-        let walked: Vec<(std::borrow::Cow<'_, Expr>, Vec<String>)> = match literal {
+        let walked: Vec<(std::borrow::Cow<'_, Expr>, LoopNames)> = match literal {
             Expr::LitInterpolated { parts } => crate::emit::interpolated_holes(parts)
                 .into_iter()
                 .map(|(at, hole)| (crate::emit::hole_as_read(self.parsed, at, hole), Vec::new()))
@@ -15484,14 +15484,25 @@ impl<'a> Checker<'a> {
                 .collect(),
         };
         let mut names: Vec<bool> = Vec::new();
+        // **What each collection a `<for>` walks came to** (#524): it is a hole
+        // of its own, walked before the body that binds its element, so the
+        // name is a view of that element, as a `for` over a list binds it.
+        let mut collections: BTreeMap<String, Ty> = BTreeMap::new();
         for (index, (hole, bound)) in walked.into_iter().enumerate() {
             let hole: &Expr = &hole;
             let frame: Vec<Local> = bound
                 .into_iter()
-                // What the element's type is, is a question about the
-                // collection, and this walk does not ask it: what it needs is
-                // that the name is *declared*.
-                .map(|name| Local::free(name, Ty::Unknown))
+                .map(|(name, collection)| {
+                    let element = match collections.get(collection.trim()) {
+                        Some(Ty::Named { name, args, .. })
+                            if matches!(name.as_str(), "Vec" | "Array") && args.len() == 1 =>
+                        {
+                            view_of(&args[0])
+                        }
+                        _ => Ty::Unknown,
+                    };
+                    Local::free(name, element)
+                })
                 .collect();
             self.scope.push(frame);
             // An f-string's holes, which the emitter walks the same way.
@@ -15502,6 +15513,9 @@ impl<'a> Checker<'a> {
                 _ => self.hole.clone(),
             };
             let held = self.expr(hole, span);
+            if let Expr::Variable(name) = hole {
+                collections.insert(self.parsed.text(*name).to_string(), held.clone());
+            }
             // **A hole is formatted by reference** (ADR-279 D5): a `??` that
             // is the hole lends its left side, as a print call's argument does.
             if matches!(literal, Expr::LitInterpolated { .. }) {
@@ -26606,6 +26620,10 @@ fn articles(text: &str) -> String {
     out.push_str(rest);
     out
 }
+
+/// What a template's `<for>` binds around a hole: each name beside the
+/// collection it walks (#524).
+type LoopNames = Vec<(String, String)>;
 
 /// **The two forms of a root**, where that is the argument a call left out
 /// ([ADR-108](../../docs/specification/adr/adr-108.md) D1: *a call that leaves
