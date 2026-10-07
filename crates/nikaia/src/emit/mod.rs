@@ -1292,6 +1292,8 @@ struct Emitter<'p> {
     number_lets: std::collections::BTreeMap<usize, String>,
     /// [`check::Checked::changed_elements`].
     changed_elements: std::collections::BTreeSet<(usize, String)>,
+    /// [`check::Checked::text_finds`].
+    text_finds: std::collections::BTreeSet<(usize, String)>,
     /// The arguments that are a count in `usize` below, by the entry the checker
     /// resolved ([ADR-293](../../docs/specification/adr/adr-293.md) D20).
     count_args: std::collections::BTreeSet<(usize, String, usize)>,
@@ -2726,6 +2728,7 @@ impl<'p> Emitter<'p> {
             copied_tuple_parts: propagation.copied_tuple_parts,
             number_lets: propagation.number_lets,
             changed_elements: propagation.changed_elements,
+            text_finds: propagation.text_finds,
             count_args: propagation.count_args,
             path_methods: propagation.path_methods,
             map_keys: propagation.map_keys,
@@ -8223,6 +8226,29 @@ impl<'p> Emitter<'p> {
             } if matches!(expr, Expr::MethodCall { .. })
                 || self.plain_reaches.contains(&crate::check::value_node(expr)) =>
             {
+                // **`s.find(needle; from:)` on text is `std`'s search**
+                // (ADR-320 D6): the language below's `str::find` takes one
+                // argument and answers a `usize`.
+                if self.text(*method) == "find"
+                    && self
+                        .text_finds
+                        .contains(&(flow.statement, crate::check::argument_shape(receiver)))
+                {
+                    out.push("nikaia_std::search::find(&");
+                    self.nested(out, receiver, u8::MAX, depth, flow)?;
+                    out.push(", &");
+                    match args.first() {
+                        Some(needle) => self.nested(out, needle, u8::MAX, depth, flow)?,
+                        None => out.push("\"\""),
+                    }
+                    out.push(", ");
+                    match config.iter().find(|c| self.text(c.name) == "from") {
+                        Some(from) => self.expr(out, &from.value, depth, flow)?,
+                        None => out.push("0"),
+                    }
+                    out.push(")");
+                    return Ok(());
+                }
                 // **`field.of(value)` is the field read a program would have
                 // written by hand** ([ADR-304](../../docs/specification/adr/adr-304.md)
                 // D2, D5's *at run time: nothing*): `value.name`, with no

@@ -3038,6 +3038,17 @@ sync = true
 touches = []
 signature = "(self: ref String) -> ref(self) String"
 
+# **The byte position of the first match at or after `from`**, or nothing
+# ([ADR-320](../../docs/specification/adr/adr-320.md) D6). `from` may be any
+# byte position: a match of a valid needle always starts on a scalar, so a
+# search begun inside one finds the next match. A one-byte needle is a byte
+# search of the kind `memchr` does. The position cuts the text it came from.
+[fn."str::find"]
+pub = true
+sync = true
+touches = []
+signature = "(self: ref String, needle: ref String; from: i64 = 0) -> i64?"
+
 # The lines of the text, each a view into it, without its line ending.
 #
 # Nothing is copied: a line lives as long as the text does.

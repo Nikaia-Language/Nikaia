@@ -450,6 +450,10 @@ pub struct Checked {
     /// receiver's shape: the emitter writes it as the place it is,
     /// `xs[at(i)].push(…)`, and not as a read.
     pub changed_elements: BTreeSet<(usize, String)>,
+    /// **`s.find(needle; from:)` on text** (ADR-320 D6), by statement and the
+    /// receiver's shape: the emitter writes it as `std`'s search, since the
+    /// language below's `str::find` has another shape.
+    pub text_finds: BTreeSet<(usize, String)>,
     /// The arguments that are a **count the language below takes in `usize`**,
     /// by the byte the statement starts at, the method as written and the
     /// position ([ADR-293](../../docs/specification/adr/adr-293.md) D20).
@@ -2152,6 +2156,8 @@ pub struct Propagation {
     pub number_lets: BTreeMap<usize, String>,
     /// [`Checked::changed_elements`].
     pub changed_elements: BTreeSet<(usize, String)>,
+    /// [`Checked::text_finds`].
+    pub text_finds: BTreeSet<(usize, String)>,
     /// [`Checked::count_args`].
     pub count_args: BTreeSet<(usize, String, usize)>,
     /// [`Checked::path_methods`].
@@ -2515,6 +2521,7 @@ fn propagation(
         unsigned_literals: checked.unsigned_literals,
         number_lets: checked.number_lets,
         changed_elements: checked.changed_elements,
+        text_finds: checked.text_finds,
         count_args: checked.count_args,
         path_methods: checked.path_methods,
         map_keys: checked.map_keys,
@@ -13056,6 +13063,11 @@ impl<'a> Checker<'a> {
                 // literal there, or by a `.clone()` the program writes.
                 let text = matches!(&on, Ty::Named { name, args: none, .. }
                     if none.is_empty() && matches!(name.as_str(), "String" | "str"));
+                if text && self.parsed.text(*method) == "find" {
+                    self.checked
+                        .text_finds
+                        .insert((span.at(), argument_shape(receiver)));
+                }
                 if text
                     && args.is_empty()
                     && self.parsed.text(*method) == "to_string"

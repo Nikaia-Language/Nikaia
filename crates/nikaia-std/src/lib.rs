@@ -59,6 +59,7 @@ pub mod par;
 pub mod process;
 pub mod range;
 pub mod rt;
+pub mod search;
 pub mod seq;
 pub mod task;
 pub mod tether;

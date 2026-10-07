@@ -4,6 +4,22 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.635] — 2026-10-07
+
+**`s.find(needle; from:)` on text** (#453 step 4, ADR-320 D6, Part I 2.6).
+It gives the byte position of the first match at or after `from` (default `0`)
+as an `i64?`.
+- A search begun inside a scalar finds the next match. A `from` before the
+  start searches from the start; one past the end finds nothing.
+- It runs through `nikaia_std::search::find`. Before, it fell through to the
+  language below's `str::find`, a `usize` without `from` (#452).
+- `std.contracts` describes it (`str::find`), so its option is checked as any
+  other.
+- `b.find` on `Bytes` and `s.bytes` belongs to step 5.
+
+**Found:** a cut with an open end (`line[..<sep]`, `line[sep + 1..]`) does not
+parse, although Part I 2.6 shows both (#527).
+
 ## [0.0.634] — 2026-10-07
 
 **A field of a list element is changed in place** (#526).
