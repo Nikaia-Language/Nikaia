@@ -4,6 +4,13 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.610] — 2026-10-07
+
+**Arrays, tuples, `scalar`, views and shared handles have a kind** (ADR-330 D3, #121).
+- `Array(A, N)`, `Tuple(parts)` (walked as `T::fields` is), `Scalar`, `Ref(A)`,
+  `Shared(A)`, `SharedMut(A)`. A view or a shared handle is a kind of its own,
+  not the kind of what it reaches. `NK1232` is left for a function type.
+
 ## [0.0.609] — 2026-10-07
 
 **A grammar names no type of the program: `Named` is gone** (ADR-330 D7, #121).

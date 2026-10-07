@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part II: Advanced Features & Metaprogramming**
-**Version:** 0.0.609 (Draft)
+**Version:** 0.0.610 (Draft)
 **Date:** 2026-10-07
 
 ---
@@ -277,15 +277,16 @@ declaration writes it. `T::kind` is a `meta::Type`, whose parts are types:
 | `T` | `T::kind` |
 | :--- | :--- |
 | `i64`, `i32`, `u8`, `u64`, `u32`, `f64`, `bool` | `I64`, `I32`, `U8`, `U64`, `U32`, `F64`, `Bool` |
-| `String`, `Bytes` | `Text`, `Bytes` |
+| `String`, `Bytes`, `scalar` | `Text`, `Bytes`, `Scalar` |
 | `A?`, `Vec[A]`, `HashMap[K, V]` | `Maybe(A)`, `List(A)`, `Map(K, V)` |
+| `Array[A, N]`, `(A, B, …)` | `Array(A, N)`, `Tuple(parts)`, the parts walked as `T::fields` is |
+| `ref A`, `Shared[A]`, `SharedMut[A]` | `Ref(A)`, `Shared(A)`, `SharedMut(A)` |
 | a `struct`, an `enum` | `Struct(T)`, `Enum(T)` |
 | a type whose inside the program does not see | `Opaque(T)` |
 
 A type of `std` has the kind of what it is; it is `Opaque` only where `std`
 keeps its inside its own. A type of a Rust crate and a C `opaque type` are
-`Opaque`. `T::kind` of an array, a tuple, `scalar`, a `ref`, `Shared` or
-`SharedMut` is refused with `NK1232`.
+`Opaque`. `T::kind` of a function type is refused with `NK1232`.
 
 **A `match` on a kind checks each arm under the kind its pattern names.** In
 `Struct(s)`, `s` is a type bound by `Struct`, so `s::fields` is reached; in
