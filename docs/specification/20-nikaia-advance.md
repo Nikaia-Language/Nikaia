@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part II: Advanced Features & Metaprogramming**
-**Version:** 0.0.608 (Draft)
+**Version:** 0.0.609 (Draft)
 **Date:** 2026-10-07
 
 ---
@@ -330,7 +330,7 @@ The `dsl` keyword embeds **foreign syntax** in a Nikaia file: SQL, HTML, regex, 
 | `meta::parameter(name, type)` | runtime, as a named argument | SQL placeholders — anything the statement should be *reusable* over |
 | `meta::column(name, type)` | build time, declared by the grammar | the statement's **result**: one field per column, so a row is a type |
 
-`meta::column(name, type)` gives a grammar control over the statement's result type. The compiler builds the row type from the declared columns, one typed field per column, as it builds the parameter type from the holes. The `type` of `meta::column` and of `meta::parameter` is a `std::meta::Type` (10.3): `Text`, `Maybe(String)` for `String?`, `List(i64)` for `Vec[i64]`, any kind whose parts the grammar can name, `Record(fields)` for a struct the compiler writes, and `Named("Mode")` for a type of the program the grammar's package cannot see, resolved where the block stands (`NK1135` if nothing declares it) ([ADR-323](adr/adr-323.md), [ADR-330](adr/adr-330.md) D6). A type crosses out of the grammar run as its full name. A message about a field of a type the compiler wrote names the block and the grammar that declared it, and `--comptime` prints the type of each block.
+`meta::column(name, type)` gives a grammar control over the statement's result type. The compiler builds the row type from the declared columns, one typed field per column, as it builds the parameter type from the holes. The `type` of `meta::column` and of `meta::parameter` is a `std::meta::Type` (10.3): `Text`, `Maybe(String)` for `String?`, `List(i64)` for `Vec[i64]`, any kind whose parts the grammar can name, and `Record(fields)` for a struct the compiler writes ([ADR-323](adr/adr-323.md), [ADR-330](adr/adr-330.md) D6-D7). A grammar names no type of the program; a block maps its rows onto one with `-> T`. A type crosses out of the grammar run as its full name. A message about a field of a type the compiler wrote names the block and the grammar that declared it, and `--comptime` prints the type of each block.
 
 **A grammar from a package is named with its package** ([ADR-299](adr/adr-299.md) D20): `dsl sqlite::Sql { … } eod`, as every name from a package is (Part I 9.2), with no short form. A grammar the program declares is named bare: `dsl Json { … } eod`. A block that names a package where a grammar stands is `NK1228`.
 

@@ -4,6 +4,14 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.609] — 2026-10-07
+
+**A grammar names no type of the program: `Named` is gone** (ADR-330 D7, #121).
+- `Named("Mode")` was a type of the program as text, resolved at the block.
+  Nothing used it; a block maps rows onto a type of the program with `-> T`.
+  Changes ADR-323 D1, D3. How a grammar would reach such a type is decided
+  when one needs to.
+
 ## [0.0.608] — 2026-10-07
 
 **A type is passed where a function asks for one, and answers its kind** (ADR-330, #121).
