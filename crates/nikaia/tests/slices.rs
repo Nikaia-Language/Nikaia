@@ -221,7 +221,9 @@ fn an_action_that_fills_a_view_names_the_vec() {
     let refused: Vec<_> = found.iter().filter(|f| f.code == "NK1179").collect();
     assert_eq!(refused.len(), 1, "{found:#?}");
     assert!(
-        refused[0].message.contains("a `Vec[Setting]` this body owns")
+        refused[0]
+            .message
+            .contains("a `Vec[Setting]` this body owns")
             && !refused[0].message.contains('?'),
         "no `?` in the sentence: {:#?}",
         refused[0]
