@@ -8133,6 +8133,22 @@ impl<'p> Emitter<'p> {
             // out is the string building a hand-written renderer would do, with
             // `html::Render` at every hole - which is what makes the escaping a
             // property of the template rather than of whoever filled it in.
+            // **A block over a grammar of this program is the value its
+            // entry computed while the program was built** (#518): the
+            // checker recorded it under the statement, as a `comptime`'s.
+            Expr::Dsl {
+                target,
+                package: None,
+                context: None,
+                ..
+            } if self.grammars.contains_key(target)
+                && let Some((below, written)) =
+                    self.comptime_values.get(&flow.statement).cloned() =>
+            {
+                out.push(&format!(
+                    "{{ const __NIKAIA_DSL: {below} = {written}; __NIKAIA_DSL }}"
+                ));
+            }
             Expr::Dsl {
                 target,
                 package,

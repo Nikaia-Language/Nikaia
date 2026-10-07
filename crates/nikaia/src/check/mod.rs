@@ -14358,6 +14358,23 @@ impl<'a> Checker<'a> {
                 self.guard_has_no_answer();
                 Ty::Unknown
             }
+            // **A block over a grammar this program declares is run while the
+            // program is built** (Part II 10.5, ADR-299 D20, #518): it is the
+            // `comptime` of the grammar's entry on the block's text, computed
+            // by the same evaluator, and its type is the entry's result.
+            Expr::Dsl {
+                target,
+                package: None,
+                context: None,
+                content,
+            } if self
+                .grammars
+                .get(self.parsed.text(*target))
+                .is_some_and(|entries| entries.len() == 1)
+                && !crate::dsl::is_deferred(self.parsed.text(*target), content) =>
+            {
+                self.a_block_over_a_grammar(*target, content, span)
+            }
             Expr::Dsl { .. } => {
                 // Which is also why `NK1134` says nothing about one: what this
                 // becomes is decided after the checker has run, so whether it
@@ -24617,6 +24634,45 @@ impl<'a> Checker<'a> {
             }
         }
         (!refused).then_some(raised)
+    }
+
+    /// **`dsl G { … } eod` over a grammar of this program** (#518): the
+    /// grammar's `entry` run on the block's text while the program is built,
+    /// as `comptime … = G::entry("…")` would be - the value is recorded for
+    /// the emitter under the statement, as a `comptime`'s is.
+    ///
+    /// **Only a grammar with one entry**: no rule is a grammar's main one
+    /// (ADR-296 D25), and which entry a block over a grammar with several
+    /// runs is not decided (#518), so that one is left as it was.
+    fn a_block_over_a_grammar(&mut self, target: Ident, content: &str, span: &Span) -> Ty {
+        let grammar = self.parsed.text(target).to_string();
+        let Some(entry) = self
+            .grammars
+            .get(&grammar)
+            .and_then(|entries| entries.iter().next().cloned())
+        else {
+            return Ty::Unknown;
+        };
+        let name = self.parsed.interner.intern_string("__nikaia_dsl");
+        let call = Expr::Call {
+            func: Box::new(Expr::Path(vec![
+                target,
+                self.parsed.interner.intern_string(&entry),
+            ])),
+            args: vec![Expr::LitStr {
+                text: build_time::written(content.trim()),
+                at: 0,
+            }],
+            config: Vec::new(),
+        };
+        self.comptime_binding(name, None, &call, &[], span);
+        // The block's type is the entry's result, as the call's would be.
+        self.own
+            .functions
+            .get(&format!("{grammar}::{entry}"))
+            .and_then(|contract| contract.signature.as_ref())
+            .and_then(|signature| signature.result.clone())
+            .unwrap_or(Ty::Unknown)
     }
 
     /// **One `comptime`, wherever it stands**

@@ -4,6 +4,17 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.620] — 2026-10-07
+
+**`dsl G { … } eod` over a grammar the program declares** (#518 step 1, #505).
+- The grammar's entry runs on the block's text while the program is built, as
+  a `comptime` of `G::entry("…")` would. The value is built into the program,
+  and the block's type is the entry's result. Text the grammar refuses is
+  `NK1178` at the block. It used to be refused by the lowering
+  (*`Num` isn't a language the compiler knows*).
+- Only a grammar with one `entry`: which entry a block over a grammar with
+  several runs is not decided (#518).
+
 ## [0.0.619] — 2026-10-07
 
 **Attributes, and defaults on struct fields** (ADR-331, #496).
