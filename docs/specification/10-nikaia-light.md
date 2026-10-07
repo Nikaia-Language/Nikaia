@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part I: The Language Core**
-**Version:** 0.0.647 (Draft)
+**Version:** 0.0.648 (Draft)
 **Date:** 2026-10-07
 
 ---
@@ -1671,9 +1671,9 @@ let sum = numbers.reduce(0) fn(acc, n) { acc + n }
 A block ends at its `}`, so a chain continues after it and means what it reads as:
 
 ```nika
-Server()
-    .get("/x") fn { handler(db) }
-    .listen(":8080")
+Routes()
+    .get("/x") fn { first() }
+    .get("/y") fn { second() }
 ```
 
 ```nika

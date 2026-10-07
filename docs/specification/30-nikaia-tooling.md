@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part III: Tooling, Ecosystem & Interoperability**
-**Version:** 0.0.647 (Draft)
+**Version:** 0.0.648 (Draft)
 **Date:** 2026-10-07
 
 ---
@@ -951,15 +951,18 @@ after its upgrade, is that protocol's.
 
 **Decided, not built yet** ([ADR-289](adr/adr-289.md) D14, D17-D19, D22-D29): what follows, to the
 end of this module's description, except the last paragraph on the request's views. A server is
-`http::Server()` with a handler per method and path, and a handler that needs nothing names
-nothing:
+`http::Server` over a tree of routes, a handler per method and path, and a handler that needs nothing
+names nothing:
 
 ```nika
-http::Server()
+comptime ROUTES = http::Routes()
     .get("/")            fn { "Hello World" }                   // names none, takes none
     .get("/hello?name")  fn(name: String = "world") { "Hello, " + name }
     .get("/fortunes")    fn(request: http::Request) { render(request) }
-    .listen("127.0.0.1:8080")
+
+fn main() throws {
+    http::Server(ROUTES).listen("127.0.0.1:8080")
+}
 ```
 
 What a handler returns is what answers the request:
@@ -1004,7 +1007,7 @@ impl http::Extract for Session {
     }
 }
 
-http::Server(formats: [json::Format, form::Format])
+comptime ORDERS = http::Routes()
     .get("/orders/{id}?expand") fn(id: i64, expand: bool = false, session: Session) -> Order { … }
     .post("/orders")            fn(data: Body[NewOrder], key: Header["X-Api-Key"]) -> Order { … data.value … }
     .get("/files/{path...}")    fn(path: fs::Path, agent: Header[http::USER_AGENT]?) -> http::File { … }
@@ -1021,13 +1024,33 @@ handler that needs the raw request declares `request: http::Request`. The path, 
 every extractor's inputs are read while the program is built, through `F::params` (Part II 10.3),
 and an API description is made from them.
 
+**A tree of routes is a `comptime` value** ([ADR-334](adr/adr-334.md)). Handlers capture nothing;
+shared state is the extractor `State[T]`, filled from what the server is given:
+
+```nika
+pub comptime ROUTES = http::Routes()
+    .get("/{id}") fn(id: i64, db: State[Db]) -> Order { … }
+
+comptime APP = http::Routes()
+    .mount("/api/v1/orders", orders::ROUTES)
+    .mount("/admin", admin::ROUTES; formats: [json::Format])
+
+http::Server(APP; formats: [json::Format, form::Format], state: [db]).listen(":8080")
+```
+
+Trees are built from others across files and packages, under conditions the build decides; a
+group's `formats` replace the server's below it. `state` holds one value per type; a `State[T]`
+nothing is given for, and two values of one type, are refused while the program is built. The
+whole tree is checked then - conflicts, formats, state - its API description is a constant, and
+its matcher is built from it.
+
 A status code, a header or a body of the handler's own is a `Response`, built where it is
 returned: `http::Response { status: 400, body: "id is required" }`, with headers a field like the others.
 
 **A body need not be bytes the program allocated.** `Bytes` is the shared buffer of Part I 6.6
-and `Mapped` derefs to it, so a page mapped once, outside the handler, is a body that costs a
-reference count per request. The handler answering with it duplicates the handle rather than
-moving it:
+and `Mapped` derefs to it, so a page mapped once, outside the handler and handed to the server as
+state, is a body that costs a reference count per request. The handler answering with it duplicates
+the handle rather than moving it:
 
 ```nika
 use std::fs
@@ -1035,11 +1058,11 @@ use http
 
 fn main() throws {
     let page = fs::map("index.html", fs::Root::Dir("site"))
-
-    http::Server()
-        .get("/") fn { page }
-        .listen("127.0.0.1:8080")
+    http::Server(ROUTES; state: [page]).listen("127.0.0.1:8080")
 }
+
+comptime ROUTES = http::Routes()
+    .get("/") fn(page: State[fs::Mapped]) { page.value }
 ```
 
 **A response may be a file the program never read:** `http::File("index.html", fs::Root::Dir("site"))` is a body whose

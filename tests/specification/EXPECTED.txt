@@ -55,7 +55,7 @@
 10-nikaia-light.md #55 lowered (as written)  fn init {
 10-nikaia-light.md #56 refused (a body) [NK1117]  let complex = users.map fn(user) {
 10-nikaia-light.md #57 refused (a body) [NK1117]  let ids = users.map fn(user) { user.id }
-10-nikaia-light.md #58 refused (a body) [NK1117]  Server()
+10-nikaia-light.md #58 refused (a body) [NK1117]  Routes()
 10-nikaia-light.md #59 refused (a body) [NK1117]  // The count comes from the list, so a local may be cal…
 10-nikaia-light.md #60 lowered (a body)  let prefix = "User: "
 10-nikaia-light.md #61 lowered (a body) [about-a-refusal]  let prefix = "Log: "
@@ -137,19 +137,20 @@
 30-nikaia-tooling.md #16 refused (a body) [NK1117]  print(f"{name}: ")
 30-nikaia-tooling.md #17 lowered (as written)  use std::time
 30-nikaia-tooling.md #18 lowered (as written)  use http
-30-nikaia-tooling.md #19 fragment (as written)  http::Server()
+30-nikaia-tooling.md #19 fragment (as written)  comptime ROUTES = http::Routes()
 30-nikaia-tooling.md #20 fragment (as written) [sketch]  impl http::Extract for Session {
-30-nikaia-tooling.md #21 lowered (as written)  use std::fs
-30-nikaia-tooling.md #22 refused (a body) [NK1117,NK1181]  // The request chose this name; the call says which dir…
-30-nikaia-tooling.md #23 fragment (as written)  pub fn escape(text: ref String) -> String        // for…
-30-nikaia-tooling.md #24 lowered (as written)  fn row(name: ref String, shade: ref String) -> String {
-30-nikaia-tooling.md #25 fragment (as written)  <table>
-30-nikaia-tooling.md #26 fragment (as written)  // Subject: the path, and the root it may not leave ; C…
-30-nikaia-tooling.md #27 fragment (as written) [sketch]  let data = fs::map(ref path, fs::Root::Anywhere)
-30-nikaia-tooling.md #28 fragment (as written)  pub fn open(path: Path, root: Root; write: bool = false…
-30-nikaia-tooling.md #29 fragment (as written)  impl File {
-30-nikaia-tooling.md #30 fragment (as written)  pub fn map(path: Path, root: Root) -> Mapped throws    …
-30-nikaia-tooling.md #31 fragment (as written)  pub fn exists(path: Path, root: Root) -> bool throws
-30-nikaia-tooling.md #32 refused (a body) [NK1109,NK1117,NK2605]  // A service that processes files uploaded by strangers:
-30-nikaia-tooling.md #33 fragment (as written) [about-a-refusal]  use sqlite                                    // a driv…
-30-nikaia-tooling.md #34 fragment (as written)  // std::collections::List
+30-nikaia-tooling.md #21 fragment (as written) [sketch]  pub comptime ROUTES = http::Routes()
+30-nikaia-tooling.md #22 refused (as written) [NK1127,NK1135]  use std::fs
+30-nikaia-tooling.md #23 refused (a body) [NK1117,NK1181]  // The request chose this name; the call says which dir…
+30-nikaia-tooling.md #24 fragment (as written)  pub fn escape(text: ref String) -> String        // for…
+30-nikaia-tooling.md #25 lowered (as written)  fn row(name: ref String, shade: ref String) -> String {
+30-nikaia-tooling.md #26 fragment (as written)  <table>
+30-nikaia-tooling.md #27 fragment (as written)  // Subject: the path, and the root it may not leave ; C…
+30-nikaia-tooling.md #28 fragment (as written) [sketch]  let data = fs::map(ref path, fs::Root::Anywhere)
+30-nikaia-tooling.md #29 fragment (as written)  pub fn open(path: Path, root: Root; write: bool = false…
+30-nikaia-tooling.md #30 fragment (as written)  impl File {
+30-nikaia-tooling.md #31 fragment (as written)  pub fn map(path: Path, root: Root) -> Mapped throws    …
+30-nikaia-tooling.md #32 fragment (as written)  pub fn exists(path: Path, root: Root) -> bool throws
+30-nikaia-tooling.md #33 refused (a body) [NK1109,NK1117,NK2605]  // A service that processes files uploaded by strangers:
+30-nikaia-tooling.md #34 fragment (as written) [about-a-refusal]  use sqlite                                    // a driv…
+30-nikaia-tooling.md #35 fragment (as written)  // std::collections::List

@@ -4,6 +4,23 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.648] — 2026-10-07
+
+**A tree of routes is a `comptime` value** (ADR-334, #121).
+- `pub comptime ROUTES = http::Routes().get(…)…`, mounted under prefixes with
+  `.mount("/api/v1/orders", orders::ROUTES)`, across files and packages; a
+  group's `formats` replace the server's below it.
+- Handlers capture nothing; shared state is the extractor `State[T]`, filled
+  from `http::Server(APP; state: [db])`, one value per type, checked while
+  building.
+- A `comptime` may hold a function that captures nothing (Part II 10.2); one
+  that captures is `NK1127`.
+- The whole tree is checked, its API description is a constant, and its
+  matcher is built from it while building.
+- A server takes a tree, `http::Server(ROUTES)`, and has no `.get` of its own;
+  Part III's examples move to `http::Routes()`, and the mapped page arrives as
+  `State[fs::Mapped]`.
+
 ## [0.0.647] — 2026-10-07
 
 **A function names an array's length: `fn f[comptime N: i64](xs: Array[i64, N]) -> Array[i64, N]`** (ADR-333 D4, #121).

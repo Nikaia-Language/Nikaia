@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part II: Advanced Features & Metaprogramming**
-**Version:** 0.0.647 (Draft)
+**Version:** 0.0.648 (Draft)
 **Date:** 2026-10-07
 
 ---
@@ -90,7 +90,7 @@ is built; a `comptime` must be. A `comptime` binding the compiler cannot
 evaluate is refused with `NK1127`. It is never evaluated at run time instead.
 
 **What an initialiser may hold:** an integer, a float, a `bool`, **text**, a **list**, an **`enum` variant**, a
-**pair** or a **struct**: literals, `f"… {n} …"`, arithmetic and comparisons
+**pair**, a **struct**, or a **function that captures nothing** ([ADR-334](adr/adr-334.md); one that captures is `NK1127`): literals, `f"… {n} …"`, arithmetic and comparisons
 over them and over other constants, `+`, `==` and `.len()` over text, `xs[i]`,
 `xs[i] = …`, `xs.push(…)` and `xs.len()` over a list, a struct literal and a
 field of one, an `if`, and a **call** to a function or a **method** that this
