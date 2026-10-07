@@ -3,8 +3,8 @@
 //! declared, with the ledger recording its value; refused with a `comptime`'s
 //! codes where it cannot be computed. What a call receives is
 //! `tests/build-time/src/option_defaults.nika`; here stay the ledger, the
-//! refusals, defaults across packages, and the defaults `std`'s Rust half
-//! computes (`nikaia test` refuses those, NK1127).
+//! refusals, defaults across packages, and the Rust a computed value is
+//! written as.
 
 mod common;
 
@@ -21,29 +21,6 @@ fn codes(source: &str) -> Vec<String> {
         .into_iter()
         .map(|f| f.code.to_string())
         .collect()
-}
-
-fn ran(source: &str) -> String {
-    assert!(codes(source).is_empty(), "{:?}", codes(source));
-    let parsed = parse_to_ast(source).expect("the source parses");
-    let rust = emit_program_reading(&parsed, Build::default(), &common::reads())
-        .expect("the source lowers")
-        .rust;
-    let dir = common::scratch_dir("option-defaults");
-    let file = dir.join("main.rs");
-    std::fs::write(&file, &rust).expect("write the Rust");
-    let binary = dir.join("program");
-    let out = common::compile(&file, &["-o", binary.to_str().expect("utf-8 path")]);
-    assert!(
-        out.status.success(),
-        "the lowering compiles:\n{}\n--- the Rust ---\n{rust}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    let run = std::process::Command::new(&binary)
-        .output()
-        .expect("run the program");
-    let _ = std::fs::remove_dir_all(&dir);
-    String::from_utf8_lossy(&run.stdout).to_string()
 }
 
 /// D1: arithmetic, a call to a function of the program reading an item-level
@@ -362,7 +339,8 @@ fn a_refused_default_offers_an_optional_not_a_let() {
 
 /// **A span of time computed while the program is built is its constructor
 /// over its parts** (ADR-318 D5, ADR-321 D1): `30.seconds()` runs from
-/// `std`'s Rust half, and the `const` is `time::Duration::new(30, 0)`.
+/// `std`'s Rust half, and the `const` is `time::Duration::new(30, 0)`. What
+/// the program reads is `tests/build-time/src/option_defaults.nika`.
 #[test]
 fn a_duration_comptime_is_written_as_its_constructor() {
     let source = "use std::time\n\
@@ -380,29 +358,13 @@ fn a_duration_comptime_is_written_as_its_constructor() {
         rust.contains("const T: time::Duration = time::Duration::new(90, 0);"),
         "{rust}"
     );
-    assert_eq!(ran(source), "1 90\n");
-}
-
-/// **A later `comptime` reads an earlier one of the type** (#519): the run
-/// that computes `B` is handed `A` by its constructor, as a `let`, because an
-/// item may not write it.
-#[test]
-fn a_comptime_reads_an_earlier_duration() {
-    let source = "use std::time\n\
-         \n\
-         comptime A: time::Duration = 90.seconds()\n\
-         comptime B: i64 = A.in_seconds()\n\
-         \n\
-         fn main() {\n\
-         \x20   println(f\"{B}\")\n\
-         }\n";
-    assert_eq!(ran(source), "90\n");
 }
 
 /// **And an option's default of the type** (ADR-318 D3, D5): the ledger
-/// records the constructor, and a call that leaves the option out gets it.
+/// records the constructor; what a call that leaves the option out gets is
+/// `tests/build-time/src/option_defaults.nika`.
 #[test]
-fn a_duration_default_is_recorded_and_handed_to_the_call() {
+fn a_duration_default_is_recorded() {
     let source = "use std::time\n\
          \n\
          fn wait(label: ref String; timeout: time::Duration = 250.millis()) -> String {\n\
@@ -419,7 +381,6 @@ fn a_duration_default_is_recorded_and_handed_to_the_call() {
         ledger.contains("timeout: time::Duration = time::Duration::new(0, 250000000)"),
         "{ledger}"
     );
-    assert_eq!(ran(source), "a 250\nb 2000\n");
 }
 
 /// **A view of a list takes a list as its default** (ADR-318 D4): computed or
@@ -451,30 +412,4 @@ fn a_view_of_a_list_takes_a_list_default() {
     let ledger = common::infer(&parsed).render();
     assert!(ledger.contains("xs: ref Vec[i64] = [1, 2, 3]"), "{ledger}");
     assert!(ledger.contains("xs: ref Vec[i64] = [4, 5]"), "{ledger}");
-}
-
-/// **A default std's Rust half computes** (ADR-321 D1, #468): `ref String`
-/// and `String` alike, beside a function that leaves the option out, and a
-/// `comptime` whose run calls that function reads the value the ledger
-/// recorded rather than computing it again.
-#[test]
-fn a_default_std_computes_reaches_a_comptime() {
-    for ty in ["ref String", "String"] {
-        let source = format!(
-            "fn shout(word: ref String; mark: {ty} = \"!\".repeat(3)) -> String sync {{\n\
-             \x20   return f\"{{word}}{{mark}}\"\n\
-             }}\n\
-             \n\
-             fn twice() -> String {{\n\
-             \x20   return shout(\"yo\")\n\
-             }}\n\
-             \n\
-             comptime X: ref String = shout(\"hi\")\n\
-             \n\
-             fn main() {{\n\
-             \x20   println(f\"{{X}} {{twice()}}\")\n\
-             }}\n"
-        );
-        assert_eq!(ran(&source), "hi!!! yo!!!\n", "{ty}");
-    }
 }

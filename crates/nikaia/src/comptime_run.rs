@@ -21,7 +21,7 @@
 //! the value in the encoding a grammar run already uses
 //! ([`crate::grammar_run::decode`]).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::OnceLock;
@@ -173,6 +173,95 @@ pub(crate) fn unit_without_its_constants(
         ));
     }
     Some(kept)
+}
+
+/// **Without what reads a constant the sub-program does not hold** (#528,
+/// #529): the one being worked out, one not worked out yet, one carried only
+/// as a `let` of the value function. A `test` block turned function, or any
+/// function beside `main` that names one, named a constant the generated Rust
+/// did not declare, and the whole run failed for an item it never calls.
+///
+/// What goes is followed through: a function that calls a dropped one goes
+/// too. Names are matched as words, over-approximately (`tools/names.nika`) -
+/// the value cannot reach a reader of a constant it is computing, and a
+/// program that had such a reader did not build before, so a word shared by
+/// accident drops nothing from a program that built. The value function and
+/// `main` are always kept.
+pub(crate) fn without_readers(units: &mut [Parsed], absent: BTreeSet<String>) {
+    let mut gone = absent;
+    loop {
+        let before = gone.len();
+        for unit in units.iter_mut() {
+            let mut dropped = Vec::new();
+            let mut items = std::mem::take(&mut unit.program.items);
+            items.retain_mut(|item| {
+                if let Item::Impl { methods, .. } = &mut item.node {
+                    methods.retain(|method| match reads_any(unit, &method.node, &gone) {
+                        Some(own) => {
+                            dropped.extend(own);
+                            false
+                        }
+                        None => true,
+                    });
+                    return true;
+                }
+                match reads_any(unit, &item.node, &gone) {
+                    Some(own) => {
+                        dropped.extend(own);
+                        false
+                    }
+                    None => true,
+                }
+            });
+            unit.program.items = items;
+            gone.extend(dropped);
+        }
+        if gone.len() == before {
+            return;
+        }
+    }
+}
+
+/// `Some` - with the item's own name, where it has one - when `item` is a
+/// body that names something in `gone` and may be left out.
+fn reads_any(parsed: &Parsed, item: &Item, gone: &BTreeSet<String>) -> Option<Option<String>> {
+    use nikaia_std::tools::names::names_in_block;
+    let mut named = BTreeSet::new();
+    let own = match item {
+        // An option's default is not read here: the call is handed the
+        // value the ledger recorded for it.
+        Item::Fn { name, body, .. } => {
+            let own = name.map(|n| parsed.text(n).to_string());
+            if matches!(own.as_deref(), Some("main" | VALUE_FN)) {
+                return None;
+            }
+            names_in_block(body, &parsed.interner, &mut named);
+            own
+        }
+        Item::Test { body, .. } | Item::Bench { body, .. } => {
+            names_in_block(body, &parsed.interner, &mut named);
+            None
+        }
+        _ => return None,
+    };
+    named.iter().any(|name| gone.contains(name)).then_some(own)
+}
+
+/// Every `comptime` the files declare, by name.
+pub(crate) fn constants_of<'a>(files: impl IntoIterator<Item = &'a Parsed>) -> BTreeSet<String> {
+    files
+        .into_iter()
+        .flat_map(|parsed| {
+            parsed
+                .program
+                .items
+                .iter()
+                .filter_map(|item| match &item.node {
+                    Item::Comptime { name, .. } => Some(parsed.text(*name).to_string()),
+                    _ => None,
+                })
+        })
+        .collect()
 }
 
 /// **A program of several files, lowered as one** (Part I 9.1): each file
@@ -426,6 +515,12 @@ fn computed(
             None => return Computed::NotHere,
         }
     }
+    let carried = constants_of(&units);
+    let absent = constants_of(files.iter().copied())
+        .into_iter()
+        .filter(|name| !carried.contains(name))
+        .collect();
+    without_readers(&mut units, absent);
     // **A dependency's functions are the program's to call** (ADR-321 D13):
     // each package's units are derived on their own, and the program's
     // against `std` and those entries, under the package's name - as the

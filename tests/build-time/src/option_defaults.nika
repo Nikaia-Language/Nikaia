@@ -2,6 +2,8 @@
 // leaves the option out receives. What the ledger records, refusals, and
 // defaults that cross packages stay in `crates/nikaia/tests/option_defaults.rs`.
 
+use std::time
+
 comptime OPTION_DEFAULTS_BASE = 7
 
 fn option_defaults_twice(n: i64) -> i64 {
@@ -111,4 +113,62 @@ fn option_defaults_shout(word: ref String; mark: String = "!!!") -> String {
 test "a text default for an owned string is one" {
     let s = option_defaults_shout("yo")
     assert(s == "yo!!!")
+}
+
+// A span of time computed while the program is built (ADR-318 D5, ADR-321
+// D1): `90.seconds()` runs from `std`'s Rust half, and a test reads the
+// constant it came to (#529).
+comptime OPTION_DEFAULTS_SPAN: time::Duration = 90.seconds()
+
+test "a duration comptime is computed by std" {
+    let minutes = OPTION_DEFAULTS_SPAN.in_minutes()
+    let seconds = OPTION_DEFAULTS_SPAN.in_seconds()
+    assert(minutes == 1)
+    assert(seconds == 90)
+}
+
+// A later `comptime` reads an earlier one of the type (#519): the run that
+// computes it is handed the earlier one by its constructor.
+comptime OPTION_DEFAULTS_SPAN_SECONDS: i64 = OPTION_DEFAULTS_SPAN.in_seconds()
+
+test "a comptime reads an earlier duration" {
+    assert(OPTION_DEFAULTS_SPAN_SECONDS == 90)
+}
+
+fn option_defaults_patience(label: ref String; timeout: time::Duration = 250.millis()) -> String {
+    return f"{label} {timeout.in_millis()}"
+}
+
+// An option's default of the type (ADR-318 D3, D5): a call that leaves the
+// option out gets it.
+test "a duration default is handed to the call" {
+    let a = option_defaults_patience("a")
+    let b = option_defaults_patience("b"; timeout: 2.seconds())
+    assert(a == "a 250")
+    assert(b == "b 2000")
+}
+
+fn option_defaults_exclaim(word: ref String; mark: ref String = "!".repeat(3)) -> String sync {
+    return f"{word}{mark}"
+}
+
+fn option_defaults_exclaim_owned(word: ref String; mark: String = "!".repeat(3)) -> String sync {
+    return f"{word}{mark}"
+}
+
+fn option_defaults_exclaim_twice() -> String {
+    return option_defaults_exclaim("yo") + option_defaults_exclaim_owned("yo")
+}
+
+// A default std's Rust half computes (ADR-321 D1, #468), `ref String` and
+// `String` alike: a call that leaves it out receives it, and a `comptime`
+// whose run calls such a function reads the value the ledger recorded.
+comptime OPTION_DEFAULTS_HI: ref String = option_defaults_exclaim("hi")
+comptime OPTION_DEFAULTS_HI_OWNED: ref String = option_defaults_exclaim_owned("hi")
+
+test "a default std computes reaches a comptime" {
+    let twice = option_defaults_exclaim_twice()
+    assert(OPTION_DEFAULTS_HI == "hi!!!")
+    assert(OPTION_DEFAULTS_HI_OWNED == "hi!!!")
+    assert(twice == "yo!!!yo!!!")
 }
