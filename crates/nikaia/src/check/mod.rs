@@ -7243,7 +7243,13 @@ impl<'a> Checker<'a> {
                 .owned_copies
                 .insert((span.at(), argument_shape(receiver)));
         }
-        let reached = self.call_on(*inner, *method, args, &written, span);
+        // **A field that holds a function is called as one** here too
+        // (#533): `x?.apply(1)` is `(x.apply)(1)` on what is inside.
+        let inside = self.inside_a_door;
+        let reached = match self.a_called_field(&inner, receiver, *method, args, inside, span) {
+            Some(result) => result,
+            None => self.call_on(*inner, *method, args, &written, span),
+        };
         // **A view out of a temporary needs something to point into**
         // (ADR-278 D21): the receiver is held for the rest of the block.
         let a_view = match &reached {
@@ -13088,59 +13094,13 @@ impl<'a> Checker<'a> {
                 // **A field that holds a function is called as one**:
                 // `button.on_click(4)`, where `on_click` is a field and no
                 // method has the name.
-                if let Some(Ty::Fn {
-                    params,
-                    result,
-                    is_sync,
-                    can_throw: throws,
-                }) = self.a_field_that_is_code(&on, *method)
+                if let Some(result) =
+                    self.a_called_field(&on, receiver, *method, args, outer_inside, span)
                 {
-                    self.arguments_given(args, &params, false, None, span);
-                    self.kept_arguments_are_its_own(args, &params);
-                    // **A call through a function field reaches what was
-                    // stored there** (ADR-230 D1, D2): recorded for the lock
-                    // column, and asked here where a lock is already open.
-                    if let Ty::Named { name: owner, .. } = &on {
-                        let key = format!("{owner}.{}", self.parsed.text(*method));
-                        if let Some(current) = &self.current
-                            && self.task_bindings.is_empty()
-                        {
-                            self.checked
-                                .methods
-                                .entry(current.clone())
-                                .or_default()
-                                .fields_called
-                                .insert(key.clone());
-                        }
-                        // The door this call stands in, not this call: the flag
-                        // was set above for the call's own block.
-                        let holds = self.own.code_locks.get(&key).copied();
-                        if let Some(holds) = holds {
-                            let own = std::mem::replace(&mut self.inside_a_door, outer_inside);
-                            self.a_lock_inside_a_lock(&key, holds, span);
-                            self.inside_a_door = own;
-                        }
-                    }
-                    self.checked.field_calls.insert(
-                        (
-                            span.at(),
-                            format!("{}.{}", argument_shape(receiver), self.parsed.text(*method)),
-                        ),
-                        !is_sync,
-                    );
-                    if let Some(current) = &self.current {
-                        let entry = self.checked.methods.entry(current.clone()).or_default();
-                        entry.code_pauses |= !is_sync;
-                        entry.code_fails |= throws;
-                    }
-                    if throws {
-                        self.fallible_methods
-                            .insert((span.at(), self.parsed.text(*method).to_string()));
-                    }
                     self.receiver_name = outer_named;
                     self.at_a_write_door = outer_door;
                     self.inside_a_door = outer_inside;
-                    return (*result).unwrap_or_else(|| Ty::named("()"));
+                    return result;
                 }
                 // **A copy of a slice is a list** (ADR-282 D9): `to_owned`
                 // below, where `.clone()` would copy the reference.
@@ -21830,6 +21790,75 @@ impl<'a> Checker<'a> {
             .find(|field| field.name == method)
             .map(|field| field.ty)
             .filter(|ty| matches!(ty, Ty::Fn { .. }))
+    }
+
+    /// **A call of a field that holds a function**, `button.on_click(4)`:
+    /// what it is given, the lock column and what the emitter needs, and the
+    /// call's result - `None` where `on` has no such field. `outer_inside` is
+    /// whether a lock was already open around this call. Asked by the plain
+    /// call and by `x?.on_click(4)` alike (#533), which differ only in whether
+    /// the call happens.
+    fn a_called_field(
+        &mut self,
+        on: &Ty,
+        receiver: &Expr,
+        method: Ident,
+        args: &[Expr],
+        outer_inside: bool,
+        span: &Span,
+    ) -> Option<Ty> {
+        let Some(Ty::Fn {
+            params,
+            result,
+            is_sync,
+            can_throw: throws,
+        }) = self.a_field_that_is_code(on, method)
+        else {
+            return None;
+        };
+        self.arguments_given(args, &params, false, None, span);
+        self.kept_arguments_are_its_own(args, &params);
+        // **A call through a function field reaches what was
+        // stored there** (ADR-230 D1, D2): recorded for the lock
+        // column, and asked here where a lock is already open.
+        if let Ty::Named { name: owner, .. } = on {
+            let key = format!("{owner}.{}", self.parsed.text(method));
+            if let Some(current) = &self.current
+                && self.task_bindings.is_empty()
+            {
+                self.checked
+                    .methods
+                    .entry(current.clone())
+                    .or_default()
+                    .fields_called
+                    .insert(key.clone());
+            }
+            // The door this call stands in, not this call: the flag
+            // was set above for the call's own block.
+            let holds = self.own.code_locks.get(&key).copied();
+            if let Some(holds) = holds {
+                let own = std::mem::replace(&mut self.inside_a_door, outer_inside);
+                self.a_lock_inside_a_lock(&key, holds, span);
+                self.inside_a_door = own;
+            }
+        }
+        self.checked.field_calls.insert(
+            (
+                span.at(),
+                format!("{}.{}", argument_shape(receiver), self.parsed.text(method)),
+            ),
+            !is_sync,
+        );
+        if let Some(current) = &self.current {
+            let entry = self.checked.methods.entry(current.clone()).or_default();
+            entry.code_pauses |= !is_sync;
+            entry.code_fails |= throws;
+        }
+        if throws {
+            self.fallible_methods
+                .insert((span.at(), self.parsed.text(method).to_string()));
+        }
+        Some((*result).unwrap_or_else(|| Ty::named("()")))
     }
 
     fn text_at(&self, at: usize) -> usize {

@@ -33,6 +33,17 @@ test "null is asked of a type that does not compare" {
     assert(applied == 3)
 }
 
+// **A field that holds a function is called through the field behind a `?.`
+// too** (#533): `some?.apply(1)` was written as a method call on what is
+// inside, and `rustc` found no method `apply`.
+test "a function field is called behind a safe call" {
+    let some = reader_shapes_found(1)
+    let none = reader_shapes_found(0)
+    let reached = some?.apply(1) ?? 0
+    let missed = none?.apply(1) ?? 0
+    assert(reached == 2 && missed == 0)
+}
+
 // **A `match` in statement position hands nothing back**, so an arm's block
 // ends with a statement: a map's `insert` there answers the old value, and
 // written as the arm's value it made the arms disagree with the empty one.

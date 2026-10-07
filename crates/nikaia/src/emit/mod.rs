@@ -8255,45 +8255,7 @@ impl<'p> Emitter<'p> {
                 // descriptor and no dispatch left.
                 // **A field that holds a function is called through the
                 // field**: `(button.on_click)(4)`, awaited where it may pause.
-                let called = format!(
-                    "{}.{}",
-                    crate::check::argument_shape(receiver),
-                    self.text(*method)
-                );
-                if let Some(pauses) = self
-                    .field_calls
-                    .get(&(flow.statement, called.clone()))
-                    .copied()
-                {
-                    // **Inside a lambda, as a pausing function is**
-                    // ([ADR-230](../../docs/specification/adr/adr-230.md) D3):
-                    // the closure below is synchronous, and an `.await` in it
-                    // was `rustc`'s error about a file nobody wrote.
-                    if pauses && flow.in_lambda {
-                        let named = match receiver.as_ref() {
-                            Expr::Variable(name) => {
-                                format!("{}.{}", self.text(*name), self.text(*method))
-                            }
-                            _ => self.text(*method).to_string(),
-                        };
-                        return Err(pausing_in_a_lambda(flow.statement, &named));
-                    }
-                    out.push("(");
-                    self.postfix_base(out, receiver, depth, flow)?;
-                    out.push(&format!(".{})(", self.name(*method)));
-                    for (at, arg) in args.iter().enumerate() {
-                        if at > 0 {
-                            out.push(", ");
-                        }
-                        self.expr(out, arg, depth, flow)?;
-                    }
-                    out.push(")");
-                    if pauses {
-                        out.push(".await");
-                    }
-                    if flow.throws && !flow.caught && self.method_can_fail(flow, *method) {
-                        out.push("?");
-                    }
+                if self.a_field_call(out, receiver, false, *method, args, depth, flow)? {
                     return Ok(());
                 }
                 // **`variant.is(value)` is the pattern test a program would
@@ -8428,7 +8390,14 @@ impl<'p> Emitter<'p> {
                     .owned_copies
                     .contains(&(flow.statement, crate::check::argument_shape(receiver)));
                 let held_copy = self.reached_copy.replace(copy);
-                let written = self.method_call(out, None, *method, args, config, depth + 1, flow);
+                let written =
+                    match self.a_field_call(out, receiver, true, *method, args, depth + 1, flow) {
+                        Ok(true) => Ok(()),
+                        Ok(false) => {
+                            self.method_call(out, None, *method, args, config, depth + 1, flow)
+                        }
+                        Err(error) => Err(error),
+                    };
                 self.reached_copy.set(held_copy);
                 written?;
                 if !flattens {
@@ -12068,6 +12037,65 @@ impl<'p> Emitter<'p> {
     /// describes, or two calls in one statement writing the same name where one
     /// of them cannot fail - which is the emitter leaving the call exactly as it
     /// was rather than guessing at it.
+    /// **A call of a field that holds a function**, written through the
+    /// field: `(button.on_click)(4)`, awaited where it may pause - `false`,
+    /// and nothing written, where the checker recorded no such call. `reached`
+    /// is the safe form's (#533): the field is read off [`REACHED`], the name
+    /// the enclosing `match` bound, and `receiver` only keys the record.
+    #[allow(clippy::too_many_arguments)]
+    fn a_field_call(
+        &self,
+        out: &mut Out,
+        receiver: &Expr,
+        reached: bool,
+        method: Symbol,
+        args: &[Expr],
+        depth: usize,
+        flow: Flow<'_>,
+    ) -> Result<bool> {
+        let called = format!(
+            "{}.{}",
+            crate::check::argument_shape(receiver),
+            self.text(method)
+        );
+        let Some(pauses) = self.field_calls.get(&(flow.statement, called)).copied() else {
+            return Ok(false);
+        };
+        // **Inside a lambda, as a pausing function is**
+        // ([ADR-230](../../docs/specification/adr/adr-230.md) D3):
+        // the closure below is synchronous, and an `.await` in it
+        // was `rustc`'s error about a file nobody wrote.
+        if pauses && flow.in_lambda {
+            let named = match receiver {
+                Expr::Variable(name) => {
+                    format!("{}.{}", self.text(*name), self.text(method))
+                }
+                _ => self.text(method).to_string(),
+            };
+            return Err(pausing_in_a_lambda(flow.statement, &named));
+        }
+        out.push("(");
+        match reached {
+            true => out.push(REACHED),
+            false => self.postfix_base(out, receiver, depth, flow)?,
+        }
+        out.push(&format!(".{})(", self.name(method)));
+        for (at, arg) in args.iter().enumerate() {
+            if at > 0 {
+                out.push(", ");
+            }
+            self.expr(out, arg, depth, flow)?;
+        }
+        out.push(")");
+        if pauses {
+            out.push(".await");
+        }
+        if flow.throws && !flow.caught && self.method_can_fail(flow, method) {
+            out.push("?");
+        }
+        Ok(true)
+    }
+
     fn method_can_fail(&self, flow: Flow<'_>, method: Symbol) -> bool {
         self.fallible_methods
             .contains(&(flow.statement, self.text(method).to_string()))
