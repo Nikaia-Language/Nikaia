@@ -70,7 +70,7 @@
 10-nikaia-light.md #70 fragment (as written) [sketch]  struct Reading { name: ref String, temp: i32 }
 10-nikaia-light.md #71 refused (a body) [NK1117]  let mut users = load_users()
 10-nikaia-light.md #72 lowered (as written)  use std::fs
-10-nikaia-light.md #73 refused (as written) [NK1135]  enum ConfigError {
+10-nikaia-light.md #73 lowered (as written)  enum ConfigError {
 10-nikaia-light.md #74 refused (a body) [NK1117,NK2605]  if !fs::exists(path, fs::Root::Anywhere) {
 10-nikaia-light.md #75 refused (a body) [NK1117]  let user = find(id) ?? throw NotFound(id)
 10-nikaia-light.md #76 refused (as written) [NK1117,NK1135]  fn load() -> Config throws {

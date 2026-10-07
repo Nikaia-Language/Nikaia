@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part I: The Language Core**
-**Version:** 0.0.605 (Draft)
+**Version:** 0.0.606 (Draft)
 **Date:** 2026-10-07
 
 ---
@@ -2346,16 +2346,16 @@ body. The compiler infers it whole-program and writes it to `nikaia.contracts`
 
 ```nika
 enum ConfigError {
-    NotFound(Path),
-    Unreadable(Path),
+    NotFound(fs::Path),
+    Unreadable(fs::Path),
     BadSyntax { line: i64, expected: ref String },
 }
 
 impl Error for ConfigError {
     fn message(ref self) -> String {
         match self {
-            ConfigError::NotFound(p)   => f"no config at {p}"
-            ConfigError::Unreadable(p) => f"cannot read {p}"
+            ConfigError::NotFound(p)   => f"no config at {p.display()}"
+            ConfigError::Unreadable(p) => f"cannot read {p.display()}"
             ConfigError::BadSyntax { line, expected } => f"line {line}: expected {expected}"
         }
     }

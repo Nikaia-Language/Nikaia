@@ -4,6 +4,13 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.606] — 2026-10-07
+
+**Part I 7.1's error type carries an `fs::Path`** (ADR-319, #449 step 10).
+- `ConfigError::NotFound` and `Unreadable` hold `fs::Path`, and `message`
+  shows them with `{p.display()}`. The example used to be refused with
+  `NK1135` (*There's no type called `Path`*); it now lowers.
+
 ## [0.0.605] — 2026-10-07
 
 **`fs::walk` hands back `fs::Path`s, and `to_text()` fails only for a name the
