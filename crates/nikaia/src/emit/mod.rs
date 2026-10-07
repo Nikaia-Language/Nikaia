@@ -12024,11 +12024,15 @@ impl<'p> Emitter<'p> {
                 out.push(", ");
             }
             match part {
+                // A piece of text is a literal, and a hole that is not a name
+                // is its value's text: neither goes through `format!` with
+                // nothing to format, which `clippy` reads as a mistake in
+                // `std`'s lowered tools.
                 crate::ast::FPart::Text(_) => {
-                    out.push(&format!(
-                        "std::ffi::OsStr::new(&format!(\"{}\"))",
-                        format_of(std::slice::from_ref(part))
-                    ));
+                    let text = format_of(std::slice::from_ref(part))
+                        .replace("{{", "{")
+                        .replace("}}", "}");
+                    out.push(&format!("std::ffi::OsStr::new(\"{text}\")"));
                 }
                 crate::ast::FPart::Hole { .. } => {
                     let held = interpolated_holes(std::slice::from_ref(part));
@@ -12041,14 +12045,14 @@ impl<'p> Emitter<'p> {
                     let named = names.get(hole).copied().unwrap_or(false);
                     out.push(match named {
                         true => "std::convert::AsRef::<std::ffi::OsStr>::as_ref(&(",
-                        false => "std::ffi::OsStr::new(&format!(\"{}\", ",
+                        false => "std::ffi::OsStr::new(&std::string::ToString::to_string(&(",
                     });
                     let written = self.expr(out, &expr, depth, flow);
                     self.hole.replace(outer);
                     written?;
                     out.push(match named {
                         true => "))",
-                        false => "))",
+                        false => ")))",
                     });
                     hole += 1;
                 }
@@ -12599,7 +12603,19 @@ impl<'p> Emitter<'p> {
             ))
         {
             let name = self.text(method).to_string();
-            out.push(&format!("nikaia_std::fs::path::{name}(&("));
+            // **`to_text` on a name made from text cannot fail** (ADR-319
+            // D5), and the checker said where.
+            let known = name == "to_text"
+                && self.path_methods.contains(&(
+                    flow.statement,
+                    "text_of".to_string(),
+                    format!("{args:?}"),
+                ));
+            let written = match known {
+                true => "text_of",
+                false => name.as_str(),
+            };
+            out.push(&format!("nikaia_std::fs::path::{written}(&("));
             self.expr(out, on, depth, flow)?;
             out.push(")");
             if !args.is_empty() {
@@ -12607,6 +12623,9 @@ impl<'p> Emitter<'p> {
                 self.args(out, &name, args, &[], depth, flow)?;
             }
             out.push(")");
+            if flow.throws && !flow.caught && self.method_can_fail(flow, method) {
+                out.push("?");
+            }
             return Ok(());
         }
         if let Some(into) = truncating(self.text(method)) {

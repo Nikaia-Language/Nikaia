@@ -95,6 +95,20 @@ pub mod path {
 
     /// **Text for showing** (ADR-319 D6): `�` for what is not text. It never
     /// fails, and nothing tracks what is done with it.
+    /// The name as text (ADR-319 D5): `NotText` where its bytes are not.
+    pub fn to_text(p: &FilePath) -> Result<String, crate::io::IoError> {
+        match p.to_str() {
+            Some(text) => Ok(text.to_string()),
+            None => Err(crate::io::IoError::NotText(p.display().to_string())),
+        }
+    }
+
+    /// The name as text, where the compiler followed it back to text (D5):
+    /// made from text, it is text, so nothing is lost.
+    pub fn text_of(p: &FilePath) -> String {
+        p.to_string_lossy().into_owned()
+    }
+
     pub fn display(p: &FilePath) -> String {
         p.to_string_lossy().into_owned()
     }
@@ -124,6 +138,33 @@ pub mod path {
             assert!(same(&p, &named(b"caf\xe9.txt")));
             assert!(!same(&p, "caf\u{e9}.txt"));
             assert_eq!(display(&p), "caf\u{fffd}.txt");
+        }
+
+        /// **`to_text` fails for it and only for it** (D5); `text_of`, which
+        /// the compiler writes for a name made from text, does not.
+        #[test]
+        fn such_a_name_is_not_text() {
+            let p = named(b"caf\xe9.txt");
+            assert!(matches!(to_text(&p), Err(crate::io::IoError::NotText(_))));
+            assert_eq!(to_text(FilePath::new("a.txt")).expect("text"), "a.txt");
+            assert_eq!(text_of(FilePath::new("a.txt")), "a.txt");
+        }
+
+        /// **`walk` lists it, and the listed name opens it** (D7): it used to
+        /// end the walk with `NotText`.
+        #[test]
+        fn a_walk_lists_a_name_that_is_not_text() {
+            let dir = std::env::temp_dir().join(format!("nikaia-not-text-{}", std::process::id()));
+            std::fs::create_dir_all(&dir).expect("scratch");
+            std::fs::write(dir.join(named(b"caf\xe9.txt")), "hallo").expect("write");
+            let root = super::super::Root::Dir(dir.clone());
+            let found = crate::rt::exec::block_on(super::super::walk(".", &root)).expect("walked");
+            assert_eq!(found.len(), 1);
+            assert_eq!(found[0].as_os_str().as_bytes(), b"caf\xe9.txt");
+            let text = crate::rt::exec::block_on(super::super::read_to_string(&found[0], &root))
+                .expect("read by the listed name");
+            assert_eq!(text, "hallo");
+            std::fs::remove_dir_all(&dir).ok();
         }
 
         /// An `f"…"` with such a name in it keeps the name's bytes (D4).
@@ -680,17 +721,16 @@ pub async fn create(path: impl AsRef<FilePath>, root: &Root) -> Result<Writer, c
 /// **A directory is visited once**, by its resolved name, so a link that points
 /// back up the tree ends the walk instead of looping it.
 ///
-/// It fails where the directory itself cannot be read, and where a name under it
-/// is not UTF-8 — text in this language is one type, and a name handed back
-/// changed would be a name that opens a different file.
+/// It fails where the directory itself cannot be read. Each name is an `fs::Path`
+/// relative to the directory asked for, in the platform's own bytes (ADR-319
+/// D7): one that is not text is listed as it is, and opens the same file.
 ///
 /// `async` with nothing awaited, for the reason [`map`] gives: the ledger says
 /// it does I/O and may pause.
 pub async fn walk(
     path: impl AsRef<FilePath>,
     root: &Root,
-) -> Result<Vec<String>, crate::io::IoError> {
-    let asked = path.as_ref().display().to_string();
+) -> Result<Vec<Path>, crate::io::IoError> {
     let start = resolve(path.as_ref(), root)?;
     let base = match root {
         Root::Dir(dir) => Some(
@@ -704,7 +744,7 @@ pub async fn walk(
     // The directory asked for has to be readable; one under it that is not is
     // left out, as a name outside the root is.
     std::fs::read_dir(&start).map_err(|e| crate::io::IoError::of(e, path.as_ref()))?;
-    let mut pending = vec![(start, String::new())];
+    let mut pending = vec![(start, Path::new())];
     while let Some((dir, prefix)) = pending.pop() {
         let Ok(real) = std::fs::canonicalize(&dir) else {
             continue;
@@ -715,14 +755,11 @@ pub async fn walk(
         let Ok(entries) = std::fs::read_dir(&dir) else {
             continue;
         };
+        // **A name is listed as the platform's bytes** (ADR-319 D7): one
+        // that is not text is a name like any other, and `to_text` is where
+        // a program asks whether it is text.
         for entry in entries.flatten() {
             let name = entry.file_name();
-            let Some(name) = name.to_str() else {
-                return Err(crate::io::IoError::NotText(format!(
-                    "{asked}/{prefix}{}",
-                    name.to_string_lossy()
-                )));
-            };
             let at = entry.path();
             let Ok(real) = std::fs::canonicalize(&at) else {
                 continue;
@@ -730,9 +767,9 @@ pub async fn walk(
             if base.as_ref().is_some_and(|base| !real.starts_with(base)) {
                 continue;
             }
-            let relative = format!("{prefix}{name}");
+            let relative = prefix.join(&name);
             match real.is_dir() {
-                true => pending.push((at, format!("{relative}/"))),
+                true => pending.push((at, relative)),
                 false => found.push(relative),
             }
         }
@@ -1160,22 +1197,26 @@ mod walking {
         }
 
         let inside = Root::Dir(tree.to_path_buf());
+        // The names as text, which every one in this tree is.
+        let shown = |found: Vec<Path>| -> Vec<String> {
+            found.iter().map(|p| p.display().to_string()).collect()
+        };
         let found = crate::rt::exec::block_on(walk(".", &inside)).expect("walked");
-        assert_eq!(found, ["b.rs", "src/a.rs", "src/deep/c.txt"]);
+        assert_eq!(shown(found), ["b.rs", "src/a.rs", "src/deep/c.txt"]);
 
         // From `src`, the link up reaches the rest of the tree once, and its
         // way back into `src` is a directory already seen.
         #[cfg(unix)]
         {
             let under = crate::rt::exec::block_on(walk("src", &inside)).expect("walked");
-            assert_eq!(under, ["a.rs", "deep/c.txt", "up/b.rs"]);
+            assert_eq!(shown(under), ["a.rs", "deep/c.txt", "up/b.rs"]);
         }
 
         #[cfg(unix)]
         {
             let anywhere = crate::rt::exec::block_on(walk(&tree, &Root::Anywhere)).expect("walked");
             assert_eq!(
-                anywhere,
+                shown(anywhere),
                 ["b.rs", "out/secret", "src/a.rs", "src/deep/c.txt"]
             );
         }

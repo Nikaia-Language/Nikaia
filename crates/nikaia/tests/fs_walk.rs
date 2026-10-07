@@ -81,7 +81,7 @@ fn a_walk_lists_every_file_under_a_directory() {
                   fn main() throws {\n\
                   \x20   let root = fs::Root::Dir(\"tree\")\n\
                   \x20   for name in fs::walk(\".\", root) {\n\
-                  \x20       let text = fs::read_to_string(ref name, root)\n\
+                  \x20       let text = fs::read_to_string(name, root)\n\
                   \x20       println(f\"{name}={text}\")\n\
                   \x20   }\n\
                   \x20   for name in fs::walk(\"src\", root) {\n\

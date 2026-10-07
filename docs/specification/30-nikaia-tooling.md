@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part III: Tooling, Ecosystem & Interoperability**
-**Version:** 0.0.604 (Draft)
+**Version:** 0.0.605 (Draft)
 **Date:** 2026-10-07
 
 ---
@@ -1128,7 +1128,7 @@ names relative to it with `/` between the parts, sorted, so two runs over one tr
 back up the tree ends the walk. Under `Dir(store)` the root holds for every name the walk finds:
 an entry that leads out of it, a symlink pointing away, is left out rather than failing the walk.
 It throws where the directory itself cannot be read; a name that is not text is handed back
-like any other. A name it hands back opens under the same root: `fs::read_to_string(ref name, root)`
+like any other. A name it hands back opens under the same root: `fs::read_to_string(name, root)`
 after `fs::walk(".", root)`.
 
 **The reactor.** `read`, `read_to_string` and `write` go through the runtime's reactor. Where the

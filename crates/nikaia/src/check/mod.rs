@@ -1471,6 +1471,8 @@ fn walked<'a>(
         run_code: BTreeSet::new(),
         last_resolved: None,
         receiver_name: None,
+        receiver_from_text: false,
+        text_paths: BTreeSet::new(),
         caught_several: false,
         caught_one: None,
         read_at: Vec::new(),
@@ -3436,6 +3438,13 @@ struct Checker<'a> {
     /// expression is not. `None` for a temporary — `map.keys().collect()` walks
     /// one, and a temporary has no second use to refuse.
     receiver_name: Option<String>,
+    /// **Whether the receiver of the call being checked is a file's name the
+    /// compiler followed back to text** ([ADR-319](../../docs/specification/adr/adr-319.md)
+    /// D5): then its `to_text` cannot fail. Set for one call, taken by it.
+    receiver_from_text: bool,
+    /// The bindings of a file's name made from text, by binding (D5):
+    /// a literal, text, or an `f"…"` or an operation over such names.
+    text_paths: BTreeSet<usize>,
     /// Every place a local name was read, by the byte its statement starts at.
     ///
     /// The other half of the same question. Reads and not writes: an assignment
@@ -9059,7 +9068,20 @@ impl<'a> Checker<'a> {
             self.method_propagates(method, false, span);
             return Ty::Unknown;
         };
-        self.reached_method(Some(&key));
+        // **`to_text` on a name made from text cannot fail** (ADR-319 D5):
+        // it reaches the entry that throws nothing, and the emitter writes it.
+        let known_text = key == "fs::Path::to_text" && std::mem::take(&mut self.receiver_from_text);
+        if known_text {
+            self.checked.path_methods.insert((
+                span.at(),
+                "text_of".to_string(),
+                format!("{args:?}"),
+            ));
+        }
+        self.reached_method(Some(match known_text {
+            true => "fs::Path::text_of",
+            false => &key,
+        }));
         self.last_resolved = Some(key.clone());
         // **A receiver the method changes or takes is not only read**: a
         // `match` arm that does this to a part it bound needs the part itself.
@@ -9107,7 +9129,9 @@ impl<'a> Checker<'a> {
         self.method_options(method, contract, span);
         self.method_propagates(
             method,
-            !contract.fails_with.is_empty() || self.walks_a_failing_sequence(&on, contract),
+            !known_text
+                && (!contract.fails_with.is_empty()
+                    || self.walks_a_failing_sequence(&on, contract)),
             span,
         );
         // ADR-055 D2, the method half. Either ledger since §6 step 3
@@ -9183,7 +9207,9 @@ impl<'a> Checker<'a> {
         // (`NK2605`) - and here the receiver's type was known and a
         // ledger described the method, which is the only case this
         // compiler can answer at all.
-        self.may_fail_here(&key, contract, span);
+        if !known_text {
+            self.may_fail_here(&key, contract, span);
+        }
 
         // What the receiver's own type tells the signature (ADR-288).
         // `HashMap[&str, Stats]` against `&HashMap[$K, $V]` binds `$V`
@@ -11074,6 +11100,11 @@ impl<'a> Checker<'a> {
                         .insert((span.at(), argument_shape(value)));
                 }
                 let read_through_a_jump = read_through_a_jump && !copied_read;
+                if matches!(&bound, Ty::Named { name, .. } if name == "fs::Path")
+                    && self.made_from_text(value)
+                {
+                    self.text_paths.insert(id);
+                }
                 self.bind_local(Local {
                     id,
                     name,
@@ -12683,7 +12714,9 @@ impl<'a> Checker<'a> {
                     };
                 }
                 self.last_resolved = None;
+                self.receiver_from_text = self.made_from_text(receiver);
                 let value = self.call_on(on, *method, args, &written, span);
+                self.receiver_from_text = false;
                 // **A copy of `std`'s is a copy whatever the receiver is**
                 // (ADR-293 D24): below, `.clone()` of a view is the view.
                 if let Some(key) = self.last_resolved.take() {
@@ -15200,6 +15233,47 @@ impl<'a> Checker<'a> {
             self.checked
                 .path_holes
                 .insert((span.at(), argument_shape(literal)), names);
+        }
+    }
+
+    /// **Whether a file's name is made from text** (ADR-319 D5), followed as
+    /// far as this can see: a literal, a name that holds text or a name made
+    /// from text, an `f"…"` whose names are, and `join` or `with_extension`
+    /// over them. Anything else - a parameter, a field, what `walk` handed
+    /// over - may be the operating system's, and is not.
+    fn made_from_text(&self, expr: &Expr) -> bool {
+        let text =
+            |ty: &Ty| matches!(ty, Ty::Named { name, .. } if name == "String" || name == "str");
+        match expr {
+            Expr::LitStr { .. } => true,
+            Expr::Variable(name) => self
+                .binding(self.parsed.text(*name))
+                .is_some_and(|local| text(&local.ty) || self.text_paths.contains(&local.id)),
+            Expr::LitInterpolated { parts } => {
+                crate::emit::interpolated_holes(parts)
+                    .iter()
+                    .all(|(_, hole)| match hole {
+                        Expr::Variable(name) => {
+                            self.binding(self.parsed.text(*name)).is_some_and(|local| {
+                                !matches!(&local.ty, Ty::Named { name, .. } if name == "fs::Path")
+                                    || self.text_paths.contains(&local.id)
+                            })
+                        }
+                        Expr::LitInt { .. } | Expr::LitStr { .. } => true,
+                        other => self.made_from_text(other),
+                    })
+            }
+            Expr::MethodCall {
+                receiver,
+                method,
+                args,
+                ..
+            } => {
+                matches!(self.parsed.text(*method), "join" | "with_extension")
+                    && self.made_from_text(receiver)
+                    && args.iter().all(|arg| self.made_from_text(arg))
+            }
+            _ => false,
         }
     }
 

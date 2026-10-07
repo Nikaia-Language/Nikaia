@@ -237,8 +237,9 @@ fn an_interpolated_name_is_joined_by_its_bytes() {
     assert!(
         rust.contains(
             "nikaia_std::fs::path::joined(&[std::convert::AsRef::<std::ffi::OsStr>::as_ref(&(p)), \
-             std::ffi::OsStr::new(&format!(\".\")), std::ffi::OsStr::new(&format!(\"{}\", n)), \
-             std::ffi::OsStr::new(&format!(\".bak\"))])"
+             std::ffi::OsStr::new(\".\"), \
+             std::ffi::OsStr::new(&std::string::ToString::to_string(&(n))), \
+             std::ffi::OsStr::new(\".bak\")])"
         ),
         "{rust}"
     );
@@ -389,4 +390,63 @@ fn an_io_errors_name_is_a_file_name() {
     );
     let shown = refused.replace("{p}", "{p.display()}");
     assert!(refusals(&shown).is_empty(), "{:#?}", refusals(&shown));
+}
+
+/// The codes a source gets.
+fn codes(source: &str) -> Vec<String> {
+    refusals(source).into_iter().map(|(code, _)| code).collect()
+}
+
+/// **`to_text` fails only for a name the system handed over** (ADR-319 D5):
+/// made from text - a literal, text, an `f"…"` or `join` over such names - it
+/// needs no `throws`; a parameter and what `walk` lists do.
+#[test]
+fn to_text_throws_by_the_names_source() {
+    let made = "use std::fs\n\nfn shown() -> String {\n\
+                \x20   let p: fs::Path = \"a.txt\"\n\
+                \x20   let name = \"b\"\n\
+                \x20   let q: fs::Path = name\n\
+                \x20   let bak: fs::Path = f\"{p}.{q}.bak\"\n\
+                \x20   let joined = p.join(\"c\")\n\
+                \x20   return f\"{p.to_text()} {q.to_text()} {bak.to_text()} {joined.to_text()}\"\n\
+                }\n\nfn main() {\n    println(shown())\n}\n";
+    assert!(codes(made).is_empty(), "{:#?}", refusals(made));
+
+    let given = "use std::fs\n\nfn shown(p: ref fs::Path) -> String {\n\
+                 \x20   return p.to_text()\n\
+                 }\n\nfn main() {\n}\n";
+    assert!(
+        codes(given).contains(&"NK2605".to_string()),
+        "{:#?}",
+        refusals(given)
+    );
+
+    let walked = "use std::fs\n\nfn names() -> String throws {\n\
+                  \x20   let mut out: String = \"\"\n\
+                  \x20   for name in fs::walk(\".\", fs::Root::Dir(\"tree\")) {\n\
+                  \x20       out = name.to_text()\n\
+                  \x20   }\n\
+                  \x20   return out\n\
+                  }\n\nfn main() {\n}\n";
+    assert!(codes(walked).is_empty(), "{:#?}", refusals(walked));
+    let unsaid = walked.replace(" -> String throws {", " -> String {");
+    assert!(
+        codes(&unsaid).contains(&"NK2605".to_string()),
+        "{:#?}",
+        refusals(&unsaid)
+    );
+}
+
+/// **The same verdict for every target** (D5): the source decides, so the
+/// program text that needs no `throws` lowers to the call that cannot fail.
+#[test]
+fn a_name_made_from_text_lowers_to_the_call_that_cannot_fail() {
+    let rust = lowered(
+        "use std::fs\n\nfn shown() -> String {\n\
+         \x20   let p: fs::Path = \"a.txt\"\n\
+         \x20   return p.to_text()\n\
+         }\n\nfn main() {\n    println(shown())\n}\n",
+    );
+    assert!(rust.contains("nikaia_std::fs::path::text_of("), "{rust}");
+    assert!(!rust.contains("nikaia_std::fs::path::to_text("), "{rust}");
 }

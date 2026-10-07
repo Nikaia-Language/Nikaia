@@ -27,7 +27,9 @@ pub fn rust_sources(src: ref String) -> collections::BTreeMap[String, String] th
     for name in fs::walk(src, fs::Root::Anywhere) {
         if !name.ends_with(".rs") { continue }
         let text = fs::read_to_string(f"{src}/{name}", fs::Root::Anywhere)
-        out.insert(f"src/{name}", text)
+        // A name the walk found may not be text (ADR-319 D5), and a key
+        // here is: `to_text` is where that is the failure, named.
+        out.insert(f"src/{name.to_text()}", text)
     }
     return out
 }

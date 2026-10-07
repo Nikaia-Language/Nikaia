@@ -298,20 +298,20 @@ throws = ["io::IoError"]
 provenance = "trusted"
 signature = "(path: ref fs::Path, root: ref fs::Root) -> String"
 
-# Every file under a directory, as names relative to it with `/` between the
-# parts, in sorted order. Directories are not listed, and each is visited once.
+# Every file under a directory, as names relative to it, in sorted order.
+# Directories are not listed, and each is visited once.
 #
 # Under `fs::Root::Dir` a name the walk finds that leads out of the root - a
 # symlink pointing away - is left out rather than failing the walk. It fails
-# where the directory itself cannot be read, and where a name under it is not
-# UTF-8. The names came from the program's own machine, so they are **trusted**
+# where the directory itself cannot be read; a name that is not text is listed
+# as the platform's bytes (ADR-319 D7). The names came from the program's own machine, so they are **trusted**
 # (ADR-290 D14).
 [fn."fs::walk"]
 pub = true
 touches = ["file(path) read"]
 throws = ["io::IoError"]
 provenance = "trusted"
-signature = "(path: ref fs::Path, root: ref fs::Root) -> Vec[String]"
+signature = "(path: ref fs::Path, root: ref fs::Root) -> Vec[fs::Path]"
 
 # Whether a file or directory is there (Part III 17.1). The root comes first
 # (ADR-108 D1): a name that leaves an `fs::Root::Dir` throws `Outside` rather
@@ -3252,6 +3252,26 @@ signature = "(self: ref fs::Path, part: ref fs::Path) -> fs::Path"
 # Text for showing (ADR-319 D6): `�` for what is not text. It never fails.
 [fn."fs::Path::display"]
 pub = true
+sync = true
+touches = []
+signature = "(self: ref fs::Path) -> String"
+
+# The name as text (ADR-319 D5). A name the operating system handed over -
+# from `walk`, from a parameter, from anything the compiler cannot follow back to
+# text - may hold bytes that are not text, and then this throws `NotText`, on
+# every target.
+[fn."fs::Path::to_text"]
+pub = true
+sync = true
+touches = []
+throws = ["io::IoError"]
+signature = "(self: ref fs::Path) -> String"
+
+# `to_text` where the compiler followed the name back to text (D5): it cannot
+# fail, so it throws nothing. The compiler resolves a call to `to_text` here; a
+# program writes `to_text`.
+[fn."fs::Path::text_of"]
+pub = false
 sync = true
 touches = []
 signature = "(self: ref fs::Path) -> String"

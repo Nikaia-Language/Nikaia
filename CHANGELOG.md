@@ -4,6 +4,26 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.605] — 2026-10-07
+
+**`fs::walk` hands back `fs::Path`s, and `to_text()` fails only for a name the
+system handed over** (ADR-319 D5, D7, #449 steps 3 and 6).
+- `fs::walk` returns `Vec[fs::Path]`: a name that is not text is listed as the
+  platform's bytes and opens the same file, where it used to end the walk with
+  `NotText`.
+- `p.to_text()` gives the `String`. On a name the compiler follows back to
+  text - a literal, text, an `f"…"` over such names, `join` or
+  `with_extension` - it cannot fail and needs no `throws`; on anything else,
+  a parameter or what `walk` listed, it `throws io::IoError` (`NotText`), the
+  same on every target.
+- `tools/sources.nika` writes `{name.to_text()}` where a walked name becomes a
+  map key. An `f"…"` that builds a name writes its text parts without
+  `format!`.
+- Part III 17.1's `walk` example passes the name without `ref`.
+- Tests: `file_paths.rs::to_text_throws_by_the_names_source`,
+  `a_name_made_from_text_lowers_to_the_call_that_cannot_fail`; `fs.rs`'s
+  `such_a_name_is_not_text` and `a_walk_lists_a_name_that_is_not_text`.
+
 ## [0.0.604] — 2026-10-07
 
 **A file's name in an `f"…"` used as text is `NK1201`; `IoError` and
