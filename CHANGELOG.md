@@ -4,6 +4,22 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.640] — 2026-10-07
+
+**A handler gets only what its signature declares** (ADR-332, #121).
+- `{name}` in a route's path is the parameter of that name; another plain
+  parameter is the query's. Every other input is a type implementing
+  `http::Extract`, whose `extract` declares its own inputs as typed parameters:
+  a header is a type declared once (`@http::Header("X-Api-Key") struct ApiKey`),
+  who is asking is `AuthUser`. Only `http`'s own extractors read the raw request.
+- `Body[T]` has no format; the server's `formats` and the request's
+  `Content-Type`/`Accept` choose. A wrapper is read with `.value`.
+- A function bound by `Fn` answers `F::params` (`.name`, `.ty`, `.default`,
+  `.attribute(X)`) and `F::result` while building; its kind is `Fn(F)`.
+  `NK1232` is retired.
+- Open: how `route` says its path is read while building, a method in the
+  path, middleware with no result, groups, value parameters of a type.
+
 ## [0.0.639] — 2026-10-07
 
 **`develop` is green again**: three tests still expected what 0.0.630 and

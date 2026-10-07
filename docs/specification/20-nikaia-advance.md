@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part II: Advanced Features & Metaprogramming**
-**Version:** 0.0.639 (Draft)
+**Version:** 0.0.640 (Draft)
 **Date:** 2026-10-07
 
 ---
@@ -287,7 +287,14 @@ declaration writes it. `T::kind` is a `meta::Type`, whose parts are types:
 
 A type of `std` has the kind of what it is; it is `Opaque` only where `std`
 keeps its inside its own. A type of a Rust crate and a C `opaque type` are
-`Opaque`. `T::kind` of a function type is refused with `NK1232`.
+`Opaque`. A function type's kind is `Fn(F)`.
+
+**A function answers its parameters** ([ADR-332](adr/adr-332.md) D1). A type
+parameter bound by `Fn` is a function - a lambda or a named one passed as a
+value - and `F::params` is its parameters in order, a list known while the
+program is built, walked as `T::fields` is. A reflected parameter answers
+`.name`, `.ty`, `.default` and `.attribute(X)` / `.attributes(X)`, as a field
+does, and `F::result` is the result type.
 
 `ref A`, `Shared[A]` and `SharedMut[A]` have the kind of `A`. How a value is
 reached is `T::access`, a `meta::Access`: `Owned`, `Ref`, `Shared` or
