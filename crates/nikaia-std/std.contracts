@@ -3191,7 +3191,7 @@ compares = true
 # reached `rustc` as a `&str` where `fs.rs` declares `Dir(String)`: the literal
 # is made a `String` of its own only where the checker knows the payload is one
 # (ADR-282 D4), and for a `std` enum it knows that from this column alone.
-variants = ["Dir(String)", "Anywhere"]
+variants = ["Dir(fs::Path)", "Anywhere"]
 
 # A file held as memory: the pages arrive as they are touched rather than being
 # read up front, which is what makes a file larger than memory workable.
@@ -3282,7 +3282,7 @@ crosses = true
 # **`compares = true`** ([ADR-204](../../docs/specification/adr/adr-204.md) D1),
 # and like `crosses` it is a claim reviewed like code: this type's parts are Rust,
 # so nothing in the compiler can walk them. An easy claim here — every variant
-# holds a `String`.
+# holds a `String` or an `fs::Path`, and a name compares by its bytes.
 #
 # **Absence is not permission**: a `std` type without this line does not compare,
 # and `NK1188` says so on the author's line rather than letting `rustc` say it
@@ -3297,7 +3297,7 @@ compares = true
 # Each carries what it was about, which is
 # [ADR-280](../../docs/specification/adr/adr-280.md) D5's *the variant is the
 # kind and it carries the thing*.
-variants = ["NotFound(String)", "PermissionDenied(String)", "NotText(String)", "Outside(String)", "Other(String)"]
+variants = ["NotFound(fs::Path)", "PermissionDenied(fs::Path)", "NotText(String)", "Outside(fs::Path)", "Other(String)"]
 
 # **What a parse fails with** ([ADR-296](../../docs/specification/adr/adr-296.md)
 # D1), and the end of the last `"?"` in this tree. A `dsl` entry rule's ledger

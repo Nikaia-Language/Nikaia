@@ -4390,8 +4390,8 @@ impl<'a> Checker<'a> {
                     self.variant_owner.insert(key.clone(), name.clone());
                     // **A positional variant is built by its constructor**, as
                     // a declared enum's is: `fs::Root::Dir("site")` has to meet
-                    // `Dir(String)` so the literal is made text of its own
-                    // (ADR-282 D4). Recorded as a struct it was a type called
+                    // `Dir(fs::Path)` so the literal is made a name of its own
+                    // (ADR-282 D4, ADR-319 D2). Recorded as a struct it was a type called
                     // with no constructor, or, before the ledger said what
                     // `Dir` holds, a `&str` handed to `rustc`.
                     match variant.positional && !variant.holds.is_empty() {
@@ -11350,6 +11350,9 @@ impl<'a> Checker<'a> {
                     if self.owned_text_into_a_literal_binding(target, &found, &into, span) {
                         return Ty::Tuple(Vec::new());
                     }
+                    if self.a_name_in_text(&into, Some(value), span) {
+                        return Ty::Tuple(Vec::new());
+                    }
                     self.expect(&found, &into, *span, "assign", |found, want| {
                         format!("You're assigning `{found}` to something that holds `{want}`.")
                     });
@@ -11609,7 +11612,18 @@ impl<'a> Checker<'a> {
                     }
                 }
                 self.holes(expr, span);
-                Ty::named("String")
+                // **With a file's name in a hole it builds a name** (ADR-319
+                // D4): the parts are joined in the platform's encoding, and a
+                // position that asks for text refuses it at the hole
+                // (`a_name_in_text`).
+                match self
+                    .checked
+                    .path_holes
+                    .contains_key(&(span.at(), argument_shape(expr)))
+                {
+                    true => Ty::named("fs::Path"),
+                    false => Ty::named("String"),
+                }
             }
             // A character literal is kept as written too, so `'\q'` is the
             // same refusal one literal over.
@@ -11864,7 +11878,7 @@ impl<'a> Checker<'a> {
                             other
                         } else {
                             let arms = [(tail_of(then_branch), then), (tail_of(otherwise), other)];
-                            self.arms_meet_at_text(&arms)
+                            self.arms_meet_at_text(&arms, span)
                                 .or_else(|| self.arms_meet_at_null(&arms))
                                 .unwrap_or(Ty::Unknown)
                         }
@@ -12140,7 +12154,7 @@ impl<'a> Checker<'a> {
                 match result {
                     Some(ty) if agree => ty,
                     _ => self
-                        .arms_meet_at_text(&answered)
+                        .arms_meet_at_text(&answered, span)
                         .or_else(|| self.arms_meet_at_null(&answered))
                         .unwrap_or(Ty::Unknown),
                 }
@@ -15189,6 +15203,66 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// **`NK1201`, a file's name in an `f"…"` used as text** (ADR-319 D4):
+    /// a name holds the platform's bytes, which need not be text, so it has no
+    /// text form where the `f"…"` is text. Refused at the hole, the same at
+    /// every position; whether the name is text is the program's to say,
+    /// with `to_text()` or `display()`.
+    fn a_name_in_text(&mut self, want: &Ty, value: Option<&Expr>, span: &Span) -> bool {
+        let Some(literal @ Expr::LitInterpolated { parts }) = value else {
+            return false;
+        };
+        let wants_text = match want {
+            Ty::Nullable(inner) => {
+                matches!(&**inner, Ty::Named { name, .. } if name == "String" || name == "str")
+            }
+            Ty::Named { name, .. } => name == "String" || name == "str",
+            _ => false,
+        };
+        if !wants_text {
+            return false;
+        }
+        let Some(names) = self
+            .checked
+            .path_holes
+            .get(&(span.at(), argument_shape(literal)))
+            .cloned()
+        else {
+            return false;
+        };
+        let holes = crate::emit::interpolated_holes(parts);
+        for ((_, hole), is_a_name) in holes.iter().zip(names) {
+            if !is_a_name {
+                continue;
+            }
+            let written = written(self.parsed, hole);
+            let shown = match hole {
+                Expr::Variable(_) | Expr::Field { .. } => written.clone(),
+                _ => format!("({written})"),
+            };
+            self.checked.findings.push(Finding {
+                severity: Severity::Error,
+                span: *span,
+                code: "NK1201",
+                message: format!(
+                    "You can't put the file name `{written}` in an `f\"…\"` that is text."
+                ),
+                notes: vec![
+                    "A hole is written as its value's text, and a file name holds the \
+                     platform's bytes, which need not be text. Here the `f\"…\"` is used \
+                     as text."
+                        .to_string(),
+                ],
+                help: Some(format!(
+                    "Write `{{{shown}.to_text()}}` to use it as text where it is text, or \
+                     `{{{shown}.display()}}` to show it."
+                )),
+                labels: Vec::new(),
+            });
+        }
+        true
+    }
+
     /// **`NK1201`: a list, a map or a set in an `f"…"` hole.**
     ///
     /// A hole is written as its value's text, which the emitter asks the
@@ -16185,9 +16259,11 @@ impl<'a> Checker<'a> {
                 && let Some(given) = given.get(at)
                 && matches!(found, Ty::Named { name, .. } if name == "fs::Path")
             {
+                // An `f"…"` recorded which of its holes are names already.
                 self.checked
                     .path_holes
-                    .insert((span.at(), argument_shape(given)), vec![true]);
+                    .entry((span.at(), argument_shape(given)))
+                    .or_insert_with(|| vec![true]);
                 continue;
             }
             if let Some(value) = given.get(at) {
@@ -16250,6 +16326,9 @@ impl<'a> Checker<'a> {
                     }),
                     labels: Vec::new(),
                 });
+                continue;
+            }
+            if self.a_name_in_text(want, given.get(at), span) {
                 continue;
             }
             let (why, help) = match self.a_view_kept(
@@ -16341,6 +16420,9 @@ impl<'a> Checker<'a> {
         // `let`'s annotation, what a function hands back.
         if let Some(value) = value {
             self.number_asked(value, want, &span, true);
+        }
+        if self.a_name_in_text(want, value, &span) {
+            return;
         }
         // **A view into a position both kinds of text flow into** is borrowed
         // as it is (ADR-282 D14, ADR-282 D15): that is what the position is for.
@@ -21279,10 +21361,15 @@ impl<'a> Checker<'a> {
         }
     }
 
-    fn arms_meet_at_text(&mut self, arms: &[(Option<&Expr>, Ty)]) -> Option<Ty> {
+    fn arms_meet_at_text(&mut self, arms: &[(Option<&Expr>, Ty)], span: &Span) -> Option<Ty> {
         let text = Ty::named("String");
         if !arms.iter().any(|(_, ty)| *ty == text) {
             return None;
+        }
+        // **An arm beside text is text** (ADR-319 D4): an `f"…"` with a
+        // file's name in it, there, is refused at the hole.
+        for (arm, _) in arms {
+            self.a_name_in_text(&text, *arm, span);
         }
         let meets = arms
             .iter()

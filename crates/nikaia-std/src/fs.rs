@@ -154,10 +154,9 @@ pub mod path {
 pub enum Root {
     /// The name is resolved under this directory and may not leave it.
     ///
-    /// A `String` and not a `PathBuf`, because the caller is a Nikaia program
-    /// and text in this language is one type: `fs::Root::Dir(store)` hands over
-    /// what the program has.
-    Dir(String),
+    /// A name, in the platform's own bytes (ADR-319 D7); text stands where
+    /// one is asked, so `fs::Root::Dir("site")` is written as it always was.
+    Dir(Path),
     /// No check — the program answers for the name.
     ///
     /// It does not say *checked*. It says *I answer for this*, and it is visible
@@ -194,7 +193,7 @@ fn resolve(path: &FilePath, root: &Root) -> Result<std::path::PathBuf, crate::io
         return Ok(path.to_path_buf());
     };
     // The name is written out only for the refusal (ADR-263 D3).
-    let outside = || crate::io::IoError::Outside(path.display().to_string());
+    let outside = || crate::io::IoError::Outside(path.to_path_buf());
 
     // The root itself has to resolve. One that does not is not a directory a
     // name may be used under, and answering `Outside` for it is the fail-closed
@@ -267,7 +266,7 @@ fn climb(path: &FilePath) -> Option<std::path::PathBuf> {
 pub fn exists(path: impl AsRef<FilePath>, root: &Root) -> Result<bool, crate::io::IoError> {
     let asked = path.as_ref();
     let resolved = resolve(asked, root)?;
-    std::fs::exists(&resolved).map_err(|e| crate::io::IoError::of(e, &asked.display().to_string()))
+    std::fs::exists(&resolved).map_err(|e| crate::io::IoError::of(e, asked))
 }
 
 /// A file's bytes, addressable as text for as long as the value lives.
@@ -368,7 +367,7 @@ pub async fn map(path: impl AsRef<FilePath>, root: &Root) -> Result<Mapped, crat
     let asked = path.as_ref();
     let resolved = resolve(asked, root)?;
     let path = resolved.as_path();
-    let named = |e| crate::io::IoError::of(e, &asked.display().to_string());
+    let named = |e| crate::io::IoError::of(e, asked);
     let file = std::fs::File::open(path).map_err(named)?;
     if file.metadata().map_err(named)?.len() == 0 {
         return Ok(Mapped {
@@ -425,7 +424,7 @@ pub async fn read_to_string(
     let resolved = resolve(asked, root)?;
     let bytes = crate::rt::io::reading(&resolved)
         .await
-        .map_err(|e| crate::io::IoError::of(e, &asked.display().to_string()))?;
+        .map_err(|e| crate::io::IoError::of(e, asked))?;
     text_named(bytes, || asked.display().to_string())
 }
 
@@ -505,7 +504,7 @@ pub async fn read(
     crate::rt::io::reading(&resolved)
         .await
         .map(crate::bytes::Bytes::from)
-        .map_err(|e| crate::io::IoError::of(e, &asked.display().to_string()))
+        .map_err(|e| crate::io::IoError::of(e, asked))
 }
 
 /// A whole file, written.
@@ -557,7 +556,7 @@ pub async fn write(
     crate::rt::io::writing(&resolved, data.as_ref(), append, create)
         .await
         .map(|_| ())
-        .map_err(|e| crate::io::IoError::of(e, &asked.display().to_string()))
+        .map_err(|e| crate::io::IoError::of(e, asked))
 }
 
 /// Where `nikaia test` puts a test's own directory, for [`scratch`]
@@ -591,9 +590,8 @@ pub fn scratch() -> Result<Root, crate::io::IoError> {
         CALLS.fetch_add(1, Ordering::Relaxed)
     );
     let dir = under.join(name);
-    std::fs::create_dir_all(&dir)
-        .map_err(|e| crate::io::IoError::of(e, &dir.display().to_string()))?;
-    Ok(Root::Dir(dir.display().to_string()))
+    std::fs::create_dir_all(&dir).map_err(|e| crate::io::IoError::of(e, &dir))?;
+    Ok(Root::Dir(dir))
 }
 
 /// **A file written through a buffer, flushed when it is done with**
@@ -697,7 +695,7 @@ pub async fn walk(
     let base = match root {
         Root::Dir(dir) => Some(
             std::fs::canonicalize(FilePath::new(dir))
-                .map_err(|_| crate::io::IoError::Outside(asked.clone()))?,
+                .map_err(|_| crate::io::IoError::Outside(path.as_ref().to_path_buf()))?,
         ),
         Root::Anywhere => None,
     };
@@ -705,7 +703,7 @@ pub async fn walk(
     let mut found = Vec::new();
     // The directory asked for has to be readable; one under it that is not is
     // left out, as a name outside the root is.
-    std::fs::read_dir(&start).map_err(|e| crate::io::IoError::of(e, &asked))?;
+    std::fs::read_dir(&start).map_err(|e| crate::io::IoError::of(e, path.as_ref()))?;
     let mut pending = vec![(start, String::new())];
     while let Some((dir, prefix)) = pending.pop() {
         let Ok(real) = std::fs::canonicalize(&dir) else {
@@ -1029,7 +1027,7 @@ mod tests {
         std::fs::write(dir.join("outside.txt"), "secret").expect("write");
         std::fs::write(sibling.join("near.txt"), "near").expect("write");
 
-        let root = super::Root::Dir(store.display().to_string());
+        let root = super::Root::Dir(store.to_path_buf());
         let inside = |name: &str| super::resolve(FilePath::new(name), &root).is_ok();
 
         assert!(inside("ok.txt"), "a plain name under the root");
@@ -1075,7 +1073,7 @@ mod tests {
 
         // A root that does not resolve is not a directory a name may be used
         // under, and the answer is the fail-closed one (ADR-010 D1).
-        let nowhere = super::Root::Dir(dir.join("no-such-store").display().to_string());
+        let nowhere = super::Root::Dir(dir.join("no-such-store").to_path_buf());
         assert!(super::resolve(FilePath::new("ok.txt"), &nowhere).is_err());
 
         // **`Anywhere` resolves nothing**: the name goes over exactly as written.
@@ -1095,7 +1093,7 @@ mod tests {
         let store = dir.join("store");
         std::fs::create_dir_all(&store).expect("scratch");
         std::fs::write(dir.join("outside.txt"), "secret").expect("write");
-        let root = super::Root::Dir(store.display().to_string());
+        let root = super::Root::Dir(store.to_path_buf());
 
         crate::rt::exec::block_on(async {
             let refused = super::read_to_string("../outside.txt", &root)
@@ -1161,7 +1159,7 @@ mod walking {
             std::os::unix::fs::symlink(&tree, tree.join("src/up")).expect("link");
         }
 
-        let inside = Root::Dir(tree.display().to_string());
+        let inside = Root::Dir(tree.to_path_buf());
         let found = crate::rt::exec::block_on(walk(".", &inside)).expect("walked");
         assert_eq!(found, ["b.rs", "src/a.rs", "src/deep/c.txt"]);
 
@@ -1204,7 +1202,7 @@ mod existing {
         std::fs::create_dir_all(&store).expect("scratch");
         std::fs::write(store.join("here.txt"), "").expect("write");
         std::fs::write(dir.join("x"), "").expect("write");
-        let inside = Root::Dir(store.display().to_string());
+        let inside = Root::Dir(store.to_path_buf());
 
         assert!(matches!(exists("here.txt", &inside), Ok(true)));
         assert!(matches!(exists("gone.txt", &inside), Ok(false)));

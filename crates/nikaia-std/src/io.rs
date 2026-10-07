@@ -80,10 +80,11 @@ const STDIN: &str = "standard input";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum IoError {
-    /// It is not there. The payload is what was looked for.
-    NotFound(String),
+    /// It is not there. The payload is what was looked for, a file's name in
+    /// the platform's own bytes (ADR-319 D7).
+    NotFound(crate::fs::Path),
     /// It is there and this program may not have it.
-    PermissionDenied(String),
+    PermissionDenied(crate::fs::Path),
     /// The bytes are not text, and text in this language is UTF-8.
     NotText(String),
     /// **The name would leave the root it was given**
@@ -100,7 +101,7 @@ pub enum IoError {
     /// D3's *one case beside not found among the errors the entry already names*
     /// asks for: every path-taking entry already `throws = ["io::IoError"]`, so
     /// the root check adds no member to any program's failure set.
-    Outside(String),
+    Outside(crate::fs::Path),
     /// Everything else, as the operating system said it.
     Other(String),
 }
@@ -112,23 +113,26 @@ impl IoError {
     /// `what` is the path, or the name of the stream: an operating system's
     /// error does not carry it, and *not found* without the thing that was not
     /// found is the message D3 calls a round trip to the user.
-    pub fn of(error: std::io::Error, what: &str) -> IoError {
+    ///
+    /// A name keeps its bytes where the variant carries one; a message shows
+    /// it (ADR-319 D6, D7).
+    pub fn of(error: std::io::Error, what: impl AsRef<std::ffi::OsStr>) -> IoError {
+        let what = std::path::Path::new(what.as_ref());
         match error.kind() {
-            std::io::ErrorKind::NotFound => IoError::NotFound(what.to_string()),
-            std::io::ErrorKind::PermissionDenied => IoError::PermissionDenied(what.to_string()),
-            std::io::ErrorKind::InvalidData => IoError::NotText(what.to_string()),
-            _ => IoError::Other(format!("{what}: {error}")),
+            std::io::ErrorKind::NotFound => IoError::NotFound(what.to_path_buf()),
+            std::io::ErrorKind::PermissionDenied => IoError::PermissionDenied(what.to_path_buf()),
+            std::io::ErrorKind::InvalidData => IoError::NotText(what.display().to_string()),
+            _ => IoError::Other(format!("{}: {error}", what.display())),
         }
     }
 
-    /// What was looked for, where the variant names one.
-    pub fn what(&self) -> &str {
+    /// What was looked for, shown as text.
+    pub fn what(&self) -> std::borrow::Cow<'_, str> {
         match self {
-            IoError::NotFound(what)
-            | IoError::PermissionDenied(what)
-            | IoError::NotText(what)
-            | IoError::Outside(what)
-            | IoError::Other(what) => what,
+            IoError::NotFound(name) | IoError::PermissionDenied(name) | IoError::Outside(name) => {
+                name.to_string_lossy()
+            }
+            IoError::NotText(what) | IoError::Other(what) => what.into(),
         }
     }
 }
@@ -136,11 +140,17 @@ impl IoError {
 impl std::fmt::Display for IoError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            IoError::NotFound(what) => write!(f, "no such file or directory: {what}"),
-            IoError::PermissionDenied(what) => write!(f, "permission denied: {what}"),
+            IoError::NotFound(name) => {
+                write!(f, "no such file or directory: {}", name.display())
+            }
+            IoError::PermissionDenied(name) => write!(f, "permission denied: {}", name.display()),
             IoError::NotText(what) => write!(f, "not valid UTF-8: {what}"),
-            IoError::Outside(what) => {
-                write!(f, "the name leaves the root it was given: {what}")
+            IoError::Outside(name) => {
+                write!(
+                    f,
+                    "the name leaves the root it was given: {}",
+                    name.display()
+                )
             }
             IoError::Other(what) => f.write_str(what),
         }

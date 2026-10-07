@@ -412,7 +412,7 @@ fn a_failure_from_std_is_matched_by_variant() {
          fn main() {\n\
          \x20   let text = load(\"nope.txt\") catch {\n\
          \x20       match error {\n\
-         \x20           io::IoError::NotFound(p) => f\"no file: {p}\"\n\
+         \x20           io::IoError::NotFound(p) => f\"no file: {p.display()}\"\n\
          \x20           else => \"other\".clone()\n\
          \x20       }\n\
          \x20   }\n\

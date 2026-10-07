@@ -4,6 +4,26 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.604] — 2026-10-07
+
+**A file's name in an `f"…"` used as text is `NK1201`; `IoError` and
+`fs::Root::Dir` carry `fs::Path`** (ADR-319 D4, D7, #449 steps 5 and 8).
+- An `f"…"` with an `fs::Path` in a hole is a name. Where its use asks for
+  text - a `let`, an argument, an assignment, a `return`, a field, a `match`
+  or `if` arm beside text - it is `NK1201` at the hole, with
+  `{p.to_text()}` and `{p.display()}` as the ways out. It used to pass the
+  checker and fail in `rustc`. A use that asks for a name, and printing,
+  are unchanged.
+- `io::IoError::NotFound`, `PermissionDenied` and `Outside` carry an
+  `fs::Path`, the platform's bytes; `NotText` and `Other` stay messages.
+  `fs::Root::Dir` holds an `fs::Path`; `fs::Root::Dir("site")` is written as
+  before. `std` hands an OS failure's name over as it was asked, not as its
+  display.
+- Tests: `file_paths.rs::a_name_in_a_text_interpolation_is_refused_at_the_hole`,
+  `a_name_in_an_interpolation_that_builds_a_name_is_not_refused`,
+  `an_io_errors_name_is_a_file_name`; `error_types.rs` and `error_sums.rs`
+  write `{p.display()}`.
+
 ## [0.0.603] — 2026-10-07
 
 **What fallible collections cost: measured** (ADR-327 D4, D5, #490 step 1).

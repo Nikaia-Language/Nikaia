@@ -302,3 +302,91 @@ fn a_name_is_printed_as_its_bytes() {
     );
     assert_eq!(String::from_utf8_lossy(&run.stderr), "data.csv!\n");
 }
+
+/// The findings a source gets, with the code and the help of each.
+fn refusals(source: &str) -> Vec<(String, String)> {
+    let parsed = parse_to_ast(source).expect("the source parses");
+    common::checked(&parsed, &common::infer(&parsed), &library())
+        .findings
+        .into_iter()
+        .map(|f| (f.code.to_string(), f.help.unwrap_or_default()))
+        .collect()
+}
+
+/// **A name in an `f"…"` used as text is `NK1201`, at the hole** (ADR-319 D4):
+/// in a `let`, an argument, an assignment, a `return` and a `match` arm beside
+/// text, each with both ways out in the help.
+#[test]
+fn a_name_in_a_text_interpolation_is_refused_at_the_hole() {
+    for (body, what) in [
+        ("    let s: String = f\"name {p}\"\n", "a let"),
+        ("    let s = take(f\"name {p}\")\n", "an argument"),
+        (
+            "    let mut s = \"\"\n    s = f\"name {p}\"\n",
+            "an assignment",
+        ),
+        (
+            "    let s = match 1 {\n        1 => f\"name {p}\"\n        else => \"other\".clone()\n    }\n",
+            "a match arm",
+        ),
+    ] {
+        let source = format!(
+            "use std::fs\n\nfn take(s: String) -> String {{\n    return s\n}}\n\n\
+             fn main() {{\n    let p: fs::Path = \"a.txt\"\n{body}}}\n"
+        );
+        let found = refusals(&source);
+        let hit = found.iter().find(|(code, _)| code == "NK1201");
+        let (_, help) = hit.unwrap_or_else(|| panic!("{what}: {found:#?}"));
+        assert!(help.contains("{p.to_text()}"), "{what}: {help}");
+        assert!(help.contains("{p.display()}"), "{what}: {help}");
+        assert!(
+            !found
+                .iter()
+                .any(|(code, _)| code == "NK1103" || code == "NK1102"),
+            "{what}: {found:#?}"
+        );
+    }
+    let returned = "use std::fs\n\nfn named(p: ref fs::Path) -> String {\n    return f\"name {p}\"\n}\n\nfn main() {\n}\n";
+    assert!(
+        refusals(returned).iter().any(|(code, _)| code == "NK1201"),
+        "{:#?}",
+        refusals(returned)
+    );
+}
+
+/// **A name in an `f"…"` that builds a name, or one that is printed, is
+/// not refused** (D4): the use asks for a name, or writes its bytes.
+#[test]
+fn a_name_in_an_interpolation_that_builds_a_name_is_not_refused() {
+    let source = "use std::fs\n\nfn main() {\n\
+                  \x20   let p: fs::Path = \"a.txt\"\n\
+                  \x20   let bak: fs::Path = f\"{p}.bak\"\n\
+                  \x20   println(f\"found: {p} and {bak}\")\n\
+                  \x20   let shown: String = f\"name {p.display()}\"\n\
+                  \x20   println(shown)\n\
+                  }\n";
+    assert!(refusals(source).is_empty(), "{:#?}", refusals(source));
+}
+
+/// **`IoError`'s name variants carry an `fs::Path`, and so does
+/// `fs::Root::Dir`** (ADR-319 D7): a handler that writes the name into text
+/// says how, and `display()` shows it.
+#[test]
+fn an_io_errors_name_is_a_file_name() {
+    let refused = "use std::fs\nuse std::io\n\nfn main() {\n\
+                   \x20   let text = fs::read_to_string(\"nope.txt\", fs::Root::Dir(\".\")) catch {\n\
+                   \x20       match error {\n\
+                   \x20           io::IoError::NotFound(p) => f\"no file: {p}\"\n\
+                   \x20           else => \"other\".clone()\n\
+                   \x20       }\n\
+                   \x20   }\n\
+                   \x20   println(text)\n\
+                   }\n";
+    assert!(
+        refusals(refused).iter().any(|(code, _)| code == "NK1201"),
+        "{:#?}",
+        refusals(refused)
+    );
+    let shown = refused.replace("{p}", "{p.display()}");
+    assert!(refusals(&shown).is_empty(), "{:#?}", refusals(&shown));
+}

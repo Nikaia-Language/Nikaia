@@ -151,7 +151,7 @@ fn a_librarys_member_is_matched_by_variant() {
              \x20   let text = load(\"nope.txt\") catch {{\n\
              \x20       match error {{\n\
              \x20           ConfigError::Empty(p) => f\"empty: {{p}}\"\n\
-             \x20           io::IoError::NotFound(p) => f\"missing: {{p}}\"\n\
+             \x20           io::IoError::NotFound(p) => f\"missing: {{p.display()}}\"\n\
              \x20           else => \"other\".clone()\n\
              \x20       }}\n\
              \x20   }}\n\
@@ -256,7 +256,7 @@ fn a_match_over_two_error_types_needs_an_else() {
          \x20   let text = load(\"x\") catch {{\n\
          \x20       match error {{\n\
          \x20           ConfigError::Empty(p) => f\"empty: {{p}}\"\n\
-         \x20           io::IoError::NotFound(p) => f\"missing: {{p}}\"\n\
+         \x20           io::IoError::NotFound(p) => f\"missing: {{p.display()}}\"\n\
          \x20       }}\n\
          \x20   }}\n\
          \x20   println(f\"{{text}}\")\n\
