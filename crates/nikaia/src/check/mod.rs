@@ -1387,6 +1387,7 @@ fn walked<'a>(
         stored_frames: Vec::new(),
         inside_an_action: None,
         rule_results: BTreeMap::new(),
+        pushed_into: None,
         inside_a_sync_function: None,
         std_in_scope: parsed
             .program
@@ -3625,6 +3626,9 @@ struct Checker<'a> {
     /// **Each rule of the grammar being walked, with the type it declares**
     /// (#500): what a binding `t:term` holds is `term`'s result.
     rule_results: BTreeMap<String, Ty>,
+    /// **The name of an empty list a `push` is being walked on** (#523): its
+    /// first use gives it its element type.
+    pushed_into: Option<String>,
     /// The name of the enclosing function, where its declaration **writes**
     /// `sync` ([ADR-288](../../docs/specification/adr/adr-288.md) D4: an
     /// assertion is checked, never overwritten).
@@ -9388,6 +9392,28 @@ impl<'a> Checker<'a> {
             span,
         );
         self.in_parallel = outer_parallel;
+        // **The element type an empty list's first `push` gives it** (#523):
+        // `let mut rows = Vec()` then `rows.push((fragment, tally.n))` makes
+        // `rows` a list of what was pushed, for every read after.
+        if entry == "push"
+            && let Some(name) = self.pushed_into.take()
+            && let [pushed] = found.as_slice()
+            && !pushed.is_unknown()
+        {
+            let element = value_of_a_copy(pushed.clone());
+            if let Some(local) = self
+                .scope
+                .iter_mut()
+                .rev()
+                .find_map(|frame| frame.iter_mut().rev().find(|local| local.name == name))
+            {
+                local.ty = Ty::Named {
+                    name: "Vec".to_string(),
+                    args: vec![element],
+                    view: false,
+                };
+            }
+        }
         let paused_here = std::mem::replace(&mut self.paused_args, outer_paused);
         let pausing_lambda = args.iter().find(|arg| {
             matches!(arg, Expr::Closure { .. }) && paused_here.contains(&argument_shape(arg))
@@ -12396,6 +12422,19 @@ impl<'a> Checker<'a> {
                 // is what says it has to be a `$T`. Found here by name, and
                 // confirmed to be the door once the receiver's type is in hand
                 // - a `set` on something that is not a lock takes this back.
+                // **An empty list's first `push`** (#523, ADR-135 D2): the
+                // name is held for `call_on`, which has the argument's type.
+                self.pushed_into = match (&**receiver, self.parsed.text(*method), args.len()) {
+                    (Expr::Variable(name), "push", 1)
+                        if self.binding(self.parsed.text(*name)).is_some_and(|local| {
+                            matches!(&local.ty, Ty::Named { name, args, .. }
+                                if name == "Vec" && matches!(args.as_slice(), [] | [Ty::Unknown]))
+                        }) =>
+                    {
+                        Some(self.parsed.text(*name).to_string())
+                    }
+                    _ => None,
+                };
                 let witness = match self.parsed.text(*method) == "set" {
                     true => config
                         .iter()
@@ -25474,6 +25513,22 @@ impl<'a> Checker<'a> {
     /// name. Nested patterns and or-patterns are left untyped, which leaves
     /// their names bound as they always were.
     fn pattern_parts(&self, pattern: &MatchPattern, on: &Ty) -> BTreeMap<String, Ty> {
+        // **A tuple's parts are the types at their positions** (#522):
+        // `(Op::Times, n)` over an `(Op, i64)` binds `n` as the `i64`.
+        if let (Ty::Tuple(types), MatchPattern::Tuple { path, parts }) = (on, pattern)
+            && path.is_empty()
+        {
+            return parts
+                .iter()
+                .zip(types)
+                .filter_map(|(part, ty)| match part {
+                    MatchPattern::Path(one) if one.len() == 1 => {
+                        Some((self.parsed.text(one[0]).to_string(), ty.clone()))
+                    }
+                    _ => None,
+                })
+                .collect();
+        }
         let Ty::Named { name: owner, .. } = on else {
             return BTreeMap::new();
         };

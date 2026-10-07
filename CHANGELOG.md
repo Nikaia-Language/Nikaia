@@ -4,6 +4,15 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.625] — 2026-10-07
+
+**A tuple pattern's parts and an empty list's elements are typed** (#522, #523).
+- `(Op::Times, n) => …` over an `(Op, i64)` binds `n` as the `i64`, as a
+  variant's parts were already bound.
+- `let mut rows = Vec()` followed by `rows.push((fragment, n))` makes `rows`
+  a list of what was pushed, for every read after (ADR-135 D2's first use).
+  Its elements were unknown.
+
 ## [0.0.624] — 2026-10-07
 
 **`sort_by_key` hands back nothing, and its key is the lambda's result** (#497).

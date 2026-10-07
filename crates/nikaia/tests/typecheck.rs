@@ -1841,3 +1841,50 @@ fn a_cast_to_a_type_the_page_offers_is_accepted() {
         );
     }
 }
+
+/// **A `match` arm's tuple pattern binds its parts with the tuple's types**
+/// (#522): `(Op::Times, n)` over an `(Op, i64)` makes `n` the `i64`.
+#[test]
+fn a_tuple_pattern_binds_its_parts_typed() {
+    let found = findings(
+        "enum Op { Times, Divide }\n\
+         fn f(step: (Op, i64)) -> i64 {\n\
+         \x20   return match step {\n\
+         \x20       (Op::Times, n) => {\n\
+         \x20           let b: bool = n\n\
+         \x20           1\n\
+         \x20       }\n\
+         \x20       (Op::Divide, n) => n\n\
+         \x20   }\n\
+         }\n",
+    );
+    assert!(
+        found
+            .iter()
+            .any(|f| f.code == "NK1103" && f.message.contains("`i64`")),
+        "{found:#?}"
+    );
+}
+
+/// **An empty list's first `push` gives it its element type** (#523,
+/// ADR-135 D2): `rows` below is a list of `(ref String, i64)` for every read
+/// after the push.
+#[test]
+fn an_empty_list_takes_its_element_type_from_its_first_push() {
+    let found = findings(
+        "fn main() {\n\
+         \x20   let n: i64 = 2\n\
+         \x20   let mut rows = Vec()\n\
+         \x20   rows.push((\"a\", n))\n\
+         \x20   for row in rows {\n\
+         \x20       let b: bool = row.1\n\
+         \x20   }\n\
+         }\n",
+    );
+    assert!(
+        found
+            .iter()
+            .any(|f| f.code == "NK1103" && f.message.contains("`i64`")),
+        "{found:#?}"
+    );
+}
