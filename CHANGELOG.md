@@ -40,6 +40,13 @@ enum** (#505 step 1 for `html`, #507 step 1).
   column, as `Op::Times` is an `Op`. A case that holds something is its
   constructor and is not covered here.
 
+## [0.0.611] — 2026-10-07
+
+**A view or a shared handle has the kind of what it reaches; `T::access` says how** (ADR-330 D8, #121).
+- `ref A`, `Shared[A]`, `SharedMut[A]` have `A`'s kind; `T::access` is `Owned`,
+  `Ref`, `Shared` or `SharedMut`. Replaces the kinds `Ref`, `Shared`,
+  `SharedMut` of 0.0.610. `A?` stays the kind `Maybe(A)`.
+
 ## [0.0.610] — 2026-10-07
 
 **Arrays, tuples, `scalar`, views and shared handles have a kind** (ADR-330 D3, #121).

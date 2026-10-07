@@ -270,7 +270,7 @@ The argument is a type the call names or one the body holds: a parameter,
 belongs, is refused with `NK1230`. The function is emitted once per type, as
 any shape walk is.
 
-A type answers `T::kind`, its kind; `T::fields` and `T::variants`; `T::doc`,
+A type answers `T::kind`, its kind; `T::access`, how it is reached; `T::fields` and `T::variants`; `T::doc`,
 the `///` lines before its declaration; and `T::name`, its name as the
 declaration writes it. `T::kind` is a `meta::Type`, whose parts are types:
 
@@ -280,13 +280,16 @@ declaration writes it. `T::kind` is a `meta::Type`, whose parts are types:
 | `String`, `Bytes`, `scalar` | `Text`, `Bytes`, `Scalar` |
 | `A?`, `Vec[A]`, `HashMap[K, V]` | `Maybe(A)`, `List(A)`, `Map(K, V)` |
 | `Array[A, N]`, `(A, B, …)` | `Array(A, N)`, `Tuple(parts)`, the parts walked as `T::fields` is |
-| `ref A`, `Shared[A]`, `SharedMut[A]` | `Ref(A)`, `Shared(A)`, `SharedMut(A)` |
 | a `struct`, an `enum` | `Struct(T)`, `Enum(T)` |
 | a type whose inside the program does not see | `Opaque(T)` |
 
 A type of `std` has the kind of what it is; it is `Opaque` only where `std`
 keeps its inside its own. A type of a Rust crate and a C `opaque type` are
 `Opaque`. `T::kind` of a function type is refused with `NK1232`.
+
+`ref A`, `Shared[A]` and `SharedMut[A]` have the kind of `A`. How a value is
+reached is `T::access`, a `meta::Access`: `Owned`, `Ref`, `Shared` or
+`SharedMut`. `A?` is a kind, `Maybe(A)`.
 
 **A `match` on a kind checks each arm under the kind its pattern names.** In
 `Struct(s)`, `s` is a type bound by `Struct`, so `s::fields` is reached; in
