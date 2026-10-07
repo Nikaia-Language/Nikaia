@@ -213,8 +213,9 @@ fn a_reflected_field_answers_its_default() {
     assert_eq!(run_file("attributes-default", source), "size 50\nstep 0\n");
 }
 
-/// Reading something that is no attribute is `NK1235`; an argument computed
-/// rather than written is not recorded yet, and is said to be (`NK1127`).
+/// Reading something that is no attribute is `NK1235`; an argument that
+/// cannot run while the program is built is refused as a default is
+/// (`NK1152`).
 #[test]
 fn what_cannot_be_read_is_refused() {
     let read = with(
@@ -226,8 +227,15 @@ fn what_cannot_be_read_is_refused() {
          }",
     );
     assert_eq!(codes(&read), vec!["NK1235"]);
-    let computed = with("struct User {\n    @Name(\"a\" + \"b\")\n    name: String,\n}");
-    assert_eq!(codes(&computed), vec!["NK1127"]);
+    let loud = with(
+        "fn loud() -> String {\n\
+         \x20   println(\"side effect\")\n\
+         \x20   return \"x\"\n\
+         }\n\
+         \n\
+         struct User {\n    @Name(loud())\n    name: String,\n}",
+    );
+    assert_eq!(codes(&loud), vec!["NK1152"]);
 }
 
 /// **D8: the ledger carries the mark and each field's attributes**, as the
@@ -371,4 +379,35 @@ fn a_types_and_a_variants_attributes_are_read() {
     );
     let read = Ledger::parse(&written).expect("the ledger reads back");
     assert_eq!(read.render(), written);
+}
+
+/// **D1: an argument is any build-time value**, computed once where it is
+/// written, and the ledger records what it came to.
+#[test]
+fn a_computed_argument_is_read_as_its_value() {
+    let source = format!(
+        "{JSON}\n\
+         comptime PREFIX = \"created\"\n\
+         \n\
+         fn joined(a: ref String, b: ref String) -> String {{\n\
+         \x20   return a + b\n\
+         }}\n\
+         \n\
+         struct User {{\n\
+         \x20   @Name(joined(PREFIX, \"At\"))\n\
+         \x20   created_at: i64,\n\
+         }}\n\
+         \n\
+         fn wire[T: Struct](value: T) {{\n\
+         \x20   for field in T::fields {{\n\
+         \x20       println(field.attribute(Name)?.value ?? field.name)\n\
+         \x20   }}\n\
+         }}\n\
+         \n\
+         fn main() {{\n\
+         \x20   wire(User {{ created_at: 1 }})\n\
+         }}\n"
+    );
+    assert!(codes(&source).is_empty(), "{:?}", codes(&source));
+    assert_eq!(run_file("attributes-computed", &source), "createdAt\n");
 }

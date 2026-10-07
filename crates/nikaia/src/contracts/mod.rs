@@ -1233,7 +1233,7 @@ fn attribute_values(ledger: &mut Ledger, units: &[&Parsed], library: &Ledger) {
                 if named == crate::check::attributes::MARK {
                     return None;
                 }
-                attribute_value(ledger, library, parsed, &named, attribute)
+                attribute_value(ledger, library, units, parsed, &named, attribute)
             })
             .collect()
     };
@@ -1299,6 +1299,7 @@ fn type_named<'l>(ledger: &'l Ledger, library: &'l Ledger, name: &str) -> Option
 fn attribute_value(
     ledger: &Ledger,
     library: &Ledger,
+    units: &[&Parsed],
     parsed: &Parsed,
     name: &str,
     attribute: &crate::ast::Attribute,
@@ -1308,13 +1309,22 @@ fn attribute_value(
     let mut written = Vec::with_capacity(fields.len());
     for field in fields {
         let value = match field.default.is_empty() {
-            true => argument_text(ledger, library, parsed, &field.ty, positional.next()?)?,
+            true => argument_text(
+                ledger,
+                library,
+                units,
+                parsed,
+                &field.ty,
+                positional.next()?,
+            )?,
             false => match attribute
                 .config
                 .iter()
                 .find(|option| parsed.text(option.name) == field.name)
             {
-                Some(option) => argument_text(ledger, library, parsed, &field.ty, &option.value)?,
+                Some(option) => {
+                    argument_text(ledger, library, units, parsed, &field.ty, &option.value)?
+                }
                 None => field.default.clone(),
             },
         };
@@ -1324,10 +1334,12 @@ fn attribute_value(
 }
 
 /// An attribute's argument as a literal: a literal's own text, a variant of
-/// the field's `enum` by its name alone (D3) or whole.
+/// the field's `enum` by its name alone (D3) or whole, or the value anything
+/// else computes to at build time, as an option's default does (D1).
 fn argument_text(
     ledger: &Ledger,
     library: &Ledger,
+    units: &[&Parsed],
     parsed: &Parsed,
     ty: &ty::Ty,
     argument: &Expr,
@@ -1335,27 +1347,25 @@ fn argument_text(
     if a_literal(argument) {
         return Some(nikaia_std::tools::declared::default_text(argument));
     }
-    match argument {
-        Expr::Variable(word) => {
-            let ty::Ty::Named { name, .. } = ty else {
-                return None;
-            };
-            let word = parsed.text(*word);
-            let variant = type_named(ledger, library, name)?
-                .variants
+    if let Expr::Variable(word) = argument
+        && let ty::Ty::Named { name, .. } = ty
+        && let Some(variant) = type_named(ledger, library, name).and_then(|c| {
+            c.variants
                 .iter()
-                .find(|v| v.name.eq_ignore_ascii_case(word))?;
-            Some(format!("{name}::{}", variant.name))
-        }
-        Expr::Path(segments) => Some(
-            segments
-                .iter()
-                .map(|s| parsed.text(*s))
-                .collect::<Vec<_>>()
-                .join("::"),
-        ),
-        _ => None,
+                .find(|v| v.name.eq_ignore_ascii_case(parsed.text(*word)))
+        })
+    {
+        return Some(format!("{name}::{}", variant.name));
     }
+    computed_literal(
+        units,
+        parsed,
+        "an attribute's argument",
+        argument,
+        ty,
+        ledger,
+        library,
+    )
 }
 
 /// A literal, as the grammar once required a default to be: its text is the
@@ -1391,10 +1401,7 @@ fn evaluate_defaults(
     if defaults.is_empty() {
         return;
     }
-    let reads = crate::assets::Reads::none();
     let own = ledger.clone();
-    let nothing = |_: &str| -> Option<crate::build_time::Value> { None };
-    let workshop = crate::comptime_run::defaults_workshop();
     for computed in defaults {
         // **Read where a run's sub-program is inferred** (#468): the program's
         // ledger has already computed it.
@@ -1410,49 +1417,68 @@ fn evaluate_defaults(
             }
             continue;
         }
-        // **Compiled where the build has a workshop** (ADR-321 D1), as the
-        // checker computes the same default; the interpreter answers a read
-        // with none.
-        let compiled = workshop.as_ref().and_then(|workshop| {
-            let here = units
-                .iter()
-                .position(|unit| std::ptr::eq(*unit, computed.parsed))?;
-            let ty = crate::comptime_run::as_built(crate::contracts::ty::Ty::from_ast(
-                computed.parsed,
-                computed.ty,
-            ));
-            match crate::comptime_run::compute(
-                units,
-                here,
-                &computed.option,
-                computed.default,
-                &ty,
-                &nothing,
-                library,
-                workshop,
-                workshop.bounds(),
-                None,
-            ) {
-                crate::comptime_run::Computed::Value(value) => Some(Some(value)),
-                crate::comptime_run::Computed::NotHere => None,
-                _ => Some(None),
-            }
-        });
-        let value = match compiled {
-            Some(value) => value,
-            None => {
-                crate::build_time::BuildTime::new(computed.parsed, units, &own, &reads, &nothing)
-                    .evaluate(computed.default)
-                    .ok()
-            }
-        };
-        let Some(text) = value.and_then(|v| literal_of(&v)) else {
+        let ty = crate::contracts::ty::Ty::from_ast(computed.parsed, computed.ty);
+        let Some(text) = computed_literal(
+            units,
+            computed.parsed,
+            &computed.option,
+            computed.default,
+            &ty,
+            &own,
+            library,
+        ) else {
             continue;
         };
         if let Some(slot) = default_slot(ledger, computed) {
             *slot = text;
         }
     }
+}
+
+/// **A build-time value as the literal the ledger records** (ADR-318 D1-D3):
+/// compiled where the build has a workshop (ADR-321 D1), as the checker
+/// computes the same value; the interpreter answers a read with none.
+/// `None` where it cannot be computed or has no literal - the checker
+/// refuses it there.
+fn computed_literal(
+    units: &[&Parsed],
+    parsed: &Parsed,
+    name: &str,
+    expr: &Expr,
+    ty: &ty::Ty,
+    own: &Ledger,
+    library: &Ledger,
+) -> Option<String> {
+    let reads = crate::assets::Reads::none();
+    let nothing = |_: &str| -> Option<crate::build_time::Value> { None };
+    let workshop = crate::comptime_run::defaults_workshop();
+    let compiled = workshop.as_ref().and_then(|workshop| {
+        let here = units.iter().position(|unit| std::ptr::eq(*unit, parsed))?;
+        let ty = crate::comptime_run::as_built(ty.clone());
+        match crate::comptime_run::compute(
+            units,
+            here,
+            name,
+            expr,
+            &ty,
+            &nothing,
+            library,
+            workshop,
+            workshop.bounds(),
+            None,
+        ) {
+            crate::comptime_run::Computed::Value(value) => Some(Some(value)),
+            crate::comptime_run::Computed::NotHere => None,
+            _ => Some(None),
+        }
+    });
+    let value = match compiled {
+        Some(value) => value,
+        None => crate::build_time::BuildTime::new(parsed, units, own, &reads, &nothing)
+            .evaluate(expr)
+            .ok(),
+    };
+    value.and_then(|v| literal_of(&v))
 }
 
 /// A value as the literal both languages spell it the same way, where it has

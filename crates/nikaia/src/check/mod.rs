@@ -1862,6 +1862,14 @@ fn left_out_text(missing: &[String]) -> String {
         .join(", ")
 }
 
+/// What a computed build-time value stands for, which its refusal names.
+#[derive(Clone, Copy)]
+pub(crate) enum Computing {
+    Option,
+    Field,
+    Attribute,
+}
+
 /// A field's default as the checker keeps it (ADR-331 D5): a literal's text,
 /// or a mark that one is there, which is all a literal leaving the field out
 /// asks. The value a computed one has is the ledger's.
@@ -7530,13 +7538,17 @@ impl<'a> Checker<'a> {
         field: bool,
     ) {
         let declared = Ty::from_ast(self.parsed, ty);
-        self.computed_value(name, &declared, default, span, field);
+        let kind = match field {
+            true => Computing::Field,
+            false => Computing::Option,
+        };
+        self.computed_value(name, &declared, default, span, kind);
     }
 
     /// [`Checker::computed_default`] over a type already read, which an
     /// attribute's argument has: its field may be another package's
     /// (ADR-331 D4).
-    fn computed_value(&mut self, name: &str, ty: &Ty, default: &Expr, span: Span, field: bool) {
+    fn computed_value(&mut self, name: &str, ty: &Ty, default: &Expr, span: Span, kind: Computing) {
         if crate::contracts::a_literal(default) {
             return;
         }
@@ -7599,27 +7611,36 @@ impl<'a> Checker<'a> {
             span,
             message,
             notes: vec![
-                match field {
-                    true => {
-                        "A field's default is computed once, where the struct is declared, \
-                             as a `comptime` is."
+                match kind {
+                    Computing::Field => {
+                        "A field's default is computed once, where the struct is declared, as \
+                         a `comptime` is."
                     }
-                    false => {
-                        "An option's default is computed once, where the function is \
-                              declared, as a `comptime` is."
+                    Computing::Option => {
+                        "An option's default is computed once, where the function is declared, \
+                         as a `comptime` is."
+                    }
+                    Computing::Attribute => {
+                        "An attribute's argument is computed once, where it is written, as a \
+                         `comptime` is."
                     }
                 }
                 .to_string(),
             ],
-            help: Some(match field {
-                true => format!(
+            help: Some(match kind {
+                Computing::Field => format!(
                     "Give `{name}` a default the build can compute, or leave the default out \
                      and give the field in each literal."
                 ),
-                false => format!(
+                Computing::Option => format!(
                     "Give `{name}` a default the build can compute, or make it a `T?` and \
                      decide in the body."
                 ),
+                Computing::Attribute => {
+                    format!(
+                        "Give `{name}` a value the build can compute, or write the value itself."
+                    )
+                }
             }),
             labels: Vec::new(),
         });

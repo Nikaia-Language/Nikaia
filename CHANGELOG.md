@@ -4,6 +4,17 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.633] — 2026-10-07
+
+**An attribute's argument is any build-time value** (#496, ADR-331 D1).
+- `@Name(joined(PREFIX, "At"))` is computed once where it is written, by the
+  same path an option's default takes (`contracts::computed_literal`). The
+  ledger records the value it came to.
+- One that cannot run at build time is refused with a default's codes
+  (`NK1127`, `NK1152`), and the note says it is an attribute's argument.
+
+This finishes #496's build list.
+
 ## [0.0.632] — 2026-10-07
 
 **A type's and a variant's attributes are read too** (#496, ADR-331 D6, D8).

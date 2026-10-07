@@ -346,30 +346,11 @@ impl Checker<'_> {
         {
             return;
         }
-        // **A literal, or a variant**, for now: a value computed at build time
-        // has no form in the ledger's attribute yet, and is said to have none
-        // rather than dropped.
+        // **Anything else is computed at build time** (D1), as an option's
+        // default is, under the same codes.
         if !crate::contracts::a_literal(arg) {
-            if matches!(arg, Expr::Path(_)) {
-                return;
-            }
-            self.checked.findings.push(Finding {
-                code: "NK1127",
-                severity: Severity::Error,
-                span,
-                message: format!(
-                    "`@{owner}`'s `{}` is computed, and an attribute's argument is a literal \
-                     or a variant for now.",
-                    field.name
-                ),
-                notes: vec![
-                    "An attribute is read while the program is built, from the value it came to; \
-                     a computed one is not recorded yet."
-                        .to_string(),
-                ],
-                help: Some("Write the value itself.".to_string()),
-                labels: Vec::new(),
-            });
+            let label = format!("{owner}.{}", field.name);
+            self.computed_value(&label, &want, arg, span, Computing::Attribute);
             return;
         }
         let found = self.expr(arg, &span);
