@@ -291,6 +291,10 @@ fn a_loop_over_standard_input_binds_a_string_and_still_costs_throws() {
 /// calls of the new `traits.nika` - `names.resolve(..)` and the `.clone()` on
 /// what it hands back - and two in `trust.nika` that were counted before - measured: 61 without
 /// it, 48 with.
+///
+/// **17 at 0.0.642**, measured when the test stopped inferring the tools'
+/// package once per tool: the same 17 in 103 programs before and after, so the
+/// fall from 48 happened in the releases between and was never written down.
 #[test]
 fn the_corpus_has_no_more_unanswered_method_calls_than_it_had() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
@@ -390,8 +394,8 @@ fn the_corpus_has_no_more_unanswered_method_calls_than_it_had() {
     }
     assert!(files >= 18, "only {files} programs were read");
     assert!(
-        unanswered <= 48,
-        "{unanswered} unanswered method calls in {files} programs, and 48 is the \
+        unanswered <= 17,
+        "{unanswered} unanswered method calls in {files} programs, and 17 is the \
          ceiling this was last measured at - a rise means a receiver stopped \
          being typed, and a fall means this number goes down with a sentence \
          saying what answered them"

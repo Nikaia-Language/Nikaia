@@ -4,6 +4,11 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.642] — 2026-10-07
+
+**The ceiling of unanswered method calls is 17, what the corpus measures**,
+down from 48. The old and the new test both count 17 in 103 programs.
+
 ## [0.0.641] — 2026-10-07
 
 **The corpus test of unanswered method calls runs in 23 s instead of 21
