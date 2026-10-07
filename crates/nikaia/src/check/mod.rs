@@ -330,6 +330,9 @@ pub struct Checked {
     /// Both are spelled in the language below, so the emitter writes the pair
     /// and decides nothing.
     pub comptime_values: BTreeMap<usize, (String, String)>,
+    /// **A `dsl` block's value over a grammar of this program** (#518), by
+    /// the block's node: the type below and its literal, as a `comptime`'s.
+    pub dsl_values: BTreeMap<usize, (String, String)>,
     /// **The type each `with` copies**, by the byte the word stands at
     /// ([ADR-118](../../docs/specification/adr/adr-118.md) D1).
     ///
@@ -2223,6 +2226,9 @@ pub struct Propagation {
     pub task_handles: BTreeSet<(usize, String)>,
     /// [`Checked::comptime_values`].
     pub comptime_values: BTreeMap<usize, (String, String)>,
+    /// **A `dsl` block's value over a grammar of this program** (#518), by
+    /// the block's node: the type below and its literal, as a `comptime`'s.
+    pub dsl_values: BTreeMap<usize, (String, String)>,
     /// [`Checked::with_types`].
     pub with_types: BTreeMap<usize, String>,
     /// [`Checked::unrolled`].
@@ -2526,6 +2532,7 @@ fn propagation(
         nullable_in_args: checked.nullable_args,
         task_handles: checked.task_handles,
         comptime_values: checked.comptime_values,
+        dsl_values: checked.dsl_values,
         with_types: checked.with_types,
         unrolled: checked.unrolled,
         walks_fields: checked.walks_fields,
@@ -14373,7 +14380,7 @@ impl<'a> Checker<'a> {
                 .is_some_and(|entries| entries.len() == 1)
                 && !crate::dsl::is_deferred(self.parsed.text(*target), content) =>
             {
-                self.a_block_over_a_grammar(*target, content, span)
+                self.a_block_over_a_grammar(expr, *target, content, span)
             }
             Expr::Dsl { .. } => {
                 // Which is also why `NK1134` says nothing about one: what this
@@ -24644,7 +24651,13 @@ impl<'a> Checker<'a> {
     /// **Only a grammar with one entry**: no rule is a grammar's main one
     /// (ADR-296 D25), and which entry a block over a grammar with several
     /// runs is not decided (#518), so that one is left as it was.
-    fn a_block_over_a_grammar(&mut self, target: Ident, content: &str, span: &Span) -> Ty {
+    fn a_block_over_a_grammar(
+        &mut self,
+        block: &Expr,
+        target: Ident,
+        content: &str,
+        span: &Span,
+    ) -> Ty {
         let grammar = self.parsed.text(target).to_string();
         let Some(entry) = self
             .grammars
@@ -24665,7 +24678,16 @@ impl<'a> Checker<'a> {
             }],
             config: Vec::new(),
         };
+        // Recorded under the statement, as a `comptime`'s is, and moved to the
+        // block's own node: two blocks in one statement are two values.
+        let outer = self.checked.comptime_values.remove(&span.at());
         self.comptime_binding(name, None, &call, &[], span);
+        if let Some(value) = self.checked.comptime_values.remove(&span.at()) {
+            self.checked.dsl_values.insert(value_node(block), value);
+        }
+        if let Some(outer) = outer {
+            self.checked.comptime_values.insert(span.at(), outer);
+        }
         // The block's type is the entry's result, as the call's would be.
         self.own
             .functions

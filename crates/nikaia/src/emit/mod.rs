@@ -1580,6 +1580,8 @@ struct Emitter<'p> {
     /// knows what `PAGE` is. A statement with no entry never arrives, because
     /// the checker refused it as `NK1127` first.
     comptime_values: std::collections::BTreeMap<usize, (String, String)>,
+    /// `check::Checked::dsl_values` (#518).
+    dsl_values: std::collections::BTreeMap<usize, (String, String)>,
     /// **The functions the build runs** (#446): `built_at_build_time`.
     built_at_build_time: HashSet<String>,
     /// **The type each `with` copies**, by the byte the word stands at
@@ -2830,6 +2832,7 @@ impl<'p> Emitter<'p> {
             keep_function: std::cell::RefCell::new(String::new()),
             nonnegative: std::cell::RefCell::new(HashMap::new()),
             comptime_values: propagation.comptime_values,
+            dsl_values: propagation.dsl_values,
             built_at_build_time: built_at_build_time(parsed),
             with_types: propagation.with_types,
             unrolled: propagation.unrolled,
@@ -8142,8 +8145,10 @@ impl<'p> Emitter<'p> {
                 context: None,
                 ..
             } if self.grammars.contains_key(target)
-                && let Some((below, written)) =
-                    self.comptime_values.get(&flow.statement).cloned() =>
+                && let Some((below, written)) = self
+                    .dsl_values
+                    .get(&crate::check::value_node(expr))
+                    .cloned() =>
             {
                 out.push(&format!(
                     "{{ const __NIKAIA_DSL: {below} = {written}; __NIKAIA_DSL }}"

@@ -4,6 +4,12 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.621] — 2026-10-07
+
+**Two `dsl` blocks over a grammar in one statement are two values** (#518).
+- Each block's value is kept under its own node (`Checked::dsl_values`), not
+  under the statement a `comptime` is keyed by, which two blocks shared.
+
 ## [0.0.620] — 2026-10-07
 
 **`dsl G { … } eod` over a grammar the program declares** (#518 step 1, #505).
