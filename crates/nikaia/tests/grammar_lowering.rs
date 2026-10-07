@@ -9,6 +9,8 @@
 //! Each generated file goes in a module of its own, because each is a whole
 //! compilation unit and brings its own imports.
 
+mod common;
+
 use nikaia::contracts::{Ledger, LedgerOps, STD};
 use nikaia::emit::{Build, emit_program};
 use nikaia::parser::parse_to_ast;
@@ -799,31 +801,57 @@ fn pub_rule_is_refused_and_the_message_says_entry() {
     assert!(help.contains("`pub grammar`"), "{finding:#?}");
 }
 
-/// `pub grammar` is decided and not built (D25): a grammar is entered from its
-/// own file today, so there is nothing for it to offer yet, and saying so beats
-/// a parse error at `grammar`.
+/// **`pub grammar` offers its entries to other packages** (ADR-296 D25,
+/// #520): a consumer calls `lib::Nums::number(…)`, and a grammar without
+/// `pub` stays its package's own (`NK1110`).
 #[test]
-fn pub_grammar_is_refused_as_not_built() {
-    let source = "pub grammar Nums {\n\
-                  \x20   entry rule number -> i64 = d:dec[i64](digit+) { d }\n\
-                  }\n";
-    let Err(error) = parse_to_ast(source) else {
-        panic!("`pub grammar` parses but means nothing yet");
+fn a_pub_grammar_is_entered_from_another_package() {
+    let dir = common::scratch_dir("pub-grammar");
+    let lib = "pub grammar Nums {\n\
+               \x20   entry rule number -> i64 = d:dec[i64](digit+) { d }\n\
+               }\n\
+               \n\
+               grammar Hidden {\n\
+               \x20   entry rule number -> i64 = d:dec[i64](digit+) { d }\n\
+               }\n\
+               \n\
+               fn main() {\n\
+               }\n";
+    let app = |call: &str| {
+        format!("fn main() throws {{\n    let n = {call}(\"42\")\n    println(f\"{{n}}\")\n}}\n")
     };
-    let finding = nikaia::diagnostics::refused_finding(&error).expect("a parse refusal");
-    assert!(
-        finding
-            .message
-            .contains("`pub grammar` is decided and not built"),
-        "{finding:#?}"
-    );
-    assert!(
-        finding
-            .help
-            .as_deref()
-            .is_some_and(|h| h.contains("Write `grammar`")),
-        "{finding:#?}"
-    );
+    let run = |call: &str| {
+        for (package, source, manifest) in [
+            (
+                "lib",
+                lib.to_string(),
+                "[package]\nname = \"lib\"\nversion = \"0.1.0\"\n",
+            ),
+            (
+                "app",
+                app(call),
+                "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n[dependencies]\nlib = { path = \"../lib\" }\n",
+            ),
+        ] {
+            std::fs::create_dir_all(dir.join(package).join("src")).expect("the package");
+            std::fs::write(dir.join(package).join("nikaia.toml"), manifest).expect("a manifest");
+            std::fs::write(dir.join(package).join("src/main.nika"), source).expect("a source");
+        }
+        let ran = std::process::Command::new(env!("CARGO_BIN_EXE_nikaia"))
+            .current_dir(dir.join("app"))
+            .arg("run")
+            .output()
+            .expect("the nikaia binary runs");
+        (
+            String::from_utf8_lossy(&ran.stdout).to_string(),
+            String::from_utf8_lossy(&ran.stderr).to_string(),
+        )
+    };
+    let (out, err) = run("lib::Nums::number");
+    assert_eq!(out, "42\n", "{err}");
+    let (_, err) = run("lib::Hidden::number");
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(err.contains("NK1110"), "{err}");
 }
 
 /// `entry` is a word of the grammar sublanguage, as `rule` is: a program may

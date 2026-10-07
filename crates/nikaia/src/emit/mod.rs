@@ -9995,6 +9995,34 @@ impl<'p> Emitter<'p> {
         {
             return self.grammar_entry(out, *grammar, *rule, &args[0], depth, flow);
         }
+        // **A package's `pub grammar`, entered by its path** (ADR-296 D25,
+        // #520): `lib::Nums::number(input)` is the entry the package's ledger
+        // records - a `ParseError` its failure and the text its one input -
+        // and its crate's parser is driven as a grammar of this file's is.
+        if let Expr::Path(segments) = func
+            && let [package, grammar, rule] = segments.as_slice()
+            && args.len() == 1
+            && self.a_package_grammar_entry(&format!(
+                "{}::{}::{}",
+                self.text(*package),
+                self.text(*grammar),
+                self.text(*rule)
+            ))
+        {
+            let question = match flow.caught {
+                false => "?",
+                true => "",
+            };
+            out.push("nikaia_std::grammar::parse(&*");
+            self.expr(out, &args[0], depth, flow)?;
+            out.push(&format!(
+                ", {}::{}::parse_{}()){question}",
+                self.text(*package),
+                self.text(*grammar),
+                self.text(*rule)
+            ));
+            return Ok(());
+        }
         // **A variant with a boxed part is built with the part in its box**
         // ([ADR-246](../../docs/specification/adr/adr-246.md) D3). The mask
         // is `args`' to read, so every other thing an argument is written
@@ -13846,6 +13874,18 @@ impl<'p> Emitter<'p> {
             true => self.takes_a_handle(&format!("{name}::new")),
             false => self.takes_a_handle(&name),
         }
+    }
+
+    /// Whether a ledger key is a grammar entry another package offers: what
+    /// `contracts` records for every `entry rule` - one input, `input`, and a
+    /// `ParseError` its one failure (#520).
+    fn a_package_grammar_entry(&self, key: &str) -> bool {
+        self.own_contracts.functions.get(key).is_some_and(|contract| {
+            contract.fails_with == [crate::contracts::PARSE_ERROR]
+                && contract.signature.as_ref().is_some_and(|signature| {
+                    matches!(signature.params.as_slice(), [(name, _)] if name == crate::contracts::INPUT)
+                })
+        })
     }
 
     /// `Measurements.file(data)` - the whole of what a user writes to run a

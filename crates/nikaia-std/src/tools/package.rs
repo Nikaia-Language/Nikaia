@@ -349,6 +349,7 @@ impl BinaryOp {
 pub struct GrammarDef {
     pub name: winnow_grammar::Symbol,
     pub rules: Vec<GrammarRule>,
+    pub public: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]

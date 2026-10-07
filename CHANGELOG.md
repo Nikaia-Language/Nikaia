@@ -4,6 +4,17 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.618] — 2026-10-07
+
+**`pub grammar` offers its entries to other packages** (ADR-296 D25, #520).
+- `pub grammar Nums { entry rule number -> i64 = … }` parses, where it was
+  refused as *decided and not built*. Each entry's ledger entry is `pub` as
+  the grammar is, and a consumer calls `lib::Nums::number("42")`, which drives
+  the package's parser as a grammar of its own file is driven. A grammar without
+  `pub` is its package's (`NK1110`).
+- Not yet: a `par_fold` entry across packages, and `dsl lib::G { … }`, which
+  waits on #518.
+
 ## [0.0.617] — 2026-10-07
 
 **A `comptime` reads an earlier one that holds a `std` type's value** (#519).

@@ -1092,6 +1092,8 @@ impl BinaryOp {
 pub struct GrammarDef {
     pub name: winnow_grammar::Symbol,
     pub rules: Vec[GrammarRule],
+    /// `pub grammar`: every entry is offered to other packages (ADR-296 D25).
+    pub public: bool,
 }
 
 /// `@frame(boundary: "\n") rule MEASUREMENT -> Reading = ... -> { ... }`

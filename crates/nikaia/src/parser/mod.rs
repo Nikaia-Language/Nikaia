@@ -2395,17 +2395,14 @@ grammar! {
         // --- Part II, Kapitel 10: Grammatiken ---
 
         rule grammar_item -> Item =
-            // **`pub grammar` is decided and not built** (ADR-296 D25): it
-            // will offer the grammar's entries to other packages, and a grammar
-            // is entered only from its own file today.
-            KW_PUB KW_GRAMMAR fail("A grammar can't be offered to other packages yet: \
-                                    `pub grammar` is decided and not built. Write \
-                                    `grammar`, and call its entries from this file.") -> {
-                Item::Import { path: Vec::new(), alias: None }
-            }
+            // **`pub grammar` offers every entry to other packages**
+            // (ADR-296 D25, #520), as a `pub enum` offers its variants.
+            KW_PUB KW_GRAMMAR name:NAME
+            "{" rules:grammar_rule* "}"
+            -> { Item::Grammar(GrammarDef { name, rules, public: true }) }
           | KW_GRAMMAR name:NAME
             "{" rules:grammar_rule* "}"
-            -> { Item::Grammar(GrammarDef { name, rules }) }
+            -> { Item::Grammar(GrammarDef { name, rules, public: false }) }
 
         rule grammar_rule -> GrammarRule @=
             // **A rule is not `pub` on its own** (ADR-296 D25): whether the

@@ -639,7 +639,9 @@ impl LedgerOps for Ledger {
                             ledger.functions.insert(
                                 key,
                                 FnContract {
-                                    public: true,
+                                    // **The grammar's `pub` is each entry's**
+                                    // (ADR-296 D25, #520).
+                                    public: def.public,
                                     fails_with: vec![PARSE_ERROR.to_string()],
                                     // **An action may not pause**
                                     // ([ADR-296](../../../docs/specification/adr/adr-296.md)
