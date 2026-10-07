@@ -4,6 +4,15 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.641] — 2026-10-07
+
+**The corpus test of unanswered method calls runs in 23 s instead of 21
+minutes** (`sequences::the_corpus_has_no_more_unanswered_method_calls_than_it_had`).
+For each of the ~80 self-hosted tools it re-read and re-parsed every other
+tool, and inferred the whole package's ledger anew. Each program is now
+parsed once, and the tools' package ledger is inferred once, as `lower-std`
+infers it. It was half of the local test suite's time.
+
 ## [0.0.640] — 2026-10-07
 
 **A handler gets only what its signature declares** (ADR-332, #121).

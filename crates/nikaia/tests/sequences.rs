@@ -297,6 +297,10 @@ fn the_corpus_has_no_more_unanswered_method_calls_than_it_had() {
     let library = library();
     let mut files = 0usize;
     let mut unanswered = 0usize;
+    // **Every program, parsed once**: a loose one alone, and the tools as the
+    // package they are.
+    let mut loose: Vec<nikaia::parser::Parsed> = Vec::new();
+    let mut tools: Vec<(PathBuf, nikaia::parser::Parsed)> = Vec::new();
     let mut pending = vec![root.join("examples"), root.join("crates/nikaia-std/src")];
     while let Some(dir) = pending.pop() {
         let Ok(entries) = std::fs::read_dir(&dir) else {
@@ -315,67 +319,66 @@ fn the_corpus_has_no_more_unanswered_method_calls_than_it_had() {
             let Ok(parsed) = parse_to_ast(&source) else {
                 continue;
             };
-            // **A tool is read as `lower-std` reads it: in its package**
-            // (ADR-294), every other file of `src/tools` beside it. Read
-            // alone, `ledger.nika` names a `FnContract` nothing here declares,
-            // and every call on one is unanswered (0.0.292).
             let in_tools = path
                 .parent()
                 .and_then(|dir| dir.file_name())
                 .is_some_and(|dir| dir == "tools");
-            let records: Vec<nikaia::parser::Parsed> = match in_tools {
-                false => Vec::new(),
-                true => {
-                    let mut others: Vec<PathBuf> = std::fs::read_dir(path.parent().unwrap())
-                        .expect("the package's directory")
-                        .flatten()
-                        .map(|entry| entry.path())
-                        .filter(|other| {
-                            other != &path && other.extension().is_some_and(|e| e == "nika")
-                        })
-                        .collect();
-                    others.sort();
-                    others
-                        .iter()
-                        .map(|other| {
-                            let text =
-                                std::fs::read_to_string(other).expect("a file of the package");
-                            parse_to_ast(&text).expect("it parses")
-                        })
-                        .collect()
-                }
-            };
-            let beside: Vec<&nikaia::parser::Parsed> = records.iter().collect();
-            let units: Vec<&nikaia::parser::Parsed> = std::iter::once(&parsed)
-                .chain(beside.iter().copied())
+            match in_tools {
+                true => tools.push((path, parsed)),
+                false => loose.push(parsed),
+            }
+        }
+    }
+    let newly = nikaia::check::Newly::default();
+    let reads = nikaia::assets::Reads::none();
+    for parsed in &loose {
+        let own = Ledger::infer(parsed);
+        let checked = nikaia::check::check_against(
+            parsed,
+            &[],
+            &own,
+            &library,
+            &BTreeSet::new(),
+            &newly,
+            &reads,
+        );
+        files += 1;
+        unanswered += checked
+            .methods
+            .values()
+            .map(|c| c.unanswered)
+            .sum::<usize>();
+    }
+    // **A tool is read as `lower-std` reads it: in its package** (ADR-294),
+    // every other file of `src/tools` beside it, and with the Rust the tools
+    // read described (ADR-294 D9.3): without it every `names.resolve(..)` in
+    // `traits.nika` is unanswered, and so is what it hands back (0.0.320).
+    // **The package's ledger is inferred once**, as `lower-std` infers it - per
+    // file it was eighty inferences of eighty files, and the test ran for
+    // over ten minutes.
+    tools.sort_by(|a, b| a.0.cmp(&b.0));
+    if !tools.is_empty() {
+        let mut read = library.clone();
+        let described = Ledger::parse(TOOLS_DESCRIBED).expect("the tools' ledger parses");
+        read.types.extend(described.types);
+        read.functions.extend(described.functions);
+        let units: Vec<&nikaia::parser::Parsed> = tools.iter().map(|(_, p)| p).collect();
+        let own = Ledger::infer_package(&units, &read);
+        for (at, (_, parsed)) in tools.iter().enumerate() {
+            let beside: Vec<&nikaia::parser::Parsed> = tools
+                .iter()
+                .enumerate()
+                .filter(|(other, _)| *other != at)
+                .map(|(_, (_, p))| p)
                 .collect();
-            // And with the Rust the tools read described (ADR-294 D9.3), as
-            // `lower-std` reads them: without it every `names.resolve(..)` in
-            // `traits.nika` is unanswered, and so is what it hands back (0.0.320).
-            let library = match in_tools {
-                false => library.clone(),
-                true => {
-                    let mut read = library.clone();
-                    let described =
-                        Ledger::parse(TOOLS_DESCRIBED).expect("the tools' ledger parses");
-                    read.types.extend(described.types);
-                    read.functions.extend(described.functions);
-                    read
-                }
-            };
-            let own = match beside.is_empty() {
-                true => Ledger::infer(&parsed),
-                false => Ledger::infer_package(&units, &library),
-            };
-            let newly = nikaia::check::Newly::default();
             let checked = nikaia::check::check_against(
-                &parsed,
+                parsed,
                 &beside,
                 &own,
-                &library,
+                &read,
                 &BTreeSet::new(),
                 &newly,
-                &nikaia::assets::Reads::none(),
+                &reads,
             );
             files += 1;
             unanswered += checked
