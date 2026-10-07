@@ -4,6 +4,29 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.630] — 2026-10-07
+
+**Attributes are written and checked** (#496 steps 2-3, ADR-331 D1-D4, Part
+II 10.3). `@path(…)` lines stand after a declaration's `///` lines and before
+a struct, an enum, a variant, a field, a `fn` (a method, a trait's method), a
+parameter, a trait or an `impl`.
+- A struct is an attribute where `@meta::Attribute(field, struct; repeatable:
+  true)` marks it. The places are written by their words, `struct` and `fn`
+  among them. Anything else is `NK1235`, and a second one without
+  `repeatable: true` is `NK1236`.
+- The arguments follow Part I 5.1: the fields without a default by position,
+  those with one by name after the `;`. A variant of the field's `enum` is
+  written by its name alone (`case: snake`). A wrong count is `NK1101`, an
+  unknown option `NK1109`, a value that is not the field's type `NK1102`, and
+  an unknown struct `NK1135`.
+- A literal that cannot be a field's type now refuses a field default too
+  (`name: String = 5` is `NK1166`). A number had passed, having no type of its
+  own yet.
+
+Nothing of an attribute reaches the running program. Reading one
+(`field.attribute(X)`) and the ledger are #496's steps 4 and 5. Until step 5,
+an attribute declared in another package is refused as unmarked.
+
 ## [0.0.629] — 2026-10-07
 
 **A struct's field may have a default** (#496 step 1, ADR-331 D5, D8). The

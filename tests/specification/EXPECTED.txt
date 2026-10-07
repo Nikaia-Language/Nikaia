@@ -93,8 +93,8 @@
 20-nikaia-advance.md #4 lowered (as written)  comptime ROUTES: Fixed[ref String, i64] = [("get", 1), …
 20-nikaia-advance.md #5 lowered (as written)  fn describe[T: Struct](value: T) {
 20-nikaia-advance.md #6 fragment (as written)  fn schema[T](T) -> String {
-20-nikaia-advance.md #7 fragment (as written)  struct User {
-20-nikaia-advance.md #8 fragment (as written)  @meta::Attribute(field)
+20-nikaia-advance.md #7 refused (as written) [NK1135]  struct User {
+20-nikaia-advance.md #8 refused (as written) [NK1135,NK1181]  @meta::Attribute(field)
 20-nikaia-advance.md #9 fragment (as written)  use sqlite                                // a driver p…
 20-nikaia-advance.md #10 lowered (as written)  impl Template {
 20-nikaia-advance.md #11 fragment (as written)  rule expr -> Expr # "expression" =

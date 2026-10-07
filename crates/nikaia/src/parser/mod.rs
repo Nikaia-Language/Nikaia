@@ -1595,17 +1595,56 @@ grammar! {
         // skip ate them — so what is read back is what the skip recorded
         // (`Trivia::comment`), and `take_doc` is a *take*: an item consumes its
         // own prose, so the next one does not inherit it.
+        // **The `@` lines stand after the `///` lines and before the
+        // declaration** ([ADR-331](../../../../docs/specification/adr/adr-331.md)
+        // D1). Any item takes them here; where one may stand is the checker's
+        // question (`NK1235`), so a misplaced one is said in words.
         rule item -> Spanned<Item> # "item" @=
-            d:doc_here g:grammar_item -> { Spanned::documented(g, Span::from(_span), d) }
-          | d:doc_here s:struct_item -> { Spanned::documented(s, Span::from(_span), d) }
-          | d:doc_here e:enum_item -> { Spanned::documented(e, Span::from(_span), d) }
-          | d:doc_here im:impl_item -> { Spanned::documented(im, Span::from(_span), d) }
-          | d:doc_here t:trait_item -> { Spanned::documented(t, Span::from(_span), d) }
-          | d:doc_here u:use_item -> { Spanned::documented(u, Span::from(_span), d) }
-          | d:doc_here c:comptime_item -> { Spanned::documented(c, Span::from(_span), d) }
-          | d:doc_here e:extern_item -> { Spanned::documented(e, Span::from(_span), d) }
-          | d:doc_here i:fn_item -> { Spanned::documented(i, Span::from(_span), d) }
-          | d:doc_here t:test_item -> { Spanned::documented(t, Span::from(_span), d) }
+            d:doc_here a:attribute* g:grammar_item -> { Spanned::attributed(g, Span::from(_span), d, a) }
+          | d:doc_here a:attribute* s:struct_item -> { Spanned::attributed(s, Span::from(_span), d, a) }
+          | d:doc_here a:attribute* e:enum_item -> { Spanned::attributed(e, Span::from(_span), d, a) }
+          | d:doc_here a:attribute* im:impl_item -> { Spanned::attributed(im, Span::from(_span), d, a) }
+          | d:doc_here a:attribute* t:trait_item -> { Spanned::attributed(t, Span::from(_span), d, a) }
+          | d:doc_here a:attribute* u:use_item -> { Spanned::attributed(u, Span::from(_span), d, a) }
+          | d:doc_here a:attribute* c:comptime_item -> { Spanned::attributed(c, Span::from(_span), d, a) }
+          | d:doc_here a:attribute* e:extern_item -> { Spanned::attributed(e, Span::from(_span), d, a) }
+          | d:doc_here a:attribute* i:fn_item -> { Spanned::attributed(i, Span::from(_span), d, a) }
+          | d:doc_here a:attribute* t:test_item -> { Spanned::attributed(t, Span::from(_span), d, a) }
+
+        // `@json::Name("createdAt"; case: snake)` (ADR-331 D1, D4): the
+        // struct's path, then arguments as a call writes them. `(; case: …)`
+        // parses, so that a missing positional argument is the checker's
+        // `NK1101` rather than a parse error.
+        rule attribute -> Attribute @=
+            "@" name:type_name args:attribute_args? -> {
+                let (args, config) = args.unwrap_or_default();
+                Attribute { name, args, config, span: Span::from(_span) }
+            }
+
+        rule attribute_args -> (Vec<Expr>, Vec<ConfigArg>) =
+            "(" args:attribute_values? config:config_args? ")" -> {
+                (args.unwrap_or_default(), config.unwrap_or_default())
+            }
+
+        rule attribute_values -> Vec<Expr> =
+            head:attribute_value tail:attribute_value_tail* -> {
+                let mut args = vec![head];
+                args.extend(tail);
+                args
+            }
+
+        rule attribute_value_tail -> Expr = "," e:attribute_value -> { e }
+
+        // **A place is written by its word** (ADR-331 D2-D3), and five of
+        // them are the words that start the declarations they name:
+        // `@meta::Attribute(field, struct)`.
+        rule attribute_value -> Expr =
+            KW_STRUCT -> { Expr::Variable(_state.intern("struct")) }
+          | KW_ENUM -> { Expr::Variable(_state.intern("enum")) }
+          | KW_FN -> { Expr::Variable(_state.intern("fn")) }
+          | KW_TRAIT -> { Expr::Variable(_state.intern("trait")) }
+          | KW_IMPL -> { Expr::Variable(_state.intern("impl")) }
+          | e:expr -> { e }
 
         // **`test "name" { … }`**
         // ([ADR-269](../../../../docs/specification/adr/adr-269.md) D1): where a
@@ -1711,6 +1750,7 @@ grammar! {
         // ([ADR-307](../../../../docs/specification/adr/adr-307.md) D4).
         rule trait_method -> Spanned<TraitMethod> @=
             d:doc_here
+            a:attribute*
             KW_FN
             name:NAME
             generics:generic_list?
@@ -1724,7 +1764,7 @@ grammar! {
                 let (sync, _, throws) = promise;
                 // Part I 5.1's *Optional Parentheses*, as `fn_head` has them.
                 let params = params.unwrap_or_else(FnParams::none);
-                Spanned::documented(TraitMethod {
+                Spanned::attributed(TraitMethod {
                     name,
                     generics: generics.unwrap_or_default(),
                     receiver: params.receiver,
@@ -1733,7 +1773,7 @@ grammar! {
                     ret_type: ret,
                     is_sync: sync,
                     can_throw: throws,
-                }, Span::from(_span), d)
+                }, Span::from(_span), d, a)
             }
 
         // **A method takes its prose too**
@@ -1742,7 +1782,7 @@ grammar! {
         // method's entry is in the ledger under `Type::name`, so a consumer
         // reads it there or nowhere.
         rule impl_method -> Spanned<Item> @=
-            d:doc_here f:fn_item -> { Spanned::documented(f, Span::from(_span), d) }
+            d:doc_here a:attribute* f:fn_item -> { Spanned::attributed(f, Span::from(_span), d, a) }
 
         rule kw_sync -> () = KW_SYNC -> { () }
         rule kw_pub -> () = KW_PUB -> { () }
@@ -2128,15 +2168,15 @@ grammar! {
 
         rule enum_variant_tail -> EnumVariant = "," v:enum_variant -> { v }
 
-        rule enum_variant -> EnumVariant =
-            name:NAME "(" types:type_refs ")" -> {
-                EnumVariant { name, fields: VariantFields::Tuple(types) }
+        rule enum_variant -> EnumVariant @=
+            attributes:attribute* name:NAME "(" types:type_refs ")" -> {
+                EnumVariant { name, fields: VariantFields::Tuple(types), attributes, span: Span::from(_span) }
             }
-          | name:NAME "{" fields:variant_field_defs "}" -> {
-                EnumVariant { name, fields: VariantFields::Named(fields) }
+          | attributes:attribute* name:NAME "{" fields:variant_field_defs "}" -> {
+                EnumVariant { name, fields: VariantFields::Named(fields), attributes, span: Span::from(_span) }
             }
-          | name:NAME -> {
-                EnumVariant { name, fields: VariantFields::Unit }
+          | attributes:attribute* name:NAME -> {
+                EnumVariant { name, fields: VariantFields::Unit, attributes, span: Span::from(_span) }
             }
 
         rule field_defs -> Vec<FieldDef> =
@@ -2155,8 +2195,8 @@ grammar! {
         // field, and the nearest span the walk around it has is a statement's
         // (ADR-298 D4).
         rule field_def -> FieldDef @=
-            vis:kw_pub? name:NAME ":" ty:type_ref default:field_default? -> {
-                FieldDef { name, ty, is_public: vis.is_some(), span: Span::from(_span), default }
+            attributes:attribute* vis:kw_pub? name:NAME ":" ty:type_ref default:field_default? -> {
+                FieldDef { name, ty, is_public: vis.is_some(), span: Span::from(_span), default, attributes }
             }
 
         // `size: i64 = 50` (ADR-331 D5): the default and where it is written,
@@ -2175,14 +2215,14 @@ grammar! {
         rule variant_field_def_tail -> FieldDef = "," f:variant_field_def -> { f }
 
         rule variant_field_def -> FieldDef @=
-            name:NAME ":" ty:type_ref "=" fail(
+            attribute* name:NAME ":" ty:type_ref "=" fail(
                 "A variant's field has no default; only a struct's field may have one \
                  (Part I 4.1). Remove the `= …`."
             ) -> {
-                FieldDef { name, ty, is_public: false, span: Span::from(_span), default: None }
+                FieldDef { name, ty, is_public: false, span: Span::from(_span), default: None, attributes: Vec::new() }
             }
-          | vis:kw_pub? name:NAME ":" ty:type_ref -> {
-                FieldDef { name, ty, is_public: vis.is_some(), span: Span::from(_span), default: None }
+          | attributes:attribute* vis:kw_pub? name:NAME ":" ty:type_ref -> {
+                FieldDef { name, ty, is_public: vis.is_some(), span: Span::from(_span), default: None, attributes }
             }
 
         // --- Argumente & Typen ---
@@ -2208,11 +2248,11 @@ grammar! {
         // its type, because the caller needs it - what `_` says is that this body
         // does not read the value, never that the signature is shorter.
         rule fn_arg_def -> FnArg @=
-            mutable:kw_mut? name:NAME ":" ty:type_ref -> {
-                FnArg { name, ty, mutable: mutable.is_some(), span: Span::from(_span) }
+            attributes:attribute* mutable:kw_mut? name:NAME ":" ty:type_ref -> {
+                FnArg { name, ty, mutable: mutable.is_some(), span: Span::from(_span), attributes }
             }
-          | UNDERSCORE ":" ty:type_ref -> {
-                FnArg { name: _state.intern("_"), ty, mutable: false, span: Span::from(_span) }
+          | attributes:attribute* UNDERSCORE ":" ty:type_ref -> {
+                FnArg { name: _state.intern("_"), ty, mutable: false, span: Span::from(_span), attributes }
             }
 
         rule return_type_arrow -> Type =

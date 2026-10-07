@@ -25,6 +25,7 @@
 // expression-level spans are open work in the parser, and a caret on the right
 // line is worth more than none at all.
 
+mod attributes;
 use crate::contracts::LedgerOps;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -4672,6 +4673,9 @@ impl<'a> Checker<'a> {
         // the whole of why this is a pass and not an arm.
         self.item_constants();
         self.types_that_contain_themselves();
+        // **Attributes** (ADR-331), before the bodies: they are about the
+        // declarations.
+        self.attributes();
         for item in &self.parsed.program.items {
             match &item.node {
                 // Walked by `item_constants` above, in a frame that stays.
@@ -7483,6 +7487,24 @@ impl<'a> Checker<'a> {
         {
             return;
         }
+        if let Some(kind) = attributes::literal_misfit(&default.value, &want) {
+            self.checked.findings.push(Finding {
+                code: "NK1166",
+                severity: Severity::Error,
+                span: default.span,
+                message: format!(
+                    "`{name}` holds `{}`, but its default is {kind}.",
+                    want.text()
+                ),
+                notes: Vec::new(),
+                help: Some(format!(
+                    "Give `{name}` a default that is a `{}`.",
+                    want.text()
+                )),
+                labels: Vec::new(),
+            });
+            return;
+        }
         self.expect(&found, &want, default.span, "const", move |found, want| {
             format!("`{name}` holds `{want}`, but its default is `{found}`.")
         });
@@ -7496,6 +7518,14 @@ impl<'a> Checker<'a> {
         span: Span,
         field: bool,
     ) {
+        let declared = Ty::from_ast(self.parsed, ty);
+        self.computed_value(name, &declared, default, span, field);
+    }
+
+    /// [`Checker::computed_default`] over a type already read, which an
+    /// attribute's argument has: its field may be another package's
+    /// (ADR-331 D4).
+    fn computed_value(&mut self, name: &str, ty: &Ty, default: &Expr, span: Span, field: bool) {
         if crate::contracts::a_literal(default) {
             return;
         }
@@ -7509,7 +7539,7 @@ impl<'a> Checker<'a> {
             return;
         }
         self.computing_default = true;
-        let declared_ty = crate::comptime_run::as_built(Ty::from_ast(self.parsed, ty));
+        let declared_ty = crate::comptime_run::as_built(ty.clone());
         let (value, said) =
             match self.compiled_build_time_value(default, &declared_ty, &name, &span) {
                 Some(outcome) => outcome,
@@ -7522,7 +7552,7 @@ impl<'a> Checker<'a> {
         // **A list a `Vec` option would own is `NK1167`** (ADR-318 D4, D7):
         // refused for what it is, as a `comptime` is, with the length the
         // build computed in the way out.
-        let declared = Ty::from_ast(self.parsed, ty);
+        let declared = ty.clone();
         // **A view of a list takes one** (D4): `xs: ref Vec[i64] = [4, 5]`
         // crosses as the `&[4, 5]` the parameter is below. Only one it owns
         // is refused.

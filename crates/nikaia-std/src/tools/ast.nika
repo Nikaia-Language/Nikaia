@@ -58,16 +58,35 @@ pub struct Spanned[T] {
     ///
     /// The compiler does not read it (D3). What it does is travel.
     pub doc: String?,
+    /// The `@` lines between the `///` lines and the declaration
+    /// ([ADR-331](../../../docs/specification/adr/adr-331.md) D1), in written
+    /// order. Only an item, a method and a trait's method carry any.
+    pub attributes: Vec[Attribute],
+}
+
+/// **`@json::Name("createdAt"; case: snake)`** (ADR-331 D1, D4): a value of
+/// the struct the path names, by position for the fields without a default
+/// and by name after the `;` for those with one.
+pub struct Attribute {
+    pub name: winnow_grammar::Symbol,
+    pub args: Vec[Expr],
+    pub config: Vec[ConfigArg],
+    pub span: Span,
 }
 
 impl Spanned[T] {
     pub fn new(node: T, span: Span) -> Spanned[T] {
-        return Spanned { node: node, span: span, doc: null }
+        return Spanned { node: node, span: span, doc: null, attributes: [] }
     }
 
     /// The same, with the documentation standing in front of it.
     pub fn documented(node: T, span: Span, doc: String?) -> Spanned[T] {
-        return Spanned { node: node, span: span, doc: doc }
+        return Spanned { node: node, span: span, doc: doc, attributes: [] }
+    }
+
+    /// The same, with the documentation and the attributes in front of it.
+    pub fn attributed(node: T, span: Span, doc: String?, attributes: Vec[Attribute]) -> Spanned[T] {
+        return Spanned { node: node, span: span, doc: doc, attributes: attributes }
     }
 }
 
@@ -825,6 +844,10 @@ pub struct Code {
 pub struct EnumVariant {
     pub name: winnow_grammar::Symbol,
     pub fields: VariantFields,
+    /// Its `@` lines (ADR-331 D1).
+    pub attributes: Vec[Attribute],
+    /// Where the variant is written, for a refusal of its attributes.
+    pub span: Span,
 }
 
 /// What a variant carries. The three shapes Kap 4.4 shows, and no others.
@@ -991,6 +1014,8 @@ pub struct FnArg {
     /// which is a different line
     /// ([ADR-298](../../../docs/specification/adr/adr-298.md) D4).
     pub span: Span,
+    /// Its `@` lines (ADR-331 D1).
+    pub attributes: Vec[Attribute],
 }
 
 /// `timeout: 60` at a call site.
@@ -1026,6 +1051,8 @@ pub struct FieldDef {
     /// `size: i64 = 50` (ADR-331 D5): a build-time value a literal that
     /// leaves the field out takes, with the span a refusal of it points at.
     pub default: FieldDefault?,
+    /// Its `@` lines (ADR-331 D1).
+    pub attributes: Vec[Attribute],
 }
 
 /// A field's default and where it is written (ADR-331 D5).

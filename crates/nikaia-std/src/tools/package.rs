@@ -77,16 +77,26 @@ impl Span {
     pub fn nowhere() -> Span { Span { start: 0, end: 0 } }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Spanned<T> {
     pub node: T,
     pub span: Span,
     pub doc: Option<String>,
+    pub attributes: Vec<Attribute>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Attribute {
+    pub name: winnow_grammar::Symbol,
+    pub args: Vec<Expr>,
+    pub config: Vec<ConfigArg>,
+    pub span: Span,
 }
 
 impl<T> Spanned<T> {
-    pub fn new(node: T, span: Span) -> Spanned<T> { Spanned { node, span, doc: None } }
-    pub fn documented(node: T, span: Span, doc: Option<String>) -> Spanned<T> { Spanned { node, span, doc } }
+    pub fn new(node: T, span: Span) -> Spanned<T> { Spanned { node, span, doc: None, attributes: vec![] } }
+    pub fn documented(node: T, span: Span, doc: Option<String>) -> Spanned<T> { Spanned { node, span, doc, attributes: vec![] } }
+    pub fn attributed(node: T, span: Span, doc: Option<String>, attributes: Vec<Attribute>) -> Spanned<T> { Spanned { node, span, doc, attributes } }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -214,6 +224,8 @@ pub struct Code {
 pub struct EnumVariant {
     pub name: winnow_grammar::Symbol,
     pub fields: VariantFields,
+    pub attributes: Vec<Attribute>,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -273,6 +285,7 @@ pub struct FnArg {
     pub ty: Type,
     pub mutable: bool,
     pub span: Span,
+    pub attributes: Vec<Attribute>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -296,6 +309,7 @@ pub struct FieldDef {
     pub is_public: bool,
     pub span: Span,
     pub default: Option<FieldDefault>,
+    pub attributes: Vec<Attribute>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -22632,7 +22646,7 @@ pub mod assets {
 }
 pub mod ast {
     #[allow(unused_imports)]
-    pub use super::{Span, Spanned, Program, Item, Block, Stmt, Expr, FPart, Type, ExternMember, OpaqueType, Code, EnumVariant, VariantFields, SelectArm, MatchArm, MatchPattern, GenericParam, TraitMethod, FnArg, ConfigArg, ConfigParam, FieldDef, FieldDefault, AsmBinding, FieldInit, UnaryOp, BinaryOp, GrammarDef, GrammarRule, FrameAttr, GrammarAlt, Pattern, Repeat, FoldSpec, Receiver, FnParams, ConfigZone, LONGEST_SOURCE, offset};
+    pub use super::{Span, Spanned, Attribute, Program, Item, Block, Stmt, Expr, FPart, Type, ExternMember, OpaqueType, Code, EnumVariant, VariantFields, SelectArm, MatchArm, MatchPattern, GenericParam, TraitMethod, FnArg, ConfigArg, ConfigParam, FieldDef, FieldDefault, AsmBinding, FieldInit, UnaryOp, BinaryOp, GrammarDef, GrammarRule, FrameAttr, GrammarAlt, Pattern, Repeat, FoldSpec, Receiver, FnParams, ConfigZone, LONGEST_SOURCE, offset};
 }
 pub mod boundaries {
     #[allow(unused_imports)]
