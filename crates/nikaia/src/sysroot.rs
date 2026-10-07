@@ -172,15 +172,14 @@ impl Sysroot {
     /// that differ in a way Cargo would answer by rebuilding - a different
     /// codegen table, a different toolchain - coexist instead of evicting one
     /// another (D7, §4's "dimensions coexist; they do not share").
-    /// **Which tree, and the sweep that keeps the rest from piling up.** The key
-    /// holds this compiler's own identity, so every rebuild of it starts a new
-    /// tree and nothing ever took an old one away - measured, 1.7 GB in a user
-    /// cache and 13 GB in the one the project tests share, with a build then
-    /// failing for want of disk. Coexisting is right (D7); coexisting forever is
-    /// the leak. See [`cache::sweep`].
+    /// **Which tree, and the sweep that keeps the rest from piling up.** A new
+    /// toolchain, target or codegen table starts a new tree, and nothing ever
+    /// took an old one away - measured, 1.7 GB in a user cache and 13 GB in the
+    /// one the project tests share, with a build then failing for want of disk.
+    /// Coexisting is right (D7); coexisting forever is the leak. See
+    /// [`cache::sweep`].
     pub fn rlib_cache(&self, target: &str, codegen: &Codegen, features: &str) -> PathBuf {
         let key = Key::sysroot(
-            env!("NIKAIA_COMPILER"),
             env!("NIKAIA_RUSTC_VERSION"),
             target,
             &codegen.render(),

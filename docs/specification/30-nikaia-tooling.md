@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part III: Tooling, Ecosystem & Interoperability**
-**Version:** 0.0.648 (Draft)
+**Version:** 0.0.649 (Draft)
 **Date:** 2026-10-07
 
 ---
@@ -52,7 +52,7 @@ A file inside a project is a file of that project: the nearest `nikaia.toml` abo
 `std` is not resolved by a registry and is not a `type = "rust"` dependency (13.3). A generated project depends on it by path into a **sysroot**: a directory that travels with the compiler and holds `std`'s sources. `NIKAIA_SYSROOT` names the sysroot. By default it is the source tree the compiler was built from.
 
 * **`std` ships as sources, with its Nikaia half already lowered.** The parts of `std` written in Nikaia are lowered to Rust at release time, and the `.rs` sits beside the `.nika` it came from; the toolchain's own Nikaia, `src/tools`, is one package lowered into one `package.rs` ([ADR-294](adr/adr-294.md) D18). Building `std` needs only `rustc`; the compiler is not in a project's build graph. `nikaia lower-std` re-lowers it by invoking the compiler binary.
-* **`std` is compiled once per machine, not once per project.** The compiled `std` lives in the user's cache directory, in an entry keyed by the compiler's own fingerprint, the toolchain, the `target` and the codegen flags of 13.3's `[build.<target>]` table. Two builds that differ in any of those keep their own entry. `NIKAIA_CACHE_DIR` moves the cache. `CARGO_TARGET_DIR` disables it. The program built there is the project's own in `target/nikaia/bin/<name>`, and two projects of one name built at the same time each get their own.
+* **`std` is compiled once per machine, not once per project.** The compiled `std` lives in the user's cache directory, in an entry keyed by the toolchain, the `target`, the codegen flags of 13.3's `[build.<target>]` table and the `reentrancy-check` switch. A program built there is lowered again when another compiler builds it. A program built there is removed from it by the next build once its project directory is gone. Two builds that differ in any of those keep their own entry. `NIKAIA_CACHE_DIR` moves the cache. `CARGO_TARGET_DIR` disables it. The program built there is the project's own in `target/nikaia/bin/<name>`, and two projects of one name built at the same time each get their own.
 * **The newest three entries are kept; idle entries below that are removed.** Each entry is a whole Cargo target directory. A tree written to within the hour is never removed.
 * **`user-parallelism` is not one of those keys.** The build option reaches `std` as a value its runtime is started with, never as a compile-time condition. One compiled `std` serves both values.
 * **Nothing in `std`'s Nikaia half may lower differently per build option.** The Nikaia half is lowered at one value of every build option. `Shared` is ruled out of it, since the emission of a `Shared`'s count follows `user-parallelism`. `Locked` is ruled out likewise (Part II, 12.2). The toolchain lowers every module at both values; the bytes must agree, and a difference fails the toolchain's own build.

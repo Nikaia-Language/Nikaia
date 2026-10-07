@@ -143,7 +143,6 @@ fn the_generated_manifest_checks_the_program_and_not_its_dependencies() {
     let _ = Command::new(env!("CARGO_BIN_EXE_nikaia"))
         .args(["build"])
         .current_dir(&dir)
-        .env("NIKAIA_CACHE_DIR", dir.join("cache"))
         .env("CARGO_NET_OFFLINE", "true")
         .output()
         .expect("the nikaia binary runs");

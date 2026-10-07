@@ -129,6 +129,65 @@ fn a_project_builds_runs_and_notices_an_edit() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+/// **A program another compiler lowered is lowered again** (ADR-002 D4).
+///
+/// The directory a program is built in is shared and named without the
+/// compiler's identity, so it outlives an edit to the compiler, and Cargo knows
+/// the wrapper only by its path. What says which compiler lowered the program
+/// is the last line of the switches file, an input of every crate the wrapper
+/// lowered: a build by the same compiler leaves the program fresh, a build by
+/// another one lowers it again.
+#[test]
+fn a_program_another_compiler_lowered_is_lowered_again() {
+    let dir = a_project(
+        "project-other-compiler",
+        "[package]\nname = \"rebuilt\"\nversion = \"0.1.0\"\n",
+        HELLO,
+    );
+    let lowered = |log: &str| {
+        let trace = dir.join(log);
+        let built = Command::new(env!("CARGO_BIN_EXE_nikaia"))
+            .args(["build", "--project"])
+            .arg(&dir)
+            .env("NIKAIA_CACHE_DIR", shared_cache_dir())
+            .env("NIKAIA_WRAPPER_TRACE", &trace)
+            .env_remove("CARGO_TARGET_DIR")
+            .output()
+            .expect("the nikaia binary runs");
+        assert!(built.status.success(), "{}", said(&built));
+        std::fs::read_to_string(&trace)
+            .unwrap_or_default()
+            .lines()
+            .any(|line| line.starts_with("rebuilt_") && line.ends_with(" lowered"))
+    };
+    assert!(lowered("first.log"), "the first build lowers the program");
+    assert!(
+        !lowered("second.log"),
+        "the same compiler again finds the program fresh"
+    );
+
+    let switches = dir.join("target/nikaia/gen/switches");
+    let written = std::fs::read_to_string(&switches).expect("the switches are written");
+    let identity = env!("NIKAIA_COMPILER");
+    assert!(written.ends_with(&format!("{identity}\n")), "{written}");
+    // As another compiler left it, and as old as the build it described.
+    let modified = std::fs::metadata(&switches)
+        .and_then(|m| m.modified())
+        .expect("its time");
+    std::fs::write(&switches, written.replace(identity, "another-compiler")).expect("rewrite");
+    std::fs::File::options()
+        .write(true)
+        .open(&switches)
+        .and_then(|f| f.set_modified(modified))
+        .expect("the old time");
+    assert!(
+        lowered("third.log"),
+        "a program another compiler lowered is lowered again"
+    );
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 /// A program is every file of its package (Part I 9.1), and all of them have to
 /// reach Cargo's dependency info - not just the one Cargo was told about.
 /// Editing a file that is **not** the entry is the case that separates "the
@@ -238,8 +297,9 @@ fn a_machine_the_toolchain_cannot_build_for_is_refused() {
 /// build was for whatever machine it ran on - ARM code under the name
 /// `x86_64-linux` on an ARM machine - and this directory never appeared.
 ///
-/// `CARGO_TARGET_DIR` is set here, where the other builds leave it alone,
-/// because it is the one way to know where Cargo wrote without asking it.
+/// Where Cargo wrote is read from the shared directory itself: the one whose
+/// record names this project holds its program under the triple, where a build
+/// with no `--target` writes `debug/` at the top.
 #[test]
 fn the_triple_of_the_target_is_handed_to_cargo() {
     use nikaia::emit::Target;
@@ -250,21 +310,32 @@ fn the_triple_of_the_target_is_handed_to_cargo() {
         "[package]\nname = \"triple\"\nversion = \"0.1.0\"\n",
         HELLO,
     );
-    let out = dir.join("cargo-target");
 
-    let built = Command::new(env!("CARGO_BIN_EXE_nikaia"))
-        .args(["build", "--target", host.name(), "--project"])
-        .arg(&dir)
-        .env("NIKAIA_CACHE_DIR", shared_cache_dir())
-        .env("CARGO_TARGET_DIR", &out)
-        .output()
-        .expect("the nikaia binary runs");
+    let built = nikaia(&["build", "--target", host.name()], &dir);
     assert!(built.status.success(), "{}", said(&built));
+    let root = dir.canonicalize().expect("the project");
+    let tree = std::fs::read_dir(shared_cache_dir().join("rlib"))
+        .expect("the shared directories")
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.path())
+        .find(|tree| {
+            std::fs::read_dir(tree.join(".nikaia-projects"))
+                .into_iter()
+                .flatten()
+                .filter_map(|record| std::fs::read_to_string(record.ok()?.path()).ok())
+                .any(|named| Path::new(&named).canonicalize().ok().as_ref() == Some(&root))
+        })
+        .expect("a shared directory names this project");
+    let programs = std::fs::read_dir(tree.join(host.triple()).join("debug/deps"))
+        .expect("Cargo built under the triple")
+        .filter_map(|entry| entry.ok())
+        .filter(|entry| entry.file_name().to_string_lossy().starts_with("triple_"))
+        .count();
     assert!(
-        out.join(host.triple()).is_dir(),
-        "Cargo built for `{}`, so its output is under that name in {}",
+        programs > 0,
+        "Cargo built for `{}`, so the program is under that name in {}",
         host.triple(),
-        out.display()
+        tree.display()
     );
 
     std::fs::remove_dir_all(&dir).ok();
@@ -319,6 +390,9 @@ fn a_crates_io_dependency_never_reaches_the_wrapper() {
         .arg(&dir)
         .env("NIKAIA_CACHE_DIR", shared_cache_dir())
         .env("NIKAIA_WRAPPER_TRACE", &trace)
+        // The crate is named for its project only in the shared directory,
+        // which a `CARGO_TARGET_DIR` from whoever runs the suite turns off.
+        .env_remove("CARGO_TARGET_DIR")
         .output()
         .expect("the nikaia binary runs");
     assert!(built.status.success(), "{}", said(&built));

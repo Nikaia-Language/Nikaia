@@ -188,7 +188,6 @@ fn a_switch_changed_in_the_manifest_rebuilds_the_program() {
         let ran = Command::new(env!("CARGO_BIN_EXE_nikaia"))
             .args(["build", "--project"])
             .arg(&dir)
-            .env("NIKAIA_CACHE_DIR", dir.join("cache"))
             .output()
             .expect("the nikaia binary runs");
         assert!(

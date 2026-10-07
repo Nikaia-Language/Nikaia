@@ -124,6 +124,12 @@ fn a_projects_toolchain_file_is_not_read() {
 /// **D3**: the user's own `CARGO_HOME/config.toml` still applies. Its linker
 /// runs; the registry and the git checkouts are the real ones, so nothing is
 /// fetched.
+///
+/// **The home, the linker and the cache are at one path from run to run**, and
+/// the cache is this test's own. Cargo keys what it built on where the sources
+/// are and on the linker's path, so a home or a linker at a new path every run
+/// rebuilt `std` and all under it, and in the cache the other tests share,
+/// rebuilt it again for the next of them.
 #[test]
 fn the_users_cargo_home_is_read() {
     let real = std::env::var_os("CARGO_HOME")
@@ -131,15 +137,19 @@ fn the_users_cargo_home_is_read() {
         .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".cargo")))
         .expect("a cargo home");
     let dir = project("below-cargo-home", "linked-by-the-user");
-    let home = dir.join("cargo-home");
+    let kept_here = common::deps_dir()
+        .parent()
+        .expect("the profile directory")
+        .join("nikaia-tools-below");
+    let home = kept_here.join("cargo-home");
     std::fs::create_dir_all(&home).expect("a cargo home");
     for kept in ["registry", "git"] {
-        if real.join(kept).exists() {
+        if real.join(kept).exists() && !home.join(kept).exists() {
             std::os::unix::fs::symlink(real.join(kept), home.join(kept)).expect("linked");
         }
     }
     let marker = dir.join("MARKER");
-    let linker = marking_linker(&dir, &marker);
+    let linker = marking_linker(&kept_here, &marker);
     std::fs::write(
         home.join("config.toml"),
         format!("[target.{}]\nlinker = '{}'\n", host(), linker.display()),
@@ -147,6 +157,7 @@ fn the_users_cargo_home_is_read() {
     .expect("the config");
     let out = nikaia(&dir)
         .env("CARGO_HOME", &home)
+        .env("NIKAIA_CACHE_DIR", kept_here.join("cache"))
         .output()
         .expect("the nikaia binary runs");
     let marked = marker.exists();

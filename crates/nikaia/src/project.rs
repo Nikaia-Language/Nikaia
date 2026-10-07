@@ -2667,13 +2667,21 @@ impl Project {
         let choices = self.settings.choices();
         // **And the libraries' flags**, which change what the program is
         // linked against and nothing Cargo watches.
+        //
+        // **And this compiler's identity** (ADR-002 D4): the wrapper that
+        // lowers the program is this compiler, and Cargo fingerprints the
+        // wrapper by its path, not by what it writes. The directory the program
+        // is built in is shared and outlives an edit to the compiler, so this
+        // line is what makes the program's crates stale after one - and only
+        // them, not `std` and what is under it, which the compiler never wrote.
         write_if_changed(
             &switches,
             &format!(
-                "{}\n{}\n{}\n",
+                "{}\n{}\n{}\n{}\n",
                 choices.build,
                 choices.backend,
-                link_flags.join(" ")
+                link_flags.join(" "),
+                env!("NIKAIA_COMPILER"),
             ),
         )?;
 
@@ -2748,11 +2756,16 @@ impl Project {
             // get it.
             target_dir: match std::env::var_os("CARGO_TARGET_DIR") {
                 Some(_) => None,
-                None => Some(Sysroot::resolve().rlib_cache(
-                    &self.settings.target,
-                    &self.codegen(),
-                    &self.settings.reentrancy_check,
-                )),
+                None => {
+                    let tree = Sysroot::resolve().rlib_cache(
+                        &self.settings.target,
+                        &self.codegen(),
+                        &self.settings.reentrancy_check,
+                    );
+                    // What projects that are gone left there goes (ADR-021 D12.5).
+                    orchestrator::cache::sweep_programs(&tree, &self.root_tag(), &self.root);
+                    Some(tree)
+                }
             },
             wrapper: std::env::current_exe().context("finding this compiler's own path")?,
             env,

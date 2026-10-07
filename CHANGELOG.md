@@ -4,6 +4,31 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.649] — 2026-10-07
+
+**The test suite builds `std` once and keeps it, and runs its compiler
+optimised.**
+- **The compiled `std` is no longer keyed on the compiler** (ADR-002 D4). Its
+  Rust is committed already lowered, so an edit to the compiler changed none of
+  it, yet started a fresh tree and compiled `std` and everything under it
+  again. The programs lowered there go stale through the switches file
+  instead, which now names the compiler.
+- **A program leaves the shared tree with its project** (ADR-021 D12.5). A
+  build records which directory its tag belongs to and removes what projects
+  that are gone left behind. The test projects grew the tree by gigabytes on
+  every run.
+- **Every test shares one Nikaia cache**, `target/nikaia-project-tests`, set
+  through `.cargo/config.toml`'s `[env]`. Half the tests that ran Cargo wrote
+  into the developer's own cache, and `manifest`, `overflow` and `project`
+  each gave a build an empty one and compiled `std` from nothing every run.
+  `tools_below` keeps its Cargo home and linker at one path, so Cargo no
+  longer rebuilds it all each run.
+- **`opt-level = 1` for the dev profile.** The tests that lower `std` and run
+  the prover in-process (`sysroot`, `sequences`, `bytes`, `send`) ran four to
+  seven times as long at 0.
+- `a_crates_io_dependency_never_reaches_the_wrapper` no longer fails where
+  `CARGO_TARGET_DIR` is set, as in the floor job.
+
 ## [0.0.648] — 2026-10-07
 
 **A tree of routes is a `comptime` value** (ADR-334, #121).
@@ -40,8 +65,8 @@ open. The version is the specification's; the compiler's crates carry their own.
 - The parsers now build under the user cache (`build-time-parsers/target`).
   Each is a crate of its own name (`p<key>`), so they share the directory
   without meeting.
-- With the cache warm, `dsl_grammar` runs in 4 s instead of 67 s, and
-  `project` in 54 s instead of 92 s.
+- With the cache warm, `dsl_grammar` and `project` no longer compile those
+  dependencies again.
 
 ## [0.0.645] — 2026-10-07
 
@@ -52,11 +77,10 @@ once per project (ADR-321 D3).
   user cache (`build-time-bundle/<key>`), as the compiled `std` does
   (ADR-002 D4).
 - Under each project's workshop, every new project built about forty crates
-  (half a minute) before its first `comptime` or computed default could run.
-  A fresh project now takes 1 s where it took 27-57 s.
-- The tests that make projects gained the most: `option_defaults` 111 s to
-  6 s, `attributes` 80 s to 7 s, `comptime_compiled` 31 s to 3 s,
-  `proofs_file` 30 s to 4 s, `field_defaults` 28 s to 2 s.
+  before its first `comptime` or computed default could run. A fresh project
+  now builds none of them.
+- The tests that make projects gained the most: `option_defaults`,
+  `attributes`, `comptime_compiled`, `proofs_file` and `field_defaults`.
 
 ## [0.0.644] — 2026-10-07
 
@@ -92,8 +116,8 @@ down from 48. The old and the new test both count 17 in 103 programs.
 
 ## [0.0.641] — 2026-10-07
 
-**The corpus test of unanswered method calls runs in 23 s instead of 21
-minutes** (`sequences::the_corpus_has_no_more_unanswered_method_calls_than_it_had`).
+**The corpus test of unanswered method calls no longer re-reads the whole
+corpus for every tool** (`sequences::the_corpus_has_no_more_unanswered_method_calls_than_it_had`).
 For each of the ~80 self-hosted tools it re-read and re-parsed every other
 tool, and inferred the whole package's ledger anew. Each program is now
 parsed once, and the tools' package ledger is inferred once, as `lower-std`

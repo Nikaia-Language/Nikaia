@@ -1,0 +1,8 @@
+# **Every test shares one Nikaia cache, and not the developer's.** The tests
+# start the compiler hundreds of times; each build that runs Cargo compiles
+# `std` and what is under it into the cache it is handed, and a cache of its
+# own is a full compile of all of it, every run. This is inherited by every
+# process `cargo test` starts; a test that sets the variable itself still wins.
+# It moves `cargo run -p nikaia`'s cache here too, which is a checkout's own.
+[env]
+NIKAIA_CACHE_DIR = { value = "target/nikaia-project-tests", relative = true }

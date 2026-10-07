@@ -310,9 +310,8 @@ impl Key {
     /// one answers *which compiled `std` may this build link*, and the two sets
     /// of dimensions are not the same set:
     ///
-    /// * `compiler` and `toolchain` are in both. `std`'s Nikaia half is lowered
-    ///   by this emitter, and an rlib is only loadable by the `rustc` that wrote
-    ///   it.
+    /// * `toolchain` is in both: an rlib is only loadable by the `rustc` that
+    ///   wrote it.
     /// * `target` is in, and `user_parallelism` is deliberately **not**: the
     ///   switch reaches `std` as a runtime value, never as a `cfg`, so there is
     ///   one compiled `std` per machine rather than one per build switch
@@ -337,15 +336,15 @@ impl Key {
     ///   thing this cache exists to stop.
     /// * **The lowering backend.** It changes what a `.nika` file lowers to,
     ///   and `std`'s Rust is not lowered by this build at all.
-    pub fn sysroot(
-        compiler: &str,
-        toolchain: &str,
-        target: &str,
-        codegen: &str,
-        features: &str,
-    ) -> Self {
+    /// * **The compiler's own identity**, which the unit key has (D3). `std`'s
+    ///   Rust is committed already lowered, so this compiler writes not a byte
+    ///   of what is compiled here; with it in, every edit to the compiler
+    ///   started a fresh directory and compiled `std` and everything under it
+    ///   again. The program's own crates in the directory are the ones the
+    ///   compiler does write, and they go stale through the switches file
+    ///   instead (ADR-002 D4).
+    pub fn sysroot(toolchain: &str, target: &str, codegen: &str, features: &str) -> Self {
         let mut b = KeyBuilder::new(SYSROOT_DOMAIN);
-        b.field("compiler", compiler);
         b.field("toolchain", toolchain);
         b.field("target", target);
         b.field("codegen", codegen);
@@ -731,9 +730,9 @@ const IN_USE: std::time::Duration = std::time::Duration::from_secs(60 * 60);
 /// rest.
 ///
 /// **A cache with no eviction is a disk leak**, and this one leaks by design
-/// rather than by accident: its key holds the compiler's identity so that two
-/// builds which differ in a way Cargo would answer by rebuilding coexist instead
-/// of evicting one another ([ADR-021](../../../docs/specification/adr/adr-021.md)
+/// rather than by accident: two builds which differ in a way Cargo would answer
+/// by rebuilding - a toolchain, a target, a codegen table - coexist instead of
+/// evicting one another ([ADR-021](../../../docs/specification/adr/adr-021.md)
 /// D7). Coexisting is right; coexisting *forever* is what makes the disk run out.
 ///
 /// Newest by the marker file [`touch`] writes, not by the directory's own
@@ -773,6 +772,95 @@ pub fn touch(dir: &Path) {
     let _ = std::fs::write(dir.join(USED), b"");
 }
 
+/// **A program's artifacts leave a shared tree with its project.**
+///
+/// Every project builds its program in the one tree, under a crate name that
+/// ends in the project's tag (`<name>_<tag>`), so two projects of one name do
+/// not meet, and Cargo lifts its binary out as `<name>-<tag>`. The binaries are tens of megabytes each, and a deleted project
+/// left them there forever: nothing else would ever read them, and a test suite
+/// that builds hundreds of throwaway projects grew the tree by gigabytes a run.
+///
+/// So a build says which directory its tag belongs to, and removes what every
+/// tag whose directory is gone left in the tree. A project that no longer
+/// exists is not building, so nothing is taken from a build in flight. Failure
+/// is a fuller disk, never a failed build ([`sweep`]'s rule).
+pub fn sweep_programs(tree: &Path, tag: &str, project: &Path) {
+    let records = tree.join(PROJECTS);
+    let _ = std::fs::create_dir_all(&records);
+    // A path that is not text is not recorded, and so never swept.
+    if let Some(project) = project.to_str() {
+        let _ = std::fs::write(records.join(tag), project);
+    }
+    let Ok(entries) = std::fs::read_dir(&records) else {
+        return;
+    };
+    let gone: Vec<String> = entries
+        .filter_map(|entry| entry.ok())
+        .filter(|entry| {
+            std::fs::read_to_string(entry.path()).is_ok_and(|root| !Path::new(&root).exists())
+        })
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .collect();
+    if gone.is_empty() {
+        return;
+    }
+    for dir in profile_dirs(tree) {
+        for sub in ["", "deps", ".fingerprint", "incremental", "build"] {
+            let Ok(entries) = std::fs::read_dir(dir.join(sub)) else {
+                continue;
+            };
+            for entry in entries.filter_map(|entry| entry.ok()) {
+                let name = entry.file_name();
+                let name = name.to_string_lossy();
+                // The crate is `<name>_<tag>`; the binary Cargo lifts out of
+                // `deps/` is `<name>-<tag>`.
+                if gone.iter().any(|tag| {
+                    name.contains(&format!("_{tag}")) || name.contains(&format!("-{tag}"))
+                }) {
+                    let path = entry.path();
+                    let _ = match path.is_dir() {
+                        true => std::fs::remove_dir_all(&path),
+                        false => std::fs::remove_file(&path),
+                    };
+                }
+            }
+        }
+    }
+    for tag in gone {
+        let _ = std::fs::remove_file(records.join(tag));
+    }
+}
+
+/// The profile directories of a Cargo target directory - `debug/` and
+/// `<triple>/debug/` and their kin: the ones that hold a `deps/`.
+fn profile_dirs(tree: &Path) -> Vec<PathBuf> {
+    let children = |dir: &Path| -> Vec<PathBuf> {
+        std::fs::read_dir(dir)
+            .into_iter()
+            .flatten()
+            .filter_map(|entry| entry.ok())
+            .map(|entry| entry.path())
+            .filter(|path| path.is_dir())
+            .collect()
+    };
+    let mut out = Vec::new();
+    for dir in children(tree) {
+        if dir.join("deps").is_dir() {
+            out.push(dir);
+        } else {
+            out.extend(
+                children(&dir)
+                    .into_iter()
+                    .filter(|d| d.join("deps").is_dir()),
+            );
+        }
+    }
+    out
+}
+
+/// Which project each tag in a tree belongs to, one file per tag.
+const PROJECTS: &str = ".nikaia-projects";
+
 /// When a cache directory was last said to be in use.
 fn used_at(dir: &Path) -> std::time::SystemTime {
     std::fs::metadata(dir.join(USED))
@@ -788,6 +876,44 @@ const USED: &str = ".nikaia-used";
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A tag whose project is gone loses its artifacts; a live one keeps them,
+    /// and so does what belongs to no project (`std` and its dependencies).
+    #[test]
+    fn a_gone_projects_program_leaves_the_tree_and_a_live_ones_stays() {
+        let base =
+            std::env::temp_dir().join(format!("nikaia-sweep-programs-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let tree = base.join("tree");
+        let profile = tree.join("x86_64-unknown-linux-gnu").join("debug");
+        let live = base.join("live");
+        std::fs::create_dir_all(profile.join("deps")).unwrap();
+        std::fs::create_dir_all(profile.join(".fingerprint/app_aaaa-1")).unwrap();
+        std::fs::create_dir_all(&live).unwrap();
+        for file in [
+            "deps/app_aaaa-1",
+            "app-aaaa",
+            "app-aaaa.d",
+            "deps/app_bbbb-2",
+            "app-bbbb",
+            "deps/libnikaia_std-3.rlib",
+        ] {
+            std::fs::write(profile.join(file), b"").unwrap();
+        }
+        sweep_programs(&tree, "aaaa", &base.join("gone"));
+        sweep_programs(&tree, "bbbb", &live);
+
+        assert!(!profile.join("deps/app_aaaa-1").exists());
+        assert!(!profile.join("app-aaaa").exists());
+        assert!(!profile.join("app-aaaa.d").exists());
+        assert!(profile.join("app-bbbb").exists());
+        assert!(!profile.join(".fingerprint/app_aaaa-1").exists());
+        assert!(profile.join("deps/app_bbbb-2").exists());
+        assert!(profile.join("deps/libnikaia_std-3.rlib").exists());
+        assert!(!tree.join(PROJECTS).join("aaaa").exists());
+        assert!(tree.join(PROJECTS).join("bbbb").exists());
+        let _ = std::fs::remove_dir_all(&base);
+    }
 
     fn choices() -> Choices {
         Choices::new("x86_64-linux/auto", "rust")

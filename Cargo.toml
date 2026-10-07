@@ -40,7 +40,13 @@ thiserror = "1.0"
 anyhow = "1.0"
 
 [profile.dev]
-opt-level = 0
+# **Optimised a little, because the tests are the compiler's main user.** The
+# suite lowers `std` and the toolchain, proves, and interprets in the test
+# process itself; at `opt-level = 0` the four test binaries that do most of it
+# took four to seven times as long. The price is a slower cold build of the
+# workspace; a rebuild after an edit got faster, since the binaries it links
+# are smaller.
+opt-level = 1
 # No debug information: every integration test is a binary of its own with
 # the compiler and `std` linked in, and with full debug information the
 # suite's build filled a session's disk (27 GB). Panics still name their file
