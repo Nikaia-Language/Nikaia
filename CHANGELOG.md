@@ -4,6 +4,21 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.645] — 2026-10-07
+
+**The library build-time code links against is built once per machine**, not
+once per project (ADR-321 D3).
+- What the bundle is depends on its manifest (where `std` comes from), its
+  one file and the toolchain, never on the program. It now lives under the
+  user cache (`build-time-bundle/<key>`), as the compiled `std` does
+  (ADR-002 D4).
+- Under each project's workshop, every new project built about forty crates
+  (half a minute) before its first `comptime` or computed default could run.
+  A fresh project now takes 1 s where it took 27-57 s.
+- The tests that make projects gained the most: `option_defaults` 111 s to
+  6 s, `attributes` 80 s to 7 s, `comptime_compiled` 31 s to 3 s,
+  `proofs_file` 30 s to 4 s, `field_defaults` 28 s to 2 s.
+
 ## [0.0.644] — 2026-10-07
 
 **A value parameter is marked `comptime`; a function may take one, written as any other argument** (ADR-333, #121).

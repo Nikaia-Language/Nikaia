@@ -902,10 +902,16 @@ static HEAP: Heap = Heap;\n";
 /// The crates the bundle names: `std`, and what a `grammar` lowers to.
 const NAMED: [&str; 3] = ["nikaia_std", "winnow", "winnow_grammar"];
 
-/// Build the bundle under `at`, or say why it could not be built.
-pub(crate) fn bundle(at: &Path) -> Result<Bundle, String> {
-    let dir = at.join("bundle");
-    std::fs::create_dir_all(dir.join("src")).map_err(|e| format!("{}: {e}", dir.display()))?;
+/// Build the bundle, or say why it could not be built.
+///
+/// **Once per machine, not per project**: what it is depends on its manifest
+/// (where `std` comes from), its one file and the toolchain, never on the
+/// program - so it lives under the user cache, keyed by the first two, as the
+/// compiled `std` of ADR-002 D4 does. Under each project's own workshop it was
+/// built again for every new project, some forty crates (half a minute) before
+/// the first `comptime` could run. Cargo's lock on the target directory is what
+/// makes two builds at once wait for one another rather than collide.
+pub(crate) fn bundle(_workshop: &Path) -> Result<Bundle, String> {
     let mut manifest = String::from(
         "# GENERATED. The library build-time code links against (ADR-321 D3).\n\n\
          [workspace]\n\n\
@@ -915,6 +921,12 @@ pub(crate) fn bundle(at: &Path) -> Result<Bundle, String> {
     for (name, value) in crate::project::runtime_dependencies_for(NAMED.join(" ").as_str()) {
         manifest.push_str(&format!("{name} = {value}\n"));
     }
+    let key = orchestrator::cache::sha256_hex(format!("{manifest}\n{BUNDLE}").as_bytes());
+    let at = orchestrator::cache::Layout::user_cache_dir()
+        .join("build-time-bundle")
+        .join(&key[..16]);
+    let dir = at.join("bundle");
+    std::fs::create_dir_all(dir.join("src")).map_err(|e| format!("{}: {e}", dir.display()))?;
     write_if_changed(&dir.join("Cargo.toml"), &manifest)?;
     write_if_changed(&dir.join("src").join("lib.rs"), BUNDLE)?;
     let built = Command::new(cargo())
