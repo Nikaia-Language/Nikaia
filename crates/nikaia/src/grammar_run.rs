@@ -193,6 +193,13 @@ impl Workshop {
         write_if_changed(&source, &program)?;
         write_if_changed(&dir.join("Cargo.toml"), &manifest(&key, &program))?;
 
+        // **One target directory for every parser on the machine**: what a
+        // parser depends on - `std`, `winnow`, the grammar runtime - is the
+        // same for all of them, and under each project's workshop it was
+        // compiled again for every new project (half a minute before the
+        // first grammar could run). Each parser is a crate of its own name
+        // (`p<key>`), so they share the directory without meeting.
+        let target = shared_target();
         let built = Command::new(cargo())
             .current_dir(orchestrator::cache::Layout::where_tools_start())
             .arg("build")
@@ -200,7 +207,7 @@ impl Workshop {
             .arg("--manifest-path")
             .arg(dir.join("Cargo.toml"))
             .arg("--target-dir")
-            .arg(at.join("target"))
+            .arg(&target)
             .output()
             .map_err(|error| Wall::DidNotBuild {
                 detail: format!("running cargo: {error}"),
@@ -216,7 +223,7 @@ impl Workshop {
         let input = dir.join("input");
         write_if_changed(&input, ask.input)?;
 
-        let binary = at.join("target").join("debug").join(format!("p{key}"));
+        let binary = target.join("debug").join(format!("p{key}"));
         let ran = Command::new(&binary)
             .arg(&input)
             .output()
@@ -261,6 +268,14 @@ fn write_if_changed(path: &Path, text: &str) -> Result<(), Wall> {
 /// The dependencies are the ones a generated program already gets
 /// (`project::runtime_dependencies`), so the parser compiled here is the parser
 /// the program links.
+/// Where every grammar run's parser is compiled: the user cache, beside the
+/// compiled `std` (ADR-002 D4).
+fn shared_target() -> PathBuf {
+    orchestrator::cache::Layout::user_cache_dir()
+        .join("build-time-parsers")
+        .join("target")
+}
+
 fn manifest(key: &str, program: &str) -> String {
     let mut out = String::from(
         "# GENERATED. A parser compiled so that a grammar can run while the program\n\

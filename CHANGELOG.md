@@ -4,6 +4,19 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.646] — 2026-10-07
+
+**A grammar run's parsers share one target directory per machine** (issue
+#178's build-time parser).
+- What a parser depends on (`std`, `winnow`, the grammar runtime) is the same
+  for every parser. Under each project's workshop it was compiled again for
+  every new project.
+- The parsers now build under the user cache (`build-time-parsers/target`).
+  Each is a crate of its own name (`p<key>`), so they share the directory
+  without meeting.
+- With the cache warm, `dsl_grammar` runs in 4 s instead of 67 s, and
+  `project` in 54 s instead of 92 s.
+
 ## [0.0.645] — 2026-10-07
 
 **The library build-time code links against is built once per machine**, not
