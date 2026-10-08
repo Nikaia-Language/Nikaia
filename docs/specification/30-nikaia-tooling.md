@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part III: Tooling, Ecosystem & Interoperability**
-**Version:** 0.0.708 (Draft)
+**Version:** 0.0.709 (Draft)
 **Date:** 2026-10-08
 
 ---
@@ -1351,7 +1351,8 @@ An untrusted map is seeded randomly, so **its iteration order is not stable betw
   nothing where it writes none or one the type does not hold:
   `text::parse_i32(s) ?? 0`. An integer is an optional sign and decimal digits,
   and an unsigned one takes no `-`; a float adds an optional `.` and digits and
-  an optional exponent, `e` or `E`, or is `inf`, `-inf` or `nan`. No space,
+  an optional exponent, `e` or `E`, or is `inf`, `-inf` or `nan` in any case
+  (`NaN`, `-Inf`). No space,
   no `_`. `text::digit_value(c)` is one digit's
   value. A text whose shape has to be explained when it is wrong is a grammar's
   to read, with `dec[T](p)` (Part II 10.8).
