@@ -8,6 +8,28 @@ or the specification. A change only to the guide, the notes, the README, the
 website, the tests, the examples or the tooling around them raises nothing and
 has no heading here; `CLAUDE.md` draws the line.
 
+## [0.0.684] — 2026-10-08
+
+**`nikaia bind python`** (ADR-284 D26, D27, D29; #112). It builds the library
+and writes `target/nikaia/c-library/<package>/__init__.py`, a `ctypes` module
+over it, from the same reading of the package as the header and carrying the
+same ledger hash:
+- A status other than `OK` is an exception: `Error` with a subclass per thrown
+  variant, and `BoundaryError` subclasses for the seven negative codes, each
+  carrying what `last_error` said.
+- Text and bytes go in as `str` and `bytes`, and come back with the size query
+  done by the binding.
+- A handle is a class: its constructor as `__init__`, its methods, a property
+  per `pub` field, `close()`, a `with` block, and `__del__`.
+- An `extern` struct is a `ctypes.Structure`, an `enum` an `IntEnum`, and
+  `null` is `None`.
+- A callback is any callable. What it raises is raised by the call once the
+  call has returned, since `ctypes` cannot carry an exception through C.
+
+A call refused for its handle (`E_REENTRANT`, `E_ARGUMENT`) now says so in
+`last_error`. Not built yet: the `_async` form's awaitable, a stream as a
+generator, and `nikaia bind js`, which waits on the WebAssembly build.
+
 ## [0.0.683] — 2026-10-08
 
 **A library's `Shared` values are safe on the caller's threads** (ADR-284 D1,

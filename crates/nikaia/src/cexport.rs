@@ -43,6 +43,8 @@ pub struct Exported {
     pub rust: String,
     /// `<package>.h`.
     pub header: String,
+    /// `<package>/__init__.py`, what `nikaia bind python` writes (D26).
+    pub python: String,
 }
 
 /// Where the header names the ledger's digest, filled in once the lowering
@@ -226,6 +228,29 @@ fn record_of(parsed: &crate::parser::Parsed, records: &[Record], ty: &Type) -> O
     }
     let name = parsed.text(ty.name);
     records.iter().position(|record| record.name == name)
+}
+
+/// **The records, each after every record its fields hold**: C, and Python's
+/// `ctypes`, want a struct complete before another holds it. One that holds
+/// itself has no size, which rustc says; this only must not walk it forever.
+fn records_in_order(records: &[Record]) -> Vec<usize> {
+    fn ordered(at: usize, records: &[Record], seen: &mut Vec<usize>, walking: &mut Vec<usize>) {
+        if seen.contains(&at) || walking.contains(&at) {
+            return;
+        }
+        walking.push(at);
+        for (_, part) in &records[at].fields {
+            if let Part::Record(inner) = part {
+                ordered(*inner, records, seen, walking);
+            }
+        }
+        seen.push(at);
+    }
+    let mut order = Vec::new();
+    for at in 0..records.len() {
+        ordered(at, records, &mut order, &mut Vec::new());
+    }
+    order
 }
 
 /// The mirror of a [`Record`] the wrapper takes and hands back, and its two
@@ -681,6 +706,16 @@ pub fn export(
          \n\
          fn __nikaia_failed(said: String) {\n    \
          __NIKAIA_LAST_ERROR.with(|last| *last.borrow_mut() = said);\n\
+         }\n\
+         \n\
+         /// A handle the call could not hold, said for `<prefix>_last_error` (ADR-284 D7, D11).\n\
+         #[allow(dead_code)]\n\
+         fn __nikaia_refused(status: std::ffi::c_int) -> std::ffi::c_int {\n    \
+         __nikaia_failed(match status {\n        \
+         -5 => \"a call on a handle this thread holds already, from a callback of a call on it\",\n        \
+         _ => \"no handle where one is needed, or one that is closed\",\n    \
+         }.to_string());\n    \
+         status\n\
          }\n",
     );
     rust.push_str(&format!(
@@ -709,6 +744,7 @@ pub fn export(
          return -6;\n    }}\n    0\n}}\n"
     ));
     let mut declarations = String::new();
+    let mut python = Python::default();
     let mut any_pause = false;
     let found = entries(program)?;
     let Some(unit) = program.units.first() else {
@@ -845,7 +881,7 @@ pub fn export(
             c_params.push(format!("{constant}{prefix}_{owner} *self"));
             checks.push_str(&format!(
                 "    // SAFETY: the C caller hands a handle this library made and has not freed, or NULL (ADR-284 D5).\n    \
-                 let {binding}__nikaia_self = match unsafe {{ nikaia_std::c_boundary::{how}(__nikaia_self) }} {{ Ok(held) => held, Err(status) => return status }};\n"
+                 let {binding}__nikaia_self = match unsafe {{ nikaia_std::c_boundary::{how}(__nikaia_self) }} {{ Ok(held) => held, Err(status) => return __nikaia_refused(status) }};\n"
             ));
         }
         for (position, arg) in entry.args.iter().enumerate() {
@@ -1027,7 +1063,7 @@ pub fn export(
                             "    let {local} = match {local}.is_null() {{\n        \
                              true => None,\n        \
                              // SAFETY: the C caller hands a handle this library made and has not freed (ADR-284 D5).\n        \
-                             false => match unsafe {{ nikaia_std::c_boundary::shared({local}) }} {{ Ok(held) => Some(held), Err(status) => return status }},\n    \
+                             false => match unsafe {{ nikaia_std::c_boundary::shared({local}) }} {{ Ok(held) => Some(held), Err(status) => return __nikaia_refused(status) }},\n    \
                              }};\n"
                         ));
                         call_args.push(format!("{local}.as_deref()"));
@@ -1042,7 +1078,7 @@ pub fn export(
                     c_params.push(format!("const {prefix}_{ty} *{param}"));
                     checks.push_str(&format!(
                         "    // SAFETY: the C caller hands a handle this library made and has not freed, or NULL (ADR-284 D5).\n    \
-                         let {local} = match unsafe {{ nikaia_std::c_boundary::shared({local}) }} {{ Ok(held) => held, Err(status) => return status }};\n"
+                         let {local} = match unsafe {{ nikaia_std::c_boundary::shared({local}) }} {{ Ok(held) => held, Err(status) => return __nikaia_refused(status) }};\n"
                     ));
                     call_args.push(format!("&*{local}"));
                 }
@@ -1228,6 +1264,12 @@ pub fn export(
             false => c_params.join(", "),
         };
         declarations.push_str(&format!("int {symbol}({c_params});\n"));
+        let text_out = entry
+            .ret_type
+            .is_some_and(|ty| parsed.text(ty.name) == "String");
+        python.entry(
+            entry, &symbol, parsed, &plains, &handles, &records, text_out,
+        );
         // **The `_async` form** (D9, D19): the same call on a library thread,
         // `done` called exactly once with its status, and a ticket that
         // cancels it at its next pause point. What C handed it stays C's to
@@ -1365,24 +1407,7 @@ pub fn export(
         ));
     }
     // A struct a field holds comes first: C wants it complete.
-    // One that holds itself has no size, which rustc says; this only must
-    // not walk it forever.
-    fn ordered(at: usize, records: &[Record], seen: &mut Vec<usize>, walking: &mut Vec<usize>) {
-        if seen.contains(&at) || walking.contains(&at) {
-            return;
-        }
-        walking.push(at);
-        for (_, part) in &records[at].fields {
-            if let Part::Record(inner) = part {
-                ordered(*inner, records, seen, walking);
-            }
-        }
-        seen.push(at);
-    }
-    let mut order = Vec::new();
-    for at in 0..records.len() {
-        ordered(at, &records, &mut order, &mut Vec::new());
-    }
+    let order = records_in_order(&records);
     for record in order.iter().map(|at| &records[*at]) {
         let fields: Vec<String> = record
             .fields
@@ -1430,12 +1455,16 @@ pub fn export(
          {declarations}\n\
          #ifdef __cplusplus\n}}\n#endif\n\n#endif\n"
     );
+    let python = python.module(
+        package, prefix, &codes, &plains, &handles, &held, &records, any_pause,
+    );
     Ok(Exported {
         rust: match declarations.is_empty() {
             true => String::new(),
             false => rust,
         },
         header,
+        python,
     }
     .exporting(!declarations.is_empty()))
 }
@@ -1454,4 +1483,578 @@ pub fn nothing_exported() -> anyhow::Error {
         "`artifact = \"c-library\"`, and the package exports nothing: write `pub extern fn` \
          before a function C may call (ADR-284 D4)."
     )
+}
+
+// --- `nikaia bind python` (ADR-284 D26, D27) -----------------------------------
+//
+// **A `ctypes` module over the library**, written from the same reading of the
+// package as the header, so that the two cannot disagree: a status is an
+// exception, a buffer is `str` or `bytes` with the size query done here, a
+// handle is a class with its methods, a property per `pub` field, `close()` and
+// a context manager, an `extern` struct a `ctypes.Structure`, an `enum` an
+// `IntEnum`, `null` is `None`, and a callback a callable `CFUNCTYPE` keeps alive
+// for the call. Only the entry points (D29). Not written yet: the `_async`
+// form's awaitable and a stream as a generator; a pausing function is called
+// in its blocking form.
+
+/// The Python of one library, gathered entry by entry.
+#[derive(Default)]
+struct Python {
+    /// Module-level functions.
+    functions: Vec<String>,
+    /// Each handle's class body: its constructor, methods and properties.
+    classes: std::collections::BTreeMap<String, Vec<String>>,
+    /// `_lib.<symbol>.argtypes = …` lines.
+    signatures: Vec<String>,
+}
+
+/// A name Python may bind: one of its words gets a `_` after it.
+fn python_name(name: &str) -> String {
+    const WORDS: &[&str] = &[
+        "False", "None", "True", "and", "as", "assert", "async", "await", "break", "class",
+        "continue", "def", "del", "elif", "else", "except", "finally", "for", "from", "global",
+        "if", "import", "in", "is", "lambda", "nonlocal", "not", "or", "pass", "raise", "return",
+        "try", "while", "with", "yield", "self",
+    ];
+    match WORDS.contains(&name) {
+        true => format!("{name}_"),
+        false => name.to_string(),
+    }
+}
+
+/// The `ctypes` type of a value that crosses by value.
+fn python_scalar(shape: &ByValue) -> &'static str {
+    match shape.rust {
+        "i32" => "ctypes.c_int32",
+        "i64" => "ctypes.c_int64",
+        "u8" => "ctypes.c_uint8",
+        "f64" => "ctypes.c_double",
+        "bool" => "ctypes.c_bool",
+        _ => "ctypes.c_uint32",
+    }
+}
+
+impl Python {
+    /// One entry point: a function, or a handle's constructor, method or
+    /// property.
+    #[allow(clippy::too_many_arguments)]
+    fn entry(
+        &mut self,
+        entry: &Entry,
+        symbol: &str,
+        parsed: &crate::parser::Parsed,
+        plains: &[Plain],
+        handles: &[Handled],
+        records: &[Record],
+        text_out: bool,
+    ) {
+        let mut def_params: Vec<String> = Vec::new();
+        let mut argtypes: Vec<String> = Vec::new();
+        let mut before: Vec<String> = Vec::new();
+        let mut args: Vec<String> = Vec::new();
+        let mut keep: Vec<String> = Vec::new();
+        let mut raising: Vec<String> = Vec::new();
+        if entry.receiver.is_some() {
+            argtypes.push("ctypes.c_void_p".to_string());
+            args.push("self._live()".to_string());
+        }
+        for arg in entry.args {
+            let name = python_name(parsed.text(arg.name));
+            def_params.push(name.clone());
+            match taken(parsed, plains, handles, records, &arg.ty) {
+                Some(In::Value(shape)) => {
+                    argtypes.push(python_scalar(&shape).to_string());
+                    args.push(match shape.scalar {
+                        true => format!("ord({name})"),
+                        false => name,
+                    });
+                }
+                Some(In::Run { rust, as_text, .. }) => {
+                    let element = match (as_text, rust) {
+                        (true, _) => "ctypes.c_uint8",
+                        (false, "i32") => "ctypes.c_int32",
+                        (false, "i64") => "ctypes.c_int64",
+                        (false, "u8") => "ctypes.c_uint8",
+                        (false, "f64") => "ctypes.c_double",
+                        (false, _) => "ctypes.c_bool",
+                    };
+                    argtypes.push(format!("ctypes.POINTER({element})"));
+                    argtypes.push("ctypes.c_size_t".to_string());
+                    match as_text {
+                        true => before.push(format!("{name}_at, {name}_len = _text({name})")),
+                        false => {
+                            before.push(format!("{name}_at, {name}_len = _run({element}, {name})"))
+                        }
+                    }
+                    args.push(format!("{name}_at"));
+                    args.push(format!("{name}_len"));
+                }
+                Some(In::Bytes) => {
+                    argtypes.push("ctypes.POINTER(ctypes.c_uint8)".to_string());
+                    argtypes.push("ctypes.c_size_t".to_string());
+                    before.push(format!("{name}_at, {name}_len = _bytes({name})"));
+                    args.push(format!("{name}_at"));
+                    args.push(format!("{name}_len"));
+                }
+                Some(In::Choice(at)) => {
+                    argtypes.push("ctypes.c_int".to_string());
+                    args.push(format!("int({}({name}))", plains[at].name));
+                }
+                Some(In::Record(at)) => {
+                    argtypes.push(records[at].name.clone());
+                    args.push(name);
+                }
+                Some(In::Handle(_)) => {
+                    argtypes.push("ctypes.c_void_p".to_string());
+                    args.push(format!("{name}._live()"));
+                }
+                Some(In::Absent(present)) => match *present {
+                    In::Handle(_) => {
+                        argtypes.push("ctypes.c_void_p".to_string());
+                        args.push(format!("None if {name} is None else {name}._live()"));
+                    }
+                    _ => {
+                        argtypes.push("ctypes.POINTER(ctypes.c_uint8)".to_string());
+                        argtypes.push("ctypes.c_size_t".to_string());
+                        before.push(format!(
+                            "{name}_at, {name}_len = (None, 0) if {name} is None else _text({name})"
+                        ));
+                        args.push(format!("{name}_at"));
+                        args.push(format!("{name}_len"));
+                    }
+                },
+                Some(In::Callback { args: lent, result }) => {
+                    let mut c_args: Vec<String> = Vec::new();
+                    let mut params: Vec<String> = Vec::new();
+                    let mut handed: Vec<String> = Vec::new();
+                    for (at, part) in lent.iter().enumerate() {
+                        match part {
+                            Lent::Value(shape) => {
+                                c_args.push(python_scalar(shape).to_string());
+                                params.push(format!("a{at}"));
+                                handed.push(match shape.scalar {
+                                    true => format!("chr(a{at})"),
+                                    false => format!("a{at}"),
+                                });
+                            }
+                            Lent::Choice(which) => {
+                                c_args.push("ctypes.c_int".to_string());
+                                params.push(format!("a{at}"));
+                                handed.push(format!("{}(a{at})", plains[*which].name));
+                            }
+                            Lent::Text => {
+                                c_args.push("ctypes.POINTER(ctypes.c_uint8)".to_string());
+                                c_args.push("ctypes.c_size_t".to_string());
+                                params.push(format!("a{at}, a{at}_len"));
+                                handed.push(format!(
+                                    "ctypes.string_at(a{at}, a{at}_len).decode(\"utf-8\")"
+                                ));
+                            }
+                        }
+                    }
+                    c_args.push("ctypes.c_void_p".to_string());
+                    params.push("ctx".to_string());
+                    let restype = match &result {
+                        Some(shape) => python_scalar(shape).to_string(),
+                        None => "None".to_string(),
+                    };
+                    let kind = format!("ctypes.CFUNCTYPE({restype}, {})", c_args.join(", "));
+                    argtypes.push(kind.clone());
+                    argtypes.push("ctypes.c_void_p".to_string());
+                    // **What the callback raises is raised by the call**, once
+                    // it has returned: `ctypes` cannot carry an exception out
+                    // through C, so it is held and the callback answers its
+                    // default.
+                    let default = match &result {
+                        Some(_) => "0",
+                        None => "None",
+                    };
+                    before.push(format!("{name}_raised = []"));
+                    before.push(format!(
+                        "{name}_c = {kind}(lambda {}: _calling({name}_raised, {default}, {name}, {}))",
+                        params.join(", "),
+                        handed.join(", ")
+                    ));
+                    raising.push(format!("{name}_raised"));
+                    // Kept alive until the call has returned (D27).
+                    keep.push(format!("{name}_c"));
+                    args.push(format!("{name}_c"));
+                    args.push("None".to_string());
+                }
+                None => {}
+            }
+        }
+        // What comes back, through the out-parameter.
+        let mut after: Vec<String> = Vec::new();
+        let result = entry
+            .ret_type
+            .and_then(|ty| handed(parsed, plains, handles, records, ty));
+        let call = |args: &[String]| format!("_lib.{symbol}({})", args.join(", "));
+        let body_call: String;
+        match &result {
+            None => {
+                body_call = format!("_check({})", call(&args));
+            }
+            Some(Out::Buffer) => {
+                argtypes.push("ctypes.POINTER(ctypes.c_uint8)".to_string());
+                argtypes.push("ctypes.c_size_t".to_string());
+                argtypes.push("ctypes.POINTER(ctypes.c_size_t)".to_string());
+                let mut asked = args.clone();
+                asked.push("out".to_string());
+                asked.push("cap".to_string());
+                asked.push("written".to_string());
+                body_call = format!("got = _buffer(lambda out, cap, written: {})", call(&asked));
+                after.push(match text_out {
+                    true => "return got.decode(\"utf-8\")".to_string(),
+                    false => "return got".to_string(),
+                });
+            }
+            Some(out) => {
+                let (ctype, back) = match out {
+                    Out::Value(shape) => (
+                        python_scalar(shape).to_string(),
+                        match (shape.scalar, shape.rust) {
+                            (true, _) => "chr(out.value)".to_string(),
+                            (false, "bool") => "bool(out.value)".to_string(),
+                            _ => "out.value".to_string(),
+                        },
+                    ),
+                    Out::Choice(at) => (
+                        "ctypes.c_int".to_string(),
+                        format!("{}(out.value)", plains[*at].name),
+                    ),
+                    Out::Record(at) => (records[*at].name.clone(), "out".to_string()),
+                    Out::Handle(at) => (
+                        "ctypes.c_void_p".to_string(),
+                        format!("{}._from(out.value)", handles[*at].name),
+                    ),
+                    Out::AbsentHandle(at) => (
+                        "ctypes.c_void_p".to_string(),
+                        format!(
+                            "None if not out.value else {}._from(out.value)",
+                            handles[*at].name
+                        ),
+                    ),
+                    Out::Buffer => unreachable!("handled above"),
+                };
+                argtypes.push(format!("ctypes.POINTER({ctype})"));
+                before.push(format!("out = {ctype}()"));
+                let mut asked = args.clone();
+                asked.push("ctypes.byref(out)".to_string());
+                body_call = format!("_check({})", call(&asked));
+                after.push(format!("return {back}"));
+            }
+        }
+        self.signatures.push(format!(
+            "_lib.{symbol}.argtypes = [{}]\n_lib.{symbol}.restype = ctypes.c_int",
+            argtypes.join(", ")
+        ));
+        let mut lines: Vec<String> = before;
+        match raising.is_empty() {
+            true => lines.push(body_call),
+            false => {
+                lines.push("try:".to_string());
+                lines.push(format!("    {body_call}"));
+                lines.push("finally:".to_string());
+                for held in &raising {
+                    lines.push(format!("    if {held}:"));
+                    lines.push(format!("        raise {held}[0]"));
+                }
+            }
+        }
+        for kept in &keep {
+            lines.push(format!("del {kept}"));
+        }
+        lines.extend(after);
+        let indent = |lines: &[String], by: &str| -> String {
+            lines
+                .iter()
+                .map(|line| format!("{by}{line}\n"))
+                .collect::<String>()
+        };
+        match (&entry.owner, entry.receiver, entry.getter) {
+            (None, _, _) => {
+                self.functions.push(format!(
+                    "def {}({}):\n{}",
+                    python_name(&entry.name),
+                    def_params.join(", "),
+                    indent(&lines, "    ")
+                ));
+            }
+            (Some(owner), _, true) => {
+                self.classes.entry(owner.clone()).or_default().push(format!(
+                    "    @property\n    def {}(self):\n{}",
+                    python_name(&entry.name),
+                    indent(&lines, "        ")
+                ));
+            }
+            (Some(owner), Some(_), false) => {
+                let mut params = vec!["self".to_string()];
+                params.extend(def_params);
+                self.classes.entry(owner.clone()).or_default().push(format!(
+                    "    def {}({}):\n{}",
+                    python_name(&entry.name),
+                    params.join(", "),
+                    indent(&lines, "        ")
+                ));
+            }
+            // The anonymous constructor is the class's own `__init__`; any
+            // other function of the type is a static method.
+            (Some(owner), None, false) if entry.name == "new" => {
+                let mut params = vec!["self".to_string()];
+                params.extend(def_params);
+                let mut made = lines.clone();
+                if let Some(last) = made.last_mut() {
+                    *last = "self._ptr = out.value".to_string();
+                }
+                self.classes.entry(owner.clone()).or_default().push(format!(
+                    "    def __init__({}):\n{}",
+                    params.join(", "),
+                    indent(&made, "        ")
+                ));
+            }
+            (Some(owner), None, false) => {
+                self.classes.entry(owner.clone()).or_default().push(format!(
+                    "    @staticmethod\n    def {}({}):\n{}",
+                    python_name(&entry.name),
+                    def_params.join(", "),
+                    indent(&lines, "        ")
+                ));
+            }
+        }
+    }
+
+    /// The module.
+    #[allow(clippy::too_many_arguments)]
+    fn module(
+        &self,
+        package: &str,
+        prefix: &str,
+        codes: &[(String, Vec<(String, i64)>)],
+        plains: &[Plain],
+        handles: &[Handled],
+        held: &[bool],
+        records: &[Record],
+        any_pause: bool,
+    ) -> String {
+        let library = package.replace('-', "_");
+        let mut out = format!(
+            "\"\"\"{package} - GENERATED by `nikaia bind python` from {package}'s ledger. Do not edit.\n\
+             \n\
+             ledger: {LEDGER_DIGEST}\n\
+             \"\"\"\n\
+             \n\
+             import ctypes\n\
+             import enum\n\
+             import os\n\
+             import sys\n\
+             \n\
+             _here = os.path.dirname(os.path.abspath(__file__))\n\
+             if sys.platform == \"darwin\":\n    _file = \"lib{library}.dylib\"\n\
+             elif sys.platform == \"win32\":\n    _file = \"{library}.dll\"\n\
+             else:\n    _file = \"lib{library}.so\"\n\
+             _lib = ctypes.CDLL(os.path.join(_here, \"..\", _file))\n\
+             \n\
+             \n\
+             class Error(Exception):\n    \
+             \"\"\"A status other than OK, with what `{prefix}_last_error` said.\"\"\"\n    \
+             code = None\n\
+             \n\
+             \n\
+             class BoundaryError(Error):\n    \
+             \"\"\"One of the seven statuses the boundary owns.\"\"\"\n\
+             \n\
+             \n"
+        );
+        let boundary = [
+            ("ArgumentError", -1),
+            ("TooSmallError", -2),
+            ("NotRunningError", -3),
+            ("PanickedError", -4),
+            ("ReentrantError", -5),
+            ("CleanupError", -6),
+            ("CancelledError", -7),
+        ];
+        let mut errors: Vec<(String, i64)> = Vec::new();
+        for (name, code) in boundary {
+            out.push_str(&format!(
+                "class {name}(BoundaryError):\n    code = {code}\n\n\n"
+            ));
+            errors.push((name.to_string(), code));
+        }
+        let mut taken: std::collections::BTreeSet<String> =
+            boundary.iter().map(|(name, _)| name.to_string()).collect();
+        for (error, variants) in codes {
+            for (variant, code) in variants {
+                let name = match taken.insert(variant.clone()) {
+                    true => variant.clone(),
+                    false => format!("{error}{variant}"),
+                };
+                out.push_str(&format!(
+                    "class {name}(Error):\n    \"\"\"`{error}::{variant}`.\"\"\"\n    code = {code}\n\n\n"
+                ));
+                errors.push((name, *code));
+            }
+        }
+        let table: Vec<String> = errors
+            .iter()
+            .map(|(name, code)| format!("{code}: {name}"))
+            .collect();
+        out.push_str(&format!(
+            "_ERRORS = {{{}}}\n\n\
+             _lib.{prefix}_last_error.argtypes = [ctypes.POINTER(ctypes.c_uint8), ctypes.c_size_t, ctypes.POINTER(ctypes.c_size_t)]\n\
+             _lib.{prefix}_last_error.restype = ctypes.c_int\n\
+             \n\
+             \n\
+             def _buffer(call):\n    \
+             \"\"\"Asks the size, then hands a buffer of it (ADR-284 D6).\"\"\"\n    \
+             written = ctypes.c_size_t(0)\n    \
+             _check(call(None, 0, ctypes.byref(written)))\n    \
+             room = (ctypes.c_uint8 * max(written.value, 1))()\n    \
+             _check(call(room, written.value, ctypes.byref(written)))\n    \
+             return bytes(room[: written.value])\n\
+             \n\
+             \n\
+             def _said():\n    \
+             written = ctypes.c_size_t(0)\n    \
+             _lib.{prefix}_last_error(None, 0, ctypes.byref(written))\n    \
+             room = (ctypes.c_uint8 * max(written.value, 1))()\n    \
+             _lib.{prefix}_last_error(room, written.value, ctypes.byref(written))\n    \
+             return bytes(room[: written.value]).decode(\"utf-8\", \"replace\")\n\
+             \n\
+             \n\
+             def _check(status):\n    \
+             if status != 0:\n        \
+             raise _ERRORS.get(status, Error)(_said())\n\
+             \n\
+             \n\
+             def _calling(raised, default, call, *args):\n    \
+             try:\n        \
+             return call(*args)\n    \
+             except BaseException as error:\n        \
+             raised.append(error)\n        \
+             return default\n\
+             \n\
+             \n\
+             def _bytes(data):\n    \
+             data = bytes(data)\n    \
+             return (ctypes.c_uint8 * len(data)).from_buffer_copy(data), len(data)\n\
+             \n\
+             \n\
+             def _text(text):\n    \
+             return _bytes(text.encode(\"utf-8\"))\n\
+             \n\
+             \n\
+             def _run(kind, values):\n    \
+             values = list(values)\n    \
+             return (kind * len(values))(*values), len(values)\n\
+             \n\
+             \n\
+             _lib.{prefix}_init.restype = ctypes.c_int\n\
+             _lib.{prefix}_shutdown.restype = ctypes.c_int\n\
+             \n\
+             \n\
+             def init():\n    \
+             \"\"\"Starts the library, and starts it again after `shutdown` (ADR-284 D10).\"\"\"\n    \
+             _check(_lib.{prefix}_init())\n\
+             \n\
+             \n\
+             def shutdown():\n    \
+             \"\"\"Stops the library; every call after it raises `NotRunningError` until `init`.\"\"\"\n    \
+             _check(_lib.{prefix}_shutdown())\n\
+             \n\
+             \n",
+            table.join(", ")
+        ));
+        let _ = any_pause;
+        for plain in plains {
+            let values: Vec<String> = plain
+                .variants
+                .iter()
+                .enumerate()
+                .map(|(number, variant)| format!("    {variant} = {number}\n"))
+                .collect();
+            out.push_str(&format!(
+                "class {}(enum.IntEnum):\n{}\n\n",
+                plain.name,
+                values.concat()
+            ));
+        }
+        for record in records_in_order(records).iter().map(|at| &records[*at]) {
+            let fields: Vec<String> = record
+                .fields
+                .iter()
+                .map(|(field, part)| {
+                    let ty = match part {
+                        Part::Value(shape) => python_scalar(shape).to_string(),
+                        Part::Choice(_) => "ctypes.c_int".to_string(),
+                        Part::Record(at) => records[*at].name.clone(),
+                    };
+                    format!("(\"{field}\", {ty})")
+                })
+                .collect();
+            out.push_str(&format!(
+                "class {}(ctypes.Structure):\n    _fields_ = [{}]\n\n\n",
+                record.name,
+                fields.join(", ")
+            ));
+        }
+        for (handle, _) in handles.iter().zip(held).filter(|(_, held)| **held) {
+            let ty = &handle.name;
+            out.push_str(&format!(
+                "_lib.{prefix}_{ty}_free.argtypes = [ctypes.c_void_p]\n\
+                 _lib.{prefix}_{ty}_free.restype = ctypes.c_int\n\
+                 \n\
+                 \n\
+                 class {ty}:\n    \
+                 \"\"\"A handle (ADR-284 D5): `close()` frees it, as leaving a `with` does.\"\"\"\n\
+                 \n    \
+                 _ptr = None\n\
+                 \n    \
+                 @classmethod\n    \
+                 def _from(cls, ptr):\n        \
+                 made = cls.__new__(cls)\n        \
+                 made._ptr = ptr\n        \
+                 return made\n\
+                 \n    \
+                 def _live(self):\n        \
+                 if not self._ptr:\n            \
+                 raise ArgumentError(\"the handle is closed\")\n        \
+                 return self._ptr\n\
+                 \n    \
+                 def close(self):\n        \
+                 if self._ptr:\n            \
+                 ptr, self._ptr = self._ptr, None\n            \
+                 _check(_lib.{prefix}_{ty}_free(ptr))\n\
+                 \n    \
+                 def __enter__(self):\n        \
+                 return self\n\
+                 \n    \
+                 def __exit__(self, *_):\n        \
+                 self.close()\n\
+                 \n    \
+                 def __del__(self):\n        \
+                 try:\n            \
+                 self.close()\n        \
+                 except Exception:\n            \
+                 pass\n\
+                 \n"
+            ));
+            for member in self.classes.get(ty).into_iter().flatten() {
+                out.push_str(member);
+                out.push('\n');
+            }
+            out.push('\n');
+        }
+        for signature in &self.signatures {
+            out.push_str(signature);
+            out.push('\n');
+        }
+        out.push_str("\n\n");
+        for function in &self.functions {
+            out.push_str(function);
+            out.push_str("\n\n");
+        }
+        out
+    }
 }

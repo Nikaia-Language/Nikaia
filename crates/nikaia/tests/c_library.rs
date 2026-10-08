@@ -741,3 +741,84 @@ fn the_example_builds_and_its_c_program_runs() {
          stopped after 2\n"
     );
 }
+
+/// **`nikaia bind python`** (ADR-284 D26, D27): a `ctypes` module over the
+/// library, used as Python uses a module - every kind of entry point, a
+/// failure as an exception of its variant, a handle as a class.
+const PYTHON_CALLER: &str = r#"import calc
+
+assert calc.add(2, 40) == 42
+assert calc.halve(5.0) == 2.5
+assert calc.is_vowel("e") is True
+assert calc.greet("Ada") == "Hello, Ada"
+assert calc.total([1, 2, 3, 4]) == 10
+assert calc.size(b"\x01\x02\x03") == 3
+assert calc.after(calc.Light.Green) == calc.Light.Amber
+grown = calc.grown(calc.Rect(calc.Point(1.0, 2.0), 3.0, 4.0, calc.Light.Red), 0.5)
+assert (grown.corner.x, grown.width, grown.light) == (0.5, 4.0, calc.Light.Green)
+try:
+    calc.checked(-1)
+    raise AssertionError("no exception")
+except calc.Negative as error:
+    assert error.code == 1 and "a negative count" in str(error), str(error)
+try:
+    calc.checked(500)
+    raise AssertionError("no exception")
+except calc.Error as error:
+    assert isinstance(error, calc.TooLarge) and "500 is too large" in str(error)
+with calc.Counter("clicks") as counter:
+    counter.bump(5)
+    assert counter.bump(2) == 7
+    assert (counter.count, counter.name, counter.light) == (7, "clicks", calc.Light.Red)
+    assert counter.steps() == 2
+    try:
+        calc.looking_at(counter, lambda n: counter.bump(1))
+        raise AssertionError("no exception")
+    except calc.ReentrantError:
+        pass
+assert calc.found(0) is None
+found = calc.found(4)
+assert calc.count_of(found) == 4 and calc.count_of(None) == -1
+assert calc.length_of(None) == 4 and calc.length_of("") == 0
+assert calc.count_up(10, lambda i: i < 3) == 3
+seen = []
+calc.words("one two", lambda word, light: seen.append((word, light)))
+assert seen == [("one", calc.Light.Amber), ("two", calc.Light.Amber)], seen
+assert calc.napped(20) == 62
+print("ok")
+"#;
+
+#[test]
+fn python_calls_the_library_through_its_binding() {
+    let have = |tool: &str| Command::new(tool).arg("--version").output().is_ok();
+    if !have("cc") || !have("python3") {
+        eprintln!("skipped: no C compiler or no python3");
+        return;
+    }
+    let root = package("c-library-python", "artifact = \"c-library\"\n", LIBRARY);
+    let bound = nikaia_with(&root, &["bind", "python"]);
+    assert!(bound.status.success(), "{}", said(&bound));
+    let made = root.join("target/nikaia/c-library");
+    assert!(made.join("calc/__init__.py").is_file(), "the binding");
+    std::fs::write(root.join("use.py"), PYTHON_CALLER).expect("the caller");
+    let ran = Command::new("python3")
+        .arg(root.join("use.py"))
+        .env("PYTHONPATH", &made)
+        .output()
+        .expect("python3 runs");
+    assert!(ran.status.success(), "{}", said(&ran));
+    assert_eq!(String::from_utf8_lossy(&ran.stdout), "ok\n");
+
+    let refused = nikaia_with(&root, &["bind", "cobol"]);
+    assert!(!refused.status.success());
+    assert!(said(&refused).contains("`python` is"), "{}", said(&refused));
+}
+
+fn nikaia_with(root: &Path, args: &[&str]) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_nikaia"))
+        .current_dir(root)
+        .args(args)
+        .env_remove("CARGO_TARGET_DIR")
+        .output()
+        .expect("the nikaia binary runs")
+}

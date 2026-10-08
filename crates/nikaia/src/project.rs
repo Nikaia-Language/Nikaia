@@ -138,6 +138,10 @@ pub struct Settings {
     /// `test` blocks are compiled, and its `main` runs them by number. A
     /// choice like the others, so the cache and the wrapper both see it.
     pub tests: bool,
+    /// **A binding to write beside the library** (`nikaia bind <language>`,
+    /// [ADR-284](../../docs/specification/adr/adr-284.md) D26): `python`, or
+    /// none for a plain build.
+    pub bind: Option<String>,
 }
 
 /// `error` or `warn`, what `--refuted-claims` and `[build] refuted-claims`
@@ -297,6 +301,7 @@ impl Settings {
             artifact,
             symbol_prefix,
             tests: false,
+            bind: None,
         })
     }
 
@@ -384,6 +389,7 @@ impl Settings {
             artifact,
             symbol_prefix,
             tests: std::env::var_os(TESTS_VAR).is_some(),
+            bind: None,
         })
     }
 
@@ -471,6 +477,8 @@ pub struct Lowered {
     /// **`<package>.h`**, where this build makes a library and the package
     /// exports entry points (ADR-284 D12).
     pub header: Option<String>,
+    /// Its Python binding, which `nikaia bind python` writes (ADR-284 D26).
+    pub python: Option<String>,
 }
 
 /// Stage 0: parse, check, lower, infer - or serve all four from the cache.
@@ -1294,15 +1302,22 @@ pub fn lower_reading(
     // **A library's entry points get their wrappers and their header**
     // (ADR-284 D4, D7, D12), whether the cache answered or not; the header
     // carries the digest of the ledger this lowering wrote.
-    let (rust, header) = match exported {
+    let digest = crate::assets::digest(ledger.as_bytes());
+    let (rust, header, python) = match exported {
         Some(exported) => (
             rust + &exported.rust,
-            Some(exported.header.replace(
-                crate::cexport::LEDGER_DIGEST,
-                &crate::assets::digest(ledger.as_bytes()),
-            )),
+            Some(
+                exported
+                    .header
+                    .replace(crate::cexport::LEDGER_DIGEST, &digest),
+            ),
+            Some(
+                exported
+                    .python
+                    .replace(crate::cexport::LEDGER_DIGEST, &digest),
+            ),
         ),
-        None => (rust, None),
+        None => (rust, None, None),
     };
 
     Ok(Lowered {
@@ -1314,6 +1329,7 @@ pub fn lower_reading(
         notes,
         proofs,
         header,
+        python,
     })
 }
 
@@ -2689,6 +2705,7 @@ impl Project {
         // **`<package>.h`**, the entry's, where this build makes a library
         // (ADR-284 D12).
         let mut header: Option<String> = None;
+        let mut python: Option<String> = None;
         let mut link_flags: Vec<String> = Vec::new();
         for at in order {
             let member = &members[at];
@@ -2768,6 +2785,7 @@ impl Project {
             if at == 0 {
                 eprint!("{}", lowered.notes);
                 header = lowered.header.clone();
+                python = lowered.python.clone();
             }
             rust[at] = Some(lowered.rust);
         }
@@ -2946,6 +2964,17 @@ impl Project {
                 .unwrap_or("program")
                 .to_string();
             write_if_changed(&made.join(format!("{package}.h")), header)?;
+            // **The binding asked for, over it** (D26): `<package>/__init__.py`
+            // beside the library it loads.
+            if self.settings.bind.as_deref() == Some("python")
+                && let Some(python) = &python
+            {
+                let module = made.join(package.replace('-', "_"));
+                std::fs::create_dir_all(&module)
+                    .with_context(|| format!("making {}", module.display()))?;
+                write_if_changed(&module.join("__init__.py"), python)?;
+                println!("binding: {}", module.join("__init__.py").display());
+            }
             for built in libraries_in(&messages) {
                 if let Some(name) = built.file_name() {
                     std::fs::copy(&built, made.join(name))

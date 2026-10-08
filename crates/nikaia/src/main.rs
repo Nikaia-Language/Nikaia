@@ -246,6 +246,19 @@ pub enum Command {
         #[arg(long)]
         project: Option<PathBuf>,
     },
+    /// Build the project as a library and write a binding over it for another
+    /// language ([ADR-284](../../../docs/specification/adr/adr-284.md) D26).
+    ///
+    /// `python` writes `target/nikaia/c-library/<package>/__init__.py`, a
+    /// `ctypes` module over the library beside it. The library stays the one
+    /// artifact: a binding is generated source the host loads.
+    Bind {
+        /// The language: `python`.
+        #[arg(value_name = "LANGUAGE")]
+        language: String,
+        #[arg(long)]
+        project: Option<PathBuf>,
+    },
     /// Compile the project and run it, or compile and run one `.nika` file.
     ///
     /// Everything after `--` is the program's own arguments. A file outside any
@@ -557,6 +570,32 @@ fn describe(crate_name: &str, project: Option<PathBuf>) -> Result<i32> {
 fn project_command(args: &Cli, command: &Command) -> Result<i32> {
     let (subcommand, directory, program_args) = match command {
         Command::Build { project } => ("build", project.clone(), Vec::new()),
+        Command::Bind { language, project } => {
+            if language != "python" {
+                refuse!(
+                    "`nikaia bind {language}` is not built: `python` is (ADR-284 D26). JavaScript \
+                     is served by the WebAssembly build, which is not built yet either."
+                );
+            }
+            let start = match project {
+                Some(directory) => directory.clone(),
+                None => std::env::current_dir().context("finding the working directory")?,
+            };
+            let mut project = Project::open(
+                &start,
+                args.target.as_deref(),
+                args.user_parallelism.as_deref(),
+            )?;
+            if !project.settings.library() {
+                refuse!(
+                    "`nikaia bind` writes a binding over a library: set `artifact = \"c-library\"` \
+                     in `[build]` (ADR-284 D4, D26)."
+                );
+            }
+            project.settings.bind = Some(language.clone());
+            project.settings.optimize(&args.optimization)?;
+            return drive(args, &project, "build", &[]);
+        }
         Command::Run {
             project: None,
             file: Some(file),
