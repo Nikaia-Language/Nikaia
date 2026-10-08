@@ -1,0 +1,201 @@
+// tests/guide/src/main.nika
+//
+// **Every `nika` block of `guide/` runs.** `syntax.md` promises that every
+// snippet on it compiles and runs; this takes each one, builds it as a project
+// of its own with `nikaia run`, and says which did not.
+//
+//     cd tests/guide && nikaia test      # the check
+//     cd tests/guide && nikaia run       # the report, block by block
+//
+// `nikaia` is looked for on `PATH`.
+
+use std::fs
+use std::process
+
+/// One ```nika block of a page: the 1-based line its code starts on, and the code.
+struct Block {
+    page: String,
+    line: i64,
+    code: String,
+}
+
+/// Every ```nika block of one page, in line order.
+fn blocks_in(page: ref String, text: ref String) -> Vec[Block] {
+    let mut lines: Vec[String] = []
+    for line in text.split("\n") {
+        lines.push(line.clone())
+    }
+    let mut found: Vec[Block] = []
+    let mut at = 0
+    while at < lines.len() {
+        if lines[at].trim() != "```nika" {
+            at += 1
+            continue
+        }
+        let start = at + 1
+        let mut end = start
+        while end < lines.len() && lines[end].trim() != "```" {
+            end += 1
+        }
+        let mut code: String = ""
+        for k in start..<end {
+            code.push_str(ref lines[k])
+            code.push('\n')
+        }
+        found.push(Block { page: page.clone(), line: start + 1, code: code })
+        at = end + 1
+    }
+    return found
+}
+
+/// Whether a line opens a top-level item rather than a statement.
+fn opens_an_item(line: ref String) -> bool {
+    let rest = line.trim_start_matches("pub ")
+    for word in ["fn ", "struct ", "enum ", "use ", "impl ", "trait ", "grammar ", "type ", "const ", "test "] {
+        if rest.starts_with(word) {
+            return true
+        }
+    }
+    return false
+}
+
+/// The block with its items left at the top and its statements put in a `main`.
+fn split(code: ref String) -> String {
+    let mut items: String = ""
+    let mut body: String = ""
+    let mut depth = 0
+    let mut in_item = false
+    for line in code.split("\n") {
+        if depth == 0 && opens_an_item(line) {
+            in_item = true
+        }
+        if in_item {
+            items.push_str(line)
+            items.push('\n')
+        } else {
+            body.push_str(line)
+            body.push('\n')
+        }
+        // `count()` is unsigned, unlike every other length: `as i64` before subtracting.
+        depth += (line.matches("{").count() as i64) - (line.matches("}").count() as i64)
+        if in_item && depth == 0 {
+            in_item = false
+        }
+    }
+    return f"{items}\nfn main() {{\n{body}}}\n"
+}
+
+/// The programs a block can be read as, tried in order until one runs.
+fn readings(code: ref String) -> Vec[String] {
+    if code.contains("fn main(") {
+        return [code.clone()]
+    }
+    return [f"fn main() {{\n{code}}}\n", split(code)]
+}
+
+/// The file a block says it is, `// file: src/stock.nika`, if it says so.
+fn file_named(code: ref String) -> String? {
+    let first = code.lines().next() ?? return null
+    if first.starts_with("// file: ") {
+        return first.trim_start_matches("// file: ").trim().to_string()
+    }
+    return null
+}
+
+/// What became of one block.
+struct Verdict {
+    block: Block,
+    runs: bool,
+    said: String,
+}
+
+/// Builds and runs every block of `guide/`, each in a project of its own under
+/// `root`, whose directory is `dir`. A block that names its file (`// file:`)
+/// is not run alone: it goes into the project of the block after it.
+fn run_all(root: ref fs::Root, dir: ref String) -> Vec[Verdict] throws {
+    let guide = fs::Root::Dir("../../guide")
+    let mut verdicts: Vec[Verdict] = []
+    let mut n = 0
+    let mut beside: Vec[(String, String)] = []
+    for page in fs::walk(".", guide) {
+        let name = page.to_text()
+        if !name.ends_with(".md") {
+            continue
+        }
+        let text = fs::read_to_string(page, guide)
+        for block in blocks_in(name, text) {
+            let file = file_named(block.code) ?? "src/main.nika"
+            if file != "src/main.nika" {
+                beside.push((file, block.code.clone()))
+                continue
+            }
+            n += 1
+            let project = f"b{n}"
+            // `fs::create_dir` is specified (Part III 17.1) and not in `std` yet.
+            process::run("mkdir", ["-p", f"{project}/src"]; dir: ref dir)
+            fs::write(f"{project}/nikaia.toml", root, f"[package]\nname = \"b{n}\"\nversion = \"0.1.0\"\n")
+            for (path, code) in beside {
+                fs::write(f"{project}/{path}", root, code)
+            }
+            beside = []
+            let mut runs = false
+            let mut said: String = ""
+            for source in readings(block.code) {
+                fs::write(f"{project}/src/main.nika", root, source)
+                let out = process::run("nikaia", ["run"]; dir: ref f"{dir}/{project}")
+                runs = out.ok
+                said = if out.ok { out.stdout } else { out.stderr }
+                if runs {
+                    break
+                }
+            }
+            verdicts.push(Verdict { block: block, runs: runs, said: said })
+        }
+    }
+    return verdicts
+}
+
+/// The first line of what the compiler or the program said that names the trouble.
+fn trouble(said: ref String) -> String {
+    for line in said.lines() {
+        if line.starts_with("error") || line.starts_with("Error") {
+            return line.clone()
+        }
+    }
+    return said.trim().clone()
+}
+
+/// The directory a scratch root stands for.
+fn dir_of(root: ref fs::Root) -> String throws {
+    return match root {
+        fs::Root::Dir(path) => path.to_text(),
+        else => panic("fs::scratch() hands back a Dir"),
+    }
+}
+
+fn main() throws {
+    let root = fs::scratch()
+    let dir = dir_of(root)
+    let mut failed = 0
+    for v in run_all(root, dir) {
+        if v.runs {
+            println(f"RUNS  {v.block.page}:{v.block.line}")
+        } else {
+            failed += 1
+            println(f"FAILS {v.block.page}:{v.block.line}  {trouble(v.said)}")
+        }
+    }
+    println(f"{failed} blocks do not run")
+}
+
+test "every block of the guide runs" {
+    let root = fs::scratch()
+    let dir = dir_of(root)
+    let mut failing: String = ""
+    for v in run_all(root, dir) {
+        if !v.runs {
+            failing.push_str(f"\n{v.block.page}:{v.block.line}  {trouble(v.said)}")
+        }
+    }
+    assert(failing == ""; message: f"blocks of guide/ that do not run:{failing}")
+}
