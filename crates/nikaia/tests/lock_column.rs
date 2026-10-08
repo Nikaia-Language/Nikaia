@@ -232,10 +232,10 @@ fn a_constructor_or_a_variant_is_not_a_doubt() {
 /// about it, and it takes standard output's **own lock** while yours is open.
 /// Two conditions and not one, and this column answers the second.
 ///
-/// **No example opens a lock of its own**, which is the other half of the same
-/// measurement: nothing in `examples/` writes `SharedMut` or `Locked`, so
-/// `NK2203` refuses nothing there and the number above is what it *would* be
-/// read against the day one does.
+/// **One example opens locks of its own**: `hello-http`'s supervised
+/// counters (ADR-328), each door a single `update` or `get` whose block takes
+/// no other lock, so `NK2203` refuses nothing there. Any other example that
+/// writes `SharedMut` or `Locked` has to be read against the number above.
 #[test]
 fn what_the_corpus_holds_is_the_prints() {
     let mut held = Vec::new();
@@ -266,6 +266,9 @@ fn what_the_corpus_holds_is_the_prints() {
             continue;
         }
         let text = std::fs::read_to_string(&path).expect("read it");
+        if path.ends_with("hello-http/src/main.nika") {
+            continue;
+        }
         assert!(
             !text.contains("SharedMut(") && !text.contains("Locked("),
             "{} opens a lock, so the measurement above has to be re-read",

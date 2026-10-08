@@ -372,10 +372,24 @@ fn the_one_shared_in_the_repository_comes_out_atomic_undecided() {
     }
 
     assert!(checked >= 12, "only {checked} programs were analysed");
+    // **`hello-http`'s counters cross, and the analysis found it** (ADR-328):
+    // they are handed to two children of a supervisor, so they are atomic for
+    // a reason the analysis proved rather than the floor's.
+    let (crossing, found): (Vec<_>, Vec<_>) =
+        found.into_iter().partition(|(file, _)| file == "main.nika");
+    for (_, decision) in &crossing {
+        assert!(
+            ["asked", "crashed", "refreshed"].contains(&decision.value.as_str()),
+            "{decision:#?}"
+        );
+        assert_eq!(decision.count, Count::Atomic, "{decision:#?}");
+        assert!(!decision.undecided(), "a crossing found: {decision:#?}");
+    }
+    assert!(!crossing.is_empty(), "hello-http's supervised counters");
     assert_eq!(
         found.len(),
         1,
-        "the corpus writes exactly one `Shared`: {found:#?}"
+        "the corpus writes exactly one `Shared` nothing decides: {found:#?}"
     );
     let (file, decision) = &found[0];
     assert_eq!(file, "fortunes.nika");

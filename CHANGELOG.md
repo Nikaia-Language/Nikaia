@@ -8,6 +8,15 @@ or the specification. A change only to the guide, the notes, the README, the
 website, the tests, the examples or the tooling around them raises nothing and
 has no heading here; `CLAUDE.md` draws the line.
 
+## [0.0.690] — 2026-10-08
+
+**Two corpus measurements re-read for the supervised `hello-http`** (fixed
+forward). `tests/sharing.rs` finds its three counters atomic because they cross
+into a supervisor's children. That is a decided crossing, not the floor's
+answer. The one undecided `Shared` is still `fortunes.nika`'s. In
+`tests/lock_column.rs`, `hello-http` is the one example that opens locks of its
+own, each door a single `update` or `get`.
+
 ## [0.0.689] — 2026-10-08
 
 **`develop` is green again** (fixed forward). Since 0.0.673, two corpus tests
