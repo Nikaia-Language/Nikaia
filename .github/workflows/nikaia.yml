@@ -55,9 +55,14 @@ jobs:
   #
   # On every push to main and weekly; on a pull request only where a floor is
   # declared or can move (a manifest, the lock file, the toolchain).
+  #
+  # **Switched off until Nikaia is stable** (owner's decision, 2026-10-08): the
+  # suite runs on the current Rust only. The floor is a goal again later; until
+  # then the job only held every push's answer up and spent runner hours.
+  # To switch it back on, restore the `if:` below and its place in `promote`.
   rust_floor:
     needs: changes
-    if: needs.changes.outputs.floor == 'true'
+    if: false && needs.changes.outputs.floor == 'true'
     runs-on: ubuntu-latest
     # A hang is a failure, in an hour and a half (see `arm64`).
     timeout-minutes: 90
@@ -137,7 +142,7 @@ jobs:
   # alone. A push that is not a fast-forward is refused, so a commit that landed
   # on `main` some other way stops the promotion until `develop` has it.
   promote:
-    needs: [changes, rust_floor, arm64, unsafe_crates, bootstrap_compiler]
+    needs: [changes, arm64, unsafe_crates, bootstrap_compiler]
     if: >-
       always() && github.event_name == 'push' && github.ref == 'refs/heads/develop'
       && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled')
