@@ -227,7 +227,7 @@ implementation.
 | ADR | Decides | Status | Built |
 | :--- | :--- | :--- | :--- |
 | [308](adr-308.md) | An unread error is bound as `_error`, a `catch` over what cannot fail is refused (`NK1134`), and an error that newly reaches a handler is named once (`NK2402`). | Accepted | yes |
-| [280](adr-280.md) | A failure travels as its error type in a one-word envelope; the site is free, a trace is asked for, and the failures that joined it are shown, not read. | Accepted | yes |
+| [280](adr-280.md) | A failure travels as its error type in a one-word envelope; the site is free, a trace is asked for, and the failures that joined it are shown, not read. Where more than one error type arrives, `error` is an `Error`, one of the members (D30). | Accepted | yes |
 | [023](adr-023.md) | `throws` carries no type list and the error set is inferred into the ledger; `throw` exists, an error knows its site, and there is no postfix `?`. | Accepted | yes |
 | [025](adr-025.md) | A loop's step can fail, and the enclosing function gains a `throws` for it. | Accepted | yes |
 

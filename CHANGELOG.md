@@ -8,6 +8,13 @@ or the specification. A change only to the guide, the notes, the README, the
 website, the tests, the examples or the tooling around them raises nothing and
 has no heading here; `CLAUDE.md` draws the line.
 
+## [0.0.710] — 2026-10-08
+
+**A handler's `error` where several error types arrive is an `Error`, one of
+them** (ADR-280 D30, #512).
+- Decided, not built: `Error`'s methods, `f"{error}"` and `throw error` are
+  checked; what only one member has is reached through a `match`. Part I 7.1.
+
 ## [0.0.709] — 2026-10-08
 
 **`inf`, `-inf` and `nan` are read in any case** (ADR-285 D35, #504).
