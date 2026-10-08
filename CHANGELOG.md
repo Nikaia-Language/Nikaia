@@ -4,6 +4,16 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.667] — 2026-10-08
+
+**A library's entry point may throw** (ADR-284 D7; #88). Each variant of an
+error `enum` the entry file declares and an entry point throws is a positive
+status, `1…` per library in declaration order, `<PREFIX>_E_<VARIANT>` in the
+header. `<prefix>_last_error(out, cap, written)` renders this thread's last
+failure with its raise site, into the caller's buffer; after a panic it says
+the library panicked. An entry point throwing `std`'s errors, or more than one
+type, is not exported yet.
+
 ## [0.0.666] — 2026-10-08
 
 **A library's entry points take text, bytes and a run of numbers, and hand

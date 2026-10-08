@@ -129,6 +129,50 @@ fn handed(parsed: &crate::parser::Parsed, ty: &Type) -> Option<Out> {
     }
 }
 
+/// Every error `enum` the entry file declares and an entry point throws, with
+/// the code of each variant: `1…` in declaration order across the library.
+fn variant_codes(program: &Program) -> Vec<(String, Vec<(String, i64)>)> {
+    let Some(unit) = program.units.first() else {
+        return Vec::new();
+    };
+    let parsed = &unit.parsed;
+    let thrown: std::collections::BTreeSet<String> = parsed
+        .program
+        .items
+        .iter()
+        .filter_map(|item| match &item.node {
+            Item::Fn {
+                name: Some(name),
+                is_extern: true,
+                ..
+            } => program.contracts.functions.get(parsed.text(*name)),
+            _ => None,
+        })
+        .flat_map(|contract| contract.fails_with.iter().cloned())
+        .collect();
+    let mut next = 1;
+    let mut out = Vec::new();
+    for item in &parsed.program.items {
+        let Item::Enum { name, variants, .. } = &item.node else {
+            continue;
+        };
+        let error = parsed.text(*name).to_string();
+        if !thrown.contains(&error) {
+            continue;
+        }
+        let numbered = variants
+            .iter()
+            .map(|variant| {
+                let code = next;
+                next += 1;
+                (parsed.text(variant.name).to_string(), code)
+            })
+            .collect();
+        out.push((error, numbered));
+    }
+    out
+}
+
 /// The wrappers and the header for every entry point the program's own files
 /// declare.
 pub fn export(program: &Program, prefix: &str, package: &str) -> Result<Option<Exported>> {
@@ -138,9 +182,39 @@ pub fn export(program: &Program, prefix: &str, package: &str) -> Result<Option<E
         "\n// --- The C boundary (ADR-284): one wrapper per entry point. ---\n\
          \n\
          /// Set by a panic at the boundary; every call after it is `E_PANICKED` (ADR-284 D8).\n\
-         static __NIKAIA_POISONED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);\n",
+         static __NIKAIA_POISONED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);\n\
+         \n\
+         std::thread_local! {\n    \
+         /// This thread's last failure, as `<prefix>_last_error` renders it (ADR-284 D7).\n    \
+         static __NIKAIA_LAST_ERROR: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) };\n\
+         }\n\
+         \n\
+         fn __nikaia_failed(said: String) {\n    \
+         __NIKAIA_LAST_ERROR.with(|last| *last.borrow_mut() = said);\n\
+         }\n",
     );
+    rust.push_str(&format!(
+        "\n/// This thread's last failure, with its site, into the caller's buffer (ADR-284 D7).\n\
+         #[unsafe(no_mangle)]\npub extern \"C\" fn {prefix}_last_error(out: *mut u8, cap: usize, written: *mut usize) -> std::ffi::c_int {{\n    \
+         __NIKAIA_LAST_ERROR.with(|last| {{\n        \
+         // SAFETY: the C caller hands `cap` bytes at `out` and a place for the length, or NULL (ADR-284 D6).\n        \
+         unsafe {{ nikaia_std::c_boundary::hand_back(last.borrow().as_bytes(), out, cap, written) }}\n    \
+         }})\n}}\n"
+    ));
     let mut declarations = String::new();
+    // **A `throws` function's variants are `1…`, per library in declaration
+    // order** (D7): every variant of every error `enum` the entry file
+    // declares and an entry point throws.
+    let codes = variant_codes(program);
+    let mut constants = String::new();
+    for (error, variants) in &codes {
+        for (variant, code) in variants {
+            constants.push_str(&format!(
+                "#define {upper}_E_{} {code} /* {error}::{variant} */\n",
+                variant.to_uppercase()
+            ));
+        }
+    }
     for (at, unit) in program.units.iter().enumerate() {
         if unit.package.is_some() {
             continue;
@@ -173,9 +247,17 @@ pub fn export(program: &Program, prefix: &str, package: &str) -> Result<Option<E
             if contract.is_some_and(|c| !c.sync_claim.is_sync()) {
                 return Err(not_yet("pausing"));
             }
-            if contract.is_some_and(|c| !c.fails_with.is_empty()) {
-                return Err(not_yet("failure"));
-            }
+            // **What it throws is one `enum` of the entry file** (D7), whose
+            // variants are the codes; anything else is not exported yet.
+            let thrown: Option<&Vec<(String, i64)>> =
+                match contract.map(|c| c.fails_with.as_slice()) {
+                    None | Some([]) => None,
+                    Some([one]) => match codes.iter().find(|(error, _)| error == one) {
+                        Some((_, variants)) => Some(variants),
+                        None => return Err(not_yet("failure")),
+                    },
+                    Some(_) => return Err(not_yet("failure")),
+                };
             let symbol = format!("{prefix}_{written}");
             let mut rust_params = Vec::new();
             let mut c_params = Vec::new();
@@ -274,12 +356,39 @@ pub fn export(program: &Program, prefix: &str, package: &str) -> Result<Option<E
                     .to_string(),
                 None => "Ok(()) => 0".to_string(),
             };
+            // A failure is the variant's code, and its message, with its site,
+            // is what `<prefix>_last_error` hands back (D7).
+            let (handed_back, failed) = match thrown {
+                None => (handed_back, String::new()),
+                Some(variants) => {
+                    let error = contract
+                        .and_then(|c| c.fails_with.first())
+                        .cloned()
+                        .unwrap_or_default();
+                    let arms: Vec<String> = variants
+                        .iter()
+                        .map(|(variant, code)| format!("{error}::{variant} {{ .. }} => {code},"))
+                        .collect();
+                    (
+                        handed_back
+                            .replacen("Ok(", "Ok(Ok(", 1)
+                            .replacen(") =>", ")) =>", 1),
+                        format!(
+                            "\n        Ok(Err(thrown)) => {{\n            \
+                             __nikaia_failed(thrown.full());\n            \
+                             match thrown.split().0 {{ {} }}\n        }}",
+                            arms.join(" ")
+                        ),
+                    )
+                }
+            };
             rust.push_str(&format!(
                 "\n#[unsafe(no_mangle)]\npub extern \"C\" fn {symbol}({}) -> std::ffi::c_int {{\n    \
                  if __NIKAIA_POISONED.load(std::sync::atomic::Ordering::SeqCst) {{\n        return -4;\n    }}\n\
                  {checks}    \
-                 match std::panic::catch_unwind(move || {call}) {{\n        {handed_back}\n        \
+                 match std::panic::catch_unwind(move || {call}) {{\n        {handed_back}{failed}\n        \
                  Err(_) => {{\n            __NIKAIA_POISONED.store(true, std::sync::atomic::Ordering::SeqCst);\n            \
+                 __nikaia_failed(\"the library panicked; it answers E_PANICKED until it is started again\".to_string());\n            \
                  -4\n        }}\n    }}\n}}\n",
                 rust_params.join(", "),
             ));
@@ -306,6 +415,10 @@ pub fn export(program: &Program, prefix: &str, package: &str) -> Result<Option<E
          #define {upper}_E_REENTRANT (-5)\n\
          #define {upper}_E_CLEANUP (-6)\n\
          #define {upper}_E_CANCELLED (-7)\n\n\
+         /* What the entry points throw, numbered per library (ADR-284 D7). */\n\
+         {constants}\n\
+         /* This thread's last failure, with its site (ADR-284 D7). */\n\
+         int {prefix}_last_error(uint8_t *out, size_t cap, size_t *written);\n\n\
          {declarations}\n\
          #ifdef __cplusplus\n}}\n#endif\n\n#endif\n"
     );
