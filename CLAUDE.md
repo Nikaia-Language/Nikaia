@@ -13,11 +13,26 @@
 * **Before pushing, rebase onto the latest `origin/develop`**
   (`git pull --rebase origin develop`). Other sessions push all the time.
   If the push is rejected, rebase again and push again.
-* **A change package raises the version by one**: the `**Version:**` line of
-  the three specification parts and a `CHANGELOG.md` heading, then
+* **A change to the language raises the version by one**: the `**Version:**`
+  line of the three specification parts and a `CHANGELOG.md` heading, then
   `python3 scripts/badges.py` redraws the README's badges from that line
   (`scripts/pre-commit.sh` does it where it is installed). Never edit an SVG by
   hand; CI checks the badges with `--check`.
+* **What raises it, and what does not.** The version is the specification's: it
+  moves when what a program means, or what the toolchain does with it, moves.
+
+  | Changed | Raises the version |
+  | :--- | :--- |
+  | `crates/` (compiler, parser, `std`) | yes |
+  | Part I-III of `docs/specification/` | yes |
+  | an ADR | only with the specification text it decides |
+  | tests | no, unless they belong to a change above, in its package |
+  | `guide/`, the notes in `docs/`, `README.md`, the website | no |
+  | `examples/`, `benches/`, `scripts/`, CI, `editors/` | no |
+
+  A change that does not raise the version gets no `CHANGELOG.md` heading or
+  entry either: its commit message is its record. It touches neither the
+  version lines nor the badges, so it does not collide with other sessions.
 * **Nobody pushes to `main`.** CI runs everything on each push to `develop`.
   When every job passes, the `promote` job fast-forwards `main` to that commit
   (`.github/workflows/nikaia.yml`) - that commit, not `develop`'s tip, which

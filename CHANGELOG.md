@@ -3,6 +3,10 @@
 Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
+A change package is a change to the language - the compiler, the parser, `std`
+or the specification. A change only to the guide, the notes, the README, the
+website, the tests, the examples or the tooling around them raises nothing and
+has no heading here; `CLAUDE.md` draws the line.
 
 ## [0.0.674] — 2026-10-08
 
