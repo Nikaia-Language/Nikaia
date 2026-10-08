@@ -1376,6 +1376,8 @@ struct Emitter<'p> {
     either_prelude: std::cell::RefCell<Vec<String>>,
     /// `check::Checked::kept_hulls` (ADR-230 D4).
     kept_hulls: std::collections::BTreeMap<(usize, String), Vec<String>>,
+    /// `check::Checked::kept_owned` (#95 step 6).
+    kept_owned: std::collections::BTreeMap<(usize, String), Vec<String>>,
     /// `check::Checked::kept_calls`.
     kept_calls: std::collections::BTreeMap<(usize, String), (bool, bool)>,
     /// `check::Checked::kept_args`.
@@ -2816,6 +2818,7 @@ impl<'p> Emitter<'p> {
             filter_patterns: propagation.filter_patterns,
             kept_lambdas: propagation.kept_lambdas,
             kept_hulls: propagation.kept_hulls,
+            kept_owned: propagation.kept_owned,
             either_prelude: std::cell::RefCell::new(Vec::new()),
             field_calls: propagation.field_calls,
             kept_calls: propagation.kept_calls,
@@ -9142,11 +9145,24 @@ impl<'p> Emitter<'p> {
                         .get(&(flow.statement, crate::check::argument_shape(expr)))
                         .cloned()
                         .unwrap_or_default();
-                    if !hulls.is_empty() {
+                    // **What a pausing one takes is owned once and lent to every
+                    // call** (#95 step 6): moved behind an `Arc` here, and each
+                    // call's future holds a count of it rather than a copy.
+                    let owned = self
+                        .kept_owned
+                        .get(&(flow.statement, crate::check::argument_shape(expr)))
+                        .cloned()
+                        .unwrap_or_default();
+                    let block = !hulls.is_empty() || !owned.is_empty();
+                    if block {
                         out.push("{ ");
                         for hull in &hulls {
                             let hull = escaped(hull);
                             out.push(&format!("let {hull} = {hull}.clone(); "));
+                        }
+                        for taken in &owned {
+                            let taken = escaped(taken);
+                            out.push(&format!("let {taken} = std::sync::Arc::new({taken}); "));
                         }
                     }
                     // **A `mut` parameter is the lambda's own value**: a kept
@@ -9184,9 +9200,9 @@ impl<'p> Emitter<'p> {
                     // makes owns what it uses, so the closure's own handle is
                     // cloned per call rather than moved out of it.
                     if pauses {
-                        if !hulls.is_empty() {
+                        if block {
                             out.push("{ ");
-                            for hull in &hulls {
+                            for hull in hulls.iter().chain(&owned) {
                                 let hull = escaped(hull);
                                 out.push(&format!("let {hull} = {hull}.clone(); "));
                             }
@@ -9208,12 +9224,12 @@ impl<'p> Emitter<'p> {
                     }
                     if pauses {
                         out.push(&format!(") as {}<_>", self.boxed_future()));
-                        if !hulls.is_empty() {
+                        if block {
                             out.push(" }");
                         }
                     }
                     out.push("))");
-                    if !hulls.is_empty() {
+                    if block {
                         out.push(" }");
                     }
                     return Ok(());

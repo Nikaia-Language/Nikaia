@@ -28,6 +28,11 @@ use std::supervisor
 use std::time
 
 fn main() throws {
+    // An address may be given as an argument. Port `0` picks any free port,
+    // and `listen` prints the one it got. The server's child takes it with it:
+    // every restart is lent the same text, and nothing copies it.
+    let at = cli::args().nth(1) ?? "127.0.0.1:8080"
+
     // What the two children share: how often the refresher ran, and how often
     // it was asked to crash and did. A `SharedMut` is changed only through its
     // methods.
@@ -38,7 +43,7 @@ fn main() throws {
     // Both children are restarted whenever they end; `OneForOne` restarts only
     // the one that did.
     supervisor::run([
-        supervisor::child(fn { serve(refreshed, asked, crashed) }; restart: supervisor::Kind::Permanent),
+        supervisor::child(fn { serve(at, refreshed, asked, crashed) }; restart: supervisor::Kind::Permanent),
         supervisor::child(fn { refresh(refreshed, asked, crashed) }; restart: supervisor::Kind::Permanent),
     ]; strategy: supervisor::Strategy::OneForOne)
 }
@@ -56,11 +61,7 @@ fn refresh(refreshed: SharedMut[i64], asked: SharedMut[i64], crashed: SharedMut[
     }
 }
 
-fn serve(refreshed: SharedMut[i64], asked: SharedMut[i64], crashed: SharedMut[i64]) throws {
-    // An address may be given as an argument. Port `0` picks any free port,
-    // and `listen` prints the one it got.
-    let at = cli::args().nth(1) ?? "127.0.0.1:8080"
-
+fn serve(at: ref String, refreshed: SharedMut[i64], asked: SharedMut[i64], crashed: SharedMut[i64]) throws {
     // One function answers every request and decides by method and path.
     // Nothing is served that this function does not name.
     http::listen(at) fn(request) {

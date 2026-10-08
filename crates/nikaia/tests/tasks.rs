@@ -406,3 +406,29 @@ fn the_switch_decides_which_executor_a_task_is_started_on() {
         "a thread of its own, so the future must be `Send`: {at_yes}"
     );
 }
+
+/// **A function kept for later takes what it captures** (Part I 8.3, ADR-328
+/// D7, #95 step 6): a supervisor's child is called after the statement that
+/// made it, so a `String` it captures went with it, and using it again is
+/// `NK2101` - with the same help a task's capture has.
+#[test]
+fn data_a_kept_child_took_and_the_program_used_again_is_refused() {
+    let found = findings(
+        "use std::supervisor\n\
+         fn greet(name: ref String) throws {\n\
+         \x20   println(name)\n\
+         }\n\
+         fn main() throws {\n\
+         \x20   let name = \"Ada\".clone()\n\
+         \x20   supervisor::run([supervisor::child(fn { greet(name) }; restart: supervisor::Kind::Transient)])\n\
+         \x20   println(name)\n\
+         }",
+    );
+    let taken: Vec<_> = found.iter().filter(|f| f.code == "NK2101").collect();
+    assert_eq!(taken.len(), 1, "{found:?}");
+    assert!(
+        taken[0].message.contains("a function kept for later"),
+        "{:?}",
+        taken[0]
+    );
+}

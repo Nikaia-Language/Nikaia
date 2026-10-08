@@ -619,6 +619,9 @@ pub struct Checked {
     /// ([ADR-230](../../docs/specification/adr/adr-230.md) D4): the lambda
     /// takes its own handle, and the one it was written beside stays usable.
     pub kept_hulls: BTreeMap<(usize, String), Vec<String>>,
+    /// **What a pausing kept lambda takes**, by name: owned once behind an
+    /// `Arc`, and lent to each call (#95 step 6).
+    pub kept_owned: BTreeMap<(usize, String), Vec<String>>,
     /// **Calls of a field that holds a function**, `button.on_click(4)`, by
     /// statement and `receiver.field`, and whether the call may pause.
     pub field_calls: BTreeMap<(usize, String), bool>,
@@ -2236,6 +2239,9 @@ pub struct Propagation {
     pub kept_lambdas: BTreeMap<(usize, String), (bool, bool)>,
     /// [`Checked::kept_hulls`].
     pub kept_hulls: BTreeMap<(usize, String), Vec<String>>,
+    /// **What a pausing kept lambda takes**, by name: owned once behind an
+    /// `Arc`, and lent to each call (#95 step 6).
+    pub kept_owned: BTreeMap<(usize, String), Vec<String>>,
     /// [`Checked::field_calls`].
     pub field_calls: BTreeMap<(usize, String), bool>,
     /// [`Checked::kept_calls`].
@@ -2570,6 +2576,7 @@ fn propagation(
         filter_patterns: checked.filter_patterns,
         kept_lambdas: checked.kept_lambdas,
         kept_hulls: checked.kept_hulls,
+        kept_owned: checked.kept_owned,
         field_calls: checked.field_calls,
         kept_calls: checked.kept_calls,
         kept_args: checked.kept_args,
@@ -3485,7 +3492,7 @@ struct Checker<'a> {
     /// The `spawn` statement's own **end** is what is kept, not its start: the
     /// reads inside the task's body are the move itself and lie inside that
     /// span, so "after the task" means after the statement closes.
-    moved_into_a_task: Vec<(String, Ty, usize)>,
+    moved_into_a_task: Vec<(String, Ty, usize, &'static str)>,
     /// **A name whose sequence was walked** (`NK2702`,
     /// [ADR-105](../../docs/specification/adr/adr-105.md) D2): the name, the type
     /// it held, and the byte the walking statement **ends** on.
@@ -18349,7 +18356,8 @@ impl<'a> Checker<'a> {
             if !self.takes_away(&ty) {
                 continue;
             }
-            self.moved_into_a_task.push((name, ty, span.stop()));
+            self.moved_into_a_task
+                .push((name, ty, span.stop(), "a background task"));
         }
     }
 
@@ -18368,7 +18376,7 @@ impl<'a> Checker<'a> {
         let read = std::mem::take(&mut self.read_at);
         let written = std::mem::take(&mut self.written_at);
 
-        for (name, ty, at) in moved {
+        for (name, ty, at, taker) in moved {
             // At or after the byte the `spawn` statement **ends** on. The reads
             // inside the task's own body are the move itself and lie inside
             // that statement's span, so they are excluded; a statement span
@@ -18391,19 +18399,26 @@ impl<'a> Checker<'a> {
                 code: "NK2101",
                 severity: Severity::Error,
                 span: Span::new(used, used),
-                message: format!("You're using `{name}` after a background task took it."),
+                message: format!("You're using `{name}` after {taker} took it."),
                 notes: vec![
-                    format!(
-                        "A task started with `spawn` may outlive this function, so it takes the \
-                         variables it uses with it. `{name}` is a `{ty}`, so it went to the task."
-                    ),
+                    match taker {
+                        "a background task" => format!(
+                            "A task started with `spawn` may outlive this function, so it takes the \
+                             variables it uses with it. `{name}` is a `{ty}`, so it went to the task."
+                        ),
+                        _ => format!(
+                            "A function kept to be called later - a supervisor's child, a handler - \
+                             is called after this function has moved on, so it takes the variables it \
+                             uses with it. `{name}` is a `{ty}`, so it went to the function."
+                        ),
+                    },
                     "Numbers, `bool`s, views and `Shared[T]` handles aren't taken: they're \
                      copied."
                         .to_string(),
                 ],
                 help: Some(format!(
-                    "Make a copy before starting the task and give the task the copy: \
-                     `let copy = {name}.clone()`, then use `copy` inside the task."
+                    "Make a copy before and hand over the copy: `let copy = {name}.clone()`, \
+                     then use `copy` inside."
                 )),
                 labels: Vec::new(),
             });
@@ -22105,6 +22120,44 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// **What a kept lambda captures, it takes** (Part I 8.3, ADR-328 D7, #95
+    /// step 6): it is called after the statement that made it, so a value a
+    /// move takes away goes with it and is `NK2101` where it is used again. One
+    /// that pauses owns it once and counts the calls that borrow it - each
+    /// call's future must own what it reads - which the emitter writes from
+    /// `kept_owned`: no copy.
+    fn a_kept_lambda_takes_these(&mut self, value: &Expr, pauses: bool, span: &Span) {
+        let Expr::Closure { params, body, .. } = value else {
+            return;
+        };
+        let mut named: BTreeSet<String> = BTreeSet::new();
+        crate::emit::visit_block(body, &mut |e| {
+            if let Expr::Variable(name) = e {
+                named.insert(self.parsed.text(*name).to_string());
+            }
+        });
+        let mut owned = Vec::new();
+        for name in named {
+            if params.iter().any(|p| self.parsed.text(*p) == name) {
+                continue;
+            }
+            let Some((ty, _)) = self.local(&name) else {
+                continue;
+            };
+            if is_a_handle(&ty) || !self.takes_away(&ty) {
+                continue;
+            }
+            owned.push(name.clone());
+            self.moved_into_a_task
+                .push((name, ty, span.stop(), "a function kept for later"));
+        }
+        if pauses && !owned.is_empty() {
+            self.checked
+                .kept_owned
+                .insert((span.at(), argument_shape(value)), owned);
+        }
+    }
+
     /// **A lambda where a function value is kept** is one shared closure
     /// below, and one that may pause hands back a boxed future.
     fn a_kept_lambda(&mut self, want: &Ty, value: &Expr, span: &Span) {
@@ -22139,6 +22192,7 @@ impl<'a> Checker<'a> {
                 .insert((span.at(), argument_shape(value)), (!is_sync, *throws));
             self.a_lambdas_text_is_its_own(want, value);
             self.a_kept_lambdas_hulls(value, span);
+            self.a_kept_lambda_takes_these(value, !is_sync, span);
         }
         // **A function of this program, named**, is the closure that calls it:
         // the call is typed here so that it is lowered as a written one is.
@@ -24624,6 +24678,7 @@ impl<'a> Checker<'a> {
                             .kept_lambdas
                             .insert((span.at(), argument_shape(arg)), (!is_sync, *throws));
                         self.a_kept_lambdas_hulls(arg, span);
+                        self.a_kept_lambda_takes_these(arg, !is_sync, span);
                     }
                     if let Some(want) = expected.get(at) {
                         self.a_lambdas_text_is_its_own(want, arg);

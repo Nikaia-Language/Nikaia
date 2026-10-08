@@ -44,3 +44,21 @@ test "a temporary child is not restarted" {
     let tried = attempts.get()
     assert(tried == 1)
 }
+
+fn supervision_greets(name: ref String, greeted: SharedMut[i64]) throws {
+    greeted.update fn(mut v) { v += name.len() }
+}
+
+// **A child takes the text it captures, and every restart is lent it** (ADR-328
+// D7, #95 step 6): owned once, counted per attempt, never copied.
+test "a child lends its captured text to every attempt" {
+    let name = "Ada".clone()
+    let greeted = SharedMut(0)
+    let attempts = SharedMut(0)
+    supervisor::run([
+        supervisor::child(fn { supervision_greets(name, greeted) }; restart: supervisor::Kind::Transient),
+        supervisor::child(fn { supervision_flaky(attempts) }; restart: supervisor::Kind::Transient),
+    ]; strategy: supervisor::Strategy::OneForAll)
+    let total = greeted.get()
+    assert(total == 9)
+}

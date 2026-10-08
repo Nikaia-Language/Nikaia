@@ -8,6 +8,18 @@ or the specification. A change only to the guide, the notes, the README, the
 website, the tests, the examples or the tooling around them raises nothing and
 has no heading here; `CLAUDE.md` draws the line.
 
+## [0.0.686] — 2026-10-08
+
+**A kept function takes what it captures, and a pausing one lends it to every
+call** (Part I 8.3, ADR-328 D7; #95 step 6). A lambda a callee keeps (a
+supervisor's child, a handler) is called after the statement that made it, so a
+value it captures that a move takes away goes with it. Using that value again
+is `NK2101`, with the help a task's capture has; before, it was rustc's
+*borrow of moved value*. A lambda that pauses owns such a value once, behind an
+`Arc`, and each call's future holds a count of it rather than a copy. Before,
+the first call moved it out and rustc refused the program. `hello-http` reads
+its address in `main` again.
+
 ## [0.0.685] — 2026-10-08
 
 **The Python binding's `_async` form** (ADR-284 D19, D27; #112). A pausing
