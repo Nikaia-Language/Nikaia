@@ -8,6 +8,21 @@ or the specification. A change only to the guide, the notes, the README, the
 website, the tests, the examples or the tooling around them raises nothing and
 has no heading here; `CLAUDE.md` draws the line.
 
+## [0.0.681] — 2026-10-08
+
+**A response body may be bytes, or a file the program never read** (ADR-289
+D22, D23, D27, D28; #120). The `http` package's `Response.body` is a `Body`:
+`Text`, `Bytes` or `File`. `http::File(path, root)` looks at the file when it is
+made. Its size is the `content-length` and its type follows its extension (else
+bytes). A file that is not there is a `500`, and a name that leaves its root a
+`404`, both settled before the status line. The bytes are read through the
+reactor only when the answer is sent, and a failure then closes the connection
+short and is logged. `hello-http` serves `/source`. Fixed on the way: a type a
+program declares, or one it names qualified (`http::File`), is no longer taken
+for a `std` type of the same last name (`fs::File`) when its cleanup is asked
+for. Not built yet: `sendfile` and the mapping as D24's other mechanisms, the
+`send-file` key, and D29's kept mappings.
+
 ## [0.0.680] — 2026-10-08
 
 **`fs::open` and `File`** (Part III 17.1; #546). A file held open is read

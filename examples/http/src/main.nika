@@ -19,6 +19,7 @@
 use std::net
 use std::http1
 use std::io
+use std::fs
 
 // Only two methods. `std::http1` answers `400` to any other method before a
 // handler runs, so a `match` over this covers every request a handler can get.
@@ -86,26 +87,144 @@ impl Request {
 pub struct Response {
     pub status: i32,
     pub content_type: String,
-    pub body: String,
+    pub body: Body,
+}
+
+// What a response carries (ADR-289 D18, D22, D23): text the program made,
+// bytes it holds, or a file it never read.
+pub enum Body {
+    Text(String),
+    Bytes(Bytes),
+    File(File),
+}
+
+// **A file as a response body, which the program never reads** (ADR-289 D23,
+// D27, D28). The file is looked at when this is made: its size becomes the
+// `content-length`, a file that is not there is a `500`, and a name that
+// leaves the root is a `404`. Nothing is read until the answer is sent.
+pub struct File {
+    pub path: String,
+    pub root: fs::Root,
+    // `200`, or the status the file already decided: `404` or `500`.
+    pub status: i32,
+    pub size: i64,
+}
+
+impl File {
+    pub fn(path: ref String, root: fs::Root) -> File {
+        let mut status = 200
+        let mut size = 0
+        let known = fs::metadata(path, root) catch {
+            status = match error {
+                io::IoError::Outside(_) => 404
+                else => 500
+            }
+            return File { path: path.clone(), root: root, status: status, size: 0 }
+        }
+        if !known.is_file() {
+            status = 404
+        } else {
+            size = known.len()
+        }
+        return File { path: path.clone(), root: root, status: status, size: size }
+    }
+
+    // What the name's extension says the file is, and what is not named
+    // is bytes (ADR-289 D23).
+    pub fn content_type(ref self) -> String {
+        let name = self.path.to_lowercase()
+        if name.ends_with(".html") || name.ends_with(".htm") {
+            return "text/html; charset=utf-8".clone()
+        } else if name.ends_with(".txt") || name.ends_with(".nika") || name.ends_with(".toml") {
+            return "text/plain; charset=utf-8".clone()
+        } else if name.ends_with(".css") {
+            return "text/css; charset=utf-8".clone()
+        } else if name.ends_with(".js") {
+            return "text/javascript; charset=utf-8".clone()
+        } else if name.ends_with(".json") {
+            return "application/json".clone()
+        } else if name.ends_with(".svg") {
+            return "image/svg+xml".clone()
+        } else if name.ends_with(".png") {
+            return "image/png".clone()
+        } else if name.ends_with(".jpg") || name.ends_with(".jpeg") {
+            return "image/jpeg".clone()
+        }
+        return "application/octet-stream".clone()
+    }
 }
 
 impl Response {
     // A `200` with a plain-text body.
     pub fn text(body: String) -> Response {
-        return Response { status: 200, content_type: "text/plain", body: body }
+        return Response { status: 200, content_type: "text/plain", body: Body::Text(body) }
+    }
+
+    // A `200` with bytes the program holds (ADR-289 D22).
+    pub fn bytes(body: Bytes) -> Response {
+        return Response { status: 200, content_type: "application/octet-stream", body: Body::Bytes(body) }
+    }
+
+    // A file, answered as `File` decided: `200` with its type, or the status
+    // it already knows (ADR-289 D23, D27, D28).
+    pub fn file(file: File) -> Response {
+        if file.status != 200 {
+            let status = file.status
+            return Response { status: status, content_type: "text/plain", body: Body::Text(status_line(status)) }
+        }
+        let content_type = file.content_type()
+        return Response { status: 200, content_type: content_type, body: Body::File(file) }
     }
 
     // A `404`, for a path the handler does not answer.
     pub fn not_found() -> Response {
-        return Response { status: 404, content_type: "text/plain", body: "not found" }
+        return Response { status: 404, content_type: "text/plain", body: Body::Text("not found") }
     }
 }
 
-// The status line, the headers and the body, as the text that goes on the
-// wire.
-pub fn render(response: ref Response) -> String {
+// How long the body is, as `content-length` says it.
+fn length_of(body: ref Body) -> i64 {
+    match body {
+        Body::Text(text) => text.len()
+        Body::Bytes(bytes) => bytes.len()
+        Body::File(file) => file.size
+    }
+}
+
+// The status line and the headers, as the text that goes on the wire before
+// the body.
+pub fn render_head(response: ref Response) -> String {
     let status = status_line(response.status)
-    return f"HTTP/1.1 {status}\r\ncontent-type: {response.content_type}\r\ncontent-length: {response.body.len()}\r\n\r\n{response.body}"
+    let length = length_of(response.body)
+    return f"HTTP/1.1 {status}\r\ncontent-type: {response.content_type}\r\ncontent-length: {length}\r\n\r\n"
+}
+
+// The head and a text body, as the text that goes on the wire. A body of
+// bytes or a file is written after the head by `send`.
+pub fn render(response: ref Response) -> String {
+    let head = render_head(response)
+    match response.body {
+        Body::Text(text) => f"{head}{text}"
+        else => head
+    }
+}
+
+// The answer, written to the connection. What the client sees was settled by
+// the head: a file that fails to read after it closes the connection short,
+// and the failure is logged (ADR-289 D27).
+fn send(mut connection: net::Connection, response: ref Response) throws {
+    connection.write(render_head(response))
+    match response.body {
+        Body::Text(text) => connection.write(text)
+        Body::Bytes(bytes) => connection.write(bytes)
+        Body::File(file) => {
+            let read = fs::read(file.path, file.root) catch {
+                println(f"http: {file.path} could not be read after its head was sent: {error}")
+                return
+            }
+            connection.write(read)
+        }
+    }
 }
 
 // The reason phrase for each status this package sends.
@@ -221,12 +340,12 @@ fn answer(
     }
 
     let answered = handler(Request { head: asked, body: body })
-    connection.write(render(answered)) catch { return }
+    send(connection, answered) catch { return }
 }
 
 // Answers a request the server refuses. The text `http1` throws already starts
 // with the status code, so it is passed on as the body.
 fn refuse(mut connection: net::Connection, status: i32, why: ref String) {
-    let answered = Response { status: status, content_type: "text/plain", body: why.clone() }
-    connection.write(render(answered)) catch { return }
+    let answered = Response { status: status, content_type: "text/plain", body: Body::Text(why.clone()) }
+    send(connection, answered) catch { return }
 }

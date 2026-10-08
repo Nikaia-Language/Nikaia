@@ -8756,14 +8756,29 @@ impl<'a> Checker<'a> {
                 if !seen.insert(base.clone()) {
                     return None;
                 }
-                let owner = [self.own, self.library].into_iter().find_map(|ledger| {
-                    ledger
-                        .implementations
-                        .get("Cleanup")?
-                        .iter()
-                        .find(|t| crate::contracts::ty::base(t) == base)
-                        .cloned()
-                });
+                // **A name is its own type before it is another's** (#120): a
+                // `File` this program declares is not `fs::File`, and an
+                // `http::File` is not either. Only a name nobody here declares
+                // and nobody qualified is matched by its last segment.
+                let qualified = name.contains("::");
+                let declared_here = !qualified && self.own.types.contains_key(name.as_str());
+                let owner = [self.own, self.library]
+                    .into_iter()
+                    .take(match declared_here {
+                        true => 1,
+                        false => 2,
+                    })
+                    .find_map(|ledger| {
+                        ledger
+                            .implementations
+                            .get("Cleanup")?
+                            .iter()
+                            .find(|t| match qualified {
+                                true => *t == &name || name.ends_with(&format!("::{t}")),
+                                false => crate::contracts::ty::base(t) == base,
+                            })
+                            .cloned()
+                    });
                 if let Some(owner) = owner {
                     let fails = [self.own, self.library].into_iter().any(|ledger| {
                         ledger

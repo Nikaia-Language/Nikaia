@@ -1736,6 +1736,8 @@ fn the_http_package_serves_its_example() {
         .args(["run", "--project"])
         .arg(&consumer)
         .args(["--", "127.0.0.1:0"])
+        // Where its files are: `/source` names one under the directory it runs in.
+        .current_dir(&consumer)
         .env("NIKAIA_CACHE_DIR", shared_cache_dir())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null())
@@ -1771,6 +1773,19 @@ fn the_http_package_serves_its_example() {
         "and the program decides what it does not have"
     );
     assert_eq!(body, "not found");
+
+    // **A file the program never read** (ADR-289 D23, D27, D28): its size is
+    // the `content-length`, its type follows its extension, a file that is not
+    // there is a 500 and a name that leaves its root a 404, each settled before
+    // the status line.
+    let source = std::fs::read_to_string(consumer.join("src/main.nika")).expect("the source");
+    let (status, body) = ask(&address, b"GET /source HTTP/1.1\r\nhost: x\r\n\r\n");
+    assert_eq!(status, "HTTP/1.1 200 OK");
+    assert_eq!(body, source, "the file, byte for byte");
+    let (status, _) = ask(&address, b"GET /missing HTTP/1.1\r\nhost: x\r\n\r\n");
+    assert_eq!(status, "HTTP/1.1 500 Internal Server Error");
+    let (status, _) = ask(&address, b"GET /outside HTTP/1.1\r\nhost: x\r\n\r\n");
+    assert_eq!(status, "HTTP/1.1 404 Not Found");
 
     // **A body by `Content-Length`**, which is the whole of the MVP's framing.
     let (status, body) = ask(

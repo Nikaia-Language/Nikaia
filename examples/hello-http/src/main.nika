@@ -9,6 +9,7 @@
 //     curl 'localhost:8080/?name=Ada'    Hello, Ada
 //     curl localhost:8080/who             you asked localhost:8080
 //     curl -d hello localhost:8080/       you sent 5 bytes
+//     curl localhost:8080/source          this file, which the program never reads
 //     curl localhost:8080/elsewhere       not found
 //
 // Shows: a package reached by a path (`../http`, named in `nikaia.toml`), a
@@ -17,6 +18,7 @@
 
 use http
 use std::cli
+use std::fs
 
 fn main() throws {
     // An address may be given as an argument. Port `0` picks any free port,
@@ -40,6 +42,18 @@ fn main() throws {
         if request.path() == "/who" {
             let host = request.header("host") ?? "nobody"
             return http::Response::text(f"you asked {host}")
+        }
+        // A file the program never reads (ADR-289 D23): looked at when the
+        // answer is made, read only when it is sent. Its name is resolved
+        // under the directory the server runs in, and may not leave it.
+        if request.path() == "/source" {
+            return http::Response::file(http::File("src/main.nika", fs::Root::Dir(".")))
+        }
+        if request.path() == "/missing" {
+            return http::Response::file(http::File("no-such-file.txt", fs::Root::Dir(".")))
+        }
+        if request.path() == "/outside" {
+            return http::Response::file(http::File("../hello-http/src/main.nika", fs::Root::Dir("src")))
         }
         return http::Response::not_found()
     }
