@@ -8,6 +8,13 @@ or the specification. A change only to the guide, the notes, the README, the
 website, the tests, the examples or the tooling around them raises nothing and
 has no heading here; `CLAUDE.md` draws the line.
 
+## [0.0.706] — 2026-10-08
+
+**A list written in number literals is one open number** (ADR-285 D34, #513).
+- Decided, not built: `[12, 14, 13]`'s element type is decided as a `let`'s
+  is - by the uses, else `i32`, else `i64` - and `NK1116` and `NK1200` apply to
+  it as to a name. Part I 4.5.
+
 ## [0.0.705] — 2026-10-08
 
 **`nikaia fmt` indents with tabs** (ADR-337 D1, #101).
