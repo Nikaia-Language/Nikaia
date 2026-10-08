@@ -781,6 +781,11 @@ found = calc.found(4)
 assert calc.count_of(found) == 4 and calc.count_of(None) == -1
 assert calc.length_of(None) == 4 and calc.length_of("") == 0
 assert calc.count_up(10, lambda i: i < 3) == 3
+# A stream is a generator (ADR-284 D20, D21): read to its end, or stopped.
+import itertools
+
+assert list(calc.count_up_iter(4)) == [0, 1, 2, 3]
+assert list(itertools.islice(calc.count_up_iter(1000000), 3)) == [0, 1, 2]
 seen = []
 calc.words("one two", lambda word, light: seen.append((word, light)))
 assert seen == [("one", calc.Light.Amber), ("two", calc.Light.Amber)], seen

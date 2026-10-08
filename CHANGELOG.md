@@ -8,6 +8,14 @@ or the specification. A change only to the guide, the notes, the README, the
 website, the tests, the examples or the tooling around them raises nothing and
 has no heading here; `CLAUDE.md` draws the line.
 
+## [0.0.687] — 2026-10-08
+
+**A stream is a generator in the Python binding** (ADR-284 D20, D21, D27;
+#112). A function taking one callback that answers `bool` is also
+`<name>_iter(…)`, its other parameters the same. The call runs on a thread,
+each item waits until the consumer asks for the next, and closing the
+generator early answers `False`, which is the caller's stop.
+
 ## [0.0.686] — 2026-10-08
 
 **A kept function takes what it captures, and a pausing one lends it to every

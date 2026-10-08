@@ -1508,6 +1508,8 @@ struct Python {
     signatures: Vec<String>,
     /// Whether any entry has an `_async` form, which needs the ticket.
     any_async: bool,
+    /// Whether any entry is a stream, which needs `_stream`.
+    any_stream: bool,
 }
 
 /// A name Python may bind: one of its words gets a `_` after it.
@@ -1813,6 +1815,48 @@ impl Python {
                 .map(|line| format!("{by}{line}\n"))
                 .collect::<String>()
         };
+        // **A stream is a generator** (D20, D21, D27): a function taking one
+        // callback that answers `bool` is also `<name>_iter(…)`, its other
+        // parameters the same, and the items yielded one at a time.
+        let streams: Vec<(usize, String)> = entry
+            .args
+            .iter()
+            .enumerate()
+            .filter_map(
+                |(at, arg)| match taken(parsed, plains, handles, records, &arg.ty) {
+                    Some(In::Callback {
+                        result: Some(shape),
+                        ..
+                    }) if shape.rust == "bool" => Some((at, python_name(parsed.text(arg.name)))),
+                    _ => None,
+                },
+            )
+            .collect();
+        if let ([(at, each)], None) = (streams.as_slice(), &entry.owner) {
+            self.any_stream = true;
+            let others: Vec<String> = def_params
+                .iter()
+                .enumerate()
+                .filter(|(position, _)| position != at)
+                .map(|(_, name)| name.clone())
+                .collect();
+            let forwarded: Vec<String> = def_params
+                .iter()
+                .enumerate()
+                .map(|(position, name)| match position == *at {
+                    true => "each".to_string(),
+                    false => name.clone(),
+                })
+                .collect();
+            let _ = each;
+            self.functions.push(format!(
+                "def {}_iter({}):\n    return _stream(lambda each: {}({}))\n",
+                entry.name,
+                others.join(", "),
+                python_name(&entry.name),
+                forwarded.join(", ")
+            ));
+        }
         if !async_lines.is_empty() {
             let mut params = def_params.clone();
             params.push("done=None".to_string());
@@ -2029,6 +2073,51 @@ impl Python {
              \n",
             table.join(", ")
         ));
+        if self.any_stream {
+            out.push_str(
+                "def _stream(call):\n    \
+                 \"\"\"The items a callback is handed, yielded one at a time: the next is made\n    \
+                 after this one was asked for, and closing the generator is the stop (ADR-284 D21).\"\"\"\n    \
+                 import queue\n    \
+                 import threading\n\
+                 \n    \
+                 items = queue.Queue(maxsize=1)\n    \
+                 go = queue.Queue(maxsize=1)\n    \
+                 end = object()\n    \
+                 outcome = []\n\
+                 \n    \
+                 def each(*item):\n        \
+                 items.put(item[0] if len(item) == 1 else item)\n        \
+                 return go.get()\n\
+                 \n    \
+                 def run():\n        \
+                 try:\n            \
+                 outcome.append(call(each))\n        \
+                 except BaseException as error:\n            \
+                 outcome.append(error)\n        \
+                 items.put(end)\n\
+                 \n    \
+                 threading.Thread(target=run, daemon=True).start()\n    \
+                 ended = False\n    \
+                 try:\n        \
+                 while True:\n            \
+                 item = items.get()\n            \
+                 if item is end:\n                \
+                 ended = True\n                \
+                 break\n            \
+                 yield item\n            \
+                 go.put(True)\n    \
+                 finally:\n        \
+                 if not ended:\n            \
+                 go.put(False)\n            \
+                 while items.get() is not end:\n                \
+                 go.put(False)\n    \
+                 if outcome and isinstance(outcome[0], BaseException):\n        \
+                 raise outcome[0]\n\
+                 \n\
+                 \n",
+            );
+        }
         if any_pause && self.any_async {
             out.push_str(&format!(
                 "_DONE = ctypes.CFUNCTYPE(None, ctypes.c_int, ctypes.c_void_p)\n\
