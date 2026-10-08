@@ -1411,13 +1411,15 @@ pub fn export(
                  }}\n    \
                  // SAFETY: the C caller keeps what it handed this call, and `done`'s context, until `done` (ADR-284 D9).\n    \
                  let sent = unsafe {{ nikaia_std::c_boundary::sent(({forwarded}, __nikaia_done_ctx)) }};\n    \
-                 std::thread::spawn(move || {{\n        \
+                 // A library thread, kept for the next call (`rt::library`).\n    \
+                 nikaia_std::rt::library::run(Box::new(move || {{\n        \
                  let ({forwarded}, __nikaia_done_ctx) = sent.into_inner();\n        \
                  __NIKAIA_TICKET.with(|current| *current.borrow_mut() = Some(ticket.clone()));\n        \
                  let status = {symbol}({forwarded});\n        \
+                 __NIKAIA_TICKET.with(|current| *current.borrow_mut() = None);\n        \
                  ticket.done.store(true, std::sync::atomic::Ordering::SeqCst);\n        \
                  __nikaia_done(status, __nikaia_done_ctx);\n    \
-                 }});\n    0\n}}\n",
+                 }}));\n    0\n}}\n",
                 async_params.join(", "),
             ));
             let mut c_async = match c_params.as_str() {

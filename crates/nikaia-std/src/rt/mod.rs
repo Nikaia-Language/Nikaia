@@ -52,6 +52,7 @@
 pub mod config;
 /// The executor (ADR-055 D3): what drives a program that can pause.
 pub mod exec;
+pub mod library;
 pub mod pool;
 pub mod timer;
 pub mod worker;

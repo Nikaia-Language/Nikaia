@@ -8,6 +8,14 @@ or the specification. A change only to the guide, the notes, the README, the
 website, the tests, the examples or the tooling around them raises nothing and
 has no heading here; `CLAUDE.md` draws the line.
 
+## [0.0.694] — 2026-10-08
+
+**A library's `_async` calls run on threads that are kept** (ADR-284 D9;
+#88). `rt::library` hands a call to a thread that is waiting for one, or
+starts one where none is idle. A thread that waited 60 s for nothing ends.
+Before, every `_async` call started a thread and ended it. No call waits for a
+thread, because a call may pause for as long as its work does.
+
 ## [0.0.693] — 2026-10-08
 
 **An `extern` struct's `Array[T, N]` field crosses to C** (ADR-284 D15,
