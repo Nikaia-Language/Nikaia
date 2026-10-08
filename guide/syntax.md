@@ -65,6 +65,7 @@ decision.
 ## Everything is an expression
 
 ```nika
+let count = 7
 let status = if count > 5 { "big" } else { "small" }
 ```
 
@@ -252,6 +253,9 @@ fn size_of(path: ref String) -> i64 throws {
 }
 
 fn main() throws {
+    fs::write("a.txt", fs::Root::Anywhere, "hello")    // two files to read
+    fs::write("b.txt", fs::Root::Anywhere, "world!")
+
     let (a, b) = overlap {        // both files are read at the same time
         size_of("a.txt")
         size_of("b.txt")
