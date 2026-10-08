@@ -10405,6 +10405,28 @@ impl<'p> Emitter<'p> {
                 return Ok(());
             }
         }
+        // **A shared value that is built again when a panic poisons it**
+        // ([ADR-327](../../../docs/specification/adr/adr-327.md) D3,
+        // [ADR-328](../../../docs/specification/adr/adr-328.md) D9): the hulls
+        // `SharedMut(x)` gets, around the builder instead of a value.
+        if let Expr::Path(segments) = func
+            && let [owner, door] = segments.as_slice()
+            && self.text(*owner) == SHARED_MUT
+            && self.text(*door) == "supervised"
+            && let [build] = args
+            && let Some(hulls) = self.hull_new(
+                SHARED_MUT,
+                self.hull_count
+                    .take()
+                    .unwrap_or_else(|| self.count_at(flow.function, flow.bound)),
+            )
+            && let [handle, lock] = hulls.as_slice()
+        {
+            out.push(&format!("{handle}::new({lock}::supervised_kept("));
+            self.expr(out, build, depth, flow)?;
+            out.push("))");
+            return Ok(());
+        }
         if let Expr::Variable(name) = func {
             let text = self.text(*name);
 

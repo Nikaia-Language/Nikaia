@@ -8,6 +8,21 @@ or the specification. A change only to the guide, the notes, the README, the
 website, the tests, the examples or the tooling around them raises nothing and
 has no heading here; `CLAUDE.md` draws the line.
 
+## [0.0.688] — 2026-10-08
+
+**`SharedMut::supervised(fn { … })`** (ADR-327 D3, ADR-328 D9; #95 step 7). A
+shared value that is built again when a panic poisons it. The holders keep
+their handle, and the door that finds the poison asks `std`'s restart policy
+(`supervisor::Backoff`):
+- the first time, it rebuilds at once and goes on;
+- later, after a delay that grows, and a door during the delay panics;
+- once the policy gives up, the value stays poisoned.
+
+Both lock shapes, `Local` and `Crossing`, carry it. The builder may not pause,
+because a door cannot. `SharedMut::` needs no `use`, as `SharedMut(…)` needs
+none. *One for all restarts the siblings* no longer races at `yes`: the
+crashing child waits for its sibling's first attempt.
+
 ## [0.0.687] — 2026-10-08
 
 **A stream is a generator in the Python binding** (ADR-284 D20, D21, D27;

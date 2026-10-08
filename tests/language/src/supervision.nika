@@ -4,12 +4,23 @@
 // (`crates/nikaia-std/src/supervisor.rs`).
 
 use std::supervisor
+use std::time
 
 fn supervision_flaky(attempts: SharedMut[i64]) throws {
     attempts.update fn(mut v) { v += 1 }
     if attempts.get() < 3 {
         panic("not yet")
     }
+}
+
+// Crashes as `supervision_flaky` does, once its sibling has started: at `yes`
+// the two run at once, and a crash before the sibling's first attempt ran
+// would cancel that attempt uncounted.
+fn supervision_flaky_after(attempts: SharedMut[i64], starts: SharedMut[i64]) throws {
+    while starts.get() == 0 {
+        time::sleep(1.millis())
+    }
+    supervision_flaky(attempts)
 }
 
 fn supervision_counted(starts: SharedMut[i64]) throws {
@@ -29,7 +40,7 @@ test "one for all restarts the siblings of a child that crashed" {
     let attempts = SharedMut(1)
     let starts = SharedMut(0)
     supervisor::run([
-        supervisor::child(fn { supervision_flaky(attempts) }; restart: supervisor::Kind::Transient),
+        supervisor::child(fn { supervision_flaky_after(attempts, starts) }; restart: supervisor::Kind::Transient),
         supervisor::child(fn { supervision_counted(starts) }; restart: supervisor::Kind::Transient),
     ]; strategy: supervisor::Strategy::OneForAll)
     let started = starts.get()
@@ -61,4 +72,20 @@ test "a child lends its captured text to every attempt" {
     ]; strategy: supervisor::Strategy::OneForAll)
     let total = greeted.get()
     assert(total == 9)
+}
+
+// **A supervised value is built again when a panic poisons it** (ADR-327 D3,
+// ADR-328 D9): the task that panicked inside its door ends, the holders keep
+// their handle, and the next door finds the value as its builder makes it.
+test "a supervised shared value is rebuilt after a panic in its door" {
+    let cache = SharedMut::supervised(fn { 10 })
+    cache.update fn(mut v) { v += 5 }
+    let crashing = spawn fn {
+        cache.update fn(mut v) { panic("half-changed") }
+    }
+    let mut crashed = false
+    crashing.join() catch { crashed = true }
+    let now = cache.get()
+    assert(crashed)
+    assert(now == 10)
 }

@@ -14935,6 +14935,11 @@ impl<'a> Checker<'a> {
         if !self.std_modules.contains(module) || self.std_in_scope.contains(module) {
             return;
         }
+        // **A hull is a type and not a module**: `SharedMut::supervised(…)`
+        // is reached as `SharedMut(…)` is, without a `use` (ADR-328 D9).
+        if is_hull(module) {
+            return;
+        }
         // A module of **this program** wins: a package called `text` beside a
         // `std::text` is the consumer's to name apart, and until they collide
         // the local one is what the prefix means.

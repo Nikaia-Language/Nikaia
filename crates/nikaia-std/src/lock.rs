@@ -58,6 +58,88 @@ fn poisoned() -> ! {
     )
 }
 
+/// **How a supervised value comes back from its poison**
+/// ([ADR-327](../../../docs/specification/adr/adr-327.md) D3,
+/// [ADR-328](../../../docs/specification/adr/adr-328.md) D9): the restart
+/// policy a supervisor's child has, asked by the door that finds the poison.
+#[derive(Debug)]
+pub struct Phase {
+    policy: crate::supervisor::Backoff,
+    /// When the value was last built, for how long the attempt ran.
+    built: std::time::Instant,
+    /// A delay the policy asked for: a door before it panics.
+    waiting_until: Option<std::time::Instant>,
+    /// The policy gave up: the value stays poisoned.
+    given_up: bool,
+}
+
+impl Phase {
+    fn new() -> std::sync::Mutex<Phase> {
+        std::sync::Mutex::new(Phase {
+            policy: crate::supervisor::Backoff::default(),
+            built: std::time::Instant::now(),
+            waiting_until: None,
+            given_up: false,
+        })
+    }
+
+    /// Whether the door that found the poison rebuilds now; it panics where
+    /// the policy waits or gave up.
+    #[track_caller]
+    fn recover(phase: &std::sync::Mutex<Phase>) {
+        let mut phase = phase.lock().unwrap_or_else(|held| held.into_inner());
+        if phase.given_up {
+            gave_up();
+        }
+        let now = std::time::Instant::now();
+        if phase.waiting_until.is_none() {
+            let ran = now.duration_since(phase.built);
+            match phase.policy.decide(ran, now) {
+                crate::supervisor::Next::Immediate => {}
+                crate::supervisor::Next::Delay(span) => phase.waiting_until = Some(now + span),
+                crate::supervisor::Next::Escalate => {
+                    phase.given_up = true;
+                    gave_up();
+                }
+            }
+        }
+        if let Some(until) = phase.waiting_until {
+            if now < until {
+                being_rebuilt();
+            }
+            phase.waiting_until = None;
+        }
+        phase.built = now;
+    }
+}
+
+/// A door to a supervised value during its policy's delay (ADR-328 D9).
+#[cold]
+#[inline(never)]
+#[track_caller]
+fn being_rebuilt() -> ! {
+    panic!(
+        "this value is being rebuilt after a task panicked while it held it: try again after the delay"
+    )
+}
+
+/// A door to a supervised value whose policy gave up (ADR-328 D9).
+#[cold]
+#[inline(never)]
+#[track_caller]
+fn gave_up() -> ! {
+    panic!("this value was rebuilt too often and its policy gave up: it stays poisoned")
+}
+
+/// The builder of a supervised value, which `Debug` cannot show.
+pub struct Builder<F: ?Sized>(Box<F>);
+
+impl<F: ?Sized> std::fmt::Debug for Builder<F> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Builder")
+    }
+}
+
 /// **What a `set(neu; after: seen)` failed with**
 /// ([ADR-281](../../../docs/specification/adr/adr-281.md) D26): the lock no
 /// longer holds the value that was seen.
@@ -100,6 +182,9 @@ pub struct Local<T> {
     /// **Set when a block panicked while it held the value** (ADR-327 D1):
     /// every door after that panics rather than read it.
     poisoned: std::cell::Cell<bool>,
+    /// How to build it again, for `SharedMut::supervised` (ADR-327 D3).
+    #[allow(clippy::type_complexity)]
+    rebuild: Option<(Builder<dyn Fn() -> T>, std::sync::Mutex<Phase>)>,
 }
 
 impl<T> Local<T> {
@@ -107,6 +192,24 @@ impl<T> Local<T> {
         Self {
             inner: RefCell::new(value),
             poisoned: std::cell::Cell::new(false),
+            rebuild: None,
+        }
+    }
+
+    /// `SharedMut::supervised(fn { … })` as the compiler writes it: the kept
+    /// function a program hands over.
+    pub fn supervised_kept<F: Fn() -> T + ?Sized + 'static>(build: crate::func::Kept<F>) -> Self {
+        Self::supervised(move || (build.0)())
+    }
+
+    /// **A value that is built again when a panic poisons it**
+    /// ([ADR-327](../../../docs/specification/adr/adr-327.md) D3,
+    /// [ADR-328](../../../docs/specification/adr/adr-328.md) D9).
+    pub fn supervised(build: impl Fn() -> T + 'static) -> Self {
+        Self {
+            inner: RefCell::new(build()),
+            poisoned: std::cell::Cell::new(false),
+            rebuild: Some((Builder(Box::new(build)), Phase::new())),
         }
     }
 
@@ -122,7 +225,13 @@ impl<T> Local<T> {
             reentered()
         };
         if self.poisoned.get() {
-            poisoned();
+            match &self.rebuild {
+                Some((build, phase)) => {
+                    Phase::recover(phase);
+                    *held = (build.0)();
+                }
+                None => poisoned(),
+            }
         }
         // **Set for as long as the block runs**, and cleared only when it
         // returns: a block that panics never returns, so the mark stays.
@@ -258,6 +367,12 @@ pub struct Crossing<T> {
     /// door cost three mutex acquisitions and 63.5 ns; this is 17.2
     /// (`benches/lockfree`).
     held_by: AtomicU64,
+    /// How to build it again, for `SharedMut::supervised` (ADR-327 D3).
+    #[allow(clippy::type_complexity)]
+    rebuild: Option<(
+        Builder<dyn Fn() -> T + Send + Sync>,
+        std::sync::Mutex<Phase>,
+    )>,
 }
 
 impl<T> Crossing<T> {
@@ -265,6 +380,23 @@ impl<T> Crossing<T> {
         Self {
             inner: Mutex::new(value),
             held_by: AtomicU64::new(NOBODY),
+            rebuild: None,
+        }
+    }
+
+    /// `SharedMut::supervised(fn { … })` where the value crosses threads.
+    pub fn supervised_kept<F: Fn() -> T + ?Sized + Send + Sync + 'static>(
+        build: crate::func::Kept<F>,
+    ) -> Self {
+        Self::supervised(move || (build.0)())
+    }
+
+    /// [`Local::supervised`], where the value crosses threads.
+    pub fn supervised(build: impl Fn() -> T + Send + Sync + 'static) -> Self {
+        Self {
+            inner: Mutex::new(build()),
+            held_by: AtomicU64::new(NOBODY),
+            rebuild: Some((Builder(Box::new(build)), Phase::new())),
         }
     }
 
@@ -350,7 +482,19 @@ impl<T> Crossing<T> {
         // **A poisoned value is never read** (ADR-327 D1, D2): a task that
         // panicked while it held the lock may have left it half-changed, and
         // the mutex says so. The door panics in the task that opens it.
-        let mut guard = self.inner.lock().unwrap_or_else(|_| poisoned());
+        let mut guard = match self.inner.lock() {
+            Ok(guard) => guard,
+            Err(left) => match &self.rebuild {
+                Some((build, phase)) => {
+                    Phase::recover(phase);
+                    let mut guard = left.into_inner();
+                    *guard = (build.0)();
+                    self.inner.clear_poison();
+                    guard
+                }
+                None => poisoned(),
+            },
+        };
         // **Written under the guard**, so the mark names the holder rather than
         // a hopeful: before, it was set before the acquisition, and while one
         // task waited the mark said *its* name although another held the lock.
@@ -404,6 +548,59 @@ thread_local! {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Poisons a lock by panicking inside its door, quietly.
+    fn poison(door: impl FnOnce() + std::panic::UnwindSafe) {
+        let hook = std::panic::take_hook();
+        std::panic::set_hook(Box::new(|_| {}));
+        let _ = std::panic::catch_unwind(door);
+        std::panic::set_hook(hook);
+    }
+
+    /// Whether a door panics, quietly.
+    fn panics<R>(door: impl FnOnce() -> R + std::panic::UnwindSafe) -> bool {
+        let hook = std::panic::take_hook();
+        std::panic::set_hook(Box::new(|_| {}));
+        let failed = std::panic::catch_unwind(door).is_err();
+        std::panic::set_hook(hook);
+        failed
+    }
+
+    /// **A supervised value is rebuilt** (ADR-327 D3, ADR-328 D9): the first
+    /// poison at once; the second after the policy's delay, a door during it
+    /// panicking.
+    #[test]
+    fn a_supervised_value_is_rebuilt_by_its_policy() {
+        let builds = std::rc::Rc::new(std::cell::Cell::new(0));
+        let counted = builds.clone();
+        let lock = std::panic::AssertUnwindSafe(Local::supervised(move || {
+            counted.set(counted.get() + 1);
+            10_i64
+        }));
+        lock.update(|v| *v = 11);
+        poison(|| lock.update(|_| panic!("boom")));
+        assert_eq!(lock.get(), 10, "rebuilt at once");
+        assert_eq!(builds.get(), 2);
+        poison(|| lock.update(|_| panic!("boom")));
+        assert!(panics(|| lock.get()), "a door during the delay panics");
+        std::thread::sleep(std::time::Duration::from_millis(150));
+        assert_eq!(lock.get(), 10, "rebuilt after the delay");
+        assert_eq!(builds.get(), 3);
+    }
+
+    #[test]
+    fn a_supervised_crossing_value_is_rebuilt() {
+        let lock = std::sync::Arc::new(Crossing::supervised(|| 7_i64));
+        lock.update(|v| *v = 8);
+        let held = lock.clone();
+        let _ = std::thread::spawn(move || {
+            std::panic::set_hook(Box::new(|_| {}));
+            held.update(|_| panic!("boom"))
+        })
+        .join();
+        let _ = std::panic::take_hook();
+        assert_eq!(lock.get(), 7);
+    }
 
     /// **Re-entering the crossing shape is noticed**, where the build carries
     /// the check ([ADR-281](../../../docs/specification/adr/adr-281.md) D36).

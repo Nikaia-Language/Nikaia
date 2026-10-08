@@ -2806,6 +2806,19 @@ signature = "[T](self: ref SharedMut[T], value: T, seen: ref T)"
 #
 # The block may not change it. Whether the call pauses is the block's answer
 # and not the door's.
+# **A shared value that is built again when a panic poisons it** (ADR-327
+# D3, ADR-328 D9): the holders keep their handle, and the door that finds the
+# poison builds it anew by `std`'s restart policy - at once the first time,
+# then after a delay that grows; a door during the delay panics, and a value
+# whose policy gave up stays poisoned. The builder may not pause: a door
+# cannot.
+[fn."SharedMut::supervised"]
+pub = true
+sync = true
+touches = []
+keeps = ["build"]
+signature = "[T](build: fn() -> T sync) -> SharedMut[T]"
+
 [fn."SharedMut::access"]
 pub = true
 touches = ["lock read"]
