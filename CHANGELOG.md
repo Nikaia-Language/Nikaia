@@ -4,6 +4,18 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.660] — 2026-10-08
+
+**A `'…'` is a `u8` where a byte is wanted** (ADR-320, #453 step 2, first
+half).
+- One ASCII character is either: a `u8` where the use wants one - an
+  annotation, an argument, a comparison with a byte - written `b'a'` below, and
+  a `scalar` everywhere else. `'é'` where a `u8` is wanted is `NK1103`.
+- `b[i]` on a `Bytes` is a `u8` and `b[a..<b]` a `Bytes` in the checker too,
+  so `bytes[0] == 'a'` is checked rather than handed to `rustc`.
+- Still to build: a literal of several scalars (`NK1212`, `NK1213`) and
+  `'\xNN'` above `\x7F`.
+
 ## [0.0.659] — 2026-10-08
 
 **There is no `char`: one character is a `scalar`** (ADR-320, #453 step 1,

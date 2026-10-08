@@ -1125,6 +1125,10 @@ pub struct Checked {
     /// differently. `Expr::ListLit` is the one expression that carries a
     /// position, and it carries it for this.
     pub array_literals: BTreeSet<usize>,
+    /// **`'…'` literals a `u8` is wanted for** (ADR-320, Part I 2.6), by node
+    /// ([`value_node`]): written below as the byte `b'…'`, where every other
+    /// one is a `scalar`.
+    pub byte_literals: BTreeSet<usize>,
     /// The text literals that stand where **text of its own** is wanted
     /// ([ADR-282](../../docs/specification/adr/adr-282.md) D4), by the byte
     /// the opening quote stands at.
@@ -2322,6 +2326,8 @@ pub struct Propagation {
     /// the two may be a binding.
     pub viewed_numbers: BTreeSet<(usize, String)>,
     /// [`Checked::array_literals`].
+    /// [`Checked::byte_literals`].
+    pub byte_literals: BTreeSet<usize>,
     pub array_literals: BTreeSet<usize>,
     /// [`Checked::owned_texts`].
     pub owned_texts: BTreeSet<usize>,
@@ -2603,6 +2609,7 @@ fn propagation(
         copies: checked.copies,
         viewed_numbers: checked.viewed_numbers,
         array_literals: checked.array_literals,
+        byte_literals: checked.byte_literals,
         owned_texts: checked.owned_texts,
         lent_list_reads: checked.lent_list_reads,
         view_fallbacks: checked.view_fallbacks,
@@ -13867,6 +13874,22 @@ impl<'a> Checker<'a> {
                 let left = self.expr(lhs, span);
                 self.reaching = reach;
                 let right = self.expr(rhs, span);
+                // **A `'…'` beside a byte is a byte** (ADR-320, Part I 2.6):
+                // `b[0] == 'a'` compares two `u8`s, as `x == 7` beside an
+                // `i32` compares two `i32`s.
+                let byte = Ty::named("u8");
+                let left = match value_of_a_copy(right.unseen()) == byte
+                    && self.text_literal(&byte, lhs, false).is_some()
+                {
+                    true => byte.clone(),
+                    false => left,
+                };
+                let right = match value_of_a_copy(left.unseen()) == byte
+                    && self.text_literal(&byte, rhs, false).is_some()
+                {
+                    true => byte.clone(),
+                    false => right,
+                };
                 self.divisor_is_not_zero(*op, rhs, span);
                 self.an_operation_that_overflows(*op, lhs, rhs, reach, span);
                 // **The stamp sticks**
@@ -14456,10 +14479,16 @@ impl<'a> Checker<'a> {
                             view: true,
                         },
                         ("String" | "str", []) => Ty::view("str"),
+                        // **A cut of a `Bytes` is a `Bytes`** (ADR-320 D7).
+                        ("Bytes", []) => Ty::named("Bytes"),
                         _ => Ty::Unknown,
                     };
                 }
                 match (crate::contracts::ty::base(name), args.as_slice()) {
+                    // **A `Bytes` is read as a run of bytes** (ADR-320 D7,
+                    // Part I 2.6): `b[i]` is a `u8`, and an index outside
+                    // stops the program, as a list's does.
+                    ("Bytes", []) => Ty::named("u8"),
                     // **A sequence keeps its `T` and its abort**
                     // ([ADR-293](../../docs/specification/adr/adr-293.md) D3):
                     // it has a `T` at every index it has at all, and an index
@@ -21950,6 +21979,19 @@ impl<'a> Checker<'a> {
             {
                 self.text_literal(want, receiver, owned)
             }
+            // **A `'…'` is a `u8` where a byte is wanted** (ADR-320, Part I
+            // 2.6): one ASCII character is either, and the use decides.
+            (
+                Ty::Named {
+                    name,
+                    args,
+                    view: false,
+                },
+                Expr::LitChar(written),
+            ) if name == "u8" && args.is_empty() && a_byte(written) => {
+                self.checked.byte_literals.insert(value_node(value));
+                Some(Ty::named("u8"))
+            }
             (_, Expr::LitStr { at, .. }) if *want == text => {
                 if owned {
                     self.checked.owned_texts.insert(self.text_at(*at as usize));
@@ -26472,6 +26514,25 @@ fn literals_in(expr: &Expr, out: &mut Literals) {
 
 /// A literal's node, as [`Checked::unsigned_literals`] keys it and the emitter
 /// finds it again: the address of the expression in the one tree both walk.
+/// **Whether a `'…'` as written is one ASCII character**, which is what makes
+/// it a byte as well as a scalar (Part I 2.6).
+pub fn a_byte(written: &str) -> bool {
+    crate::build_time::decoded(written)
+        .is_some_and(|text| text.chars().count() == 1 && text.is_ascii())
+}
+
+/// The byte a `'…'` that [`a_byte`] took is, as the language below writes one.
+pub fn byte_literal(written: &str) -> String {
+    let byte = crate::build_time::decoded(written)
+        .and_then(|text| text.bytes().next())
+        .unwrap_or(0);
+    match byte {
+        b'\\' | b'\'' => format!("b'\\{}'", byte as char),
+        0x20..=0x7e => format!("b'{}'", byte as char),
+        _ => format!("b'\\x{byte:02x}'"),
+    }
+}
+
 pub fn value_node(expr: &Expr) -> usize {
     expr as *const Expr as usize
 }

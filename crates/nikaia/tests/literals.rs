@@ -575,3 +575,20 @@ fn a_broken_hole_is_refused_by_the_parser() {
     // there once sent it to the line's first column.
     assert!(stray.contains("app.nika:1:25"), "{stray}");
 }
+
+/// **A `'…'` is a byte only where it is one ASCII character** (ADR-320,
+/// Part I 2.6): `'a'` where a `u8` is wanted is written `b'a'`, and `'é'` there
+/// is refused rather than handed to the language below as a mismatch.
+#[test]
+fn a_character_literal_is_a_byte_only_when_it_is_ascii() {
+    let rust = emit("fn main() {\n    let a: u8 = 'a'\n    println(f\"{a}\")\n}\n");
+    assert!(rust.contains("b'a'"), "{rust}");
+
+    let parsed = parse_to_ast("fn main() {\n    let e: u8 = 'é'\n    println(f\"{e}\")\n}\n")
+        .expect("the source parses");
+    let own = nikaia::contracts::Ledger::infer(&parsed);
+    let library =
+        nikaia::contracts::Ledger::parse(nikaia::contracts::STD).expect("std's ledger parses");
+    let found = nikaia::check::check_program(&parsed, &own, &library, &Default::default()).findings;
+    assert!(found.iter().any(|f| f.code == "NK1103"), "{found:#?}");
+}

@@ -1,0 +1,33 @@
+// A `'…'` is a `u8` or a `scalar`, by its use (ADR-320, Part I 2.6): one
+// ASCII character is either, a `u8` where a byte is wanted and a `scalar`
+// everywhere else. A `Bytes` is read as a run of bytes.
+
+use std::fs
+
+fn byte_literals_semicolon(b: u8) -> bool {
+    return b == 59
+}
+
+test "a character literal is a byte where a byte is wanted" {
+    let a: u8 = 'a'
+    let quote: u8 = '\''
+    let newline: u8 = '\n'
+    let accent = 'é'
+    assert(a == 97)
+    assert(quote == 39)
+    assert(newline == 10)
+    assert(byte_literals_semicolon(';'))
+    let shown = f"{accent}"
+    assert(shown == "é")
+}
+
+test "a byte of a bytes compares with a character literal" {
+    fs::write("byte_literals.txt", fs::Root::Anywhere, "ab;cd")
+    let bytes = fs::read("byte_literals.txt", fs::Root::Anywhere)
+    let at = bytes.find(';') ?? -1
+    let cut = bytes[1..<3]
+    assert(bytes[0] == 'a')
+    assert('b' == bytes[1])
+    assert(at == 2)
+    assert(cut.len() == 2)
+}

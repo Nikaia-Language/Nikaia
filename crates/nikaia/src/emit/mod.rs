@@ -1419,6 +1419,8 @@ struct Emitter<'p> {
     /// that is; the checker decides, because the decision is a type's
     /// (ADR-288).
     array_literals: std::collections::BTreeSet<usize>,
+    /// `check::Checked::byte_literals`: a `'…'` written as a byte.
+    byte_literals: std::collections::BTreeSet<usize>,
     /// The text literals that lower to a `String` of their own
     /// ([ADR-282](../../docs/specification/adr/adr-282.md) D4), by the byte
     /// the opening quote stands at. `"x"` for one that is not in here and
@@ -2836,6 +2838,7 @@ impl<'p> Emitter<'p> {
             copies: propagation.copies,
             viewed_numbers: propagation.viewed_numbers,
             array_literals: propagation.array_literals,
+            byte_literals: propagation.byte_literals,
             owned_texts: propagation.owned_texts,
             keep_plans: crate::contracts::keep::plans(parsed, &own_contracts, library)
                 .into_iter()
@@ -8040,6 +8043,9 @@ impl<'p> Emitter<'p> {
             Expr::LitFloat(v) => out.push(v),
             Expr::LitStr { .. } | Expr::LitInterpolated { .. } => {
                 self.string(out, expr, depth, flow)?
+            }
+            Expr::LitChar(c) if self.byte_literals.contains(&crate::check::value_node(expr)) => {
+                out.push(&crate::check::byte_literal(c))
             }
             Expr::LitChar(c) => out.push(&format!("'{c}'")),
             // **A range is a value**
