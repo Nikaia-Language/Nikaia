@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part I: The Language Core**
-**Version:** 0.0.701 (Draft)
+**Version:** 0.0.702 (Draft)
 **Date:** 2026-10-08
 
 ---
@@ -459,9 +459,14 @@ Two conversions are checked or unchecked in a way the code does not show:
 
 * **An `f64` to an integer** aborts where the value does not fit: `1e20 as i32`,
   `-1e20 as i32`, and a value that is not a number all abort.
-* **An `f64` to an `f32`** rounds to the nearest `f32`. A finite value beyond
-  the `f32` range aborts; an infinity and a value that is not a number carry
-  over. An `f32` to an `f64` always fits.
+* **An `f64` to an `f32`** is written `as f32` only where it is shown to fit:
+  a constant beyond the `f32` range is refused with `NK1116`, a value the
+  compiler proves within the range converts to the nearest `f32`, and any
+  other `as f32` is refused with `NK1241`. The program then says what it means:
+  `x.checked_f32()` is an `f32?`, `null` beyond the range; `x.rounding_f32()`
+  is the nearest `f32`, and an infinity beyond the range. An infinity and a
+  value that is not a number carry over in all three. An `f32` to an `f64`
+  always fits.
 * **An integer to an `f64`** is **not** checked. Digits are lost at large values
   without anything overflowing: `9007199254740993` through an `f64` comes back
   `9007199254740992`. This is a limit of the language, not an abort.

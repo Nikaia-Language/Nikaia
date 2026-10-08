@@ -8,6 +8,15 @@ or the specification. A change only to the guide, the notes, the README, the
 website, the tests, the examples or the tooling around them raises nothing and
 has no heading here; `CLAUDE.md` draws the line.
 
+## [0.0.702] — 2026-10-08
+
+**`f64 as f32` is written only where it is shown to fit** (ADR-285 D33, #552).
+- Decided, not built: a constant beyond the `f32` range is `NK1116`; a value
+  the compiler proves within it converts; any other `as f32` is `NK1241`, and
+  the program writes `checked_f32()` (an `f32?`) or `rounding_f32()` (the
+  backend's conversion, an infinity beyond the range). Replaces 0.0.701's
+  abort. Part I 2.2, Part III C.3.
+
 ## [0.0.701] — 2026-10-08
 
 **A type the language does not offer is refused; `f32` is offered** (#470).
