@@ -96,8 +96,7 @@ fn readings(code: ref String) -> Vec[String] {
 fn file_named(code: ref String) -> String? {
     let first = code.lines().next() ?? return null
     if first.starts_with("// file: ") {
-        // `.to_string()`, because `.clone()` of a view stays one when returned (#547).
-        return first.trim_start_matches("// file: ").trim().to_string()
+        return first.trim_start_matches("// file: ").trim().clone()
     }
     return null
 }

@@ -1,0 +1,47 @@
+// **`.clone()` of a view is text of its own wherever it is kept** (Part I
+// 2.5, #547): returned, assigned to a `String`, put in a field or in a `T?`
+// slot - also when the view comes from a text method `std` describes.
+
+fn tail(line: ref String) -> String {
+    return line.trim_start_matches("// ").clone()
+}
+
+fn maybe_tail(line: ref String) -> String? {
+    return line.trim_end_matches(";").clone()
+}
+
+fn without(line: ref String) -> String {
+    return (line.strip_prefix("// ") ?? line).clone()
+}
+
+struct Kept {
+    text: String,
+}
+
+test "a cloned view is returned as text of its own" {
+    assert(tail("// z") == "z")
+    assert((maybe_tail("x;;") ?? "") == "x")
+    assert(without("// a") == "a")
+    assert(without("b") == "b")
+}
+
+test "a cloned view is assigned and kept in a field" {
+    let mut s = "x".clone()
+    assert(s == "x")
+    s = "// y".trim_start_matches("// ").clone()
+    let kept = Kept { text: "q--".trim_end_matches("-").clone() }
+    assert(s == "y")
+    assert(kept.text == "q")
+}
+
+// The view may come from a sequence's first element: `next` is described, so
+// what it hands back is known to be a view and its `.clone()` is text.
+fn first_line(code: ref String) -> String? {
+    let first = code.lines().next() ?? return null
+    return first.trim().clone()
+}
+
+test "a cloned first line is text of its own" {
+    assert((first_line(" a \nb") ?? "") == "a")
+    assert(first_line("") == null)
+}

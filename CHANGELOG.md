@@ -8,6 +8,18 @@ or the specification. A change only to the guide, the notes, the README, the
 website, the tests, the examples or the tooling around them raises nothing and
 has no heading here; `CLAUDE.md` draws the line.
 
+## [0.0.678] — 2026-10-08
+
+**`.clone()` of a text method's view is text of its own when returned or
+assigned** (#547). The cause was not the copy but three text methods and
+`Seq::next`, which nothing in `std`'s ledger described: a function calling one
+was taken to pause, and what the method handed back had no type, so `.clone()`
+stayed a view where a `String` or a `String?` was wanted. `str::trim_start_matches`,
+`str::trim_end_matches`, `str::strip_prefix` and `str::strip_suffix` now hand back
+views into their receiver, and `Seq::next` the first element or nothing.
+`trim_matches` is left undescribed: below, a text pattern cannot be searched
+from both ends. `tests/guide` drops its `.to_string()`.
+
 ## [0.0.677] — 2026-10-08
 
 **`text.matches(p).count()` is an `i64`** (#548). `str::matches` has its entry

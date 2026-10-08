@@ -2308,6 +2308,15 @@ touches = []
 # **There may not be one**, which is `Args::nth`'s shape one type over.
 signature = "[T](self: Seq[T], at: i64) -> T?"
 
+# The first element, or nothing where the sequence is empty (#547). Nothing
+# described it, so `text.lines().next()` was taken to pause and what it
+# handed back had no type: a `.clone()` of it stayed a view.
+[fn."Seq::next"]
+pub = true
+sync = true
+touches = []
+signature = "[T](self: Seq[T]) -> T?"
+
 # Everything the sequence produces, written one after another with this text
 # between them.
 [fn."Seq::join"]
@@ -3037,6 +3046,36 @@ pub = true
 sync = true
 touches = []
 signature = "(self: ref String) -> ref(self) String"
+
+# **The same text with a pattern left off**, at the start or at the end, as
+# often as it stands there, as a view into it (#547). Nothing described
+# them, so a function calling one was taken to pause and its `.clone()` stayed
+# a view where text of its own was wanted.
+[fn."str::trim_start_matches"]
+pub = true
+sync = true
+touches = []
+signature = "(self: ref String, pat: ?) -> ref(self) String"
+
+[fn."str::trim_end_matches"]
+pub = true
+sync = true
+touches = []
+signature = "(self: ref String, pat: ?) -> ref(self) String"
+
+# The text after a prefix, or before a suffix, as a view into it; nothing where
+# it does not start or end with it (#547).
+[fn."str::strip_prefix"]
+pub = true
+sync = true
+touches = []
+signature = "(self: ref String, prefix: ?) -> ref(self) String?"
+
+[fn."str::strip_suffix"]
+pub = true
+sync = true
+touches = []
+signature = "(self: ref String, suffix: ?) -> ref(self) String?"
 
 # **The byte position of the first match at or after `from`**, or nothing
 # ([ADR-320](../../docs/specification/adr/adr-320.md) D6). `from` may be any
