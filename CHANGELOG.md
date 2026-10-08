@@ -4,6 +4,15 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.662] — 2026-10-08
+
+**`NK1229`: a supervisor's child that captures a `mut` binding is refused**
+(ADR-328, #95 step 5, first half). Its function is called again for every
+attempt, and the binding would carry one attempt's changes into the next; the
+help says to build it inside the child's function or take a `.clone()` there.
+A binding without `mut` is lent to every attempt. A captured value an attempt
+would keep or use up is not refused yet.
+
 ## [0.0.661] — 2026-10-08
 
 **`supervisor::run` restarts the tasks it runs** (ADR-328, Part II 12.8, #95

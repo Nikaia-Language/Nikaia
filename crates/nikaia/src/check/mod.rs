@@ -3001,6 +3001,9 @@ struct OpenNumber {
 /// unevaluable expression is never refused.
 struct Local {
     name: String,
+    /// **A `let mut`** (Part I 2.1): what a supervisor's child may not capture
+    /// (`NK1229`), because the next attempt would not start fresh.
+    written_mut: bool,
     ty: Ty,
     constant: Option<build_time::Integer>,
     /// **The binding is a view the emitter lent**, which a `for` over a place
@@ -3122,6 +3125,7 @@ impl Local {
     /// parameters, checked once as written and once as `Type::new`).
     fn again(local: &Local) -> Self {
         Local {
+            written_mut: local.written_mut,
             name: local.name.clone(),
             ty: local.ty.clone(),
             constant: local.constant,
@@ -3138,6 +3142,7 @@ impl Local {
 
     fn free(name: String, ty: Ty) -> Self {
         Local {
+            written_mut: false,
             literal: None,
             name,
             ty,
@@ -5505,6 +5510,7 @@ impl<'a> Checker<'a> {
             let name = self.parsed.text(arg.name).to_string();
             self.nameable(&name, &arg.span, "a parameter");
             frame.push(Local {
+                written_mut: false,
                 id: a_new_binding(),
                 literal: None,
                 name,
@@ -8685,6 +8691,7 @@ impl<'a> Checker<'a> {
     ) -> Local {
         let asked = self.at_a_write_door && !mutable.contains(&name);
         Local {
+            written_mut: false,
             id: a_new_binding(),
             literal: None,
             name: self.parsed.text(name).to_string(),
@@ -11563,6 +11570,7 @@ impl<'a> Checker<'a> {
                         at: *span,
                         kind: Kind::Let,
                     }),
+                    written_mut: *mutable,
                 });
                 Ty::Tuple(Vec::new())
             }
@@ -11903,6 +11911,7 @@ impl<'a> Checker<'a> {
                         false => element,
                     };
                     frame.push(Local {
+                        written_mut: false,
                         lent: lent && !copied && !a_view,
                         ..Local::free(name, element)
                     });
@@ -16545,6 +16554,13 @@ impl<'a> Checker<'a> {
             resolved.as_ref().map(|(_, contract)| &**contract),
             span,
         );
+        if resolved
+            .as_ref()
+            .is_some_and(|(key, _)| key == "supervisor::child")
+            && let Some(body) = args.first()
+        {
+            self.a_child_that_keeps_state(body, span);
+        }
         let passed: Vec<(String, Ty)> = config
             .iter()
             .map(|a| {
@@ -19914,6 +19930,48 @@ impl<'a> Checker<'a> {
             }),
             labels: Vec::new(),
         });
+    }
+
+    /// **`NK1229`: a supervisor's child that would not start fresh**
+    /// ([ADR-328](../../docs/specification/adr/adr-328.md), Part II 12.8): its
+    /// function is called again for every attempt, so a `mut` binding it
+    /// captures carries one attempt's changes into the next.
+    fn a_child_that_keeps_state(&mut self, body: &Expr, span: &Span) {
+        let Expr::Closure {
+            params,
+            body: block,
+            ..
+        } = body
+        else {
+            return;
+        };
+        let mut named = BTreeSet::new();
+        nikaia_std::tools::names::names_in_block(block, &self.parsed.interner, &mut named);
+        for name in named {
+            if params.iter().any(|p| self.parsed.text(*p) == name) {
+                continue;
+            }
+            if !self.binding(&name).is_some_and(|local| local.written_mut) {
+                continue;
+            }
+            self.checked.findings.push(Finding {
+                severity: Severity::Error,
+                span: *span,
+                code: "NK1229",
+                message: format!(
+                    "This child captures `{name}`, which is `mut`, so its next attempt would not start fresh."
+                ),
+                notes: vec![
+                    "A supervisor calls a child's function again for every attempt (Part II 12.8). \
+                     What one attempt changed in a captured `mut` binding would still be there."
+                        .to_string(),
+                ],
+                help: Some(format!(
+                    "Build `{name}` inside the child's function, or take `{name}.clone()` there."
+                )),
+                labels: Vec::new(),
+            });
+        }
     }
 
     /// Whether any ledger or this unit declares a **type** by this name.
@@ -24110,6 +24168,7 @@ impl<'a> Checker<'a> {
     /// (ADR-285 D29). Only [`Stmt::Let`] ever passes anything but `None`.
     fn bind_with(&mut self, name: String, ty: Ty, constant: Option<build_time::Integer>) {
         self.bind_local(Local {
+            written_mut: false,
             id: a_new_binding(),
             literal: None,
             name,
@@ -25549,6 +25608,7 @@ impl<'a> Checker<'a> {
         // the next constant that read it was `NK1127` although the one before
         // it had just been computed.
         self.bind_local(Local {
+            written_mut: false,
             id,
             literal: None,
             name: bound,
