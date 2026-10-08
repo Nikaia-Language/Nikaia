@@ -2,9 +2,10 @@
 //! D4, D5, D7, D8, D12): `artifact = "c-library"` makes a shared and a static
 //! library of the package and its header, and a C program links it.
 //!
-//! What is built is D5's first row - numbers, `bool` and `scalar`, of a
-//! function that neither pauses nor throws - with the status, the
-//! out-parameter, and a panic caught at the boundary that poisons the library.
+//! Each C program below calls one part of D5's table: numbers, text, bytes,
+//! enums, handles, `null`, callbacks and throws. Each part comes back with
+//! its status and its out-parameter. A panic caught at the boundary poisons
+//! the library until `shutdown` and `init` have run.
 
 mod common;
 
@@ -522,5 +523,50 @@ fn a_prefix_that_is_no_c_identifier_is_refused() {
         said(&built).contains("`-` cannot stand there"),
         "{}",
         said(&built)
+    );
+}
+
+/// **`examples/c-library` builds, in place and under `--locked`, and its C
+/// program prints what its README says**: a handle fed text, a getter into
+/// the caller's buffer, and a callback that stops the walk.
+#[test]
+fn the_example_builds_and_its_c_program_runs() {
+    if Command::new("cc").arg("--version").output().is_err() {
+        eprintln!("skipped: no C compiler");
+        return;
+    }
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../examples/c-library");
+    let built = Command::new(env!("CARGO_BIN_EXE_nikaia"))
+        .current_dir(&root)
+        .args(["build", "--locked"])
+        .env_remove("CARGO_TARGET_DIR")
+        .output()
+        .expect("the nikaia binary runs");
+    assert!(built.status.success(), "{}", said(&built));
+    let made = root.join("target/nikaia/c-library");
+    let program = root.join("target/use");
+    let compiled = Command::new("cc")
+        .arg("-I")
+        .arg(&made)
+        .arg(root.join("use.c"))
+        .arg("-L")
+        .arg(&made)
+        .args(["-lwordtally", "-o"])
+        .arg(&program)
+        .output()
+        .expect("cc runs");
+    assert!(compiled.status.success(), "{}", said(&compiled));
+    let ran = Command::new(&program)
+        .env("LD_LIBRARY_PATH", &made)
+        .output()
+        .expect("the caller runs");
+    assert!(ran.status.success(), "{}", said(&ran));
+    assert_eq!(
+        String::from_utf8_lossy(&ran.stdout),
+        "9 words, the longest \"quick\" (status 0)\n\
+         the first two words of \"Hello NIKAIA from c\":\n  \
+         Hello (mixed)\n  \
+         NIKAIA (upper)\n\
+         stopped after 2\n"
     );
 }

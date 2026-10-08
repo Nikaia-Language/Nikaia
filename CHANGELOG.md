@@ -4,6 +4,13 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.673] — 2026-10-08
+
+**`examples/c-library`: a library C calls** (ADR-284; #88). A word tally C
+keeps as a handle, feeds text and asks; an `enum` and a callback that stops
+the walk. `use.c` is its C program. `tests/c_library.rs` builds it in place
+under `--locked` and checks what `use.c` prints.
+
 ## [0.0.672] — 2026-10-08
 
 **`null` crosses to C as NULL** (ADR-284 D5; #88). An entry point takes

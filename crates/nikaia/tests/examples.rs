@@ -65,6 +65,13 @@ const DIRECTORIES_CHECKED_ELSEWHERE: &[(&str, &str)] = &[
         "sqlite",
         "tests/foreign_pointers.rs: sqlite3_from_end_to_end",
     ),
+    // **The other direction: a library C calls**
+    // ([ADR-284](../../../docs/specification/adr/adr-284.md)). It has nothing
+    // to run on its own; its C program is what runs, and that needs `cc`.
+    (
+        "c-library",
+        "tests/c_library.rs: the_example_builds_and_its_c_program_runs",
+    ),
 ];
 
 #[test]

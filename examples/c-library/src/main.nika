@@ -1,0 +1,62 @@
+// examples/c-library/src/main.nika
+//
+// **A library C calls** (ADR-284): a word tally a C program keeps as a handle,
+// feeds text, and asks. Every `pub extern fn` is an entry point; the build
+// writes `wordtally.h` beside the library, and `use.c` is a C program using it.
+
+/// How a word is spelled: what the C caller gets as an `enum`.
+pub enum Case {
+    Lower,
+    Upper,
+    Mixed,
+}
+
+/// The tally C holds as a handle: `wordtally_Tally_new`, `_add`, a getter for
+/// each `pub` field, and `wordtally_Tally_free`.
+pub struct Tally {
+    pub words: i64,
+    pub longest: String,
+}
+
+impl Tally {
+    pub extern fn() -> Tally sync {
+        return Tally { words: 0, longest: "".clone() }
+    }
+
+    /// Counts the words of `text`, and hands back how many there are now.
+    pub extern fn add(ref mut self, text: ref String) -> i64 sync {
+        for word in text.split(" ") {
+            if word.len() > 0 {
+                self.words = self.words + 1
+                if word.len() > self.longest.len() {
+                    self.longest = word.clone()
+                }
+            }
+        }
+        return self.words
+    }
+}
+
+/// Hands each word of `text` to C, with its case, until the callback says stop.
+pub extern fn each_word(text: ref String, each: fn(ref String, Case) -> bool sync) -> i64 sync {
+    let mut seen = 0
+    for word in text.split(" ") {
+        if word.len() > 0 {
+            seen = seen + 1
+            if !each(word, case_of(word)) {
+                return seen
+            }
+        }
+    }
+    return seen
+}
+
+fn case_of(word: ref String) -> Case sync {
+    if word == word.to_lowercase() {
+        return Case::Lower
+    }
+    if word == word.to_uppercase() {
+        return Case::Upper
+    }
+    return Case::Mixed
+}
