@@ -28,6 +28,22 @@ pub extern fn pick(n: i64) -> i64 sync {
     let xs = [10, 20, 30]
     return xs[n]
 }
+
+pub extern fn greet(name: ref String) -> String sync {
+    return f\"Hello, {name}\"
+}
+
+pub extern fn total(xs: ref Array[i64]) -> i64 sync {
+    let mut sum = 0
+    for x in xs {
+        sum = sum + x
+    }
+    return sum
+}
+
+pub extern fn size(b: Bytes) -> i64 sync {
+    return b.len()
+}
 ";
 
 const CALLER: &str = r#"#include <stdio.h>
@@ -49,6 +65,33 @@ int main(void) {
     printf("pick %d %lld\n", status, (long long)picked);
     printf("past the end %d\n", calc_pick(7, &picked));
     printf("after the panic %d\n", calc_add(1, 1, &sum));
+    return CALC_OK;
+}
+"#;
+
+/// Text, bytes and a run of numbers (ADR-284 D5, D6): in as an address and a
+/// length, out into the caller's buffer.
+const TEXT_CALLER: &str = r#"#include <stdio.h>
+#include "calc.h"
+
+int main(void) {
+    char out[64];
+    size_t written = 0;
+    int status = calc_greet((const uint8_t *)"Ada", 3, NULL, 0, &written);
+    printf("size query %d %zu\n", status, written);
+    status = calc_greet((const uint8_t *)"Ada", 3, (uint8_t *)out, 4, &written);
+    printf("too small %d %zu\n", status, written);
+    status = calc_greet((const uint8_t *)"Ada", 3, (uint8_t *)out, sizeof out, &written);
+    printf("greet %d %.*s\n", status, (int)written, out);
+    printf("not utf-8 %d\n", calc_greet((const uint8_t *)"\xff", 1, (uint8_t *)out, sizeof out, &written));
+    printf("no address %d\n", calc_greet(NULL, 3, (uint8_t *)out, sizeof out, &written));
+    int64_t xs[] = {1, 2, 3, 4};
+    int64_t sum = 0;
+    status = calc_total(xs, 4, &sum);
+    printf("total %d %lld\n", status, (long long)sum);
+    int64_t n = 0;
+    status = calc_size((const uint8_t *)"\x01\x02\x03", 3, &n);
+    printf("size %d %lld\n", status, (long long)n);
     return CALC_OK;
 }
 "#;
@@ -126,6 +169,31 @@ fn a_c_program_calls_the_library() {
     assert_eq!(
         String::from_utf8_lossy(&ran.stdout),
         "add 0 42\nhalve 0 2.5\nvowel 0 1\nnot a scalar -1\npick 0 20\npast the end -4\nafter the panic -4\n"
+    );
+
+    // Text, bytes and a run of numbers, from a second program: the first one
+    // poisoned its copy of the library.
+    std::fs::write(root.join("text.c"), TEXT_CALLER).expect("the caller");
+    let program = root.join("text");
+    let compiled = Command::new("cc")
+        .arg("-I")
+        .arg(&made)
+        .arg(root.join("text.c"))
+        .arg("-L")
+        .arg(&made)
+        .args(["-lcalc", "-o"])
+        .arg(&program)
+        .output()
+        .expect("cc runs");
+    assert!(compiled.status.success(), "{}", said(&compiled));
+    let ran = Command::new(&program)
+        .env("LD_LIBRARY_PATH", &made)
+        .output()
+        .expect("the caller runs");
+    assert!(ran.status.success(), "{}", said(&ran));
+    assert_eq!(
+        String::from_utf8_lossy(&ran.stdout),
+        "size query 0 10\ntoo small -2 10\ngreet 0 Hello, Ada\nnot utf-8 -1\nno address -1\ntotal 0 10\nsize 0 3\n"
     );
 }
 

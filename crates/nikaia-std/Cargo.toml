@@ -29,6 +29,7 @@ tether = { path = "../unsafe/tether" }
 checked-text = { path = "../unsafe/checked-text", features = ["rayon", "map", "simd"] }
 # Text a C library owns, copied out (ADR-302 D8).
 c-text = { path = "../unsafe/c-text" }
+c-boundary = { path = "../unsafe/c-boundary" }
 # An error's site in one word, or its cold part boxed (ADR-280 D24).
 ref-or-box = { path = "../unsafe/ref-or-box" }
 # An index the compiler proved inside, read and written without its check

@@ -101,6 +101,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "c-boundary"
+version = "0.1.0"
+
+[[package]]
 name = "c-text"
 version = "0.1.0"
 
@@ -477,6 +481,7 @@ version = "0.1.0"
 name = "nikaia-std"
 version = "0.1.0"
 dependencies = [
+ "c-boundary",
  "c-text",
  "checked-text",
  "file-ring",

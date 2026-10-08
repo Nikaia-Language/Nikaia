@@ -15,10 +15,13 @@
 // * its line in `<package>.h`, which also carries the seven status codes the
 //   boundary owns and the hash of the ledger the header was derived from (D12).
 //
-// **What is built is the first shape of D5's table**: numbers, `bool` and
-// `scalar`, in and out, of a function that neither pauses nor throws, declared
-// in the package's entry file. Every other entry point is refused here, saying
-// which part is not built yet, rather than exported half-way.
+// **What is built of D5's table**: numbers, `bool` and `scalar` in and out;
+// text (`ref String`) and bytes (`Bytes`) in as an address and a length, and
+// out (`String`, `Bytes`, `Vec[u8]`) into the caller's buffer (D6); a run of
+// numbers (`ref Array[T]`) in - of a function that neither pauses nor throws,
+// declared in the package's entry file. Every raw pointer is read and written
+// through `c-boundary` (ADR-218). Every other entry point is refused here,
+// saying which part is not built yet, rather than exported half-way.
 
 use anyhow::Result;
 
@@ -63,6 +66,69 @@ fn by_value(parsed: &crate::parser::Parsed, ty: &Type) -> Option<ByValue> {
     Some(ByValue { rust, c, scalar })
 }
 
+/// What a parameter takes from C (ADR-284 D5).
+enum In {
+    Value(ByValue),
+    /// `ref String`, or `ref Array[T]` of a number: an address and a length C
+    /// keeps for the call.
+    Run {
+        rust: &'static str,
+        c: &'static str,
+        as_text: bool,
+    },
+    /// `Bytes`: the same, made a `Bytes` of its own.
+    Bytes,
+}
+
+/// What a result hands back (ADR-284 D5, D6).
+enum Out {
+    Value(ByValue),
+    /// `String`, `Bytes` or `Vec[u8]`: into the caller's buffer.
+    Buffer,
+}
+
+fn taken(parsed: &crate::parser::Parsed, ty: &Type) -> Option<In> {
+    if let Some(shape) = by_value(parsed, ty) {
+        return Some(In::Value(shape));
+    }
+    if ty.is_nullable || ty.code.is_some() {
+        return None;
+    }
+    let name = parsed.text(ty.name);
+    match (name, ty.is_view, ty.generics.as_slice()) {
+        ("String" | "str", true, []) => Some(In::Run {
+            rust: "u8",
+            c: "uint8_t",
+            as_text: true,
+        }),
+        ("Array", true, [element]) => {
+            let shape = by_value(parsed, element).filter(|shape| !shape.scalar)?;
+            Some(In::Run {
+                rust: shape.rust,
+                c: shape.c,
+                as_text: false,
+            })
+        }
+        ("Bytes", _, []) => Some(In::Bytes),
+        _ => None,
+    }
+}
+
+fn handed(parsed: &crate::parser::Parsed, ty: &Type) -> Option<Out> {
+    if let Some(shape) = by_value(parsed, ty) {
+        return Some(Out::Value(shape));
+    }
+    if ty.is_nullable || ty.is_view || ty.code.is_some() {
+        return None;
+    }
+    let name = parsed.text(ty.name);
+    match (name, ty.generics.as_slice()) {
+        ("String" | "Bytes", []) => Some(Out::Buffer),
+        ("Vec", [element]) if parsed.text(element.name) == "u8" => Some(Out::Buffer),
+        _ => None,
+    }
+}
+
 /// The wrappers and the header for every entry point the program's own files
 /// declare.
 pub fn export(program: &Program, prefix: &str, package: &str) -> Result<Option<Exported>> {
@@ -95,8 +161,9 @@ pub fn export(program: &Program, prefix: &str, package: &str) -> Result<Option<E
             let not_yet = |what: &str| -> anyhow::Error {
                 anyhow::anyhow!(
                     "`{written}` is an entry point whose {what} this compiler does not export yet: \
-                     what is built is numbers, `bool` and `scalar` in and out, of a function in \
-                     `src/main.nika` that neither pauses nor throws (ADR-284 D5)."
+                     what is built is numbers, `bool` and `scalar` in and out, text and bytes in \
+                     and out, and a run of numbers in, of a function in `src/main.nika` that \
+                     neither pauses nor throws (ADR-284 D5)."
                 )
             };
             if at != 0 {
@@ -114,30 +181,74 @@ pub fn export(program: &Program, prefix: &str, package: &str) -> Result<Option<E
             let mut c_params = Vec::new();
             let mut checks = String::new();
             let mut call_args = Vec::new();
-            for arg in args {
+            for (position, arg) in args.iter().enumerate() {
                 let param = parsed.text(arg.name).to_string();
-                let Some(shape) = by_value(parsed, &arg.ty) else {
-                    return Err(not_yet(&format!("parameter `{param}`")));
-                };
                 let local = crate::emit::escaped(&param).into_owned();
-                rust_params.push(format!("{local}: {}", shape.rust));
-                c_params.push(format!("{} {param}", shape.c));
-                if shape.scalar {
-                    checks.push_str(&format!(
-                        "    let Some({local}) = char::from_u32({local}) else {{ return -1; }};\n"
-                    ));
+                match taken(parsed, &arg.ty) {
+                    Some(In::Value(shape)) => {
+                        rust_params.push(format!("{local}: {}", shape.rust));
+                        c_params.push(format!("{} {param}", shape.c));
+                        if shape.scalar {
+                            checks.push_str(&format!(
+                                "    let Some({local}) = char::from_u32({local}) else {{ return -1; }};\n"
+                            ));
+                        }
+                        call_args.push(local);
+                    }
+                    Some(In::Run {
+                        rust: element,
+                        c,
+                        as_text,
+                    }) => {
+                        rust_params.push(format!("{local}: *const {element}, {local}_len: usize"));
+                        c_params.push(format!("const {c} *{param}, size_t {param}_len"));
+                        let read = match as_text {
+                            true => "text",
+                            false => "run",
+                        };
+                        // A length with no address, or text that is not UTF-8,
+                        // is `E_ARGUMENT` (ADR-284 D5).
+                        checks.push_str(&format!(
+                            "    // SAFETY: the C caller keeps `{param}_len` values at `{param}` for the call (ADR-284 D5).\n    \
+                             let Some({local}) = (unsafe {{ nikaia_std::c_boundary::{read}({local}, {local}_len) }}) else {{ return -1; }};\n"
+                        ));
+                        call_args.push(local);
+                    }
+                    Some(In::Bytes) => {
+                        rust_params.push(format!("{local}: *const u8, {local}_len: usize"));
+                        c_params.push(format!("const uint8_t *{param}, size_t {param}_len"));
+                        checks.push_str(&format!(
+                            "    // SAFETY: the C caller keeps `{param}_len` bytes at `{param}` for the call (ADR-284 D5).\n    \
+                             let Some({local}) = (unsafe {{ nikaia_std::c_boundary::run({local}, {local}_len) }}) else {{ return -1; }};\n    \
+                             let {local} = nikaia_std::bytes::Bytes::from({local});\n"
+                        ));
+                        // **Lent where the function only reads it**, as the
+                        // ledger says and the declaration was lowered.
+                        let lent =
+                            contract.is_some_and(|c| crate::contracts::keeps::lends(c, position));
+                        call_args.push(match lent {
+                            true => format!("&{local}"),
+                            false => local,
+                        });
+                    }
+                    None => return Err(not_yet(&format!("parameter `{param}`"))),
                 }
-                call_args.push(local);
             }
             let result = match ret_type {
-                Some(ty) => {
-                    let Some(shape) = by_value(parsed, ty) else {
-                        return Err(not_yet("result"));
-                    };
-                    rust_params.push(format!("out: *mut {}", shape.rust));
-                    c_params.push(format!("{} *out", shape.c));
-                    Some(shape)
-                }
+                Some(ty) => match handed(parsed, ty) {
+                    Some(Out::Value(shape)) => {
+                        rust_params.push(format!("out: *mut {}", shape.rust));
+                        c_params.push(format!("{} *out", shape.c));
+                        Some(Out::Value(shape))
+                    }
+                    Some(Out::Buffer) => {
+                        rust_params
+                            .push("out: *mut u8, cap: usize, written: *mut usize".to_string());
+                        c_params.push("uint8_t *out, size_t cap, size_t *written".to_string());
+                        Some(Out::Buffer)
+                    }
+                    None => return Err(not_yet("result")),
+                },
                 None => None,
             };
             let call = format!(
@@ -146,17 +257,21 @@ pub fn export(program: &Program, prefix: &str, package: &str) -> Result<Option<E
                 call_args.join(", ")
             );
             let handed_back = match &result {
-                Some(shape) => {
+                Some(Out::Value(shape)) => {
                     let value = match shape.scalar {
                         true => "value as u32",
                         false => "value",
                     };
                     format!(
-                        "Ok(value) => {{\n            if !out.is_null() {{\n                \
-                         // SAFETY: the caller hands a place for one value, or NULL (ADR-284 D7).\n                \
-                         unsafe {{ *out = {value} }};\n            }}\n            0\n        }}"
+                        "Ok(value) => {{\n            \
+                         // SAFETY: the C caller hands a place for one value, or NULL (ADR-284 D7).\n            \
+                         unsafe {{ nikaia_std::c_boundary::put(out, {value}) }};\n            0\n        }}"
                     )
                 }
+                Some(Out::Buffer) => "Ok(value) => {\n            \
+                     // SAFETY: the C caller hands `cap` bytes at `out` and a place for the length, or NULL (ADR-284 D6).\n            \
+                     unsafe { nikaia_std::c_boundary::hand_back(AsRef::<[u8]>::as_ref(&value), out, cap, written) }\n        }"
+                    .to_string(),
                 None => "Ok(()) => 0".to_string(),
             };
             rust.push_str(&format!(

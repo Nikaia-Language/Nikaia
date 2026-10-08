@@ -1,0 +1,12 @@
+[package]
+name = "c-boundary"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+license = "Apache-2.0"
+description = "What C hands a library's entry point and what the entry point hands back: a run of values by address and length, one value written through an out-parameter, and bytes written into a buffer the caller owns."
+publish = false
+
+[dependencies]
+
+[workspace]

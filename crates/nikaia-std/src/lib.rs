@@ -64,6 +64,10 @@ pub mod seq;
 pub mod supervisor;
 pub mod task;
 pub mod tether;
+/// **What a library's entry point reads from C and writes back to it**
+/// ([ADR-284](../../../docs/specification/adr/adr-284.md) D5-D7): the wrapper
+/// the compiler writes calls into here for every raw pointer it is handed.
+pub use c_boundary;
 /// **An index the compiler proved inside**, read and written without its
 /// check: `--optimization=remove-bounds-checks`
 /// ([ADR-306](../../docs/specification/adr/adr-306.md) D5). The generated code

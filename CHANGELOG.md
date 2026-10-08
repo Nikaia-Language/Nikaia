@@ -4,6 +4,20 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.666] — 2026-10-08
+
+**A library's entry points take text, bytes and a run of numbers, and hand
+text and bytes back into the caller's buffer** (ADR-284 D5, D6; #88).
+- `ref String` and `Bytes` come in as an address and a length; text that is
+  not UTF-8, or a length with no address, is `E_ARGUMENT`. `ref Array[T]` of a
+  number comes in the same way.
+- `String`, `Bytes` and `Vec[u8]` go out as `out, cap, written`: `out == NULL`
+  asks the size, and a buffer too small is `E_TOO_SMALL` with the size that
+  would do, nothing copied.
+- **`crates/unsafe/c-boundary`** (ADR-218): every raw pointer the wrapper is
+  handed is read and written there, each `unsafe` argued in its README and
+  checked by Miri in CI, so the generated wrapper writes no `*out` of its own.
+
 ## [0.0.665] — 2026-10-08
 
 **A `sync` function may panic** (Part I 7.2). `panic` stops and never pauses,
