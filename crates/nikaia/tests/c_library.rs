@@ -13,6 +13,15 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 const LIBRARY: &str = "\
+use std::time
+
+pub extern fn napped(ms: i64) -> i64 {
+    let other = spawn fn { 21 * 2 }
+    time::sleep(ms.millis())
+    let got = other.join() catch { 0 }
+    return ms + got
+}
+
 pub extern fn add(a: i64, b: i64) -> i64 sync {
     return a + b
 }
@@ -332,6 +341,8 @@ int main(void) {
     int64_t n = 0;
     status = calc_size((const uint8_t *)"\x01\x02\x03", 3, &n);
     printf("size %d %lld\n", status, (long long)n);
+    status = calc_napped(20, &n);
+    printf("napped %d %lld\n", status, (long long)n);
     calc_Light light = CALC_LIGHT_RED;
     calc_Rect box = {{1.0, 2.0}, 3.0, 4.0, CALC_LIGHT_RED};
     calc_Rect bigger;
@@ -445,7 +456,7 @@ fn a_c_program_calls_the_library() {
     assert!(ran.status.success(), "{}", said(&ran));
     assert_eq!(
         String::from_utf8_lossy(&ran.stdout),
-        "size query 0 10\ntoo small -2 10\ngreet 0 Hello, Ada\nnot utf-8 -1\nno address -1\ntotal 0 10\nsize 0 3\ngrown 0 0.5 1.5 4.0 5.0 1\nno such light in a box -1\nafter 0 1\nno such light -1\n"
+        "size query 0 10\ntoo small -2 10\ngreet 0 Hello, Ada\nnot utf-8 -1\nno address -1\ntotal 0 10\nsize 0 3\nnapped 0 62\ngrown 0 0.5 1.5 4.0 5.0 1\nno such light in a box -1\nafter 0 1\nno such light -1\n"
     );
 
     std::fs::write(root.join("handle.c"), HANDLE_CALLER).expect("the caller");

@@ -259,14 +259,28 @@ impl Started {
     /// Drain, bounded by the configured deadline, and warn about what did not
     /// finish (ADR-297 D6).
     pub fn finish(self) {
+        let Some(deadline) = RUNTIME.get().map(|runtime| runtime.config.cleanup_deadline) else {
+            return;
+        };
+        let left = self.drain();
+        if left > 0 {
+            expired(left, deadline);
+        }
+    }
+
+    /// **Drain, bounded by the configured deadline, and count what did not
+    /// finish** rather than ending the process: a library's `shutdown` answers
+    /// `E_CLEANUP` with it, because the host survives
+    /// ([ADR-284](../../../docs/specification/adr/adr-284.md) D10).
+    pub fn drain(self) -> usize {
         // A runtime that was never started has nothing to drain (`on_demand`).
         let Some(runtime) = RUNTIME.get() else {
-            return;
+            return 0;
         };
         let deadline = runtime.config.cleanup_deadline;
         if deadline.is_zero() {
             // "0" disables draining, which is ADR-297 D6's own word for it.
-            return;
+            return 0;
         }
         let left = runtime.workers.drain(deadline);
         // **And the readiness registrations**, which the worker drain used to
@@ -275,10 +289,7 @@ impl Started {
         // writes to — and the deadline is exactly what bounds it (ADR-297 D6).
         // Counted, not waited for a second deadline's worth: what is left of
         // the first one is what is left.
-        let left = left + readiness::registry().drain(deadline);
-        if left > 0 {
-            expired(left, deadline);
-        }
+        left + readiness::registry().drain(deadline)
     }
 }
 

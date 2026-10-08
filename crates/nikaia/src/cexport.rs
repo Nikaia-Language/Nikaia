@@ -440,7 +440,7 @@ fn not_yet(written: &str, what: &str) -> anyhow::Error {
         "`{written}` is an entry point whose {what} this compiler does not export yet: \
          what is built is numbers, `bool`, `scalar` and an `enum` without payload in and \
          out, text and bytes in and out, a run of numbers in, and a `pub struct` as a \
-         handle, of a function in `src/main.nika` that does not pause (ADR-284 D5)."
+         handle, of a function in `src/main.nika` (ADR-284 D5)."
     )
 }
 
@@ -613,7 +613,19 @@ fn variant_codes(program: &Program, entries: &[Entry]) -> Vec<(String, Vec<(Stri
 
 /// The wrappers and the header for every entry point the program's own files
 /// declare.
-pub fn export(program: &Program, prefix: &str, package: &str) -> Result<Option<Exported>> {
+///
+/// `concurrent` is `user_parallelism = yes`: the runtime the library starts
+/// has a pool for user code.
+pub fn export(
+    program: &Program,
+    prefix: &str,
+    package: &str,
+    concurrent: bool,
+) -> Result<Option<Exported>> {
+    let user_code = match concurrent {
+        true => "Concurrent",
+        false => "Sequential",
+    };
     let ledger_digest = LEDGER_DIGEST;
     let upper = prefix.to_uppercase();
     let mut rust = String::from(
@@ -651,13 +663,20 @@ pub fn export(program: &Program, prefix: &str, package: &str) -> Result<Option<E
          \n/// Starts the library, and starts it again after `shutdown`, which is what\n\
          /// clears a panic's poison (ADR-284 D8, D10). Idempotent, from any thread.\n\
          #[unsafe(no_mangle)]\npub extern \"C\" fn {prefix}_init() -> std::ffi::c_int {{\n    \
+         let _ = nikaia_std::rt::start(nikaia_std::rt::UserCode::{user_code});\n    \
          if __NIKAIA_STOPPED.load(std::sync::atomic::Ordering::SeqCst) {{\n        \
          __NIKAIA_POISONED.store(false, std::sync::atomic::Ordering::SeqCst);\n        \
          __NIKAIA_STOPPED.store(false, std::sync::atomic::Ordering::SeqCst);\n    \
          }}\n    0\n}}\n\
-         \n/// Stops the library: every call after it is `E_NOT_RUNNING` until `init` (ADR-284 D10).\n\
+         \n/// Stops the library: every call after it is `E_NOT_RUNNING` until `init`. What is\n\
+         /// still running is drained within `cleanup-deadline`, and what is left is `E_CLEANUP`\n\
+         /// - the process goes on (ADR-284 D10).\n\
          #[unsafe(no_mangle)]\npub extern \"C\" fn {prefix}_shutdown() -> std::ffi::c_int {{\n    \
-         __NIKAIA_STOPPED.store(true, std::sync::atomic::Ordering::SeqCst);\n    0\n}}\n"
+         __NIKAIA_STOPPED.store(true, std::sync::atomic::Ordering::SeqCst);\n    \
+         let left = nikaia_std::rt::start(nikaia_std::rt::UserCode::{user_code}).drain();\n    \
+         if left > 0 {{\n        \
+         __nikaia_failed(format!(\"{{left}} cleanups did not finish within the cleanup deadline\"));\n        \
+         return -6;\n    }}\n    0\n}}\n"
     ));
     let mut declarations = String::new();
     let found = entries(program)?;
@@ -759,9 +778,10 @@ pub fn export(program: &Program, prefix: &str, package: &str) -> Result<Option<E
             true => None,
             false => program.contracts.functions.get(&entry.key()),
         };
-        if contract.is_some_and(|c| !c.sync_claim.is_sync()) {
-            return Err(not_yet(&written, "pausing"));
-        }
+        // **A function that may pause is driven by the calling thread**, over
+        // the shared reactor (D9): the blocking form. The `_async` one is not
+        // built yet.
+        let pauses = contract.is_some_and(|c| !c.sync_claim.is_sync());
         // **What it throws is one `enum` of the entry file** (D7), whose
         // variants are the codes; anything else is not exported yet.
         let thrown: Option<&Vec<(String, i64)>> = match contract.map(|c| c.fails_with.as_slice()) {
@@ -1056,6 +1076,13 @@ pub fn export(program: &Program, prefix: &str, package: &str) -> Result<Option<E
             (_, Some(_), false) => format!("__nikaia_self.{name}({})", call_args.join(", ")),
             (Some(owner), None, false) => format!("{owner}::{name}({})", call_args.join(", ")),
             (None, None, false) => format!("{name}({})", call_args.join(", ")),
+        };
+        let call = match pauses {
+            true => format!(
+                "{{ let _ = nikaia_std::rt::start(nikaia_std::rt::UserCode::{user_code}); \
+                 nikaia_std::rt::exec::block_on({call}) }}"
+            ),
+            false => call,
         };
         let handed_back = match &result {
             Some(Out::Value(shape)) => {

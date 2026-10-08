@@ -1092,7 +1092,12 @@ pub fn lower_reading(
                 .ok()
                 .and_then(|m| m.package_name().map(str::to_string))
                 .unwrap_or_else(|| settings.symbol_prefix.clone());
-            crate::cexport::export(&program, &settings.symbol_prefix, &package)?
+            crate::cexport::export(
+                &program,
+                &settings.symbol_prefix,
+                &package,
+                settings.user_parallelism == "yes",
+            )?
         }
         false => None,
     };

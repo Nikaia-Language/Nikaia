@@ -8,6 +8,16 @@ or the specification. A change only to the guide, the notes, the README, the
 website, the tests, the examples or the tooling around them raises nothing and
 has no heading here; `CLAUDE.md` draws the line.
 
+## [0.0.675] — 2026-10-08
+
+**A library's entry point may pause** (ADR-284 D9, D10; #88). Its blocking
+form drives the call on the calling thread over the shared reactor, with the
+runtime started first; a task the call spawns runs too. `init` starts the
+runtime, at `user_parallelism`'s setting. `shutdown` drains what is still
+running within `cleanup-deadline` and answers `E_CLEANUP` for what is left;
+the process goes on (`rt::Started::drain`, which `finish` now uses too). Not
+built yet: the `_async` form with its ticket and `<prefix>_cancel` (D19).
+
 ## [0.0.674] — 2026-10-08
 
 **`pub extern struct`: C's layout, crossing by value** (ADR-284 D14-D17,
