@@ -72,6 +72,10 @@ pub struct Profile {
 pub enum CrateKind {
     Bin,
     Lib,
+    /// **A library C calls** ([ADR-284](../../../docs/specification/adr/adr-284.md)
+    /// D4): the entry package of a build with `artifact = "c-library"`, made a
+    /// shared and a static library.
+    CLibrary,
 }
 
 /// One member's `Cargo.toml` to be written, and the one target it builds.
@@ -125,6 +129,9 @@ impl CargoProject {
         match self.kind {
             CrateKind::Bin => out.push_str("\n[[bin]]\n"),
             CrateKind::Lib => out.push_str("\n[lib]\n"),
+            CrateKind::CLibrary => {
+                out.push_str("\n[lib]\ncrate-type = [\"cdylib\", \"staticlib\"]\n")
+            }
         }
         out.push_str(&format!("name = {}\n", string(&self.bin_name)));
         out.push_str(&format!(

@@ -571,6 +571,8 @@ fn the_ledger_is_never_published_for_a_caller_that_does_not_say_it_can_fail() {
         source,
         "no",
         "error",
+        // A program, not a library (ADR-284 D4).
+        false,
     );
     let error = format!("{:#}", refused.expect_err("the build must refuse this"));
     assert!(error.contains("can fail without saying so"), "{error}");

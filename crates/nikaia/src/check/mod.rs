@@ -20031,9 +20031,9 @@ impl<'a> Checker<'a> {
             "NK1238",
             format!("`{written}` is an entry point, and this build makes no library."),
             "Only a build with `artifact = \"c-library\"` in `[build]` exports its \
-             `extern` functions, and this compiler does not make that artifact yet.",
+             `extern` functions, as a shared and a static library and a header.",
             format!(
-                "Leave out `extern` until the package is built as a library; `{written}` is an ordinary function without it."
+                "Set `artifact = \"c-library\"` in `[build]`, or leave out `extern`: `{written}` is an ordinary function without it."
             ),
         );
         // `NK1239`: C has neither generics nor traits.

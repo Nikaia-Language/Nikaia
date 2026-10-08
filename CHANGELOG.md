@@ -4,6 +4,25 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.664] — 2026-10-08
+
+**A package is built as a library C calls** (ADR-284 D4, D5, D7, D8, D12, D13;
+#88, steps 2 and 3 for D5's first row, and the header).
+- `[build] artifact = "c-library"` makes a shared and a static library and
+  `<package>.h` in `target/nikaia/c-library/`; `symbol-prefix` names every
+  symbol, the package's name by default, and must be a C identifier.
+- Each `pub extern fn` of numbers, `bool` and `scalar` that neither pauses nor
+  throws is exported as `<prefix>_<name>`: it returns an `int` status and hands
+  its value back through an out-parameter. A number that is no scalar is
+  `E_ARGUMENT`; a panic is caught at the boundary, is `E_PANICKED`, and poisons
+  the library for every call after it.
+- The header carries the seven boundary codes and the digest of the ledger it
+  was derived from. `nikaia run` refuses a library, and a library that exports
+  nothing is refused rather than built empty. `NK1238` is no longer said in a
+  library build.
+- Text, bytes, handles, enums, optionals, callbacks, a function that pauses or
+  throws, and `init`/`shutdown` are refused as not built yet.
+
 ## [0.0.663] — 2026-10-08
 
 **`pub extern fn` with a body parses, and four shapes of an entry point are

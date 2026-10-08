@@ -29,7 +29,7 @@ pub enum Switch {
 /// Part I 1.2 names the options rather than counting them, and this list is
 /// what a manifest is checked against.
 pub fn known() -> Vec[String] {
-    return ["target", "user-parallelism", "reentrancy-check", "cleanup-deadline", "optimization", "refuted-claims"]
+    return ["target", "user-parallelism", "reentrancy-check", "cleanup-deadline", "optimization", "refuted-claims", "artifact", "symbol-prefix"]
 }
 
 // A key this compiler had and no longer has, with what to do instead, or

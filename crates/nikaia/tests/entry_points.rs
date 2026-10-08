@@ -1,7 +1,8 @@
 //! **A function C calls** ([ADR-284](../../../docs/specification/adr/adr-284.md)
 //! D4, D5, ADR-324 D6): `pub extern fn` with a body is an entry point, and
-//! four shapes are refused at the declaration. The library artifact that
-//! exports them is not built yet, so every entry point is `NK1238` for now.
+//! four shapes are refused at the declaration. The checker knows nothing of
+//! the build, so an entry point is `NK1238` here; a library build drops it
+//! (`project::check`, `tests/c_library.rs`).
 
 use nikaia::check;
 use nikaia::contracts::{Ledger, LedgerOps, STD};

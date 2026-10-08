@@ -61,6 +61,9 @@ const REENTRANCY_VAR: &str = "NIKAIA_REENTRANCY_CHECK";
 const OPTIMIZATION_VAR: &str = "NIKAIA_OPTIMIZATION";
 /// `--refuted-claims`, resolved, for the wrapper ([ADR-269](../../docs/specification/adr/adr-269.md) D8).
 const REFUTED_VAR: &str = "NIKAIA_REFUTED_CLAIMS";
+/// `[build] artifact` and `symbol-prefix` (ADR-284 D4, D13), for the wrapper.
+const ARTIFACT_VAR: &str = "NIKAIA_BUILD_ARTIFACT";
+const PREFIX_VAR: &str = "NIKAIA_SYMBOL_PREFIX";
 /// Set where the build is `nikaia test`'s
 /// ([ADR-269](../../docs/specification/adr/adr-269.md) D1).
 const TESTS_VAR: &str = "NIKAIA_TESTS";
@@ -124,6 +127,12 @@ pub struct Settings {
     /// default, refuses the program; `warn` builds it, the claim checked where
     /// it is reached. The bypass for a program a better prover now refutes.
     pub refuted_claims: String,
+    /// **What is made** (ADR-284 D4): `"program"`, or `"c-library"`, which
+    /// exports every `pub extern fn` with a body and writes the header.
+    pub artifact: String,
+    /// The prefix of every exported symbol (ADR-284 D13): `symbol-prefix`, or
+    /// the package's name with `-` written `_`.
+    pub symbol_prefix: String,
     /// **Whether this is `nikaia test`'s build**
     /// ([ADR-269](../../docs/specification/adr/adr-269.md) D1): the program's
     /// `test` blocks are compiled, and its `main` runs them by number. A
@@ -204,7 +213,43 @@ fn renamed(level: &str) -> &'static str {
     }
 }
 
+/// `[build] artifact` (ADR-284 D4): a program, or a library C calls.
+fn artifact(word: &str) -> Result<String> {
+    match word {
+        "program" | "c-library" => Ok(word.to_string()),
+        other => Err(anyhow!(
+            "`artifact` is `program` or `c-library`, not `{other}`. `c-library` makes a shared and \
+             a static library of the package, and its header, from every `pub extern fn` with a body."
+        )),
+    }
+}
+
+/// `[build] symbol-prefix` (ADR-284 D13): a C identifier, or the build refuses
+/// it, naming the character.
+fn symbol_prefix(word: &str) -> Result<String> {
+    let mut chars = word.chars();
+    let first_is_fine = chars
+        .next()
+        .is_some_and(|c| c.is_ascii_alphabetic() || c == '_');
+    if let Some(bad) = word
+        .chars()
+        .find(|c| !(c.is_ascii_alphanumeric() || *c == '_'))
+        .or_else(|| (!first_is_fine).then(|| word.chars().next().unwrap_or(' ')))
+    {
+        return Err(anyhow!(
+            "`symbol-prefix` `{word}` is not a C identifier: `{bad}` cannot stand there. Write \
+             letters, digits and `_`, not beginning with a digit."
+        ));
+    }
+    Ok(word.to_string())
+}
+
 impl Settings {
+    /// Whether this build makes a library C calls (ADR-284 D4).
+    pub fn library(&self) -> bool {
+        self.artifact == "c-library"
+    }
+
     /// Resolve every switch before anything is read, so a mistyped one fails on
     /// its own account rather than after a compile (ADR-037 D5).
     pub fn resolve(
@@ -228,6 +273,17 @@ impl Settings {
             .to_string();
         let optimization = manifest.setting("optimization", None, "").to_string();
         let refuted_claims = refuted_claims(manifest.setting("refuted-claims", None, "error"))?;
+        let artifact = artifact(manifest.setting("artifact", None, "program"))?;
+        let symbol_prefix = symbol_prefix(
+            manifest.setting(
+                "symbol-prefix",
+                None,
+                &manifest
+                    .package_name()
+                    .unwrap_or("program")
+                    .replace('-', "_"),
+            ),
+        )?;
         let mut build = Build::parse(&target, &user_parallelism, &reentrancy_check)?;
         (build.bounds, build.overflow) = optimizations(&optimization)?;
         Ok(Settings {
@@ -237,6 +293,8 @@ impl Settings {
             reentrancy_check,
             optimization,
             refuted_claims,
+            artifact,
+            symbol_prefix,
             tests: false,
         })
     }
@@ -289,6 +347,8 @@ impl Settings {
                 REFUTED_VAR.to_string(),
                 OsString::from(&self.refuted_claims),
             ),
+            (ARTIFACT_VAR.to_string(), OsString::from(&self.artifact)),
+            (PREFIX_VAR.to_string(), OsString::from(&self.symbol_prefix)),
         ]
         .into_iter()
         .chain(
@@ -308,6 +368,8 @@ impl Settings {
         let reentrancy_check = word(REENTRANCY_VAR, "yes");
         let optimization = word(OPTIMIZATION_VAR, "");
         let refuted_claims = refuted_claims(&word(REFUTED_VAR, "error"))?;
+        let artifact = artifact(&word(ARTIFACT_VAR, "program"))?;
+        let symbol_prefix = symbol_prefix(&word(PREFIX_VAR, "program"))?;
         let mut build = Build::parse(&target, &user_parallelism, &reentrancy_check)?;
         (build.bounds, build.overflow) = optimizations(&optimization)?;
         Ok(Settings {
@@ -317,6 +379,8 @@ impl Settings {
             reentrancy_check,
             optimization,
             refuted_claims,
+            artifact,
+            symbol_prefix,
             tests: std::env::var_os(TESTS_VAR).is_some(),
         })
     }
@@ -334,7 +398,7 @@ impl Settings {
     pub fn choices(&self) -> Choices {
         Choices::new(
             format!(
-                "{}/{}/{}{}{}{}{}",
+                "{}/{}/{}{}{}{}{}{}",
                 self.target,
                 self.user_parallelism,
                 self.reentrancy_check,
@@ -353,6 +417,12 @@ impl Settings {
                 match self.build.overflow {
                     crate::bounds::OverflowChecks::Kept => String::new(),
                     level => format!("/remove-overflow-checks:{}", level.name()),
+                },
+                // A library's lowering carries its entry points' wrappers,
+                // named by the prefix.
+                match self.library() {
+                    true => format!("/c-library:{}", self.symbol_prefix),
+                    false => String::new(),
                 }
             ),
             "rust",
@@ -396,6 +466,9 @@ pub struct Lowered {
     /// [`write_proofs`]: `None` on a cache hit, where nothing was asked, and
     /// outside a project, where there is no file.
     pub proofs: Option<crate::proofs::Book>,
+    /// **`<package>.h`**, where this build makes a library and the package
+    /// exports entry points (ADR-284 D12).
+    pub header: Option<String>,
 }
 
 /// Stage 0: parse, check, lower, infer - or serve all four from the cache.
@@ -1011,6 +1084,19 @@ pub fn lower_reading(
         notes.insert_str(0, &program.lost_sync(&committed));
     }
 
+    // **Read off the program before the lowering takes it**: what the entry
+    // points are is the program's, and the wrappers are the same either way.
+    let exported = match settings.library() {
+        true => {
+            let package = Manifest::read(&layout.root.join("nikaia.toml"))
+                .ok()
+                .and_then(|m| m.package_name().map(str::to_string))
+                .unwrap_or_else(|| settings.symbol_prefix.clone());
+            crate::cexport::export(&program, &settings.symbol_prefix, &package)?
+        }
+        false => None,
+    };
+
     // An entry that predates an artifact this build needs is a miss, not a
     // gap: adding an output stays a safe change.
     let cached = cache
@@ -1100,6 +1186,7 @@ pub fn lower_reading(
                                 &unit.source,
                                 &settings.user_parallelism,
                                 &settings.refuted_claims,
+                                settings.library(),
                             )
                         },
                     )?;
@@ -1197,6 +1284,20 @@ pub fn lower_reading(
         );
     }
 
+    // **A library's entry points get their wrappers and their header**
+    // (ADR-284 D4, D7, D12), whether the cache answered or not; the header
+    // carries the digest of the ledger this lowering wrote.
+    let (rust, header) = match exported {
+        Some(exported) => (
+            rust + &exported.rust,
+            Some(exported.header.replace(
+                crate::cexport::LEDGER_DIGEST,
+                &crate::assets::digest(ledger.as_bytes()),
+            )),
+        ),
+        None => (rust, None),
+    };
+
     Ok(Lowered {
         rust,
         ledger,
@@ -1205,6 +1306,7 @@ pub fn lower_reading(
         reused,
         notes,
         proofs,
+        header,
     })
 }
 
@@ -1518,6 +1620,7 @@ pub fn check(
     source: &str,
     user_parallelism: &str,
     refuted_claims: &str,
+    building_a_library: bool,
 ) -> Result<()> {
     let Around {
         foreign,
@@ -1533,6 +1636,11 @@ pub fn check(
     let modules = foreign.packages(modules);
     let mut all =
         check::check_against(parsed, beside, own, &library, &modules, newly, reads).findings;
+    // **`NK1238` is the checker's answer for a build it knows nothing of**
+    // (ADR-284 D4): a library build exports its entry points.
+    if building_a_library {
+        all.retain(|finding| finding.code != "NK1238");
+    }
     // A separate walk, for the reason the three inside `check_program` are
     // separate: it asks about the **boundary** of the build rather than about a
     // type, and it needs the manifest rather than a ledger.
@@ -2422,7 +2530,7 @@ impl Project {
             // other's. [`Self::own_copy`] gives it its own name back.
             bin_name: match kind {
                 CrateKind::Bin => self.program_name(&member.name),
-                CrateKind::Lib => member.name.replace('-', "_"),
+                CrateKind::Lib | CrateKind::CLibrary => member.name.replace('-', "_"),
             },
             bin_path: member.entry.clone(),
             features: runtime_features(&dependencies),
@@ -2439,8 +2547,9 @@ impl Project {
         for (at, member) in members.iter().enumerate() {
             // The entry package is the program; everything it reaches is a
             // library beside it.
-            let kind = match at {
-                0 => CrateKind::Bin,
+            let kind = match (at, self.settings.library()) {
+                (0, true) => CrateKind::CLibrary,
+                (0, false) => CrateKind::Bin,
                 _ => CrateKind::Lib,
             };
             let rust = rust.get(at).map(String::as_str).unwrap_or("");
@@ -2570,6 +2679,9 @@ impl Project {
         // package stop being able to disagree.
         let order = dependencies_first(&members);
         let mut rust: Vec<Option<String>> = vec![None; members.len()];
+        // **`<package>.h`**, the entry's, where this build makes a library
+        // (ADR-284 D12).
+        let mut header: Option<String> = None;
         let mut link_flags: Vec<String> = Vec::new();
         for at in order {
             let member = &members[at];
@@ -2648,6 +2760,7 @@ impl Project {
             // author could promise is theirs to hear, in their own build.
             if at == 0 {
                 eprint!("{}", lowered.notes);
+                header = lowered.header.clone();
             }
             rust[at] = Some(lowered.rust);
         }
@@ -2802,8 +2915,38 @@ impl Project {
         // rebuild. That is the same shape the lowering already has (above): the
         // work happens once, and the decision is made where it can be reported.
         //
+        if self.settings.library() && subcommand == "run" {
+            refuse!(
+                "This package is built as a library (`artifact = \"c-library\"`), and a library \
+                 has nothing to run: `nikaia build` makes it, and a C program calls it."
+            );
+        }
+        if self.settings.library() && header.is_none() {
+            return Err(crate::cexport::nothing_exported());
+        }
         let (mut code, messages) = cargo.messages("build", &target_args)?;
         self.report(&messages, allowlist)?;
+        // **The library and its header, together where a C build looks**
+        // (ADR-284 D4, D12): `target/nikaia/c-library/`.
+        if code == 0
+            && let Some(header) = &header
+        {
+            let made = self.own_dir().join("c-library");
+            std::fs::create_dir_all(&made).with_context(|| format!("making {}", made.display()))?;
+            let package = self
+                .manifest
+                .package_name()
+                .unwrap_or("program")
+                .to_string();
+            write_if_changed(&made.join(format!("{package}.h")), header)?;
+            for built in libraries_in(&messages) {
+                if let Some(name) = built.file_name() {
+                    std::fs::copy(&built, made.join(name))
+                        .with_context(|| format!("copying {}", built.display()))?;
+                }
+            }
+            println!("library: {}", made.display());
+        }
         let binary = match (executable_in(&messages), &cargo.target_dir) {
             (Some(built), Some(_)) => Some(self.own_copy(&built)?),
             (built, _) => built,
@@ -3082,6 +3225,29 @@ impl Project {
 ///
 /// `None` where nothing says, which is not an error: the caller falls back to
 /// `cargo run` and the build behaves as it did before.
+/// The shared and the static library a `c-library` build made (ADR-284 D4).
+fn libraries_in(messages: &str) -> Vec<std::path::PathBuf> {
+    messages
+        .lines()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .filter(|value| value["reason"] == "compiler-artifact")
+        .filter(|value| {
+            value["target"]["kind"]
+                .as_array()
+                .is_some_and(|kinds| kinds.iter().any(|k| k == "cdylib" || k == "staticlib"))
+        })
+        .flat_map(|value| {
+            value["filenames"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default()
+                .into_iter()
+                .filter_map(|f| f.as_str().map(std::path::PathBuf::from))
+                .collect::<Vec<_>>()
+        })
+        .collect()
+}
+
 fn executable_in(messages: &str) -> Option<std::path::PathBuf> {
     messages
         .lines()
