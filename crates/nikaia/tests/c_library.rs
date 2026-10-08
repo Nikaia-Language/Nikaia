@@ -785,6 +785,31 @@ seen = []
 calc.words("one two", lambda word, light: seen.append((word, light)))
 assert seen == [("one", calc.Light.Amber), ("two", calc.Light.Amber)], seen
 assert calc.napped(20) == 62
+
+# The `_async` form (ADR-284 D19, D27): with `done`, or awaited.
+import asyncio
+import time
+
+landed = []
+ticket = calc.napped_async(10, done=landed.append)
+while not landed:
+    time.sleep(0.01)
+assert landed == [52], landed
+
+
+async def awaited():
+    assert await calc.napped_async(10) == 52
+    slow = calc.napped_async(60000)
+    slow.cancel()
+    try:
+        await slow
+        raise AssertionError("not cancelled")
+    except asyncio.CancelledError:
+        pass
+    await asyncio.sleep(0.2)
+
+
+asyncio.run(awaited())
 print("ok")
 "#;
 

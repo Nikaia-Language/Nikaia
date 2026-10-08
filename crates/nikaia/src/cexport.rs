@@ -1268,7 +1268,7 @@ pub fn export(
             .ret_type
             .is_some_and(|ty| parsed.text(ty.name) == "String");
         python.entry(
-            entry, &symbol, parsed, &plains, &handles, &records, text_out,
+            entry, &symbol, parsed, &plains, &handles, &records, text_out, pauses,
         );
         // **The `_async` form** (D9, D19): the same call on a library thread,
         // `done` called exactly once with its status, and a ticket that
@@ -1506,6 +1506,8 @@ struct Python {
     classes: std::collections::BTreeMap<String, Vec<String>>,
     /// `_lib.<symbol>.argtypes = …` lines.
     signatures: Vec<String>,
+    /// Whether any entry has an `_async` form, which needs the ticket.
+    any_async: bool,
 }
 
 /// A name Python may bind: one of its words gets a `_` after it.
@@ -1547,6 +1549,7 @@ impl Python {
         handles: &[Handled],
         records: &[Record],
         text_out: bool,
+        pauses: bool,
     ) {
         let mut def_params: Vec<String> = Vec::new();
         let mut argtypes: Vec<String> = Vec::new();
@@ -1749,6 +1752,44 @@ impl Python {
             "_lib.{symbol}.argtypes = [{}]\n_lib.{symbol}.restype = ctypes.c_int",
             argtypes.join(", ")
         ));
+        // **The `_async` form** (D9, D19, D27): `done` called with the value or
+        // the exception on a library thread, or - under a running `asyncio`
+        // loop and without `done` - an awaitable whose `cancel()` cancels the
+        // call at its next pause point. Not for a result into a buffer, whose
+        // size cannot be asked before the call has run, nor for a callback,
+        // whose exception has nowhere to go.
+        let asyncable = pauses && raising.is_empty() && !matches!(result, Some(Out::Buffer));
+        let async_lines: Vec<String> = match asyncable {
+            false => Vec::new(),
+            true => {
+                self.any_async = true;
+                let mut async_types = argtypes.clone();
+                async_types.push("_DONE".to_string());
+                async_types.push("ctypes.c_void_p".to_string());
+                async_types.push("ctypes.POINTER(ctypes.c_void_p)".to_string());
+                self.signatures.push(format!(
+                    "_lib.{symbol}_async.argtypes = [{}]\n_lib.{symbol}_async.restype = ctypes.c_int",
+                    async_types.join(", ")
+                ));
+                let mut lines = before.clone();
+                let mut handed_args = args.clone();
+                if result.is_some() {
+                    handed_args.push("ctypes.byref(out)".to_string());
+                }
+                lines.push("def finish(status):".to_string());
+                lines.push("    if status != 0:".to_string());
+                lines.push("        return _ERRORS.get(status, Error)(_said())".to_string());
+                match after.first() {
+                    Some(back) => lines.push(format!("    {back}")),
+                    None => lines.push("    return None".to_string()),
+                }
+                lines.push(format!(
+                    "return _start(_lib.{symbol}_async, [{}], finish, done)",
+                    handed_args.join(", ")
+                ));
+                lines
+            }
+        };
         let mut lines: Vec<String> = before;
         match raising.is_empty() {
             true => lines.push(body_call),
@@ -1772,6 +1813,28 @@ impl Python {
                 .map(|line| format!("{by}{line}\n"))
                 .collect::<String>()
         };
+        if !async_lines.is_empty() {
+            let mut params = def_params.clone();
+            params.push("done=None".to_string());
+            match (&entry.owner, entry.receiver) {
+                (None, _) => self.functions.push(format!(
+                    "def {}_async({}):\n{}",
+                    entry.name,
+                    params.join(", "),
+                    indent(&async_lines, "    ")
+                )),
+                (Some(owner), Some(_)) => {
+                    params.insert(0, "self".to_string());
+                    self.classes.entry(owner.clone()).or_default().push(format!(
+                        "    def {}_async({}):\n{}",
+                        entry.name,
+                        params.join(", "),
+                        indent(&async_lines, "        ")
+                    ));
+                }
+                (Some(_), None) => {}
+            }
+        }
         match (&entry.owner, entry.receiver, entry.getter) {
             (None, _, _) => {
                 self.functions.push(format!(
@@ -1966,7 +2029,75 @@ impl Python {
              \n",
             table.join(", ")
         ));
-        let _ = any_pause;
+        if any_pause && self.any_async {
+            out.push_str(&format!(
+                "_DONE = ctypes.CFUNCTYPE(None, ctypes.c_int, ctypes.c_void_p)\n\
+                 _lib.{prefix}_cancel.argtypes = [ctypes.c_void_p]\n\
+                 _lib.{prefix}_cancel.restype = ctypes.c_int\n\
+                 _lib.{prefix}_op_free.argtypes = [ctypes.c_void_p]\n\
+                 _lib.{prefix}_op_free.restype = ctypes.c_int\n\
+                 # Every call in flight, with what it must keep alive until `done`.\n\
+                 _HELD = {{}}\n\
+                 \n\
+                 \n\
+                 class Ticket:\n    \
+                 \"\"\"An `_async` call: `cancel()` cancels it at its next pause point (ADR-284 D19).\"\"\"\n\
+                 \n    \
+                 def __init__(self):\n        \
+                 self._op = ctypes.c_void_p()\n\
+                 \n    \
+                 def cancel(self):\n        \
+                 if self._op:\n            \
+                 _check(_lib.{prefix}_cancel(self._op))\n\
+                 \n    \
+                 def __del__(self):\n        \
+                 # Only once `done` has run: until then `_HELD` holds this.\n        \
+                 if self._op:\n            \
+                 _lib.{prefix}_op_free(self._op)\n\
+                 \n\
+                 \n\
+                 def _settle(future, value):\n    \
+                 if future.done():\n        \
+                 return\n    \
+                 if isinstance(value, BaseException):\n        \
+                 future.set_exception(value)\n    \
+                 else:\n        \
+                 future.set_result(value)\n\
+                 \n\
+                 \n\
+                 def _start(function, args, finish, done):\n    \
+                 loop = None\n    \
+                 if done is None:\n        \
+                 import asyncio\n\
+                 \n        \
+                 loop = asyncio.get_running_loop()\n        \
+                 future = loop.create_future()\n    \
+                 ticket = Ticket()\n    \
+                 held = []\n\
+                 \n    \
+                 def landed(status, ctx):\n        \
+                 value = finish(status)\n        \
+                 _HELD.pop(id(held), None)\n        \
+                 if loop is None:\n            \
+                 done(value)\n        \
+                 else:\n            \
+                 try:\n                \
+                 loop.call_soon_threadsafe(_settle, future, value)\n            \
+                 except RuntimeError:\n                \
+                 pass  # the loop has closed: nobody waits for it\n\
+                 \n    \
+                 callback = _DONE(landed)\n    \
+                 held.extend([callback, args, ticket])\n    \
+                 _HELD[id(held)] = held\n    \
+                 _check(function(*args, callback, None, ctypes.byref(ticket._op)))\n    \
+                 if loop is None:\n        \
+                 return ticket\n    \
+                 future.add_done_callback(lambda f: f.cancelled() and ticket.cancel())\n    \
+                 return future\n\
+                 \n\
+                 \n"
+            ));
+        }
         for plain in plains {
             let values: Vec<String> = plain
                 .variants

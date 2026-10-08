@@ -8,6 +8,17 @@ or the specification. A change only to the guide, the notes, the README, the
 website, the tests, the examples or the tooling around them raises nothing and
 has no heading here; `CLAUDE.md` draws the line.
 
+## [0.0.685] — 2026-10-08
+
+**The Python binding's `_async` form** (ADR-284 D19, D27; #112). A pausing
+entry point gets `<name>_async(…, done=None)`. With `done`, the value or the
+exception is handed to it on a library thread, and the returned `Ticket`
+cancels the call. Without `done`, under a running `asyncio` loop, it returns a
+future settled through `call_soon_threadsafe`, and cancelling the future cancels
+the call at its next pause point. What the call holds stays alive until `done`,
+and the ticket is freed after it. Not for a result into a buffer or a call
+taking a callback.
+
 ## [0.0.684] — 2026-10-08
 
 **`nikaia bind python`** (ADR-284 D26, D27, D29; #112). It builds the library
