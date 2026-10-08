@@ -4,6 +4,19 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.653] — 2026-10-08
+
+**Layers with phases; the handler runs at most once, under the runtime alone** (ADR-335, #121).
+- `.layer(http::Compress())` on a tree: a value whose kind implements
+  `http::Layer` with `before` (typed inputs, may refuse or answer, hands `R`
+  to `after`), `after` (changes the response) and `observe` (after the send).
+- No layer calls, skips or repeats the handler; there is no `next`.
+- `before`s run in written order, at once only where nothing can tell;
+  `after`s innermost first, failing open or closed as declared, error responses
+  included; `observe` is bounded and cannot change a response.
+- Timeouts, body limits and a panic's `500` are `std`'s layers. Header
+  conflicts and inputs a route cannot give are refused while building.
+
 ## [0.0.652] — 2026-10-07
 
 **Seven compiler faults the move to `tests/language` turned up are fixed**,

@@ -1,7 +1,7 @@
 # Nikaia Language Specification
 **Part III: Tooling, Ecosystem & Interoperability**
-**Version:** 0.0.652 (Draft)
-**Date:** 2026-10-07
+**Version:** 0.0.653 (Draft)
+**Date:** 2026-10-08
 
 ---
 
@@ -1043,6 +1043,21 @@ group's `formats` replace the server's below it. `state` holds one value per typ
 nothing is given for, and two values of one type, are refused while the program is built. The
 whole tree is checked then - conflicts, formats, state - its API description is a constant, and
 its matcher is built from it.
+
+**Work around routes is a layer** ([ADR-335](adr/adr-335.md)): a value declared on a tree,
+`.layer(http::Compress())`, whose kind implements `http::Layer` with any of three phases.
+`before(…typed inputs…) -> R throws Reject` runs before the handler and may refuse or answer itself;
+`after(r: R, response) -> Response` changes the response; `observe(exchange)` reads method, path,
+status, time and sizes after the response is sent. The handler runs at most once, and only the
+runtime starts or cancels it: no layer calls, skips or repeats it. `before`s run in written order,
+at once only where neither depends on the other's result and their effects stand whichever refuses.
+`after`s run one by one, innermost first, and an error response passes through them too; a failing
+`after` either lets the response pass or turns it into a `500`, as its layer declares, and after a
+stream's first byte a failure ends the connection. `observe` cannot change a response; what waits
+for it is bounded, and past the bound an observation is dropped and counted. A timeout, a body's
+size limit and a panic's `500` are `std`'s layers. An outer tree's layers wrap an inner one's. Two
+`after`s writing one header, and a layer whose inputs a route cannot give, are refused while the
+program is built.
 
 A status code, a header or a body of the handler's own is a `Response`, built where it is
 returned: `http::Response { status: 400, body: "id is required" }`, with headers a field like the others.
