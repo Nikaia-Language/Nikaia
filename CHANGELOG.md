@@ -8,6 +8,18 @@ or the specification. A change only to the guide, the notes, the README, the
 website, the tests, the examples or the tooling around them raises nothing and
 has no heading here; `CLAUDE.md` draws the line.
 
+## [0.0.700] — 2026-10-08
+
+**What is written down is what can be called** (ADR-286 D36, #509).
+- Decided, not built: where the type of a receiver or the head of a path is
+  known, a method, associated function, module function or field that neither
+  the program, `std`'s ledger, a crate's description nor an `extern` block
+  declares is `NK1171`, also where Rust has one by that name (`String::from`,
+  `as_str`, `is_some`). `std`'s ledger stays written by hand: an entry it lacks
+  is not callable, and the refusal is how the gap is found.
+- Part III C.4 and C.3's `NK1171` say so. C.4's silence stays for a known name
+  of unknown type (`-> ?`) and for an unknown type (#497).
+
 ## [0.0.699] — 2026-10-08
 
 **`task::scope`** (Part II 12.7, ADR-328 D8; #95). `task::scope fn(s) { … }`
