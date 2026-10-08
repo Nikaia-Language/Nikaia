@@ -13378,10 +13378,14 @@ impl<'p> Emitter<'p> {
             out.push(".await");
         }
 
-        if flow.throws && !flow.caught && self.method_can_fail(flow, method) {
+        let fails = self.method_can_fail(flow, method);
+        if flow.throws && !flow.caught && fails {
             out.push("?");
         }
-        if length {
+        // **A length that can fail is already an `i64`** (`fs::File::len`, #546):
+        // it is the system's answer, read by `std` and converted there, and a
+        // cast here would land on the `Result` a `catch` matches on.
+        if length && !fails {
             out.push(" as i64");
         }
         Ok(())

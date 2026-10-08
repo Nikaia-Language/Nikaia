@@ -828,6 +828,118 @@ pub async fn create(path: impl AsRef<FilePath>, root: &Root) -> Result<Writer, c
     }))
 }
 
+/// **A file held open** (Part III 17.1, #546): read, written and moved about
+/// in, and flushed and closed when the scope that owns it last ends - or at a
+/// named moment with `close()`, which hands the failure back as that call's
+/// ([ADR-297](../../../docs/specification/adr/adr-297.md) D4).
+pub type File = crate::cleanup::CleanedSend<Opened>;
+
+/// Where `File::seek` moves to: a byte position from the start, or a distance
+/// from where it is or from the end.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Seek {
+    Start(i64),
+    Current(i64),
+    End(i64),
+}
+
+/// What a [`File`] holds: the open file and its name, for a refusal.
+///
+/// **Every call is the system's own, without a buffer and not through the I/O
+/// reactor**, as [`exists`] is: a program that wants its bytes gathered writes
+/// them at once, or uses [`create`]'s writer.
+pub struct Opened {
+    file: std::fs::File,
+    shown: String,
+}
+
+impl Opened {
+    fn failed(&self, error: std::io::Error) -> crate::io::IoError {
+        crate::io::IoError::of(error, &self.shown)
+    }
+
+    /// Bytes into `into`, from where the file is; how many, `0` at its end.
+    pub fn read(&mut self, into: &mut [u8]) -> Result<i64, crate::io::IoError> {
+        use std::io::Read;
+        let n = self.file.read(into).map_err(|e| self.failed(e))?;
+        Ok(i64::try_from(n).unwrap_or(i64::MAX))
+    }
+
+    /// Bytes, or text, into the file where it is; how many were written.
+    pub fn write(&mut self, data: impl AsRef<[u8]>) -> Result<i64, crate::io::IoError> {
+        use std::io::Write;
+        let data = data.as_ref();
+        self.file.write_all(data).map_err(|e| self.failed(e))?;
+        Ok(i64::try_from(data.len()).unwrap_or(i64::MAX))
+    }
+
+    /// What was written, handed to the system.
+    pub fn flush(&mut self) -> Result<(), crate::io::IoError> {
+        use std::io::Write;
+        self.file.flush().map_err(|e| self.failed(e))
+    }
+
+    /// Moves to `to`; the byte position it is at now. A position before the
+    /// start is refused.
+    pub fn seek(&mut self, to: Seek) -> Result<i64, crate::io::IoError> {
+        use std::io::Seek as _;
+        let to = match to {
+            Seek::Start(at) => std::io::SeekFrom::Start(u64::try_from(at).map_err(|_| {
+                crate::io::IoError::Other(format!("{}: no position {at}", self.shown))
+            })?),
+            Seek::Current(by) => std::io::SeekFrom::Current(by),
+            Seek::End(by) => std::io::SeekFrom::End(by),
+        };
+        let at = self.file.seek(to).map_err(|e| self.failed(e))?;
+        Ok(i64::try_from(at).unwrap_or(i64::MAX))
+    }
+
+    /// How many bytes the file holds now, an `i64` as a length is.
+    #[allow(clippy::len_without_is_empty)]
+    pub fn len(&self) -> Result<i64, crate::io::IoError> {
+        let known = self.file.metadata().map_err(|e| self.failed(e))?;
+        Ok(i64::try_from(known.len()).unwrap_or(i64::MAX))
+    }
+}
+
+impl crate::cleanup::CleanupSend for Opened {
+    fn cleanup(
+        &mut self,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send + '_>> {
+        Box::pin(async move { self.flush().map_err(|e| e.to_string()) })
+    }
+
+    fn describe(&self) -> String {
+        format!("the file `{}`", self.shown)
+    }
+}
+
+/// **A file, opened** to read, and to write where `write` or `append` says so;
+/// `create` makes it where it is not there, `truncate` empties it.
+pub fn open(
+    path: impl AsRef<FilePath>,
+    root: &Root,
+    write: bool,
+    append: bool,
+    create: bool,
+    truncate: bool,
+) -> Result<File, crate::io::IoError> {
+    let asked = path.as_ref();
+    let resolved = resolve(asked, root)?;
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(write)
+        .append(append)
+        .create(create)
+        .truncate(truncate)
+        .open(&resolved)
+        .map_err(|e| crate::io::IoError::of(e, asked))?;
+    Ok(crate::cleanup::CleanedSend::new(Opened {
+        file,
+        shown: asked.display().to_string(),
+    }))
+}
+
 /// **Every file under a directory**, as names relative to it, `/` between the
 /// parts, in sorted order ([ADR-290](../../../docs/specification/adr/adr-290.md)
 /// D4).

@@ -66,3 +66,54 @@ test "a name that leaves the root is refused before anything is touched" {
     let leaves = said.contains("leaves the root")
     assert(leaves)
 }
+
+// **A file held open** (Part III 17.1): written, moved about in and read, and
+// closed when the function that owns it ends.
+fn written(root: ref fs::Root) throws {
+    let mut f = fs::open("data.bin", root; write: true, create: true, truncate: true)
+    f.write("hello world")
+    f.seek(fs::Seek::Start(6))
+    f.write("WORLD")
+}
+
+test "a file is written, moved about in and read" {
+    let root = fs::scratch()
+    written(root)
+    let mut f = fs::open("data.bin", root)
+    let mut first: Vec[u8] = [0, 0, 0, 0, 0]
+    let n = f.read(first)
+    let size = f.len()
+    let at = f.seek(fs::Seek::End(-5))
+    let mut last: Vec[u8] = [0, 0, 0, 0, 0]
+    f.read(last)
+    f.close()
+    let text = fs::read_to_string("data.bin", root)
+    assert(n == 5)
+    assert(size == 11)
+    assert(at == 6)
+    assert(first[0] == 'h')
+    assert(last[0] == 'W')
+    assert(text == "hello WORLD")
+}
+
+fn opens(name: ref String, root: ref fs::Root) -> bool throws {
+    let f = fs::open(name, root) catch { return false }
+    let size = f.len() catch { return false }
+    return size == 0
+}
+
+fn seeks_to(to: i64, root: ref fs::Root) -> bool throws {
+    let mut f = fs::open("made.txt", root; write: true, create: true) catch { return false }
+    f.seek(fs::Seek::Start(to)) catch { return false }
+    return true
+}
+
+test "a file is not made unless asked, and no position is before the start" {
+    let root = fs::scratch()
+    let missing = !opens("none.txt", root)
+    let reached = seeks_to(3, root)
+    let before = !seeks_to(-1, root)
+    assert(missing)
+    assert(reached)
+    assert(before)
+}

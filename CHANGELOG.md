@@ -8,6 +8,18 @@ or the specification. A change only to the guide, the notes, the README, the
 website, the tests, the examples or the tooling around them raises nothing and
 has no heading here; `CLAUDE.md` draws the line.
 
+## [0.0.680] — 2026-10-08
+
+**`fs::open` and `File`** (Part III 17.1; #546). A file held open is read
+(into a list the call changes in place), written, moved about in with `seek`
+(`fs::Seek::Start`, `Current`, `End`; a position before the start is refused)
+and measured with `len`. It is flushed by its cleanup when the scope that owns
+it last ends, or with `close()`. The options are `write`, `append`, `create`
+and `truncate`, and the name is resolved under its root as every `fs` call's
+is. Each call is the system's own, as `exists`'s is. Fixed on the way: a `len()`
+that can fail is not cast to `i64`. It is one already, and inside a `catch` the
+cast landed on the `Result`.
+
 ## [0.0.679] — 2026-10-08
 
 **`std::fs` makes, removes, renames, copies and reads directories** (Part III
