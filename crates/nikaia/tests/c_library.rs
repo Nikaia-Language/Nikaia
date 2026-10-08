@@ -130,6 +130,13 @@ int main(void) {
     printf("pick %d %lld\n", status, (long long)picked);
     printf("past the end %d\n", calc_pick(7, &picked));
     printf("after the panic %d\n", calc_add(1, 1, &sum));
+    status = calc_init();
+    printf("init alone %d %d\n", status, calc_add(1, 1, &sum));
+    status = calc_shutdown();
+    printf("shutdown %d %d\n", status, calc_add(1, 1, &sum));
+    status = calc_init();
+    status = calc_add(1, 1, &sum);
+    printf("started again %d %lld\n", status, (long long)sum);
     return CALC_OK;
 }
 "#;
@@ -295,7 +302,7 @@ fn a_c_program_calls_the_library() {
     assert!(ran.status.success(), "{}", said(&ran));
     assert_eq!(
         String::from_utf8_lossy(&ran.stdout),
-        "add 0 42\nhalve 0 2.5\nvowel 0 1\nnot a scalar -1\npick 0 20\npast the end -4\nafter the panic -4\n"
+        "add 0 42\nhalve 0 2.5\nvowel 0 1\nnot a scalar -1\npick 0 20\npast the end -4\nafter the panic -4\ninit alone 0 -4\nshutdown 0 -3\nstarted again 0 2\n"
     );
 
     // Text, bytes and a run of numbers, from a second program: the first one

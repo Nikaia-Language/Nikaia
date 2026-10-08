@@ -11,7 +11,8 @@
 //   returning an `int` status and handing its value back through an
 //   out-parameter (D7);
 // * the panic caught at the boundary, which poisons the library: every later
-//   call is `E_PANICKED` (D8);
+//   call is `E_PANICKED` until `<prefix>_shutdown` and `<prefix>_init` have run
+//   (D8, D10), and every call after `shutdown` is `E_NOT_RUNNING`;
 // * its line in `<package>.h`, which also carries the seven status codes the
 //   boundary owns and the hash of the ledger the header was derived from (D12).
 //
@@ -400,6 +401,16 @@ pub fn export(program: &Program, prefix: &str, package: &str) -> Result<Option<E
          /// Set by a panic at the boundary; every call after it is `E_PANICKED` (ADR-284 D8).\n\
          static __NIKAIA_POISONED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);\n\
          \n\
+         /// Set by `shutdown`, cleared by `init`; every call between them is `E_NOT_RUNNING` (ADR-284 D10).\n\
+         static __NIKAIA_STOPPED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);\n\
+         \n\
+         /// Whether a call may go in: `E_NOT_RUNNING` after `shutdown`, `E_PANICKED` after a panic (ADR-284 D8, D10).\n\
+         fn __nikaia_enter() -> Result<(), std::ffi::c_int> {\n    \
+         if __NIKAIA_STOPPED.load(std::sync::atomic::Ordering::SeqCst) {\n        return Err(-3);\n    }\n    \
+         if __NIKAIA_POISONED.load(std::sync::atomic::Ordering::SeqCst) {\n        return Err(-4);\n    }\n    \
+         Ok(())\n\
+         }\n\
+         \n\
          std::thread_local! {\n    \
          /// This thread's last failure, as `<prefix>_last_error` renders it (ADR-284 D7).\n    \
          static __NIKAIA_LAST_ERROR: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) };\n\
@@ -415,7 +426,17 @@ pub fn export(program: &Program, prefix: &str, package: &str) -> Result<Option<E
          __NIKAIA_LAST_ERROR.with(|last| {{\n        \
          // SAFETY: the C caller hands `cap` bytes at `out` and a place for the length, or NULL (ADR-284 D6).\n        \
          unsafe {{ nikaia_std::c_boundary::hand_back(last.borrow().as_bytes(), out, cap, written) }}\n    \
-         }})\n}}\n"
+         }})\n}}\n\
+         \n/// Starts the library, and starts it again after `shutdown`, which is what\n\
+         /// clears a panic's poison (ADR-284 D8, D10). Idempotent, from any thread.\n\
+         #[unsafe(no_mangle)]\npub extern \"C\" fn {prefix}_init() -> std::ffi::c_int {{\n    \
+         if __NIKAIA_STOPPED.load(std::sync::atomic::Ordering::SeqCst) {{\n        \
+         __NIKAIA_POISONED.store(false, std::sync::atomic::Ordering::SeqCst);\n        \
+         __NIKAIA_STOPPED.store(false, std::sync::atomic::Ordering::SeqCst);\n    \
+         }}\n    0\n}}\n\
+         \n/// Stops the library: every call after it is `E_NOT_RUNNING` until `init` (ADR-284 D10).\n\
+         #[unsafe(no_mangle)]\npub extern \"C\" fn {prefix}_shutdown() -> std::ffi::c_int {{\n    \
+         __NIKAIA_STOPPED.store(true, std::sync::atomic::Ordering::SeqCst);\n    0\n}}\n"
     ));
     let mut declarations = String::new();
     let found = entries(program)?;
@@ -475,13 +496,17 @@ pub fn export(program: &Program, prefix: &str, package: &str) -> Result<Option<E
     }
     // **No symbol twice** (D13): a method, a getter and `_free` share a
     // handle's names.
-    let mut symbols = std::collections::BTreeSet::new();
+    let mut symbols: std::collections::BTreeSet<String> = ["last_error", "init", "shutdown"]
+        .iter()
+        .map(|own| format!("{prefix}_{own}"))
+        .collect();
     let mut claim = |symbol: &str, written: &str| -> Result<()> {
         match symbols.insert(symbol.to_string()) {
             true => Ok(()),
             false => Err(anyhow::anyhow!(
-                "`{written}` would be exported as `{symbol}`, which another entry point, getter \
-                 or `_free` is already: rename one of them (ADR-284 D13)."
+                "`{written}` would be exported as `{symbol}`, which another entry point, a getter, \
+                 `_free` or the library's own `init`, `shutdown` or `last_error` is already: \
+                 rename it (ADR-284 D13)."
             )),
         }
     };
@@ -491,7 +516,7 @@ pub fn export(program: &Program, prefix: &str, package: &str) -> Result<Option<E
         claim(&symbol, ty)?;
         rust.push_str(&format!(
             "\n#[unsafe(no_mangle)]\npub extern \"C\" fn {symbol}(handle: *mut nikaia_std::c_boundary::Handle<{ty}>) -> std::ffi::c_int {{\n    \
-             if __NIKAIA_POISONED.load(std::sync::atomic::Ordering::SeqCst) {{\n        return -4;\n    }}\n    \
+             if let Err(status) = __nikaia_enter() {{\n        return status;\n    }}\n    \
              // SAFETY: the C caller hands a handle this library made, or NULL, and uses it no more (ADR-284 D6).\n    \
              unsafe {{ nikaia_std::c_boundary::free(handle) }}\n}}\n"
         ));
@@ -741,11 +766,11 @@ pub fn export(program: &Program, prefix: &str, package: &str) -> Result<Option<E
         // nothing it held is looked at again (D8).
         rust.push_str(&format!(
             "\n#[unsafe(no_mangle)]\npub extern \"C\" fn {symbol}({}) -> std::ffi::c_int {{\n    \
-             if __NIKAIA_POISONED.load(std::sync::atomic::Ordering::SeqCst) {{\n        return -4;\n    }}\n\
+             if let Err(status) = __nikaia_enter() {{\n        return status;\n    }}\n\
              {checks}    \
              match std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {call})) {{\n        {handed_back}{failed}\n        \
              Err(_) => {{\n            __NIKAIA_POISONED.store(true, std::sync::atomic::Ordering::SeqCst);\n            \
-             __nikaia_failed(\"the library panicked; it answers E_PANICKED until it is started again\".to_string());\n            \
+             __nikaia_failed(\"the library panicked; it answers E_PANICKED until shutdown and init have run\".to_string());\n            \
              -4\n        }}\n    }}\n}}\n",
             rust_params.join(", "),
         ));
@@ -807,6 +832,10 @@ pub fn export(program: &Program, prefix: &str, package: &str) -> Result<Option<E
          /* What the entry points throw, numbered per library (ADR-284 D7). */\n\
          {constants}\n\
          {types}\
+         /* Start the library, and start it again after shutdown (ADR-284 D10). */\n\
+         int {prefix}_init(void);\n\
+         /* Stop it: every call after this is {upper}_E_NOT_RUNNING until init. */\n\
+         int {prefix}_shutdown(void);\n\n\
          /* This thread's last failure, with its site (ADR-284 D7). */\n\
          int {prefix}_last_error(uint8_t *out, size_t cap, size_t *written);\n\n\
          {declarations}\n\

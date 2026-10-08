@@ -4,6 +4,15 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.670] — 2026-10-08
+
+**A library starts and stops** (ADR-284 D8, D10; #88). `<prefix>_init()` and
+`<prefix>_shutdown()` are in the header. After `shutdown` every call is
+`E_NOT_RUNNING` until `init`. A panic's poison is cleared by `shutdown` and
+then `init`; `init` alone leaves it. The library still starts by itself on the
+first call. Not built yet: `shutdown` draining cleanups within
+`cleanup-deadline` (`E_CLEANUP`), and `set_allocator`.
+
 ## [0.0.669] — 2026-10-08
 
 **A library hands C a `pub struct` as a handle** (ADR-284 D5, D11, D13; #88).
