@@ -254,9 +254,27 @@ pub extern fn checked(n: i64) -> i64 sync throws {
 ";
 
 const CALLER: &str = r#"#include <stdio.h>
+#include <stdlib.h>
 #include "calc.h"
 
+/* The caller's allocator (ADR-284 D6): malloc's, counting what it hands out. */
+static void *counted(size_t size, size_t align, void *ctx) {
+    __atomic_fetch_add((long *)ctx, 1, __ATOMIC_RELAXED);
+    return aligned_alloc(align < sizeof(void *) ? sizeof(void *) : align,
+                         (size + align - 1) / align * align);
+}
+
+static void given_back(void *at, size_t size, size_t align, void *ctx) {
+    (void)size;
+    (void)align;
+    (void)ctx;
+    free(at);
+}
+
 int main(void) {
+    long blocks = 0;
+    printf("allocator %d\n", calc_set_allocator(counted, given_back, &blocks));
+    printf("no allocator %d\n", calc_set_allocator(NULL, given_back, &blocks));
     int64_t sum = 0;
     double half = 0;
     bool vowel = false;
@@ -279,6 +297,8 @@ int main(void) {
     status = calc_init();
     status = calc_add(1, 1, &sum);
     printf("started again %d %lld\n", status, (long long)sum);
+    printf("the caller's blocks %d\n", __atomic_load_n(&blocks, __ATOMIC_RELAXED) > 0);
+    printf("allocator after init %d\n", calc_set_allocator(counted, given_back, &blocks));
     return CALC_OK;
 }
 "#;
@@ -601,7 +621,7 @@ fn a_c_program_calls_the_library() {
     assert!(ran.status.success(), "{}", said(&ran));
     assert_eq!(
         String::from_utf8_lossy(&ran.stdout),
-        "add 0 42\nhalve 0 2.5\nvowel 0 1\nnot a scalar -1\npick 0 20\npast the end -4\nafter the panic -4\ninit alone 0 -4\nshutdown 0 -3\nstarted again 0 2\n"
+        "allocator 0\nno allocator -1\nadd 0 42\nhalve 0 2.5\nvowel 0 1\nnot a scalar -1\npick 0 20\npast the end -4\nafter the panic -4\ninit alone 0 -4\nshutdown 0 -3\nstarted again 0 2\nthe caller's blocks 1\nallocator after init -1\n"
     );
 
     // Text, bytes and a run of numbers, from a second program: the first one

@@ -5,7 +5,7 @@ What C hands a library's entry point, and what the entry point hands back
 passes a run of values as an address and a length, a place for one result as
 an out-parameter, room for a text or bytes result as a buffer it owns:
 `out`, `cap`, `written`, and a value it holds as a handle, whose lock each
-call takes (D11). Each is a raw pointer, and reading or writing one is
+call takes (D11), and an allocator for what the library holds (D6). Each is a raw pointer, and reading or writing one is
 `unsafe`. This crate is the one place that does it, so the wrapper a Nikaia
 library's entry point is lowered to writes nothing but calls into here.
 No dependencies but `std`.
@@ -33,6 +33,8 @@ assert_eq!((status, written, &room[..5]), (c_boundary::OK, 5, &b"hello"[..]));
 | `shared`, `exclusive` (`unsafe fn`s) | `&*at` | the caller's contract: `at` is null, refused as `E_ARGUMENT`, or a handle `handle` made with `Box::into_raw` and `free` has not freed. The value is reached only through its `RwLock`, held for the call; a thread that holds it already is `E_REENTRANT` rather than a deadlock. |
 | `free` (an `unsafe fn`) | `Box::from_raw` | the caller's contract: a handle `handle` made and nobody uses any more. Null frees nothing; a handle this thread holds is `E_REENTRANT` and stays. |
 | `Sent` (`unsafe impl Send`), `sent` (an `unsafe fn`) | moves raw addresses to the library thread that runs an `_async` call | `sent`'s contract, which is the C caller's: what the addresses point at stays alive and untouched until `done` is called. The one thread that uses them is that call's. |
+| `Heap` (`unsafe impl Sync`) | its `caller` cell, shared between threads | written once, by the one thread that moved the state from undecided to setting, and read only after the state was seen as `caller` with `Acquire`, which the writer stored with `Release` after the write. |
+| `Heap` (`unsafe impl GlobalAlloc`) | hands out and takes back every block of the library | the heap chooses once, at `set` or at its first block, whichever comes first, and never again: a block goes back to the allocator that handed it out. The caller's `alloc` and `free` keep `GlobalAlloc`'s contract, which `<prefix>_set_allocator`'s says. `realloc` through the caller's is a new block, a copy of the smaller size, and the old one given back. |
 | `hand_back` (an `unsafe fn`) | writes through `written`, copies into `out` | the caller's contract: `written` is null or a place for one `usize`, and `out` is null or `cap` bytes of room. At most `cap` bytes are copied, and nothing is where the bytes do not fit. |
 
 ## How it is checked

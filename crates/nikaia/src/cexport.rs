@@ -761,6 +761,11 @@ pub fn export(
          /// Set by `shutdown`, cleared by `init`; every call between them is `E_NOT_RUNNING` (ADR-284 D10).\n\
          static __NIKAIA_STOPPED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);\n\
          \n\
+         /// What the library holds comes from the caller's allocator if it was set first,\n\
+         /// the platform heap otherwise (ADR-284 D6).\n\
+         #[global_allocator]\n\
+         static __NIKAIA_HEAP: nikaia_std::c_boundary::Heap = nikaia_std::c_boundary::Heap::new();\n\
+         \n\
          /// Whether a call may go in: `E_NOT_RUNNING` after `shutdown`, `E_PANICKED` after a panic (ADR-284 D8, D10).\n\
          fn __nikaia_enter() -> Result<(), std::ffi::c_int> {\n    \
          if __NIKAIA_STOPPED.load(std::sync::atomic::Ordering::SeqCst) {\n        return Err(-3);\n    }\n    \
@@ -794,9 +799,14 @@ pub fn export(
          // SAFETY: the C caller hands `cap` bytes at `out` and a place for the length, or NULL (ADR-284 D6).\n        \
          unsafe {{ nikaia_std::c_boundary::hand_back(last.borrow().as_bytes(), out, cap, written) }}\n    \
          }})\n}}\n\
+         \n/// Hands what the library holds to the caller's allocator: before `init` and\n\
+         /// before any other call, or it is `E_ARGUMENT` (ADR-284 D6, D10).\n\
+         #[unsafe(no_mangle)]\npub extern \"C\" fn {prefix}_set_allocator(alloc: Option<nikaia_std::c_boundary::Alloc>, free: Option<nikaia_std::c_boundary::Free>, ctx: *mut std::ffi::c_void) -> std::ffi::c_int {{\n    \
+         __NIKAIA_HEAP.set(alloc, free, ctx)\n}}\n\
          \n/// Starts the library, and starts it again after `shutdown`, which is what\n\
          /// clears a panic's poison (ADR-284 D8, D10). Idempotent, from any thread.\n\
          #[unsafe(no_mangle)]\npub extern \"C\" fn {prefix}_init() -> std::ffi::c_int {{\n    \
+         __NIKAIA_HEAP.settle();\n    \
          let _ = nikaia_std::rt::start(nikaia_std::rt::UserCode::{user_code});\n    \
          if __NIKAIA_STOPPED.load(std::sync::atomic::Ordering::SeqCst) {{\n        \
          __NIKAIA_POISONED.store(false, std::sync::atomic::Ordering::SeqCst);\n        \
@@ -888,16 +898,23 @@ pub fn export(
     }
     // **No symbol twice** (D13): a method, a getter and `_free` share a
     // handle's names.
-    let mut symbols: std::collections::BTreeSet<String> = ["last_error", "init", "shutdown"]
-        .iter()
-        .map(|own| format!("{prefix}_{own}"))
-        .collect();
+    let mut symbols: std::collections::BTreeSet<String> = [
+        "last_error",
+        "init",
+        "shutdown",
+        "set_allocator",
+        "alloc_fn",
+        "free_fn",
+    ]
+    .iter()
+    .map(|own| format!("{prefix}_{own}"))
+    .collect();
     let mut claim = |symbol: &str, written: &str| -> Result<()> {
         match symbols.insert(symbol.to_string()) {
             true => Ok(()),
             false => Err(anyhow::anyhow!(
                 "`{written}` would be exported as `{symbol}`, which another entry point, a getter, \
-                 `_free` or the library's own `init`, `shutdown` or `last_error` is already: \
+                 `_free` or the library's own `init`, `shutdown`, `set_allocator` or `last_error` is already: \
                  rename it (ADR-284 D13)."
             )),
         }
@@ -1604,6 +1621,12 @@ pub fn export(
          /* What the entry points throw, numbered per library (ADR-284 D7). */\n\
          {constants}\n\
          {types}\
+         /* What the library holds across calls comes from alloc and free, with ctx,\n\
+            when this is called before init and before any other call; it is\n\
+            {upper}_E_ARGUMENT after (ADR-284 D6). */\n\
+         typedef void *(*{prefix}_alloc_fn)(size_t size, size_t align, void *ctx);\n\
+         typedef void (*{prefix}_free_fn)(void *at, size_t size, size_t align, void *ctx);\n\
+         int {prefix}_set_allocator({prefix}_alloc_fn alloc, {prefix}_free_fn free, void *ctx);\n\n\
          /* Start the library, and start it again after shutdown (ADR-284 D10). */\n\
          int {prefix}_init(void);\n\
          /* Stop it: every call after this is {upper}_E_NOT_RUNNING until init. */\n\

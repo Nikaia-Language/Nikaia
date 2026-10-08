@@ -1,7 +1,10 @@
 //! What C hands a library's entry point and what the entry point hands back
 //! (ADR-284 D5-D7, D11). See `README.md` for every `unsafe` and its argument.
 
-use std::cell::RefCell;
+use core::ffi::{c_int, c_void};
+use std::alloc::{GlobalAlloc, Layout, System};
+use std::cell::{RefCell, UnsafeCell};
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 /// The status of a call that went as asked (ADR-284 D7).
@@ -299,6 +302,160 @@ impl<T> Sent<T> {
     }
 }
 
+/// **The caller's allocator**, as `<prefix>_set_allocator` takes it
+/// (ADR-284 D6): room for `size` bytes aligned to `align`, or null.
+pub type Alloc = unsafe extern "C" fn(size: usize, align: usize, ctx: *mut c_void) -> *mut c_void;
+/// Gives back what [`Alloc`] handed out, with the same size and alignment.
+pub type Free = unsafe extern "C" fn(at: *mut c_void, size: usize, align: usize, ctx: *mut c_void);
+
+const UNDECIDED: u8 = 0;
+const PLATFORM: u8 = 1;
+const SETTING: u8 = 2;
+const CALLER: u8 = 3;
+
+/// **Where a library's memory comes from** (ADR-284 D6, D10): the caller's
+/// allocator if it was set before anything was allocated, the platform heap
+/// otherwise.
+///
+/// The choice is made once, by whichever comes first - `set` or the first
+/// allocation - and never changes after, so every block is given back to the
+/// allocator that handed it out. A `set` that comes too late is `E_ARGUMENT`.
+pub struct Heap {
+    state: AtomicU8,
+    caller: UnsafeCell<Option<(Alloc, Free, *mut c_void)>>,
+}
+
+// SAFETY: `caller` is written once, by the one thread that moved `state` from
+// UNDECIDED to SETTING, and read only after `state` was seen CALLER with
+// `Acquire`, which the writer stored with `Release` after writing it. `ctx` is
+// the C caller's, handed back to its own functions, which it made callable
+// from any thread by handing them to a library.
+unsafe impl Sync for Heap {}
+
+impl Heap {
+    /// A heap that has not chosen yet.
+    pub const fn new() -> Self {
+        Self {
+            state: AtomicU8::new(UNDECIDED),
+            caller: UnsafeCell::new(None),
+        }
+    }
+
+    /// **Take the caller's allocator**: `OK`, or `E_ARGUMENT` where either
+    /// function is missing or the heap has chosen already.
+    pub fn set(&self, alloc: Option<Alloc>, free: Option<Free>, ctx: *mut c_void) -> c_int {
+        let (Some(alloc), Some(free)) = (alloc, free) else {
+            return E_ARGUMENT;
+        };
+        if self
+            .state
+            .compare_exchange(UNDECIDED, SETTING, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            return E_ARGUMENT;
+        }
+        // SAFETY: this thread moved `state` to SETTING, so nothing reads or
+        // writes `caller` until it is CALLER (`Sync` above).
+        unsafe { *self.caller.get() = Some((alloc, free, ctx)) };
+        self.state.store(CALLER, Ordering::Release);
+        OK
+    }
+
+    /// **Choose now**, so that a `set` after this is `E_ARGUMENT`: what
+    /// `<prefix>_init` does (D10).
+    pub fn settle(&self) {
+        self.chosen();
+    }
+
+    /// The caller's functions, or `None` for the platform heap.
+    fn chosen(&self) -> Option<(Alloc, Free, *mut c_void)> {
+        loop {
+            match self.state.load(Ordering::Acquire) {
+                UNDECIDED => {
+                    let _ = self.state.compare_exchange(
+                        UNDECIDED,
+                        PLATFORM,
+                        Ordering::AcqRel,
+                        Ordering::Acquire,
+                    );
+                }
+                SETTING => std::hint::spin_loop(),
+                // SAFETY: seen CALLER with `Acquire`, after the write (`Sync`).
+                CALLER => return unsafe { *self.caller.get() },
+                _ => return None,
+            }
+        }
+    }
+}
+
+impl Default for Heap {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+// SAFETY: a block comes from the platform heap or from the caller's `alloc`,
+// whichever the heap chose before handing out its first block, and goes back
+// to the same one, since the choice never changes; the caller's functions keep
+// `GlobalAlloc`'s contract, which `<prefix>_set_allocator`'s is.
+unsafe impl GlobalAlloc for Heap {
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        match self.chosen() {
+            // SAFETY: the caller's `alloc`, with the size and alignment asked.
+            Some((alloc, _, ctx)) => unsafe { alloc(layout.size(), layout.align(), ctx) }.cast(),
+            // SAFETY: `GlobalAlloc::alloc`'s contract, passed on.
+            None => unsafe { System.alloc(layout) },
+        }
+    }
+
+    unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
+        match self.chosen() {
+            Some(_) => {
+                // SAFETY: `GlobalAlloc::alloc`'s contract, passed on.
+                let at = unsafe { self.alloc(layout) };
+                if !at.is_null() {
+                    // SAFETY: `at` is `layout.size()` bytes just handed out.
+                    unsafe { at.write_bytes(0, layout.size()) };
+                }
+                at
+            }
+            // SAFETY: `GlobalAlloc::alloc_zeroed`'s contract, passed on.
+            None => unsafe { System.alloc_zeroed(layout) },
+        }
+    }
+
+    unsafe fn dealloc(&self, at: *mut u8, layout: Layout) {
+        match self.chosen() {
+            // SAFETY: `at` came from the caller's `alloc` with this layout.
+            Some((_, free, ctx)) => unsafe { free(at.cast(), layout.size(), layout.align(), ctx) },
+            // SAFETY: `at` came from `System` with this layout.
+            None => unsafe { System.dealloc(at, layout) },
+        }
+    }
+
+    unsafe fn realloc(&self, at: *mut u8, layout: Layout, size: usize) -> *mut u8 {
+        match self.chosen() {
+            Some(_) => {
+                // SAFETY: `size` is non-zero and fits `isize` with the
+                // alignment, as `GlobalAlloc::realloc`'s contract says.
+                let grown = unsafe { Layout::from_size_align_unchecked(size, layout.align()) };
+                // SAFETY: as `alloc`.
+                let moved = unsafe { self.alloc(grown) };
+                if !moved.is_null() {
+                    // SAFETY: both blocks hold at least the smaller size, and
+                    // the new one is not the old one.
+                    unsafe { core::ptr::copy_nonoverlapping(at, moved, layout.size().min(size)) };
+                    // SAFETY: `at` came from here with `layout`.
+                    unsafe { self.dealloc(at, layout) };
+                }
+                moved
+            }
+            // SAFETY: `GlobalAlloc::realloc`'s contract, passed on.
+            None => unsafe { System.realloc(at, layout, size) },
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -419,5 +576,65 @@ mod tests {
         });
         assert_eq!(reads, [7, 7]);
         assert_eq!(unsafe { free(counter as *mut Handle<i64>) }, OK);
+    }
+
+    /// The caller's allocator of the tests: the platform heap, counting the
+    /// blocks it holds in `ctx`.
+    unsafe extern "C" fn counted_alloc(size: usize, align: usize, ctx: *mut c_void) -> *mut c_void {
+        let held = unsafe { &*(ctx as *const std::sync::atomic::AtomicIsize) };
+        held.fetch_add(1, Ordering::SeqCst);
+        unsafe { System.alloc(Layout::from_size_align_unchecked(size, align)) }.cast()
+    }
+
+    unsafe extern "C" fn counted_free(
+        at: *mut c_void,
+        size: usize,
+        align: usize,
+        ctx: *mut c_void,
+    ) {
+        let held = unsafe { &*(ctx as *const std::sync::atomic::AtomicIsize) };
+        held.fetch_sub(1, Ordering::SeqCst);
+        unsafe { System.dealloc(at.cast(), Layout::from_size_align_unchecked(size, align)) }
+    }
+
+    #[test]
+    fn a_heap_set_first_uses_the_callers_allocator_for_every_block() {
+        let held = std::sync::atomic::AtomicIsize::new(0);
+        let heap = Heap::new();
+        let ctx = &held as *const _ as *mut c_void;
+        assert_eq!(heap.set(Some(counted_alloc), Some(counted_free), ctx), OK);
+        let layout = Layout::from_size_align(24, 8).expect("a layout");
+        let at = unsafe { heap.alloc_zeroed(layout) };
+        assert_eq!(unsafe { *at.add(23) }, 0);
+        let at = unsafe { heap.realloc(at, layout, 64) };
+        assert_eq!(held.load(Ordering::SeqCst), 1);
+        unsafe { heap.dealloc(at, Layout::from_size_align(64, 8).expect("a layout")) };
+        assert_eq!(held.load(Ordering::SeqCst), 0);
+        assert_eq!(
+            heap.set(Some(counted_alloc), Some(counted_free), ctx),
+            E_ARGUMENT
+        );
+    }
+
+    #[test]
+    fn a_heap_that_handed_out_a_block_keeps_the_platform_heap() {
+        let held = std::sync::atomic::AtomicIsize::new(0);
+        let heap = Heap::new();
+        let ctx = &held as *const _ as *mut c_void;
+        assert_eq!(heap.set(None, Some(counted_free), ctx), E_ARGUMENT);
+        let layout = Layout::from_size_align(16, 16).expect("a layout");
+        let at = unsafe { heap.alloc(layout) };
+        assert_eq!(
+            heap.set(Some(counted_alloc), Some(counted_free), ctx),
+            E_ARGUMENT
+        );
+        unsafe { heap.dealloc(at, layout) };
+        assert_eq!(held.load(Ordering::SeqCst), 0);
+        let settled = Heap::new();
+        settled.settle();
+        assert_eq!(
+            settled.set(Some(counted_alloc), Some(counted_free), ctx),
+            E_ARGUMENT
+        );
     }
 }

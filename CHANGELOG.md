@@ -8,6 +8,16 @@ or the specification. A change only to the guide, the notes, the README, the
 website, the tests, the examples or the tooling around them raises nothing and
 has no heading here; `CLAUDE.md` draws the line.
 
+## [0.0.696] — 2026-10-08
+
+**A library takes the caller's allocator** (ADR-284 D6, D10; #88).
+`<package>_set_allocator(alloc, free, ctx)` hands everything the library holds
+to the caller's functions, `alloc(size, align, ctx)` and
+`free(at, size, align, ctx)`. The library's heap (`c_boundary::Heap`) chooses
+once, at that call or at its first block, whichever comes first, so every block
+goes back to the allocator that handed it out. Called after `init` or after any
+other call, or with a `NULL` function, it is `E_ARGUMENT`.
+
 ## [0.0.695] — 2026-10-08
 
 **An `extern` struct's array field may hold any C value** (ADR-284 D15; #88).

@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part III: Tooling, Ecosystem & Interoperability**
-**Version:** 0.0.695 (Draft)
+**Version:** 0.0.696 (Draft)
 **Date:** 2026-10-08
 
 ---
@@ -625,7 +625,10 @@ generates `<package>.h` from the ledger. The caller owns the memory, and a call 
   `<package>_last_error` renders the failure with its site and its `secondary` list, per thread;
 * a text or byte result is written into the **caller's buffer** (`out, cap, written`; `NULL` asks
   the size; too small is a status with the size that would do), and the caller may supply the
-  **allocator** for everything the library holds across calls, before `init`;
+  **allocator** for everything the library holds across calls:
+  `<package>_set_allocator(alloc, free, ctx)`, where `alloc(size, align, ctx)` hands out a block
+  and `free(at, size, align, ctx)` takes it back. It holds where it is called before `init` and
+  before any other call; after them, or with a `NULL` function, it is `E_ARGUMENT`;
 * an exported `struct` is an opaque handle with `_new`, `_free`, a getter per `pub` field and its
   `extern` methods; text and bytes go in as pointer and length; `T?` is `NULL` or a status;
 * a function that may pause is exported **blocking** and **`_async`** with a callback on a library
