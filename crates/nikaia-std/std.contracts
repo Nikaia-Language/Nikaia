@@ -3881,6 +3881,21 @@ sync = true
 touches = []
 signature = "(self: ref Connection) -> String"
 
+# **The one place a protocol accepts** ([ADR-326](../../docs/specification/adr/adr-326.md)
+# D1): `handler` is kept, because each connection's task calls it after this
+# call has gone on accepting. It ends only where the address cannot be bound
+# or accepting fails for a reason other than a full descriptor table (D3).
+# Accept connections and run `handler` on each, in a task of its own.
+#
+# A handler that panics or throws ends its own connection, and the server goes
+# on. Out of descriptors, it pauses accepting rather than ending.
+[fn."net::serve"]
+pub = true
+touches = ["socket read", "socket write"]
+throws = ["io::IoError"]
+keeps = ["handler"]
+signature = "(address: ref String, handler: fn(net::Connection) throws)"
+
 # Close it now rather than when it is dropped.
 #
 # Dropping one closes it, which is the language below's answer; a program that

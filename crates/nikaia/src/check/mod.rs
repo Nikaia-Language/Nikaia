@@ -24208,8 +24208,12 @@ impl<'a> Checker<'a> {
                         }
                     }
                     // **A parameter the callee keeps is a kept function
-                    // value**, `sync` or not: the callee stores it.
-                    if declared_here && !self.runs_the_parameter(callee, at) {
+                    // value**, `sync` or not: the callee stores it. A `std`
+                    // entry too, where its `keeps` names the parameter
+                    // (`net::serve`'s handler, ADR-326 D1): its Rust takes the
+                    // same `Kept` this program's own declaration would, so
+                    // ADR-277 D12's plain closure is not what it describes.
+                    if !self.runs_the_parameter(callee, at) {
                         self.checked
                             .kept_lambdas
                             .insert((span.at(), argument_shape(arg)), (!is_sync, *throws));

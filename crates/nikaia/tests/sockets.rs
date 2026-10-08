@@ -166,3 +166,99 @@ fn main() throws {
         String::from_utf8_lossy(&out.stderr)
     );
 }
+
+/// A server on `net::serve` (ADR-326 D1): it echoes, and a message of four
+/// bytes makes its handler panic.
+const SERVED: &str = "\
+use std::net
+
+fn echo(mut conn: net::Connection) throws {
+    let got = conn.read()
+    if got.len() == 4 {
+        panic(\"boom\")
+    }
+    conn.write(got)
+}
+
+fn main() throws {
+    net::serve(\"ADDRESS\") fn(mut conn) { echo(conn) }
+}
+";
+
+/// A port nobody is listening on, which the server is then told to take.
+fn free_address() -> String {
+    let probe = std::net::TcpListener::bind("127.0.0.1:0").expect("a free port");
+    let address = probe.local_addr().expect("its address").to_string();
+    drop(probe);
+    address
+}
+
+/// The server, connected to once it has bound: a refused connection is the
+/// one answer that means *not yet*, and it is asked a bounded number of times.
+fn connect_to(address: &str, server: &mut std::process::Child) -> std::net::TcpStream {
+    for _ in 0..500 {
+        if let Ok(stream) = std::net::TcpStream::connect(address) {
+            return stream;
+        }
+        assert!(
+            server.try_wait().expect("the server's state").is_none(),
+            "the server ended before it took a connection"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    panic!("the server never took a connection at {address}");
+}
+
+fn ask(stream: &mut std::net::TcpStream, what: &[u8]) -> Vec<u8> {
+    use std::io::{Read, Write};
+    stream.write_all(what).expect("write");
+    let mut back = vec![0; 64];
+    let n = stream.read(&mut back).expect("read");
+    back.truncate(n);
+    back
+}
+
+/// **Each connection is a task of its own** (ADR-326 D1, D4), at both settings:
+/// a client that has connected and sent nothing does not hold up the next one,
+/// and a handler that panics ends its own connection while the server goes on.
+/// Asked by order, not by time: the second client's answer arrives while the
+/// first one's connection is still waiting.
+#[test]
+fn net_serve_runs_each_connection_in_a_task_of_its_own() {
+    for switch in ["no", "yes"] {
+        let dir = common::scratch_dir(&format!("serve-{switch}"));
+        let address = free_address();
+        let binary = build(
+            &dir,
+            &SERVED.replace("ADDRESS", &address),
+            &["--user-parallelism", switch],
+        );
+        let mut server = Command::new(&binary)
+            .current_dir(&dir)
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("start the server");
+
+        let mut waiting = connect_to(&address, &mut server);
+        let mut second = connect_to(&address, &mut server);
+        assert_eq!(ask(&mut second, b"hi"), b"hi", "at `{switch}`");
+        assert_eq!(ask(&mut waiting, b"a"), b"a", "at `{switch}`");
+
+        let mut crashing = connect_to(&address, &mut server);
+        assert_eq!(
+            ask(&mut crashing, b"boom"),
+            b"",
+            "at `{switch}`: the connection closes"
+        );
+        let mut after = connect_to(&address, &mut server);
+        assert_eq!(
+            ask(&mut after, b"ok"),
+            b"ok",
+            "at `{switch}`: the server goes on"
+        );
+
+        server.kill().ok();
+        server.wait().ok();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}

@@ -169,6 +169,90 @@ impl Connection {
     pub fn close(self) {}
 }
 
+/// **Accept connections at `address` and run `handler` on each, in a task of
+/// its own** ([ADR-326](../../../docs/specification/adr/adr-326.md) D1): the
+/// one place a protocol accepts, and `http` is one of its users.
+///
+/// One thread runs every connection at `user_parallelism = no`, each giving the
+/// thread up where it waits; [`serve_on_pool`] is the same at `yes`, which the
+/// emitter writes there, as `spawn` is two functions for the same reason. A
+/// handler that panics ends its own task (D4), and one that throws ends its
+/// connection with the error said on standard error: neither ends the server.
+///
+/// **A descriptor ceiling pauses the accepting and never ends it** (D3): the
+/// system's queue holds the next connection until one closes.
+pub async fn serve(address: &str, handler: Handler) -> Result<(), IoError> {
+    let listener = listen(address).await?;
+    loop {
+        let Some(connection) = accepted(&listener).await? else {
+            continue;
+        };
+        let handler = handler.clone();
+        // **Started as a `spawn` is**, so a panic is caught at the task's edge
+        // and ends this connection alone (D4); nobody joins it.
+        crate::task::TaskHandle::start(async move { said(handler(connection).await) });
+    }
+}
+
+/// [`serve`] where tasks run on threads (`user_parallelism = yes`): the
+/// handler and its futures cross one.
+pub async fn serve_on_pool(address: &str, handler: PoolHandler) -> Result<(), IoError> {
+    let listener = listen(address).await?;
+    loop {
+        let Some(connection) = accepted(&listener).await? else {
+            continue;
+        };
+        let handler = handler.clone();
+        crate::task::TaskHandle::start_on_pool(async move { said(handler(connection).await) });
+    }
+}
+
+/// What a handler ends with: nothing, or what it threw - the shape the emitter
+/// writes for a kept `fn(net::Connection) throws`.
+pub type Outcome = Result<(), Box<dyn std::error::Error>>;
+
+/// [`serve`]'s handler at `user_parallelism = no`.
+pub type Handler = crate::func::Kept<dyn Fn(Connection) -> crate::func::Boxed<Outcome>>;
+
+/// [`serve_on_pool`]'s handler, which crosses threads.
+pub type PoolHandler =
+    crate::func::Kept<dyn Fn(Connection) -> crate::func::SendBoxed<Outcome> + Send + Sync>;
+
+/// **A handler that threw ends its connection**, and the error is said on
+/// standard error; the server goes on.
+fn said(outcome: Outcome) {
+    if let Err(error) = outcome {
+        eprintln!("net::serve: a connection ended with an error: {error}");
+    }
+}
+
+/// The next connection, or `None` after a pause where the process is out of
+/// descriptors (ADR-326 D3): the connection waits in the system's queue, and
+/// the server does not end for it.
+async fn accepted(listener: &Listener) -> Result<Option<Connection>, IoError> {
+    loop {
+        match listener.inner.accept() {
+            Ok((stream, _)) => {
+                stream
+                    .set_nonblocking(true)
+                    .map_err(|e| IoError::of(e, "a connection"))?;
+                return Ok(Some(Connection { inner: stream }));
+            }
+            Err(error) if would_block(&error) => ready(&listener.inner, Interest::Readable).await?,
+            Err(error) if out_of_descriptors(&error) => {
+                crate::time::sleep(crate::time::Duration::from_millis(10)).await;
+                return Ok(None);
+            }
+            Err(error) => return Err(IoError::of(error, "accept")),
+        }
+    }
+}
+
+/// `EMFILE` or `ENFILE`: the process's or the system's descriptors are used up.
+fn out_of_descriptors(error: &std::io::Error) -> bool {
+    matches!(error.raw_os_error(), Some(24 | 23))
+}
+
 /// Whether the kernel said *not yet*.
 ///
 /// `Interrupted` is on this list because a signal is not a failure of the

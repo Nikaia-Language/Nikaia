@@ -4,6 +4,22 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.658] — 2026-10-08
+
+**`net::serve(at) fn(conn) { … }` runs each connection in a task of its own**
+(ADR-326 D1, #121 step 3).
+- At both settings: `serve` at `no`, its pool twin at `yes`, as `spawn` is.
+  A handler that panics ends its own connection, one that throws says so on
+  standard error, and neither ends the server. Out of descriptors, it pauses
+  accepting (D3).
+- A `std` entry whose `keeps` names a function parameter takes the program's
+  kept-function shape (`Kept`), as a parameter the program declares does.
+- A kept lambda's `mut` parameter is its own value (`|mut conn|`), not the
+  address an `update` block gets; a kept lambda that throws no longer draws
+  `rustc`'s *unnecessary braces*.
+- `http::listen` still accepts one connection at a time: standing it on
+  `serve` needs the bound address and D5's `connections:` from `serve` (#121).
+
 ## [0.0.657] — 2026-10-08
 
 **`join` on a task that panicked throws `task::Crashed`** (ADR-328 D8, #95

@@ -9118,12 +9118,28 @@ impl<'p> Emitter<'p> {
                             out.push(&format!("let {hull} = {hull}.clone(); "));
                         }
                     }
+                    // **A `mut` parameter is the lambda's own value**: a kept
+                    // function is handed its arguments, so `fn(mut conn)` is a
+                    // binding it may change, written `mut conn`, and not the
+                    // address a lock's door hands an `update` block.
+                    let bound: Vec<String> = params
+                        .iter()
+                        .zip(&names)
+                        .map(|(p, name)| match mutable.contains(p) {
+                            true => format!("mut {name}"),
+                            false => name.clone(),
+                        })
+                        .collect();
                     out.push(&format!(
                         "nikaia_std::func::Kept(std::sync::Arc::new(move |{}| ",
-                        names.join(", ")
+                        bound.join(", ")
                     ));
-                    let mut changed: Vec<Symbol> = flow.changed.to_vec();
-                    changed.extend(mutable.iter().copied());
+                    let changed: Vec<Symbol> = flow
+                        .changed
+                        .iter()
+                        .copied()
+                        .filter(|name| !params.contains(name))
+                        .collect();
                     let inside = Flow {
                         in_lambda: !pauses,
                         throws: fails,
@@ -9136,11 +9152,14 @@ impl<'p> Emitter<'p> {
                     }
                     // A type that may fail hands back a `Result`, as a
                     // `throws` function does: the value goes inside the `Ok`.
+                    // Through a `let`: `Ok({ … })` around a body of one
+                    // expression is `rustc`'s *unnecessary braces*, about a file
+                    // nobody wrote.
                     match fails {
                         true => {
-                            out.push("{ Ok(");
+                            out.push("{ let __nikaia_done = ");
                             self.block(out, body, depth, inside, Tail::Value)?;
-                            out.push(") }");
+                            out.push("; Ok(__nikaia_done) }");
                         }
                         false => self.block(out, body, depth, inside, Tail::Return)?,
                     }
@@ -10511,6 +10530,21 @@ impl<'p> Emitter<'p> {
         }
 
         self.expr(out, func, depth, flow)?;
+        // **`net::serve` runs each connection in a task** (ADR-326 D1), and
+        // where tasks run on threads its handler crosses one: the pool's twin,
+        // as `spawn` has, from one written call.
+        if self.build.overlaps_user_code()
+            && let Expr::Path(segments) = func
+            && self.parsed.unaliased(
+                &segments
+                    .iter()
+                    .map(|s| self.text(*s))
+                    .collect::<Vec<_>>()
+                    .join("::"),
+            ) == "net::serve"
+        {
+            out.push("_on_pool");
+        }
         if unchecked {
             out.push(UNCHECKED);
         }
