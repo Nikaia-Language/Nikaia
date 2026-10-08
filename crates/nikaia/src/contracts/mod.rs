@@ -44,7 +44,7 @@ use anyhow::{Result, anyhow};
 
 use crate::ast::{Expr, Item, Stmt};
 use crate::contracts::ty::TyOps;
-use crate::emit::{borrowing_structs, holds_view, names_borrowing};
+use crate::emit::{borrowing_structs_beside, holds_view, names_borrowing, package_borrowing};
 use crate::parser::Parsed;
 
 /// **The ledger's small records are declared in Nikaia**
@@ -388,10 +388,12 @@ impl LedgerOps for Ledger {
         // The options whose default is computed rather than written as a
         // literal (ADR-318 D1), evaluated once the entries exist.
         let mut defaults: Vec<Computed<'_>> = Vec::new();
+        // What holds a view anywhere in the package, by name (#544).
+        let package_borrowing = package_borrowing(units);
         for parsed in units.iter().copied() {
             // Per unit, and it has to be: a `Symbol` is interned by the parse
             // of one file, so a set of them means nothing to another.
-            let borrowing = borrowing_structs(parsed);
+            let borrowing = borrowing_structs_beside(parsed, &package_borrowing);
 
             for item in &parsed.program.items {
                 match &item.node {
@@ -559,11 +561,28 @@ impl LedgerOps for Ledger {
                                 compares: false,
                                 copies: false,
                                 touches: Vec::new(),
-                                // The tether is a field's question and a variant's
-                                // payload is not a field a program assigns to;
-                                // `views::fields_of` flattens them for the *view*
-                                // analysis, which is a different walk over the AST.
-                                tethered: Vec::new(),
+                                // **The cases whose payload holds a view** (#544):
+                                // a struct in another file that holds this `enum`
+                                // is lowered with the lifetime the `enum` has, and
+                                // that file reads it here by name.
+                                tethered: variants
+                                    .iter()
+                                    .filter(|v| match &v.fields {
+                                        crate::ast::VariantFields::Unit => false,
+                                        crate::ast::VariantFields::Tuple(types) => {
+                                            types.iter().any(|t| {
+                                                holds_view(t) || names_borrowing(t, &borrowing)
+                                            })
+                                        }
+                                        crate::ast::VariantFields::Named(fields) => {
+                                            fields.iter().any(|f| {
+                                                holds_view(&f.ty)
+                                                    || names_borrowing(&f.ty, &borrowing)
+                                            })
+                                        }
+                                    })
+                                    .map(|v| parsed.text(v.name).to_string())
+                                    .collect(),
                                 // A declared type is walked by its parts.
                                 constant: String::new(),
                                 mark: String::new(),

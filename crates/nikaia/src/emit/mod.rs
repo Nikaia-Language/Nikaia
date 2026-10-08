@@ -2694,7 +2694,14 @@ impl<'p> Emitter<'p> {
             parsed,
             build,
             described: described.clone(),
-            borrowing: borrowing_structs(parsed),
+            borrowing: borrowing_structs_beside(
+                parsed,
+                &package_borrowing(
+                    &std::iter::once(parsed)
+                        .chain(beside.iter().copied())
+                        .collect::<Vec<_>>(),
+                ),
+            ),
             // **A type another file of the package declares answers too**
             // (Part I 9.1): the ledger records a tether for a struct's fields
             // and for nothing an `enum` carries, so an error enum holding a
@@ -11598,8 +11605,17 @@ impl<'p> Emitter<'p> {
                     Self::sum_variant(member)
                 ));
             }
-            for arm in member_arms.iter().chain(catch_all.iter()) {
+            for (at, arm) in member_arms.iter().chain(catch_all.iter()).enumerate() {
                 out.push(&inner);
+                // **The catch-all is copied into every member's half**, and in
+                // one whose own arms already name each variant (an `enum` with
+                // a single case) the copy cannot be reached. The source's
+                // `else` is required (ADR-023 D4) and reaches the other
+                // members, so what `rustc` would warn about is the copy, in a
+                // file nobody wrote (#542).
+                if at >= member_arms.len() {
+                    out.push("#[allow(unreachable_patterns)] ");
+                }
                 self.match_pattern(out, &arm.pattern, depth + 2, flow)?;
                 if let Some(guard) = &arm.guard {
                     out.push(" if ");
@@ -14783,8 +14799,20 @@ fn tethered_types(contracts: &crate::contracts::Ledger) -> std::collections::BTr
 /// tied to the input as well - transitively, which is why this is a fixpoint
 /// and not one pass.
 pub(crate) fn borrowing_structs(parsed: &Parsed) -> HashSet<Symbol> {
+    borrowing_structs_beside(parsed, &std::collections::BTreeSet::new())
+}
+
+/// **The same, with the types another file of the package declares**
+/// (Part I 9.1, #544): `outside` names the ones known to hold a view, so a
+/// struct here that holds an `enum` declared beside this file holds a view
+/// too. By name, because a `Symbol` belongs to the parse that interned it.
+pub(crate) fn borrowing_structs_beside(
+    parsed: &Parsed,
+    outside: &std::collections::BTreeSet<String>,
+) -> HashSet<Symbol> {
     let mut fields_of: HashMap<Symbol, Vec<&Type>> = HashMap::new();
     let mut borrowing = HashSet::new();
+    let named_outside = |t: &Type| names_outside(parsed, t, outside);
 
     for item in &parsed.program.items {
         // An enum holds views the same way a struct does - in the types of
@@ -14798,14 +14826,14 @@ pub(crate) fn borrowing_structs(parsed: &Parsed) -> HashSet<Symbol> {
                     VariantFields::Named(fields) => fields.iter().map(|f| &f.ty).collect(),
                 })
                 .collect();
-            if types.iter().any(|t| holds_view(t)) {
+            if types.iter().any(|t| holds_view(t) || named_outside(t)) {
                 borrowing.insert(*name);
             }
             fields_of.insert(*name, types);
         }
         if let Item::Struct { name, fields, .. } = &item.node {
             let types: Vec<&Type> = fields.iter().map(|f| &f.ty).collect();
-            if types.iter().any(|t| holds_view(t)) {
+            if types.iter().any(|t| holds_view(t) || named_outside(t)) {
                 borrowing.insert(*name);
             }
             fields_of.insert(*name, types);
@@ -14839,6 +14867,43 @@ pub(crate) fn holds_view(ty: &Type) -> bool {
         return (*code.result).as_ref().is_some_and(holds_view);
     }
     ty.is_view || ty.generics.iter().any(holds_view)
+}
+
+/// Every view-holding type the files of a package declare, by name: each
+/// file's [`borrowing_structs_beside`] read against what the others found,
+/// until nothing more is found - a struct in one file can hold an `enum` of a
+/// second that holds a struct of a third.
+pub(crate) fn package_borrowing(units: &[&Parsed]) -> std::collections::BTreeSet<String> {
+    let mut found = std::collections::BTreeSet::new();
+    loop {
+        let before = found.len();
+        for parsed in units {
+            let more: Vec<String> = borrowing_structs_beside(parsed, &found)
+                .into_iter()
+                .map(|s| parsed.text(s).to_string())
+                .collect();
+            found.extend(more);
+        }
+        if found.len() == before {
+            return found;
+        }
+    }
+}
+
+fn names_outside(parsed: &Parsed, ty: &Type, outside: &std::collections::BTreeSet<String>) -> bool {
+    if outside.is_empty() {
+        return false;
+    }
+    if let Some(code) = &*ty.code {
+        return (*code.result)
+            .as_ref()
+            .is_some_and(|result| names_outside(parsed, result, outside));
+    }
+    outside.contains(parsed.text(ty.name))
+        || ty
+            .generics
+            .iter()
+            .any(|g| names_outside(parsed, g, outside))
 }
 
 pub(crate) fn names_borrowing(ty: &Type, borrowing: &HashSet<Symbol>) -> bool {

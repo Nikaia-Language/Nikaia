@@ -1,0 +1,8 @@
+// An enum whose case holds a view, declared apart from the struct that holds
+// it (`views_across_files.nika`): the ledger records it as tethered, so the
+// struct is lowered with the enum's lifetime (#544).
+
+enum ViewsAcrossToken {
+    Word(ref String),
+    Gap
+}

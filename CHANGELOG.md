@@ -4,6 +4,20 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.654] — 2026-10-08
+
+**Three faults filed by 0.0.652 are fixed.**
+- **#542**: a `match error` over a sum with a one-variant member draws no
+  `rustc` warning: the `else` copied into that member's half is marked as the
+  copy it is.
+- **#544**: a struct holding a view-carrying `enum` declared in another file of
+  the package carries the enum's lifetime. The ledger records an `enum` whose
+  cases hold a view as tethered, and which types hold a view is read across the
+  package's files.
+- **#545**: an `assert` reads a span with `in_seconds()` and its kin, which the
+  ledger already describes as pure; `option_defaults.nika` drops its `let`
+  workarounds. Rust's `as_secs` stays out (ADR-150 D5).
+
 ## [0.0.653] — 2026-10-08
 
 **Layers with phases; the handler runs at most once, under the runtime alone** (ADR-335, #121).

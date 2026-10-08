@@ -141,6 +141,43 @@ fn a_match_over_two_error_types_needs_an_else() {
     assert!(found[0].message.contains("else"), "{}", found[0].message);
 }
 
+/// **A member with one variant draws no warning** (#542): its half of the
+/// match names every case, so the catch-all copied into it cannot be reached,
+/// and what `rustc` would say is about the copy, in a file nobody wrote.
+#[test]
+fn a_one_variant_member_draws_no_warning() {
+    let rust = lowered(&format!(
+        "{TWO_WAYS}fn main() {{\n\
+         \x20   let text = load(\"x\") catch {{\n\
+         \x20       match error {{\n\
+         \x20           ConfigError::Empty(p) => f\"empty: {{p}}\"\n\
+         \x20           else => \"other\".clone()\n\
+         \x20       }}\n\
+         \x20   }}\n\
+         \x20   println(f\"{{text}}\")\n\
+         }}\n"
+    ));
+    let dir = common::scratch_dir("error-sums-one-variant");
+    let path = dir.join("main.rs");
+    std::fs::write(&path, &rust).expect("write the lowered program");
+    let compiled = common::compile(
+        &path,
+        &[
+            "--crate-type",
+            "bin",
+            "-o",
+            &dir.join("program").to_string_lossy(),
+        ],
+    );
+    let said = String::from_utf8_lossy(&compiled.stderr);
+    assert!(compiled.status.success(), "{said}\n--- emitted ---\n{rust}");
+    assert!(
+        !said.contains("unreachable"),
+        "{said}\n--- emitted ---\n{rust}"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 /// **And one error type is not this rule's.** A handler over a set of one is
 /// matching a closed `enum`, so naming every variant of it is exhaustive and
 /// nothing is missing.

@@ -1,0 +1,25 @@
+// A struct that holds an enum declared in another file of the package, whose
+// case holds a view (#544): the struct carries the enum's lifetime.
+
+struct ViewsAcrossLine {
+    first: ViewsAcrossToken,
+    count: i64
+}
+
+fn views_across_first(text: ref String) -> ViewsAcrossLine {
+    if text == "" {
+        return ViewsAcrossLine { first: ViewsAcrossToken::Gap, count: 0 }
+    }
+    return ViewsAcrossLine { first: ViewsAcrossToken::Word(text), count: 1 }
+}
+
+test "a struct holds a view-carrying enum from another file" {
+    let text = "hello"
+    let line = views_across_first(text)
+    let word = match line.first {
+        ViewsAcrossToken::Word(w) => f"{w}"
+        ViewsAcrossToken::Gap => "gap".clone()
+    }
+    assert(word == "hello")
+    assert(line.count == 1)
+}

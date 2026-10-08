@@ -121,10 +121,8 @@ test "a text default for an owned string is one" {
 comptime OPTION_DEFAULTS_SPAN: time::Duration = 90.seconds()
 
 test "a duration comptime is computed by std" {
-    let minutes = OPTION_DEFAULTS_SPAN.in_minutes()
-    let seconds = OPTION_DEFAULTS_SPAN.in_seconds()
-    assert(minutes == 1)
-    assert(seconds == 90)
+    assert(OPTION_DEFAULTS_SPAN.in_minutes() == 1)
+    assert(OPTION_DEFAULTS_SPAN.in_seconds() == 90)
 }
 
 // A later `comptime` reads an earlier one of the type (#519): the run that

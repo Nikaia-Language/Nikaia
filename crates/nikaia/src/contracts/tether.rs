@@ -96,9 +96,10 @@ impl HeldOps for Held {
 pub fn infer(ledger: &mut Ledger, units: &[&Parsed], library: &Ledger) {
     let mut solved: BTreeMap<String, Vec<Held>> = BTreeMap::new();
     let package = declared_in(units);
+    let package_borrowing = crate::emit::package_borrowing(units);
     for parsed in units.iter().copied() {
         // By **name**: a `Symbol` belongs to the parse that interned it.
-        let borrowing = crate::emit::borrowing_structs(parsed)
+        let borrowing = crate::emit::borrowing_structs_beside(parsed, &package_borrowing)
             .into_iter()
             .map(|s| parsed.text(s).to_string())
             .collect();
