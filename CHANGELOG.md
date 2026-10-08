@@ -8,6 +8,14 @@ or the specification. A change only to the guide, the notes, the README, the
 website, the tests, the examples or the tooling around them raises nothing and
 has no heading here; `CLAUDE.md` draws the line.
 
+## [0.0.677] — 2026-10-08
+
+**`text.matches(p).count()` is an `i64`** (#548). `str::matches` has its entry
+in `std`'s ledger, a `Seq` of views as `split` has, so its `count()` gets the
+conversion every count gets. `0 - closes` is `-1` and the program goes on.
+`tests/guide` drops its `as i64`. The guide's `SharedMut` block is a
+`fn main() throws`, because `join` throws since 0.0.657.
+
 ## [0.0.676] — 2026-10-08
 
 **A pausing entry point is exported `_async` too** (ADR-284 D9, D19; #88).

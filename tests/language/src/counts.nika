@@ -46,3 +46,14 @@ test "a programs own count is not converted" {
     let line = f"{t.count()} {words}"
     assert(line == "x! 3")
 }
+
+// **The places a pattern stands are counted in `i64` too** (#548): taking a
+// larger count from a smaller one is a negative number, as it is for `len()`,
+// and not a program that stops.
+test "a count of matches goes below zero" {
+    let line = "}"
+    let n = line.len()
+    let closes = line.matches("}").count()
+    assert(n - 2 == -1)
+    assert(0 - closes == -1)
+}

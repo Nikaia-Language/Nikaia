@@ -281,12 +281,14 @@ say so: `overlap { … }` runs its lines at the same time and waits for all of t
 ## Data that more than one task changes
 
 ```nika
-let counter = SharedMut(0)
-let first = spawn fn { counter.update fn(mut v) { v += 1 } }
-let second = spawn fn { counter.update fn(mut v) { v += 2 } }
-first.join()
-second.join()
-println(f"counter is {counter.get()}")    // counter is 3
+fn main() throws {                        // `join` fails if the task crashed
+    let counter = SharedMut(0)
+    let first = spawn fn { counter.update fn(mut v) { v += 1 } }
+    let second = spawn fn { counter.update fn(mut v) { v += 2 } }
+    first.join()
+    second.join()
+    println(f"counter is {counter.get()}")    // counter is 3
+}
 ```
 
 A value that several tasks change is put into a `SharedMut`, and it is changed only

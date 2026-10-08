@@ -76,8 +76,7 @@ fn split(code: ref String) -> String {
             body.push_str(line)
             body.push('\n')
         }
-        // `count()` is unsigned, unlike every other length (#548): `as i64` before subtracting.
-        depth += (line.matches("{").count() as i64) - (line.matches("}").count() as i64)
+        depth += line.matches("{").count() - line.matches("}").count()
         if in_item && depth == 0 {
             in_item = false
         }

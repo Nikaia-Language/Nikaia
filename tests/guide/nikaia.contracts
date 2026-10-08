@@ -16,6 +16,7 @@ views = ["page: borrowed", "text: borrowed"]
 signature = "(page: ref String, text: ref String) -> Vec[Block]"
 
 [fn."dir_of"]
+sync = "inferred"
 throws = ["?", "io::IoError"]
 locks = "?"
 views = ["root: borrowed"]
@@ -39,7 +40,6 @@ views = ["line: borrowed"]
 signature = "(line: ref String) -> bool"
 
 [fn."readings"]
-keeps = ["code"]
 locks = "?"
 views = ["code: borrowed"]
 signature = "(code: ref String) -> Vec[String]"
@@ -51,7 +51,6 @@ views = ["root: borrowed", "dir: borrowed"]
 signature = "(root: ref fs::Root, dir: ref String) -> Vec[Verdict]"
 
 [fn."split"]
-keeps = ["code"]
 locks = "?"
 views = ["code: borrowed"]
 signature = "(code: ref String) -> String"
