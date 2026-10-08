@@ -8,6 +8,13 @@ or the specification. A change only to the guide, the notes, the README, the
 website, the tests, the examples or the tooling around them raises nothing and
 has no heading here; `CLAUDE.md` draws the line.
 
+## [0.0.707] — 2026-10-08
+
+**Text becomes a number by a function per type** (ADR-285 D35, #504).
+- Decided, not built: `text::parse_i32`, `parse_i64`, `parse_u8`, `parse_u32`,
+  `parse_u64`, `parse_f32` and `parse_f64`, each a `T?`. Rust's `str::parse` is
+  not offered. Part III 17.1.
+
 ## [0.0.706] — 2026-10-08
 
 **A list written in number literals is one open number** (ADR-285 D34, #513).
