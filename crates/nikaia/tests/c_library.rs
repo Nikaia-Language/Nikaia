@@ -155,6 +155,21 @@ pub extern fn grown(b: Rect, by: f64) -> Rect sync {
     }
 }
 
+pub struct Hits {
+    count: SharedMut[i64],
+}
+
+impl Hits {
+    pub extern fn() -> Hits {
+        return Hits { count: SharedMut(0) }
+    }
+
+    pub extern fn hit(ref self) -> i64 {
+        self.count.update fn(mut v) { v += 1 }
+        return self.count.get()
+    }
+}
+
 pub enum Refusal {
     Negative,
     TooLarge(i64),
@@ -356,6 +371,37 @@ int main(void) {
     printf("cancelled %d %d\n", reported == CALC_E_CANCELLED, calls);
     calc_op_free(op);
     printf("no done %d\n", calc_napped_async(1, &n, NULL, NULL, NULL));
+    return CALC_OK;
+}
+"#;
+
+/// **Two of the caller's threads at once** (ADR-284 D1, D2, #113): a handle's
+/// `ref self` methods run together, and the `SharedMut` inside keeps the atomic
+/// count and the crossing lock a library needs at `user_parallelism = no` too.
+const THREADS_CALLER: &str = r#"#include <pthread.h>
+#include <stdio.h>
+#include "calc.h"
+
+static void *hitting(void *hits) {
+    int64_t n = 0;
+    for (int i = 0; i < 1000; i++) {
+        calc_Hits_hit((const calc_Hits *)hits, &n);
+    }
+    return NULL;
+}
+
+int main(void) {
+    calc_Hits *hits = NULL;
+    calc_Hits_new(&hits);
+    pthread_t one, two;
+    pthread_create(&one, NULL, hitting, hits);
+    pthread_create(&two, NULL, hitting, hits);
+    pthread_join(one, NULL);
+    pthread_join(two, NULL);
+    int64_t n = 0;
+    calc_Hits_hit(hits, &n);
+    printf("hits %lld\n", (long long)n);
+    calc_Hits_free(hits);
     return CALC_OK;
 }
 "#;
@@ -570,6 +616,26 @@ fn a_c_program_calls_the_library() {
         "started 0 1\nfreed too early -1\ndone 0 242 1\ncancel after done 0\nfreed 0\n\
          cancel twice 0\ncancelled 1 2\nno done -1\n"
     );
+
+    std::fs::write(root.join("threads.c"), THREADS_CALLER).expect("the caller");
+    let program = root.join("threads");
+    let compiled = Command::new("cc")
+        .arg("-I")
+        .arg(&made)
+        .arg(root.join("threads.c"))
+        .arg("-L")
+        .arg(&made)
+        .args(["-lcalc", "-lpthread", "-o"])
+        .arg(&program)
+        .output()
+        .expect("cc runs");
+    assert!(compiled.status.success(), "{}", said(&compiled));
+    let ran = Command::new(&program)
+        .env("LD_LIBRARY_PATH", &made)
+        .output()
+        .expect("the caller runs");
+    assert!(ran.status.success(), "{}", said(&ran));
+    assert_eq!(String::from_utf8_lossy(&ran.stdout), "hits 2001\n");
 
     std::fs::write(root.join("throwing.c"), THROWING_CALLER).expect("the caller");
     let program = root.join("throwing");

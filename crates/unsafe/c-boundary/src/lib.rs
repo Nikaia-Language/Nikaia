@@ -98,7 +98,12 @@ std::thread_local! {
 }
 
 /// **A new handle for `value`**, which C frees with [`free`].
-pub fn handle<T>(value: T) -> *mut Handle<T> {
+///
+/// **`Send + Sync`**, because C may call in from any thread, two at once
+/// (ADR-284 D2, D11): the lock makes the calls take turns where one changes
+/// the value, and two that only read it read it together - which is sound
+/// only for a value that may be read from two threads and dropped on a third.
+pub fn handle<T: Send + Sync>(value: T) -> *mut Handle<T> {
     Box::into_raw(Box::new(Handle {
         value: RwLock::new(value),
     }))
@@ -168,7 +173,9 @@ impl<T> core::ops::DerefMut for Exclusive<'_, T> {
 ///
 /// `at` is null, or a handle [`handle`] made and [`free`] has not freed, alive
 /// for `'a`.
-pub unsafe fn shared<'a, T>(at: *const Handle<T>) -> Result<Shared<'a, T>, core::ffi::c_int> {
+pub unsafe fn shared<'a, T: Send + Sync>(
+    at: *const Handle<T>,
+) -> Result<Shared<'a, T>, core::ffi::c_int> {
     if at.is_null() {
         return Err(E_ARGUMENT);
     }
@@ -208,7 +215,7 @@ pub unsafe fn exclusive<'a, T>(at: *const Handle<T>) -> Result<Exclusive<'a, T>,
 ///
 /// `at` is null, or a handle [`handle`] made and nothing has freed, which no
 /// other thread uses during the call or after it.
-pub unsafe fn free<T>(at: *mut Handle<T>) -> core::ffi::c_int {
+pub unsafe fn free<T: Send + Sync>(at: *mut Handle<T>) -> core::ffi::c_int {
     if at.is_null() {
         return OK;
     }

@@ -8,6 +8,18 @@ or the specification. A change only to the guide, the notes, the README, the
 website, the tests, the examples or the tooling around them raises nothing and
 has no heading here; `CLAUDE.md` draws the line.
 
+## [0.0.683] — 2026-10-08
+
+**A library's `Shared` values are safe on the caller's threads** (ADR-284 D1,
+D2; #113). A build with `artifact = "c-library"` keeps the sharing analysis's
+answer at `user_parallelism = no` too: an entry point's public signature and a
+public field stay at the atomic floor (`Arc`, the crossing lock), and only what
+the analysis proves never crosses gets the plain count. Before this, every
+count was plain at `no`. A handle holding a `SharedMut` called from two C
+threads at once was an `Rc` raced from both. `c-boundary`'s handles now require
+`Send + Sync`, so such a value can no longer hide behind the raw pointer.
+`tests/c_library.rs` hits one handle from two `pthread`s and counts 2001.
+
 ## [0.0.682] — 2026-10-08
 
 **`hello-http` runs under a supervisor** (ADR-328, Part II 12.8; #95 step 8).

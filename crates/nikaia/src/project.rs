@@ -286,6 +286,7 @@ impl Settings {
         )?;
         let mut build = Build::parse(&target, &user_parallelism, &reentrancy_check)?;
         (build.bounds, build.overflow) = optimizations(&optimization)?;
+        build.called_from_c = artifact == "c-library";
         Ok(Settings {
             build,
             target,
@@ -372,6 +373,7 @@ impl Settings {
         let symbol_prefix = symbol_prefix(&word(PREFIX_VAR, "program"))?;
         let mut build = Build::parse(&target, &user_parallelism, &reentrancy_check)?;
         (build.bounds, build.overflow) = optimizations(&optimization)?;
+        build.called_from_c = artifact == "c-library";
         Ok(Settings {
             build,
             target,

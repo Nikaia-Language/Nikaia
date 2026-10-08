@@ -180,6 +180,13 @@ pub struct Build {
     /// [`Needs::of`], whose answer no build-time value changes, and which would
     /// otherwise compute each one a second time.
     pub leaves_values: bool,
+    /// **A library C calls** (`artifact = "c-library"`,
+    /// [ADR-284](../../docs/specification/adr/adr-284.md) D1, D2): its entry
+    /// points may be called from two of the caller's threads at once, whatever
+    /// `user_parallelism` says, so a `Shared` keeps the count the analysis
+    /// gives it - the atomic floor at a public signature or field, the plain
+    /// one only where nothing crosses (#113).
+    pub called_from_c: bool,
 }
 
 impl Build {
@@ -192,7 +199,15 @@ impl Build {
             overflow: crate::bounds::OverflowChecks::default(),
             counts_steps: false,
             leaves_values: false,
+            called_from_c: false,
         })
+    }
+
+    /// Whether a value may cross a thread the program's own code did not
+    /// start: one of its tasks at `user_parallelism = yes`, or a caller's
+    /// thread for a library C calls.
+    pub fn crossings_are_possible(self) -> bool {
+        self.user_parallelism == UserParallelism::Yes || self.called_from_c
     }
 
     /// The default machine, with parallelism asked for.
@@ -2685,7 +2700,7 @@ impl<'p> Emitter<'p> {
             parsed,
             &own_contracts,
             library,
-            build.user_parallelism == UserParallelism::Yes,
+            build.crossings_are_possible(),
         )
         .counts;
 
@@ -5799,10 +5814,12 @@ impl<'p> Emitter<'p> {
             // nothing and costs what `user_parallelism = no` exists to save -
             // and the cheap one keeps the diagnostic, which is the only failure
             // reachable at that setting.
-            LOCKED => crate::contracts::sharing::lock_name(match self.build.user_parallelism {
-                UserParallelism::No => crate::contracts::sharing::Count::Plain,
-                UserParallelism::Yes => count,
-            }),
+            LOCKED => {
+                crate::contracts::sharing::lock_name(match self.build.crossings_are_possible() {
+                    false => crate::contracts::sharing::Count::Plain,
+                    true => count,
+                })
+            }
             // `unaliased`, for the reason [`Emitter::path`] gives: a type may be
             // written with this file's own name for the package that declares it
             // ([ADR-286](../../../docs/specification/adr/adr-286.md) D12).
@@ -5851,7 +5868,7 @@ impl<'p> Emitter<'p> {
         // a position the analysis has no entry for. Without this the *floor* would
         // answer for such a position, and the floor is the atomic count - which at
         // `no` is exactly what that switch exists not to pay.
-        if self.build.user_parallelism == UserParallelism::No {
+        if !self.build.crossings_are_possible() {
             return crate::contracts::sharing::Count::Plain;
         }
         self.shared
