@@ -8,6 +8,13 @@ or the specification. A change only to the guide, the notes, the README, the
 website, the tests, the examples or the tooling around them raises nothing and
 has no heading here; `CLAUDE.md` draws the line.
 
+## [0.0.705] — 2026-10-08
+
+**`nikaia fmt` indents with tabs** (ADR-337 D1, #101).
+- Decided, not built: one tab per level, nothing aligned, a tab counted as four
+  columns for the width of 100; a file indented with spaces is read and
+  written back with tabs. Replaces 0.0.704's four spaces. Part III 13.2.
+
 ## [0.0.704] — 2026-10-08
 
 **What `nikaia fmt` does** (ADR-337, #101).
