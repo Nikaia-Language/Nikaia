@@ -10,17 +10,53 @@
 //     curl localhost:8080/who             you asked localhost:8080
 //     curl -d hello localhost:8080/       you sent 5 bytes
 //     curl localhost:8080/source          this file, which the program never reads
+//     curl localhost:8080/refreshed       how often the refresher ran
+//     curl localhost:8080/crash           the refresher crashes, and is restarted
+//     curl localhost:8080/crashes         how often it did
 //     curl localhost:8080/elsewhere       not found
 //
 // Shows: a package reached by a path (`../http`, named in `nikaia.toml`), a
-// function passed as the last argument after the call, and `??` for a value
-// that may be missing.
+// function passed as the last argument after the call, `??` for a value that
+// may be missing, and a supervisor (Part II 12.8): the server and a refresher
+// run side by side, and the refresher is started again when it crashes while
+// the server goes on answering.
 
 use http
 use std::cli
 use std::fs
+use std::supervisor
+use std::time
 
 fn main() throws {
+    // What the two children share: how often the refresher ran, and how often
+    // it was asked to crash and did. A `SharedMut` is changed only through its
+    // methods.
+    let refreshed = SharedMut(0)
+    let asked = SharedMut(0)
+    let crashed = SharedMut(0)
+
+    // Both children are restarted whenever they end; `OneForOne` restarts only
+    // the one that did.
+    supervisor::run([
+        supervisor::child(fn { serve(refreshed, asked, crashed) }; restart: supervisor::Kind::Permanent),
+        supervisor::child(fn { refresh(refreshed, asked, crashed) }; restart: supervisor::Kind::Permanent),
+    ]; strategy: supervisor::Strategy::OneForOne)
+}
+
+// A cache refresher, standing for any work a server does beside answering:
+// it counts its rounds, and crashes when it is asked to.
+fn refresh(refreshed: SharedMut[i64], asked: SharedMut[i64], crashed: SharedMut[i64]) {
+    while true {
+        time::sleep(20.millis())
+        if asked.get() > crashed.get() {
+            crashed.update fn(mut v) { v += 1 }
+            panic("the refresher was asked to crash")
+        }
+        refreshed.update fn(mut v) { v += 1 }
+    }
+}
+
+fn serve(refreshed: SharedMut[i64], asked: SharedMut[i64], crashed: SharedMut[i64]) throws {
     // An address may be given as an argument. Port `0` picks any free port,
     // and `listen` prints the one it got.
     let at = cli::args().nth(1) ?? "127.0.0.1:8080"
@@ -42,6 +78,18 @@ fn main() throws {
         if request.path() == "/who" {
             let host = request.header("host") ?? "nobody"
             return http::Response::text(f"you asked {host}")
+        }
+        if request.path() == "/refreshed" {
+            let rounds = refreshed.get()
+            return http::Response::text(f"{rounds}")
+        }
+        if request.path() == "/crash" {
+            asked.update fn(mut v) { v += 1 }
+            return http::Response::text("the refresher will crash")
+        }
+        if request.path() == "/crashes" {
+            let times = crashed.get()
+            return http::Response::text(f"{times}")
         }
         // A file the program never reads (ADR-289 D23): looked at when the
         // answer is made, read only when it is sent. Its name is resolved

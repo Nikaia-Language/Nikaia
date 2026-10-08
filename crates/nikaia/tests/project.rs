@@ -1787,6 +1787,40 @@ fn the_http_package_serves_its_example() {
     let (status, _) = ask(&address, b"GET /outside HTTP/1.1\r\nhost: x\r\n\r\n");
     assert_eq!(status, "HTTP/1.1 404 Not Found");
 
+    // **Under a supervisor** (ADR-328, Part II 12.8): the refresher beside the
+    // server is asked to crash, is started again, and counts on - while the
+    // server, a child of the same supervisor, goes on answering.
+    let (_, before) = ask(&address, b"GET /refreshed HTTP/1.1\r\nhost: x\r\n\r\n");
+    let (status, _) = ask(&address, b"GET /crash HTTP/1.1\r\nhost: x\r\n\r\n");
+    assert_eq!(status, "HTTP/1.1 200 OK");
+    let mut crashes = String::new();
+    for _ in 0..200 {
+        crashes = ask(&address, b"GET /crashes HTTP/1.1\r\nhost: x\r\n\r\n").1;
+        if crashes == "1" {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    assert_eq!(crashes, "1", "the refresher crashed once");
+    let (_, after_crash) = ask(&address, b"GET /refreshed HTTP/1.1\r\nhost: x\r\n\r\n");
+    let mut later = after_crash.clone();
+    for _ in 0..200 {
+        later = ask(&address, b"GET /refreshed HTTP/1.1\r\nhost: x\r\n\r\n").1;
+        if later.parse::<i64>().unwrap_or(0) > after_crash.parse::<i64>().unwrap_or(0) {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    let (before, after_crash, later): (i64, i64, i64) = (
+        before.parse().expect("a count"),
+        after_crash.parse().expect("a count"),
+        later.parse().expect("a count"),
+    );
+    assert!(
+        later > after_crash,
+        "restarted, it counts on: {before}, {after_crash} at the crash, then {later}"
+    );
+
     // **A body by `Content-Length`**, which is the whole of the MVP's framing.
     let (status, body) = ask(
         &address,

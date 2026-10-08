@@ -8,6 +8,16 @@ or the specification. A change only to the guide, the notes, the README, the
 website, the tests, the examples or the tooling around them raises nothing and
 has no heading here; `CLAUDE.md` draws the line.
 
+## [0.0.682] — 2026-10-08
+
+**`hello-http` runs under a supervisor** (ADR-328, Part II 12.8; #95 step 8).
+The server and a refresher are two `Permanent` children of one `OneForOne`
+supervisor, sharing three `SharedMut` counters. `/crash` asks the refresher to
+crash. It panics, is started again, and counts on, while the server answers
+throughout. `/refreshed` and `/crashes` show it, and `tests/project.rs` checks
+it. The address is read inside `serve`: a pausing child capturing a `String`
+does not compile yet (step 6).
+
 ## [0.0.681] — 2026-10-08
 
 **A response body may be bytes, or a file the program never read** (ADR-289
