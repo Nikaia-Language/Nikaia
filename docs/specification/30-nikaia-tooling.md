@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part III: Tooling, Ecosystem & Interoperability**
-**Version:** 0.0.703 (Draft)
+**Version:** 0.0.704 (Draft)
 **Date:** 2026-10-08
 
 ---
@@ -32,7 +32,7 @@ Nikaia provides one command-line interface, `nikaia`. It builds and runs a proje
 * `nikaia run`: compiles and executes. `nikaia run <file>.nika` compiles and executes one file. Inside a project the file has to be that project's entry point. Outside any project it is built as a project of its own, kept in the user's cache directory and keyed on the file's path, through the same Cargo workspace `nikaia build` makes. The interpreter is not what `run` uses.
 * `nikaia test`: runs the package's `test` blocks, each in a process of its own, and its output tests, `tests/NAME.stdout` (14.1). `--both-settings` runs each at `user_parallelism = no` and `yes`.
 * `nikaia bench`: runs performance benchmarks.
-* `nikaia fmt`: formats the source.
+* `nikaia fmt`: formats the package's `.nika` files in place, in one style that nothing configures: four spaces per level, `{` at the end of the line, a line broken at 100 characters with a trailing `,` where a list is broken, at most one blank line in a row. Every comment stays where it was, a `dsl` block's body is kept as written, and what the file lowers to does not change. `--check` writes nothing and fails where a file would change.
 * `nikaia describe <crate>`: writes the draft ledger for a Rust crate the program calls, from the crate's own `pub` signatures (15.2). `--project` names the project directory. The default walks up from the working directory to the nearest `nikaia.toml`.
 * `nikaia bind <language>`: writes a binding for a library build from the ledger: `python` over `ctypes`, `js` for a WebAssembly build (15.1).
 * `nikaia lower-std`: re-lowers `std`'s Nikaia half (13.2b).

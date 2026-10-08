@@ -8,6 +8,13 @@ or the specification. A change only to the guide, the notes, the README, the
 website, the tests, the examples or the tooling around them raises nothing and
 has no heading here; `CLAUDE.md` draws the line.
 
+## [0.0.704] — 2026-10-08
+
+**What `nikaia fmt` does** (ADR-337, #101).
+- Decided, not built: one style with nothing to configure, every comment kept
+  where it was, a `dsl` body kept as written, what a file lowers to unchanged,
+  and `--check` for CI. Part III 13.2.
+
 ## [0.0.703] — 2026-10-08
 
 **Every narrowing `as` is written only where it is shown to fit** (ADR-285
