@@ -18,8 +18,10 @@ pub type Job = Box<dyn FnOnce() + Send>;
 pub const IDLE: Duration = Duration::from_secs(60);
 
 /// The threads waiting for a call, each by a number of its own.
-fn idle() -> &'static Mutex<Vec<(u64, Sender<Job>)>> {
-    static IDLE_THREADS: OnceLock<Mutex<Vec<(u64, Sender<Job>)>>> = OnceLock::new();
+type Waiting = Mutex<Vec<(u64, Sender<Job>)>>;
+
+fn idle() -> &'static Waiting {
+    static IDLE_THREADS: OnceLock<Waiting> = OnceLock::new();
     IDLE_THREADS.get_or_init(|| Mutex::new(Vec::new()))
 }
 
