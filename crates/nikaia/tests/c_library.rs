@@ -1025,7 +1025,22 @@ assert.strictEqual(hits.hit(), 2);
 // A handle nobody closed is freed by the collector.
 for (let i = 0; i < 1000; i++) new calc.Counter("dropped");
 global.gc();
-console.log("ok");
+
+// The `_async` form is a Promise (ADR-284 D9, D19): settled on the main
+// thread, its `cancel()` the ticket.
+(async () => {
+    assert.strictEqual(await calc.napped_async(10), 52);
+    const slow = calc.napped_async(60000);
+    slow.cancel();
+    await assert.rejects(slow, { code: "CALC_E_CANCELLED", status: -7 });
+    calc.shutdown();
+    await assert.rejects(calc.napped_async(1), { code: "CALC_E_NOT_RUNNING" });
+    calc.init();
+    console.log("ok");
+})().catch((error) => {
+    console.error(error);
+    process.exit(1);
+});
 "#;
 
 #[test]

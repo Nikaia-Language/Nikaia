@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part III: Tooling, Ecosystem & Interoperability**
-**Version:** 0.0.697 (Draft)
+**Version:** 0.0.698 (Draft)
 **Date:** 2026-10-08
 
 ---
@@ -656,7 +656,8 @@ generates `<package>.h` from the ledger. The caller owns the memory, and a call 
   `nikaia bind node` writes an N-API module in C and its `binding.gyp`, which the host's toolchain
   compiles — an `Error` whose `code` is the header's name for the status, `string` and `Buffer` for
   buffers, an `i64` a `number` where it is a safe integer and a `bigint` beyond, classes for handles,
-  plain objects for `extern` structs, functions for callbacks — and `nikaia bind js` is the
+  plain objects for `extern` structs, functions for callbacks, a Promise with `cancel()` for
+  `_async` — and `nikaia bind js` is the
   WebAssembly build's `.js`; there is no second artifact.
 
 ### 15.2. Rust Integration (Deep Integration)

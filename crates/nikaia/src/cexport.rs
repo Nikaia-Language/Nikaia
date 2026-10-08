@@ -1445,7 +1445,7 @@ pub fn export(
             entry, &symbol, parsed, &plains, &handles, &records, text_out, pauses,
         );
         node.entry(
-            entry, &symbol, prefix, parsed, &plains, &handles, &records, text_out,
+            entry, &symbol, prefix, parsed, &plains, &handles, &records, text_out, pauses,
         );
         // **The `_async` form** (D9, D19): the same call on a library thread,
         // `done` called exactly once with its status, and a ticket that

@@ -8,6 +8,18 @@ or the specification. A change only to the guide, the notes, the README, the
 website, the tests, the examples or the tooling around them raises nothing and
 has no heading here; `CLAUDE.md` draws the line.
 
+## [0.0.698] — 2026-10-08
+
+**The Node binding's `_async` form is a Promise** (ADR-284 D9, D19, D28; #88).
+For a function that may pause, `nikaia bind node` adds `<name>_async(…)`.
+- It returns a Promise, which is settled on the main thread through a
+  thread-safe function.
+- The Promise's `cancel()` cancels the call at its next pause point. The call
+  then rejects with `E_CANCELLED`.
+- A call that cannot start is a rejection too.
+- What the arguments keep, bytes included, lives until the call has settled.
+Before, such a function blocked Node's event loop for as long as it ran.
+
 ## [0.0.697] — 2026-10-08
 
 **`nikaia bind node`** (ADR-284 D26, D28; #88). It writes

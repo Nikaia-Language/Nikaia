@@ -16,7 +16,8 @@
 // `enum` a frozen object of numbers; `null` and `undefined` are `NULL`; a
 // callback a JavaScript function called on the calling thread, whose exception
 // the call throws once it has returned. A function that may pause is called in
-// its blocking form. Only the entry points (D29).
+// its blocking form, and as `<name>_async`: a Promise settled on the main
+// thread, whose `cancel()` is the ticket (D9, D19). Only the entry points (D29).
 
 use super::{
     ByValue, Entry, Handled, In, LEDGER_DIGEST, Lent, Out, Part, Plain, Record, handed,
@@ -38,6 +39,8 @@ pub(super) struct Node {
     constructors: std::collections::BTreeMap<String, String>,
     /// Per `extern` struct: its methods, as `(name, function)`.
     methods: std::collections::BTreeMap<String, Vec<(String, String)>>,
+    /// Whether any entry has a Promise form, which needs the ticket.
+    any_async: bool,
 }
 
 /// The converter in and out of one value that crosses by value.
@@ -71,6 +74,7 @@ impl Node {
         handles: &[Handled],
         records: &[Record],
         text_out: bool,
+        pauses: bool,
     ) {
         let by_value = entry
             .owner
@@ -164,7 +168,7 @@ impl Node {
                     locals.push(format!("const uint8_t *p{at} = NULL;"));
                     locals.push(format!("size_t p{at}_len = 0;"));
                     steps.push(format!(
-                        "if (!nk_bytes(env, {value}, \"{name}\", &p{at}, &p{at}_len)) goto done;"
+                        "if (!nk_bytes(env, {value}, \"{name}\", &kept, &p{at}, &p{at}_len)) goto done;"
                     ));
                     args.push(format!("p{at}"));
                     args.push(format!("p{at}_len"));
@@ -319,6 +323,9 @@ impl Node {
             .and_then(|ty| handed(parsed, plains, handles, records, ty));
         let call = |args: &[String]| format!("{symbol}({})", args.join(", "));
         let mut body: Vec<String> = Vec::new();
+        // The C type of the value and how it is made a JavaScript one, for
+        // the Promise form: `None` where nothing comes back.
+        let mut finish: Option<(Option<String>, String)> = None;
         let failed = match calls.is_empty() {
             true => String::new(),
             false => format!(
@@ -341,6 +348,7 @@ impl Node {
                 body.push(format!("status = {};", call(&args)));
                 body.push(check);
                 body.push("napi_get_undefined(env, &result);".to_string());
+                finish = Some((None, "napi_get_undefined(env, &result);".to_string()));
             }
             Some(Out::Buffer) => {
                 locals.push("uint8_t small[256];".to_string());
@@ -447,6 +455,9 @@ impl Node {
                 asked.push("&out".to_string());
                 body.push(format!("status = {};", call(&asked)));
                 body.push(check);
+                if !constructor {
+                    finish = Some((Some(c), back.clone()));
+                }
                 body.push(back);
             }
         }
@@ -495,8 +506,112 @@ impl Node {
              }\n",
         );
         self.functions.push(text);
+        // **The Promise form** (D9, D19): the `_async` call, settled on the
+        // main thread through a thread-safe function, its `cancel()` the
+        // ticket. Not for a result into a buffer, nor for a callback, nor for
+        // `self` of a struct the call would have to keep.
+        let promised = match (&finish, pauses && calls.is_empty() && !by_value) {
+            (Some((c, back)), true) => {
+                self.any_async = true;
+                let finisher = format!("nk_finish_{symbol}");
+                let (taken_out, read_out, out_arg) = match c {
+                    Some(c) => (
+                        format!("{c} *out = NULL;"),
+                        format!("{c} out = *({c} *)at;"),
+                        vec!["out".to_string()],
+                    ),
+                    None => (String::new(), "(void)at;".to_string(), Vec::new()),
+                };
+                let mut text = format!(
+                    "static napi_value {finisher}(napi_env env, void *at) {{\n    \
+                     napi_value result = NULL;\n    \
+                     {read_out}\n    \
+                     {back}\n    \
+                     return result;\n\
+                     }}\n\
+                     \n\
+                     /* `{written}`, as a Promise */\n\
+                     static napi_value {}_async(napi_env env, napi_callback_info info) {{\n    \
+                     size_t argc = {argc};\n    \
+                     napi_value argv[{argc}];\n    \
+                     napi_value self = NULL;\n    \
+                     napi_value result = NULL;\n    \
+                     nk_kept *kept = NULL;\n    \
+                     nk_async *job = NULL;\n    \
+                     int status = 0;\n    \
+                     {taken_out}\n",
+                    function(symbol)
+                );
+                for local in locals.iter().filter(|local| !local.contains(" out = ")) {
+                    text.push_str(&format!("    {local}\n"));
+                }
+                text.push_str(
+                    "    if (napi_get_cb_info(env, info, &argc, argv, &self, NULL) != napi_ok) goto done;\n",
+                );
+                if takes > 0 {
+                    text.push_str(&format!(
+                        "    if (argc < {takes}) {{\n        \
+                         napi_throw_type_error(env, NULL, \"`{written}` takes {takes} arguments\");\n        \
+                         goto done;\n    \
+                         }}\n"
+                    ));
+                }
+                for step in &steps {
+                    text.push_str(&format!("    {step}\n"));
+                }
+                if !out_arg.is_empty() {
+                    text.push_str(
+                        "    out = nk_keep(env, &kept, sizeof *out);\n    \
+                         if (!out) goto done;\n    \
+                         memset(out, 0, sizeof *out);\n",
+                    );
+                }
+                let mut handed = args.clone();
+                handed.extend(out_arg);
+                handed.extend([
+                    "nk_landed".to_string(),
+                    "job".to_string(),
+                    "&job->ticket->op".to_string(),
+                ]);
+                let started = match c {
+                    Some(_) => "out",
+                    None => "NULL",
+                };
+                text.push_str(&format!(
+                    "    job = nk_start(env, &kept, {started}, {finisher}, &result);\n    \
+                     if (!job) goto done;\n    \
+                     status = {symbol}_async({});\n    \
+                     if (status != 0) nk_abandon(env, job, status);\n\
+                     done:\n    \
+                     nk_release(kept);\n    \
+                     (void)self;\n    \
+                     return result;\n\
+                     }}\n",
+                    handed.join(", ")
+                ));
+                self.functions.push(text);
+                Some(format!("{}_async", function(symbol)))
+            }
+            _ => None,
+        };
         let name = entry.name.clone();
         let function = function(symbol);
+        if let Some(promised) = promised {
+            let property = format!("{name}_async");
+            match (&entry.owner, entry.receiver) {
+                (None, _) => self.exported.push((property, promised)),
+                (Some(owner), Some(_)) => {
+                    self.members.entry(owner.clone()).or_default().push(format!(
+                        "{{ \"{property}\", NULL, {promised}, NULL, NULL, NULL, napi_default_method, NULL }}"
+                    ))
+                }
+                (Some(owner), None) => {
+                    self.members.entry(owner.clone()).or_default().push(format!(
+                        "{{ \"{property}\", NULL, {promised}, NULL, NULL, NULL, napi_static, NULL }}"
+                    ))
+                }
+            }
+        }
         match (&entry.owner, by_value, entry.receiver, entry.getter) {
             (None, _, _, _) => self.exported.push((name, function)),
             (Some(owner), true, _, _) => self
@@ -640,25 +755,42 @@ impl Node {
              }}\n\
              }}\n\
              \n\
-             /* Throws the status as an Error: `code` its name, `status` its number,\n\
-             \x20  the message what {prefix}_last_error said. */\n\
-             NK_HELPER void nk_fail(napi_env env, int status) {{\n    \
-             size_t written = 0;\n    \
-             char *said = NULL;\n    \
+             /* The status as an Error: `code` its name, `status` its number, the message\n\
+             \x20  what {prefix}_last_error said, or the name where it said nothing. */\n\
+             NK_HELPER napi_value nk_error(napi_env env, int status, const char *said, size_t len) {{\n    \
              napi_value message, code, error, number;\n    \
-             {prefix}_last_error(NULL, 0, &written);\n    \
-             said = malloc(written + 1);\n    \
-             if (said && {prefix}_last_error((uint8_t *)said, written, &written) == 0) {{\n        \
-             napi_create_string_utf8(env, said, written, &message);\n    \
+             if (said) {{\n        \
+             napi_create_string_utf8(env, said, len, &message);\n    \
              }} else {{\n        \
              napi_create_string_utf8(env, nk_code(status), NAPI_AUTO_LENGTH, &message);\n    \
              }}\n    \
-             free(said);\n    \
              napi_create_string_utf8(env, nk_code(status), NAPI_AUTO_LENGTH, &code);\n    \
              napi_create_error(env, code, message, &error);\n    \
              napi_create_int32(env, status, &number);\n    \
              napi_set_named_property(env, error, \"status\", number);\n    \
-             napi_throw(env, error);\n\
+             return error;\n\
+             }}\n\
+             \n\
+             /* What {prefix}_last_error says on this thread, or NULL. */\n\
+             NK_HELPER char *nk_said(size_t *len) {{\n    \
+             size_t written = 0;\n    \
+             char *said = NULL;\n    \
+             {prefix}_last_error(NULL, 0, &written);\n    \
+             said = malloc(written + 1);\n    \
+             if (said && {prefix}_last_error((uint8_t *)said, written, &written) == 0) {{\n        \
+             *len = written;\n        \
+             return said;\n    \
+             }}\n    \
+             free(said);\n    \
+             return NULL;\n\
+             }}\n\
+             \n\
+             /* Throws the status, with what this thread's last failure said. */\n\
+             NK_HELPER void nk_fail(napi_env env, int status) {{\n    \
+             size_t len = 0;\n    \
+             char *said = nk_said(&len);\n    \
+             napi_throw(env, nk_error(env, status, said, len));\n    \
+             free(said);\n\
              }}\n\
              \n\
              NK_HELPER bool nk_wrong(napi_env env, const char *name, const char *wanted) {{\n    \
@@ -782,8 +914,8 @@ impl Node {
              return true;\n\
              }}\n\
              \n\
-             /* Bytes: a Buffer or another Uint8Array, or an ArrayBuffer, lent for the call. */\n\
-             NK_HELPER bool nk_bytes(napi_env env, napi_value value, const char *name, const uint8_t **at, size_t *len) {{\n    \
+             /* Bytes: a Buffer or another Uint8Array, or an ArrayBuffer. */\n\
+             NK_HELPER bool nk_lent(napi_env env, napi_value value, const char *name, const uint8_t **at, size_t *len) {{\n    \
              bool is = false;\n    \
              void *data = NULL;\n    \
              napi_is_typedarray(env, value, &is);\n    \
@@ -803,6 +935,18 @@ impl Node {
              return true;\n    \
              }}\n    \
              return nk_wrong(env, name, \"a Buffer, a Uint8Array or an ArrayBuffer\");\n\
+             }}\n\
+             \n\
+             /* Bytes, copied: an `_async` call keeps them past the call that started it. */\n\
+             NK_HELPER bool nk_bytes(napi_env env, napi_value value, const char *name, nk_kept **kept, const uint8_t **at, size_t *len) {{\n    \
+             const uint8_t *lent = NULL;\n    \
+             uint8_t *room = NULL;\n    \
+             if (!nk_lent(env, value, name, &lent, len)) return false;\n    \
+             room = nk_keep(env, kept, *len);\n    \
+             if (!room) return false;\n    \
+             if (*len) memcpy(room, lent, *len);\n    \
+             *at = room;\n    \
+             return true;\n\
              }}\n\
              \n\
              /* The length of an array, or of a typed array. */\n\
@@ -1070,6 +1214,128 @@ impl Node {
                  held->ptr = NULL;\n    \
                  }}\n    \
                  return NULL;\n\
+                 }}\n\
+                 \n"
+            ));
+        }
+        if self.any_async {
+            out.push_str(&format!(
+                "/* An `_async` call's ticket (ADR-284 D19): freed once the call has settled\n\
+                 \x20  and its `cancel` function has been collected. */\n\
+                 typedef struct {{\n    \
+                 {prefix}_op *op;\n    \
+                 int refs;\n    \
+                 bool settled;\n\
+                 }} nk_ticket;\n\
+                 \n\
+                 static void nk_ticket_drop(nk_ticket *ticket) {{\n    \
+                 if (--ticket->refs == 0) {{\n        \
+                 {prefix}_op_free(ticket->op);\n        \
+                 free(ticket);\n    \
+                 }}\n\
+                 }}\n\
+                 \n\
+                 static void nk_ticket_collected(napi_env env, void *data, void *hint) {{\n    \
+                 (void)env;\n    \
+                 (void)hint;\n    \
+                 nk_ticket_drop(data);\n\
+                 }}\n\
+                 \n\
+                 /* `cancel()`: at the call's next pause point; after it settled, nothing. */\n\
+                 static napi_value nk_cancel(napi_env env, napi_callback_info info) {{\n    \
+                 void *data = NULL;\n    \
+                 nk_ticket *ticket = NULL;\n    \
+                 if (napi_get_cb_info(env, info, NULL, NULL, NULL, &data) != napi_ok) return NULL;\n    \
+                 ticket = data;\n    \
+                 if (!ticket->settled && ticket->op) {{\n        \
+                 int status = {prefix}_cancel(ticket->op);\n        \
+                 if (status != 0) nk_fail(env, status);\n    \
+                 }}\n    \
+                 return NULL;\n\
+                 }}\n\
+                 \n\
+                 /* An `_async` call in flight: what it keeps, and the Promise it settles. */\n\
+                 typedef struct {{\n    \
+                 napi_deferred deferred;\n    \
+                 napi_threadsafe_function tsfn;\n    \
+                 nk_kept *kept;\n    \
+                 void *out;\n    \
+                 napi_value (*finish)(napi_env, void *);\n    \
+                 nk_ticket *ticket;\n    \
+                 int status;\n    \
+                 char *said;\n    \
+                 size_t said_len;\n\
+                 }} nk_async;\n\
+                 \n\
+                 /* On the main thread: the Promise settled, and what the call kept freed. */\n\
+                 static void nk_settle(napi_env env, napi_value js, void *context, void *data) {{\n    \
+                 nk_async *job = data;\n    \
+                 (void)js;\n    \
+                 (void)context;\n    \
+                 if (env) {{\n        \
+                 if (job->status == 0) {{\n            \
+                 napi_value value = job->finish(env, job->out);\n            \
+                 if (!value) napi_get_undefined(env, &value);\n            \
+                 napi_resolve_deferred(env, job->deferred, value);\n        \
+                 }} else {{\n            \
+                 napi_reject_deferred(env, job->deferred, nk_error(env, job->status, job->said, job->said_len));\n        \
+                 }}\n    \
+                 }}\n    \
+                 job->ticket->settled = true;\n    \
+                 nk_ticket_drop(job->ticket);\n    \
+                 nk_release(job->kept);\n    \
+                 free(job->said);\n    \
+                 free(job);\n\
+                 }}\n\
+                 \n\
+                 /* `done`, on a library thread: what last_error says is read here, where it was said. */\n\
+                 static void nk_landed(int status, void *ctx) {{\n    \
+                 nk_async *job = ctx;\n    \
+                 job->status = status;\n    \
+                 if (status != 0) job->said = nk_said(&job->said_len);\n    \
+                 napi_call_threadsafe_function(job->tsfn, job, napi_tsfn_blocking);\n    \
+                 napi_release_threadsafe_function(job->tsfn, napi_tsfn_release);\n\
+                 }}\n\
+                 \n\
+                 /* A Promise with its `cancel()`, and the call that settles it, which takes what the\n\
+                 \x20  arguments kept. */\n\
+                 static nk_async *nk_start(napi_env env, nk_kept **kept, void *out, napi_value (*finish)(napi_env, void *), napi_value *promise) {{\n    \
+                 nk_async *job = calloc(1, sizeof *job);\n    \
+                 nk_ticket *ticket = calloc(1, sizeof *ticket);\n    \
+                 napi_value name, cancel;\n    \
+                 if (!job || !ticket) {{\n        \
+                 free(job);\n        \
+                 free(ticket);\n        \
+                 napi_throw_error(env, NULL, \"out of memory\");\n        \
+                 return NULL;\n    \
+                 }}\n    \
+                 napi_create_string_utf8(env, \"{prefix}\", NAPI_AUTO_LENGTH, &name);\n    \
+                 if (napi_create_threadsafe_function(env, NULL, NULL, name, 0, 1, NULL, NULL, NULL, nk_settle, &job->tsfn) != napi_ok) {{\n        \
+                 free(job);\n        \
+                 free(ticket);\n        \
+                 return NULL;\n    \
+                 }}\n    \
+                 napi_create_promise(env, &job->deferred, promise);\n    \
+                 ticket->refs = 1;\n    \
+                 if (napi_create_function(env, \"cancel\", NAPI_AUTO_LENGTH, nk_cancel, ticket, &cancel) == napi_ok\n        \
+                 && napi_add_finalizer(env, cancel, ticket, nk_ticket_collected, NULL, NULL) == napi_ok) {{\n        \
+                 ticket->refs = 2;\n        \
+                 napi_set_named_property(env, *promise, \"cancel\", cancel);\n    \
+                 }}\n    \
+                 job->ticket = ticket;\n    \
+                 job->out = out;\n    \
+                 job->finish = finish;\n    \
+                 job->kept = *kept;\n    \
+                 *kept = NULL;\n    \
+                 return job;\n\
+                 }}\n\
+                 \n\
+                 /* The call did not start, and `done` will not run: the Promise is rejected now. */\n\
+                 static void nk_abandon(napi_env env, nk_async *job, int status) {{\n    \
+                 job->status = status;\n    \
+                 job->said = nk_said(&job->said_len);\n    \
+                 napi_release_threadsafe_function(job->tsfn, napi_tsfn_abort);\n    \
+                 nk_settle(env, NULL, NULL, job);\n\
                  }}\n\
                  \n"
             ));
