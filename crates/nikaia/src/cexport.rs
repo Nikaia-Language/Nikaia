@@ -765,6 +765,8 @@ pub fn export(
         if let Some(owner) = &entry.owner {
             match handles.iter().position(|handle| handle.name == *owner) {
                 Some(at) => held[at] = true,
+                // **A method of a struct C holds by value** (D16).
+                None if records.iter().any(|record| record.name == *owner) => {}
                 None => {
                     return Err(not_yet(
                         &entry.written(),
@@ -870,7 +872,34 @@ pub fn export(
         let mut call_args = Vec::new();
         // **`self` is the handle, held for the call** (D11): shared where the
         // method only reads it, alone where it changes it.
-        if let (Some(hold), Some(owner)) = (entry.receiver, &entry.owner) {
+        // **`self` of a struct C holds by value** (D16): `const T*` where the
+        // method reads it, `T*` where it changes it - and no lock, since it is
+        // the caller's memory. A change is written back only where the method
+        // returned.
+        let by_value = entry
+            .owner
+            .as_ref()
+            .is_some_and(|owner| records.iter().any(|record| record.name == *owner));
+        if let (Some(hold), Some(owner), true) = (entry.receiver, &entry.owner, by_value) {
+            if hold == Hold::Exclusive && pauses {
+                return Err(not_yet(&written, "changing `self` across a pause"));
+            }
+            let (constant, pointer) = match hold {
+                Hold::Shared => ("const ", "*const"),
+                Hold::Exclusive => ("", "*mut"),
+            };
+            rust_params.push(format!("__nikaia_at: {pointer} __nikaia_c_{owner}"));
+            c_params.push(format!("{constant}{prefix}_{owner} *self"));
+            let binding = match hold {
+                Hold::Shared => "",
+                Hold::Exclusive => "mut ",
+            };
+            checks.push_str(&format!(
+                "    // SAFETY: the C caller hands its struct, or NULL, and leaves it alone for the call (ADR-284 D16).\n    \
+                 let Some(__nikaia_self) = (unsafe {{ nikaia_std::c_boundary::read(__nikaia_at) }}) else {{ return -1; }};\n    \
+                 let Some({binding}__nikaia_self) = __nikaia_self.into_nikaia() else {{ return -1; }};\n"
+            ));
+        } else if let (Some(hold), Some(owner)) = (entry.receiver, &entry.owner) {
             rust_params.push(format!(
                 "__nikaia_self: *const nikaia_std::c_boundary::Handle<{owner}>"
             ));
@@ -1143,6 +1172,16 @@ pub fn export(
             (_, Some(_), false) => format!("__nikaia_self.{name}({})", call_args.join(", ")),
             (Some(owner), None, false) => format!("{owner}::{name}({})", call_args.join(", ")),
             (None, None, false) => format!("{name}({})", call_args.join(", ")),
+        };
+        let call = match (by_value, entry.receiver) {
+            (true, Some(Hold::Exclusive)) => format!(
+                "{{ let __nikaia_result = {call}; \
+                 // SAFETY: as the read above; the struct is written back as the method left it (ADR-284 D16).\n\
+                 unsafe {{ nikaia_std::c_boundary::put(__nikaia_at, __nikaia_c_{owner}::from_nikaia(__nikaia_self)) }}; \
+                 __nikaia_result }}",
+                owner = entry.owner.as_deref().unwrap_or_default()
+            ),
+            _ => call,
         };
         let call = match pauses {
             true => format!(
@@ -1559,9 +1598,20 @@ impl Python {
         let mut args: Vec<String> = Vec::new();
         let mut keep: Vec<String> = Vec::new();
         let mut raising: Vec<String> = Vec::new();
-        if entry.receiver.is_some() {
-            argtypes.push("ctypes.c_void_p".to_string());
-            args.push("self._live()".to_string());
+        let by_value = entry
+            .owner
+            .as_ref()
+            .is_some_and(|owner| records.iter().any(|record| record.name == *owner));
+        match (entry.receiver.is_some(), by_value, &entry.owner) {
+            (true, true, Some(owner)) => {
+                argtypes.push(format!("ctypes.POINTER({owner})"));
+                args.push("ctypes.byref(self)".to_string());
+            }
+            (true, _, _) => {
+                argtypes.push("ctypes.c_void_p".to_string());
+                args.push("self._live()".to_string());
+            }
+            _ => {}
         }
         for arg in entry.args {
             let name = python_name(parsed.text(arg.name));
@@ -2214,10 +2264,16 @@ impl Python {
                 })
                 .collect();
             out.push_str(&format!(
-                "class {}(ctypes.Structure):\n    _fields_ = [{}]\n\n\n",
+                "class {}(ctypes.Structure):\n    _fields_ = [{}]\n\n",
                 record.name,
                 fields.join(", ")
             ));
+            // Its methods (ADR-284 D16): `self` is handed by address.
+            for member in self.classes.get(&record.name).into_iter().flatten() {
+                out.push_str(member);
+                out.push('\n');
+            }
+            out.push('\n');
         }
         for (handle, _) in handles.iter().zip(held).filter(|(_, held)| **held) {
             let ty = &handle.name;

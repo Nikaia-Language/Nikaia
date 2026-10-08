@@ -146,6 +146,17 @@ pub extern struct Point {
     y: f64,
 }
 
+impl Point {
+    pub extern fn sum(ref self) -> f64 sync {
+        return self.x + self.y
+    }
+
+    pub extern fn shift(ref mut self, by: f64) sync {
+        self.x = self.x + by
+        self.y = self.y + by
+    }
+}
+
 pub extern fn grown(b: Rect, by: f64) -> Rect sync {
     return Rect {
         corner: Point { x: b.corner.x - by, y: b.corner.y - by },
@@ -437,6 +448,11 @@ int main(void) {
     status = calc_grown(box, 0.5, &bigger);
     printf("grown %d %.1f %.1f %.1f %.1f %d\n", status, bigger.corner.x, bigger.corner.y,
            bigger.width, bigger.height, bigger.light == CALC_LIGHT_GREEN);
+    calc_Point p = {1.0, 2.0};
+    double both = 0;
+    calc_Point_shift(&p, 0.5);
+    status = calc_Point_sum(&p, &both);
+    printf("point %d %.1f %.1f %.1f\n", status, p.x, p.y, both);
     box.light = (calc_Light)9;
     printf("no such light in a box %d\n", calc_grown(box, 0.5, &bigger));
     status = calc_after(CALC_LIGHT_GREEN, &light);
@@ -544,7 +560,7 @@ fn a_c_program_calls_the_library() {
     assert!(ran.status.success(), "{}", said(&ran));
     assert_eq!(
         String::from_utf8_lossy(&ran.stdout),
-        "size query 0 10\ntoo small -2 10\ngreet 0 Hello, Ada\nnot utf-8 -1\nno address -1\ntotal 0 10\nsize 0 3\nnapped 0 62\ngrown 0 0.5 1.5 4.0 5.0 1\nno such light in a box -1\nafter 0 1\nno such light -1\n"
+        "size query 0 10\ntoo small -2 10\ngreet 0 Hello, Ada\nnot utf-8 -1\nno address -1\ntotal 0 10\nsize 0 3\nnapped 0 62\ngrown 0 0.5 1.5 4.0 5.0 1\npoint 0 1.5 2.5 4.0\nno such light in a box -1\nafter 0 1\nno such light -1\n"
     );
 
     std::fs::write(root.join("handle.c"), HANDLE_CALLER).expect("the caller");
@@ -756,6 +772,9 @@ assert calc.size(b"\x01\x02\x03") == 3
 assert calc.after(calc.Light.Green) == calc.Light.Amber
 grown = calc.grown(calc.Rect(calc.Point(1.0, 2.0), 3.0, 4.0, calc.Light.Red), 0.5)
 assert (grown.corner.x, grown.width, grown.light) == (0.5, 4.0, calc.Light.Green)
+point = calc.Point(1.0, 2.0)
+point.shift(0.5)
+assert (point.x, point.sum()) == (1.5, 4.0)
 try:
     calc.checked(-1)
     raise AssertionError("no exception")

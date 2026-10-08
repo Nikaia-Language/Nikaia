@@ -57,6 +57,21 @@ pub unsafe fn put<T>(out: *mut T, value: T) {
     unsafe { out.write(value) }
 }
 
+/// **One value C keeps, read**: `None` where `at` is null. What a method of a
+/// struct C holds by value is handed as `self` (ADR-284 D16).
+///
+/// # Safety
+///
+/// `at` is null, or a valid, aligned, initialised `T` nothing writes during
+/// the call.
+pub unsafe fn read<T: Copy>(at: *const T) -> Option<T> {
+    if at.is_null() {
+        return None;
+    }
+    // SAFETY: the caller's contract, above.
+    Some(unsafe { at.read() })
+}
+
 /// **Bytes into the caller's buffer** (ADR-284 D6): `written` is set to the
 /// full length, `out == NULL` asks only that, and bytes that do not fit in
 /// `cap` are [`E_TOO_SMALL`] with nothing copied.
@@ -277,6 +292,13 @@ mod tests {
         assert_eq!(unsafe { text(good.as_ptr(), good.len()) }, Some("héllo"));
         let bad = [0xff_u8, 0xfe];
         assert_eq!(unsafe { text(bad.as_ptr(), bad.len()) }, None);
+    }
+
+    #[test]
+    fn a_value_is_read_and_null_is_none() {
+        let kept = 5_i64;
+        assert_eq!(unsafe { read(&kept) }, Some(5));
+        assert_eq!(unsafe { read::<i64>(core::ptr::null()) }, None);
     }
 
     #[test]

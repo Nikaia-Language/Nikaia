@@ -8,6 +8,15 @@ or the specification. A change only to the guide, the notes, the README, the
 website, the tests, the examples or the tooling around them raises nothing and
 has no heading here; `CLAUDE.md` draws the line.
 
+## [0.0.691] — 2026-10-08
+
+**A `pub extern struct`'s methods are entry points** (ADR-284 D16; #88).
+`<prefix>_<Type>_<method>` takes `self` as `const T*` where the method reads
+it and as `T*` where it changes it, with no lock, since the struct is the
+caller's memory. A changed struct is written back only where the method
+returned. In the Python binding the method belongs to the `ctypes.Structure`.
+A changing method that pauses is not exported yet.
+
 ## [0.0.690] — 2026-10-08
 
 **Two corpus measurements re-read for the supervised `hello-http`** (fixed
