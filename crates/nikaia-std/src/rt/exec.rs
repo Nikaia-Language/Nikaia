@@ -492,6 +492,10 @@ pub struct Slot<T> {
 struct Inner<T> {
     value: Option<T>,
     waiting: Option<Waker>,
+    /// **What the task panicked with**, where it did
+    /// ([ADR-326](../../../docs/specification/adr/adr-326.md) D4): there is no
+    /// value coming, and a `join` says so.
+    panicked: Option<String>,
 }
 
 impl<T> Slot<T> {
@@ -500,6 +504,7 @@ impl<T> Slot<T> {
             inner: Mutex::new(Inner {
                 value: None,
                 waiting: None,
+                panicked: None,
             }),
         })
     }
@@ -528,8 +533,29 @@ impl<T> Slot<T> {
         crate::rt::ring_the_bell();
     }
 
+    /// **The task panicked**, so no value is coming: whoever joins it is told
+    /// (ADR-326 D4).
+    pub fn fail(&self, said: String) {
+        let waiting = {
+            let mut inner = self.inner.lock().expect("the slot's lock");
+            inner.panicked = Some(said);
+            inner.waiting.take()
+        };
+        if let Some(waker) = waiting {
+            waker.wake();
+        }
+        crate::rt::ring_the_bell();
+    }
+
     fn take(&self, context: &mut Context<'_>) -> Poll<T> {
         let mut inner = self.inner.lock().expect("the slot's lock");
+        // **A `join` of a task that panicked panics in the joiner**, naming
+        // what the task said: the value it waits for does not exist. A `main`
+        // that joins it ends the program, as a panic in `main` does.
+        if let Some(said) = inner.panicked.take() {
+            drop(inner);
+            panic!("the task this joins stopped: {said}");
+        }
         match inner.value.take() {
             Some(value) => Poll::Ready(value),
             None => {

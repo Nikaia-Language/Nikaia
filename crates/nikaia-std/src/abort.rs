@@ -132,6 +132,11 @@ pub fn report_in_nikaia_terms(table: &'static [Site]) {
     std::panic::set_hook(Box::new(move |info| {
         let site = info.location().and_then(|at| lookup(table, at.line()));
         match site {
+            // **A task's panic ends the task** (ADR-326 D4), and the
+            // sentence says which ended.
+            Some((file, line)) if crate::task::in_a_task() => {
+                eprintln!("{file}:{line}: a task stopped: {}", said(info));
+            }
             Some((file, line)) => {
                 eprintln!("{file}:{line}: the program stopped: {}", said(info));
             }

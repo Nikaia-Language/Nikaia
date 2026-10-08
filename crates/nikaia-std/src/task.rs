@@ -142,7 +142,24 @@ impl<F: std::future::Future<Output = T>, T, Q: crate::cleanup::Queue> Cancellabl
         let Some(body) = self.body.as_mut() else {
             return std::task::Poll::Ready(());
         };
-        match body.as_mut().poll(context) {
+        // **A panic ends this task and nothing else**
+        // ([ADR-326](../../../docs/specification/adr/adr-326.md) D4), at both
+        // settings: caught at the task's edge, after the hook has said where it
+        // happened. The body is dropped, so its values are torn down and its
+        // cleanups run as a cancelled task's do, and whoever joins it is told.
+        let polled = {
+            let _inside = InATask::enter();
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| body.as_mut().poll(context)))
+        };
+        let polled = match polled {
+            Ok(polled) => polled,
+            Err(payload) => {
+                self.body = None;
+                self.slot.fail(panic_message(payload.as_ref()));
+                return std::task::Poll::Ready(());
+            }
+        };
+        match polled {
             std::task::Poll::Ready(value) => {
                 self.body = None;
                 self.slot.fill(value);
@@ -154,6 +171,44 @@ impl<F: std::future::Future<Output = T>, T, Q: crate::cleanup::Queue> Cancellabl
                 std::task::Poll::Pending
             }
         }
+    }
+}
+
+/// What a panic said, in the two shapes a payload comes in.
+fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
+    payload
+        .downcast_ref::<&str>()
+        .map(|s| s.to_string())
+        .or_else(|| payload.downcast_ref::<String>().cloned())
+        .unwrap_or_else(|| "it panicked".to_string())
+}
+
+thread_local! {
+    /// How many task bodies this thread is polling right now: the panic hook
+    /// asks it, to say a task stopped rather than the program.
+    static IN_A_TASK: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
+/// **Whether the code running on this thread is a task's** rather than
+/// `main`'s ([ADR-326](../../../docs/specification/adr/adr-326.md) D4): a panic
+/// there ends the task, and the program goes on.
+pub fn in_a_task() -> bool {
+    IN_A_TASK.with(|depth| depth.get() > 0)
+}
+
+/// One poll of a task's body, counted for [`in_a_task`] while it lasts.
+struct InATask;
+
+impl InATask {
+    fn enter() -> InATask {
+        IN_A_TASK.with(|depth| depth.set(depth.get() + 1));
+        InATask
+    }
+}
+
+impl Drop for InATask {
+    fn drop(&mut self) {
+        IN_A_TASK.with(|depth| depth.set(depth.get() - 1));
     }
 }
 

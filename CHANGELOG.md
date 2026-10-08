@@ -4,6 +4,21 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.656] — 2026-10-08
+
+**A panic in a task ends that task, and a poisoned value is never read
+(#121 steps 1 and 2).**
+- **ADR-326 D4**: a task's panic is caught at the task's edge, at both settings
+  of `user_parallelism`. Its body is dropped, so its cleanups run, and the
+  program goes on. The hook says `a task stopped:` there. At `yes` a task's
+  panic used to leave the program spinning, its worker thread gone.
+- **ADR-327 D1, D2**: a door to a value a panicking task held panics in the
+  task that opens it, on both lock shapes. `Crossing` read through the poison,
+  and `Local` had none. A release `update` on `Local` still counts 5
+  instructions (callgrind).
+- `join` of a task that panicked panics in the joiner for now; ADR-328 D8's
+  `task::Crashed` is #95's first step.
+
 ## [0.0.655] — 2026-10-08
 
 **A map's first write types it, and the examples are tested in place.**

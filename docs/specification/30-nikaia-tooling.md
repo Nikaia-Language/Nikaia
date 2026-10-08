@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part III: Tooling, Ecosystem & Interoperability**
-**Version:** 0.0.655 (Draft)
+**Version:** 0.0.656 (Draft)
 **Date:** 2026-10-08
 
 ---
@@ -1456,7 +1456,8 @@ generated line to Nikaia file and line, and the hook looks the site up before it
 prints anything. An overflow, a conversion that does not fit, an index out of
 bounds and a written `panic()` all read
 `src/main.nika:2: the program stopped: attempt to multiply with overflow`, and
-never name a generated file. A location the table does not know, such as a panic
+never name a generated file. In a task the sentence is `a task stopped:`, because the
+program goes on (ADR-326 D4). A location the table does not know, such as a panic
 inside `std`'s own Rust or a foreign crate's, is left in the words of whoever
 wrote it.
 

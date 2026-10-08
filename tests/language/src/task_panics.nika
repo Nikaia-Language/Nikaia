@@ -1,0 +1,12 @@
+// A panic in a task ends that task, at both settings, and the program goes on
+// (ADR-326 D4). What a panic leaves in a lock is never read again (ADR-327 D1,
+// D2): `crates/nikaia-std/src/lock.rs`'s tests.
+
+test "a task that panics ends alone and another finishes" {
+    let other = SharedMut(1)
+    let _broken = spawn fn { panic("boom") }
+    let fine = spawn fn { other.update fn(mut v) { v += 1 } }
+    fine.join()
+    let total = other.get()
+    assert(total == 2)
+}

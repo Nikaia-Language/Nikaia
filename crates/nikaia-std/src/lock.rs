@@ -45,6 +45,19 @@ fn reentered() -> ! {
     panic!("this lock is already held by the same task: `access` cannot be re-entered")
 }
 
+/// **A door to a value a panicking task held** ([ADR-327](../../../docs/specification/adr/adr-327.md)
+/// D1, D2): what it holds may be changed half-way, so it is not read. The
+/// panic ends the task that opened the door (ADR-326 D4), as the first one's
+/// ended the task that held it.
+#[cold]
+#[inline(never)]
+#[track_caller]
+fn poisoned() -> ! {
+    panic!(
+        "a task panicked while it held this lock, so the value may be half-changed: it is never read again"
+    )
+}
+
 /// **What a `set(neu; after: seen)` failed with**
 /// ([ADR-281](../../../docs/specification/adr/adr-281.md) D26): the lock no
 /// longer holds the value that was seen.
@@ -84,13 +97,42 @@ pub struct Local<T> {
     /// empty. What a panicking block leaves behind is D4's, and for this shape
     /// that is a value changed as far as the block got.
     inner: RefCell<T>,
+    /// **Set when a block panicked while it held the value** (ADR-327 D1):
+    /// every door after that panics rather than read it.
+    poisoned: std::cell::Cell<bool>,
 }
 
 impl<T> Local<T> {
     pub fn new(value: T) -> Self {
         Self {
             inner: RefCell::new(value),
+            poisoned: std::cell::Cell::new(false),
         }
+    }
+
+    /// The borrow, for a door: refused when the value is held already
+    /// (re-entered) or was left by a panic (poisoned), and marked poisoned if
+    /// the block run under it panics.
+    #[track_caller]
+    #[inline]
+    fn held<R>(&self, f: impl FnOnce(&mut T) -> R) -> R {
+        // **Re-entry first**: a door inside the block finds the value held,
+        // and that is what it is told, not that the value is poisoned.
+        let Ok(mut held) = self.inner.try_borrow_mut() else {
+            reentered()
+        };
+        if self.poisoned.get() {
+            poisoned();
+        }
+        // **Set for as long as the block runs**, and cleared only when it
+        // returns: a block that panics never returns, so the mark stays.
+        // Counted with callgrind, a release `update` is 5 instructions with
+        // the mark and without it; a guard asking `thread::panicking` on the
+        // way out made it 26.
+        self.poisoned.set(true);
+        let result = f(&mut held);
+        self.poisoned.set(false);
+        result
     }
 
     /// Part II 12.2's first door: a copy out. No code of the user's runs while
@@ -107,10 +149,7 @@ impl<T> Local<T> {
     /// lock is open for the duration of one store.
     #[track_caller]
     pub fn set(&self, value: T) {
-        match self.inner.try_borrow_mut() {
-            Ok(mut held) => *held = value,
-            Err(_) => reentered(),
-        }
+        self.held(|held| *held = value)
     }
 
     /// **Reading in place** ([ADR-281](../../../docs/specification/adr/adr-281.md)
@@ -133,10 +172,7 @@ impl<T> Local<T> {
     /// (*may* run more than once is a licence, not a requirement).
     #[track_caller]
     pub fn update(&self, f: impl FnOnce(&mut T)) {
-        match self.inner.try_borrow_mut() {
-            Ok(mut held) => f(&mut held),
-            Err(_) => reentered(),
-        }
+        self.held(f)
     }
 
     /// **The one door for a stamped value**
@@ -172,16 +208,13 @@ impl<T> Local<T> {
     where
         T: PartialEq,
     {
-        match self.inner.try_borrow_mut() {
-            Ok(mut held) => match *held == *seen {
-                true => {
-                    *held = value;
-                    Ok(())
-                }
-                false => Err(Overtaken),
-            },
-            Err(_) => reentered(),
-        }
+        self.held(|held| match *held == *seen {
+            true => {
+                *held = value;
+                Ok(())
+            }
+            false => Err(Overtaken),
+        })
     }
 
     /// **Exclusive even to read**, and that is not an oversight.
@@ -195,10 +228,7 @@ impl<T> Local<T> {
     /// door it happens through.
     #[track_caller]
     fn read<R>(&self, f: impl FnOnce(&T) -> R) -> R {
-        match self.inner.try_borrow_mut() {
-            Ok(held) => f(&held),
-            Err(_) => reentered(),
-        }
+        self.held(|held| f(held))
     }
 }
 
@@ -317,19 +347,28 @@ impl<T> Crossing<T> {
             reentered();
         }
 
-        // **Poisoning is kept.** Part III Appendix A.2's `yes` row says a
-        // resource held by a panicking task is poisoned so no other thread reads
-        // what a half-finished task left behind, and that is a property of the
-        // mutex rather than something written here - so the guard is taken
-        // without clearing the poison.
-        let mut guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        // **A poisoned value is never read** (ADR-327 D1, D2): a task that
+        // panicked while it held the lock may have left it half-changed, and
+        // the mutex says so. The door panics in the task that opens it.
+        let mut guard = self.inner.lock().unwrap_or_else(|_| poisoned());
         // **Written under the guard**, so the mark names the holder rather than
         // a hopeful: before, it was set before the acquisition, and while one
         // task waited the mark said *its* name although another held the lock.
         self.held_by.store(me, Ordering::Relaxed);
-        let result = f(&mut guard);
-        self.held_by.store(NOBODY, Ordering::Relaxed);
-        result
+        // **Cleared on the way out, a panic's way too**: a mark left behind
+        // would make the next door read as a re-entry rather than as the
+        // poisoned value it is.
+        let _released = Released(&self.held_by);
+        f(&mut guard)
+    }
+}
+
+/// Clears [`Crossing`]'s owner mark when the block ends, however it ends.
+struct Released<'a>(&'a AtomicU64);
+
+impl Drop for Released<'_> {
+    fn drop(&mut self) {
+        self.0.store(NOBODY, Ordering::Relaxed);
     }
 }
 
@@ -413,6 +452,57 @@ mod tests {
         }));
         std::panic::set_hook(hook);
         assert!(again.is_err(), "a `RefCell` notices either way");
+    }
+
+    /// The message a door panicked with.
+    fn panicked_with(run: impl FnOnce()) -> String {
+        let hook = std::panic::take_hook();
+        std::panic::set_hook(Box::new(|_| {}));
+        let said = std::panic::catch_unwind(std::panic::AssertUnwindSafe(run));
+        std::panic::set_hook(hook);
+        let said = said.expect_err("the door panics");
+        said.downcast_ref::<&str>()
+            .map(|s| s.to_string())
+            .or_else(|| said.downcast_ref::<String>().cloned())
+            .unwrap_or_default()
+    }
+
+    /// **A value a panicking block held is never read again**
+    /// ([ADR-327](../../../docs/specification/adr/adr-327.md) D1, D2), on both
+    /// shapes alike: the next door panics, and a value nobody broke is
+    /// untouched.
+    #[test]
+    fn a_poisoned_value_is_never_read() {
+        let local = Local::new(1_i64);
+        let untouched = Local::new(7_i64);
+        panicked_with(|| {
+            local.update(|n| {
+                *n = 99;
+                panic!("half-way");
+            })
+        });
+        assert!(
+            panicked_with(|| {
+                local.get();
+            })
+            .contains("never read again")
+        );
+        assert!(panicked_with(|| local.set(2)).contains("never read again"));
+        assert_eq!(untouched.get(), 7);
+
+        let crossing = Crossing::new(1_i64);
+        panicked_with(|| {
+            crossing.update(|n| {
+                *n = 99;
+                panic!("half-way");
+            })
+        });
+        assert!(
+            panicked_with(|| {
+                crossing.get();
+            })
+            .contains("never read again")
+        );
     }
 
     /// The four doors, on both shapes
@@ -722,10 +812,7 @@ impl<T> Door for Local<T> {
 
     #[track_caller]
     fn changing<R>(&self, f: impl FnOnce(&mut T) -> R) -> R {
-        match self.inner.try_borrow_mut() {
-            Ok(mut held) => f(&mut held),
-            Err(_) => reentered(),
-        }
+        self.held(f)
     }
 }
 
