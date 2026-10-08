@@ -159,6 +159,8 @@ impl Point {
 
 pub extern struct Quad {
     sides: Array[f64, 4],
+    lights: Array[Light, 2],
+    corners: Array[Point, 2],
 }
 
 pub extern fn perimeter(q: Quad) -> f64 sync {
@@ -166,7 +168,18 @@ pub extern fn perimeter(q: Quad) -> f64 sync {
     for side in q.sides {
         sum = sum + side
     }
+    for corner in q.corners {
+        sum = sum + corner.x
+    }
     return sum
+}
+
+pub extern fn flipped(q: Quad) -> Quad sync {
+    return Quad {
+        sides: q.sides,
+        lights: [q.lights[1], q.lights[0]],
+        corners: [q.corners[1], q.corners[0]],
+    }
 }
 
 pub extern fn widest(points: ref Array[Point]) -> f64 sync {
@@ -488,10 +501,15 @@ int main(void) {
     status = calc_Point_sum(&p, &both);
     printf("point %d %.1f %.1f %.1f\n", status, p.x, p.y, both);
     calc_Point many[3] = {{1.0, 0.0}, {7.0, 0.0}, {3.0, 0.0}};
-    calc_Quad quad = {{1.0, 2.0, 3.0, 4.5}};
+    calc_Quad quad = {{1.0, 2.0, 3.0, 4.5}, {CALC_LIGHT_RED, CALC_LIGHT_GREEN}, {{10.0, 0.0}, {20.0, 0.0}}};
     double around = 0;
     status = calc_perimeter(quad, &around);
     printf("perimeter %d %.1f\n", status, around);
+    calc_Quad turned;
+    status = calc_flipped(quad, &turned);
+    printf("flipped %d %d %.1f\n", status, turned.lights[0] == CALC_LIGHT_GREEN, turned.corners[0].x);
+    quad.lights[1] = (calc_Light)9;
+    printf("no such light in an array %d\n", calc_perimeter(quad, &around));
     double most = 0;
     status = calc_widest(many, 3, &most);
     printf("widest %d %.1f\n", status, most);
@@ -608,7 +626,7 @@ fn a_c_program_calls_the_library() {
     assert!(ran.status.success(), "{}", said(&ran));
     assert_eq!(
         String::from_utf8_lossy(&ran.stdout),
-        "size query 0 10\ntoo small -2 10\ngreet 0 Hello, Ada\nnot utf-8 -1\nno address -1\ntotal 0 10\nsize 0 3\nnapped 0 62\ngrown 0 0.5 1.5 4.0 5.0 1\npoint 0 1.5 2.5 4.0\nperimeter 0 10.5\nwidest 0 7.0\ndiagonal asked 0 3\ndiagonal too small -2\ndiagonal 0 3 2.0 4.0\nno such light in a box -1\nafter 0 1\nno such light -1\n"
+        "size query 0 10\ntoo small -2 10\ngreet 0 Hello, Ada\nnot utf-8 -1\nno address -1\ntotal 0 10\nsize 0 3\nnapped 0 62\ngrown 0 0.5 1.5 4.0 5.0 1\npoint 0 1.5 2.5 4.0\nperimeter 0 40.5\nflipped 0 1 20.0\nno such light in an array -1\nwidest 0 7.0\ndiagonal asked 0 3\ndiagonal too small -2\ndiagonal 0 3 2.0 4.0\nno such light in a box -1\nafter 0 1\nno such light -1\n"
     );
 
     std::fs::write(root.join("handle.c"), HANDLE_CALLER).expect("the caller");
@@ -823,7 +841,9 @@ assert (grown.corner.x, grown.width, grown.light) == (0.5, 4.0, calc.Light.Green
 point = calc.Point(1.0, 2.0)
 point.shift(0.5)
 assert (point.x, point.sum()) == (1.5, 4.0)
-assert calc.perimeter(calc.Quad((1.0, 2.0, 3.0, 4.5))) == 10.5
+quad = calc.Quad((1.0, 2.0, 3.0, 4.5), (calc.Light.Red, calc.Light.Green), (calc.Point(10.0, 0.0), calc.Point(20.0, 0.0)))
+assert calc.perimeter(quad) == 40.5
+assert calc.flipped(quad).lights[0] == calc.Light.Green
 assert calc.widest([calc.Point(1.0, 0.0), calc.Point(7.0, 0.0)]) == 7.0
 assert [(p.x, p.y) for p in calc.diagonal(3)] == [(0.0, 0.0), (1.0, 2.0), (2.0, 4.0)]
 try:

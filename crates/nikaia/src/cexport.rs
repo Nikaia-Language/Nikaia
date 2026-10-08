@@ -177,9 +177,9 @@ enum Part {
     Value(ByValue),
     Choice(usize),
     Record(usize),
-    /// `Array[T, N]` of a number or `bool`: laid out as C lays out `T x[N]`
-    /// (ADR-152 D2, ADR-284 D15), copied as it is.
-    Array(ByValue, i64),
+    /// `Array[T, N]` of any of the others: laid out as C lays out `T x[N]`
+    /// (ADR-152 D2, ADR-284 D15), each element converted as a field would be.
+    Array(Box<Part>, i64),
 }
 
 fn records(parsed: &crate::parser::Parsed, plains: &[Plain]) -> Result<Vec<Record>> {
@@ -204,23 +204,27 @@ fn records(parsed: &crate::parser::Parsed, plains: &[Plain]) -> Result<Vec<Recor
                 .iter()
                 .map(|field| {
                     let field_name = parsed.text(field.name).to_string();
-                    let part = if let Some(shape) = by_value(parsed, &field.ty) {
-                        Part::Value(shape)
-                    } else if let Some(at) = choice(parsed, plains, &field.ty) {
-                        Part::Choice(at)
-                    } else if let ("Array", [element, size]) =
-                        (parsed.text(field.ty.name), field.ty.generics.as_slice())
-                        && let Some(shape) = by_value(parsed, element).filter(|shape| !shape.scalar)
-                        && let Some(count) = size.count
-                    {
-                        Part::Array(shape, count)
-                    } else if let Some(at) = declared
-                        .iter()
-                        .position(|(other, _)| *other == parsed.text(field.ty.name))
-                        .filter(|_| field.ty.generics.is_empty() && !field.ty.is_nullable)
-                    {
-                        Part::Record(at)
-                    } else {
+                    // One field, or one element of an array field.
+                    let one = |ty: &Type| -> Option<Part> {
+                        if let Some(shape) = by_value(parsed, ty) {
+                            return Some(Part::Value(shape));
+                        }
+                        if let Some(at) = choice(parsed, plains, ty) {
+                            return Some(Part::Choice(at));
+                        }
+                        declared
+                            .iter()
+                            .position(|(other, _)| *other == parsed.text(ty.name))
+                            .filter(|_| ty.generics.is_empty() && !ty.is_nullable)
+                            .map(Part::Record)
+                    };
+                    let part = match (parsed.text(field.ty.name), field.ty.generics.as_slice()) {
+                        ("Array", [element, size]) => one(element)
+                            .zip(size.count)
+                            .map(|(element, count)| Part::Array(Box::new(element), count)),
+                        _ => one(&field.ty),
+                    };
+                    let Some(part) = part else {
                         return Err(not_yet(
                             &format!("{name}.{field_name}"),
                             "field of an `extern` struct",
@@ -255,6 +259,10 @@ fn records_in_order(records: &[Record]) -> Vec<usize> {
         }
         walking.push(at);
         for (_, part) in &records[at].fields {
+            let part = match part {
+                Part::Array(element, _) => element.as_ref(),
+                other => other,
+            };
             if let Part::Record(inner) = part {
                 ordered(*inner, records, seen, walking);
             }
@@ -268,6 +276,58 @@ fn records_in_order(records: &[Record]) -> Vec<usize> {
     order
 }
 
+/// **One field's, or one element's, conversion** between the mirror and the
+/// struct: the type in the mirror, what `of` is in the language - `None` where
+/// C's value is none - and what it is in the mirror.
+fn converted(
+    part: &Part,
+    records: &[Record],
+    plains: &[Plain],
+    of: &str,
+) -> (String, String, String) {
+    match part {
+        Part::Value(shape) if shape.scalar => (
+            "u32".to_string(),
+            format!("char::from_u32({of})"),
+            format!("{of} as u32"),
+        ),
+        Part::Value(shape) => (
+            shape.rust.to_string(),
+            format!("Some({of})"),
+            of.to_string(),
+        ),
+        Part::Choice(at) => {
+            let plain = &plains[*at];
+            let inward: Vec<String> = plain
+                .variants
+                .iter()
+                .enumerate()
+                .map(|(number, variant)| format!("{number} => Some({}::{variant}),", plain.name))
+                .collect();
+            let outward: Vec<String> = plain
+                .variants
+                .iter()
+                .enumerate()
+                .map(|(number, variant)| format!("{}::{variant} => {number},", plain.name))
+                .collect();
+            (
+                "std::ffi::c_int".to_string(),
+                format!("match {of} {{ {} _ => None }}", inward.join(" ")),
+                format!("match {of} {{ {} }}", outward.join(" ")),
+            )
+        }
+        Part::Record(at) => {
+            let inner = &records[*at].name;
+            (
+                format!("__nikaia_c_{inner}"),
+                format!("{of}.into_nikaia()"),
+                format!("__nikaia_c_{inner}::from_nikaia({of})"),
+            )
+        }
+        Part::Array(..) => unreachable!("an array's element is no array"),
+    }
+}
+
 /// The mirror of a [`Record`] the wrapper takes and hands back, and its two
 /// conversions: `None` where C's value is no value of the struct.
 fn mirror(record: &Record, records: &[Record], plains: &[Plain]) -> String {
@@ -278,51 +338,21 @@ fn mirror(record: &Record, records: &[Record], plains: &[Plain]) -> String {
     for (field, part) in &record.fields {
         let local = crate::emit::escaped(field);
         let (lowered, inward, outward) = match part {
-            Part::Value(shape) if shape.scalar => (
-                "u32".to_string(),
-                format!("char::from_u32(self.{local})?"),
-                format!("value.{local} as u32"),
-            ),
-            Part::Value(shape) => (
-                shape.rust.to_string(),
-                format!("self.{local}"),
-                format!("value.{local}"),
-            ),
-            Part::Array(shape, count) => (
-                format!("[{}; {count}]", shape.rust),
-                format!("self.{local}"),
-                format!("value.{local}"),
-            ),
-            Part::Choice(at) => {
-                let plain = &plains[*at];
-                let inward: Vec<String> = plain
-                    .variants
-                    .iter()
-                    .enumerate()
-                    .map(|(number, variant)| format!("{number} => {}::{variant},", plain.name))
-                    .collect();
-                let outward: Vec<String> = plain
-                    .variants
-                    .iter()
-                    .enumerate()
-                    .map(|(number, variant)| format!("{}::{variant} => {number},", plain.name))
-                    .collect();
+            Part::Array(element, count) => {
+                let (lowered, inward, outward) = converted(element, records, plains, "e");
                 (
-                    "std::ffi::c_int".to_string(),
+                    format!("[{lowered}; {count}]"),
                     format!(
-                        "match self.{local} {{ {} _ => return None }}",
-                        inward.join(" ")
+                        "self.{local}.iter().map(|&e| {inward}).collect::<Option<Vec<_>>>()?.try_into().ok()?"
                     ),
-                    format!("match value.{local} {{ {} }}", outward.join(" ")),
+                    format!("value.{local}.map(|e| {outward})"),
                 )
             }
-            Part::Record(at) => {
-                let inner = &records[*at].name;
-                (
-                    format!("__nikaia_c_{inner}"),
-                    format!("self.{local}.into_nikaia()?"),
-                    format!("__nikaia_c_{inner}::from_nikaia(value.{local})"),
-                )
+            one => {
+                let (lowered, inward, _) =
+                    converted(one, records, plains, &format!("self.{local}"));
+                let (_, _, outward) = converted(one, records, plains, &format!("value.{local}"));
+                (lowered, format!("({inward})?"), outward)
             }
         };
         fields.push_str(&format!("    {local}: {lowered},\n"));
@@ -837,6 +867,10 @@ pub fn export(
     // **Every `pub extern struct` is in the header**, as C lays it out (D14).
     for record in &records {
         for (_, part) in &record.fields {
+            let part = match part {
+                Part::Array(element, _) => element.as_ref(),
+                other => other,
+            };
             if let Part::Choice(at) = part {
                 crossing[*at] = true;
             }
@@ -1532,7 +1566,15 @@ pub fn export(
                     Part::Value(shape) => (shape.c.to_string(), String::new()),
                     Part::Choice(at) => (format!("{prefix}_{}", plains[*at].name), String::new()),
                     Part::Record(at) => (format!("{prefix}_{}", records[*at].name), String::new()),
-                    Part::Array(shape, count) => (shape.c.to_string(), format!("[{count}]")),
+                    Part::Array(element, count) => (
+                        match element.as_ref() {
+                            Part::Value(shape) => shape.c.to_string(),
+                            Part::Choice(at) => format!("{prefix}_{}", plains[*at].name),
+                            Part::Record(at) => format!("{prefix}_{}", records[*at].name),
+                            Part::Array(..) => unreachable!("an array's element is no array"),
+                        },
+                        format!("[{count}]"),
+                    ),
                 };
                 format!("    {c} {field}{size};")
             })
@@ -2369,7 +2411,15 @@ impl Python {
                         Part::Value(shape) => python_scalar(shape).to_string(),
                         Part::Choice(_) => "ctypes.c_int".to_string(),
                         Part::Record(at) => records[*at].name.clone(),
-                        Part::Array(shape, count) => format!("{} * {count}", python_scalar(shape)),
+                        Part::Array(element, count) => format!(
+                            "{} * {count}",
+                            match element.as_ref() {
+                                Part::Value(shape) => python_scalar(shape).to_string(),
+                                Part::Choice(_) => "ctypes.c_int".to_string(),
+                                Part::Record(at) => records[*at].name.clone(),
+                                Part::Array(..) => unreachable!("an array's element is no array"),
+                            }
+                        ),
                     };
                     format!("(\"{field}\", {ty})")
                 })

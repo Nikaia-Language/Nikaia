@@ -8,6 +8,13 @@ or the specification. A change only to the guide, the notes, the README, the
 website, the tests, the examples or the tooling around them raises nothing and
 has no heading here; `CLAUDE.md` draws the line.
 
+## [0.0.695] — 2026-10-08
+
+**An `extern` struct's array field may hold any C value** (ADR-284 D15; #88).
+`Array[T, N]` of a `scalar`, of an `enum` without payload or of another
+`extern` struct crosses as `T name[N]` too. Each element is converted as a field
+would be, and an element that is no value of its type is `E_ARGUMENT`.
+
 ## [0.0.694] — 2026-10-08
 
 **A library's `_async` calls run on threads that are kept** (ADR-284 D9;
