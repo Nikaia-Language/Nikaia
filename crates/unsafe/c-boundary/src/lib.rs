@@ -57,6 +57,35 @@ pub unsafe fn put<T>(out: *mut T, value: T) {
     unsafe { out.write(value) }
 }
 
+/// **Values into the caller's buffer, counted in values** (ADR-284 D16):
+/// [`hand_back`] for a run of structs - `written` the full count, `out ==
+/// NULL` the count alone, and a run longer than `cap` [`E_TOO_SMALL`] with
+/// nothing copied.
+///
+/// # Safety
+///
+/// `written` is null or a valid place for one `usize`; `out` is null or room
+/// for `cap` values of `T` that do not overlap `values`.
+pub unsafe fn hand_back_run<T: Copy>(
+    values: &[T],
+    out: *mut T,
+    cap: usize,
+    written: *mut usize,
+) -> core::ffi::c_int {
+    // SAFETY: the caller's contract for `written`.
+    unsafe { put(written, values.len()) };
+    if out.is_null() {
+        return OK;
+    }
+    if values.len() > cap {
+        return E_TOO_SMALL;
+    }
+    // SAFETY: `out` has room for `cap >= values.len()` values that do not
+    // overlap `values`, by the caller's contract.
+    unsafe { core::ptr::copy_nonoverlapping(values.as_ptr(), out, values.len()) };
+    OK
+}
+
 /// **One value C keeps, read**: `None` where `at` is null. What a method of a
 /// struct C holds by value is handed as `self` (ADR-284 D16).
 ///
@@ -292,6 +321,19 @@ mod tests {
         assert_eq!(unsafe { text(good.as_ptr(), good.len()) }, Some("héllo"));
         let bad = [0xff_u8, 0xfe];
         assert_eq!(unsafe { text(bad.as_ptr(), bad.len()) }, None);
+    }
+
+    #[test]
+    fn values_are_handed_back_counted() {
+        let values = [1_i64, 2, 3];
+        let mut room = [0_i64; 3];
+        let mut written = 0;
+        let asked = unsafe { hand_back_run(&values, core::ptr::null_mut(), 0, &mut written) };
+        assert_eq!((asked, written), (OK, 3));
+        let small = unsafe { hand_back_run(&values, room.as_mut_ptr(), 2, &mut written) };
+        assert_eq!((small, room), (E_TOO_SMALL, [0, 0, 0]));
+        let fits = unsafe { hand_back_run(&values, room.as_mut_ptr(), 3, &mut written) };
+        assert_eq!((fits, room), (OK, [1, 2, 3]));
     }
 
     #[test]

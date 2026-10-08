@@ -157,6 +157,28 @@ impl Point {
     }
 }
 
+pub extern fn widest(points: ref Array[Point]) -> f64 sync {
+    let mut most = 0.0
+    for p in points {
+        if p.x > most {
+            most = p.x
+        }
+    }
+    return most
+}
+
+pub extern fn diagonal(n: i64) -> Vec[Point] sync {
+    let mut out: Vec[Point] = []
+    let mut i = 0
+    let mut at = 0.0
+    while i < n {
+        out.push(Point { x: at, y: 2.0 * at })
+        i = i + 1
+        at = at + 1.0
+    }
+    return out
+}
+
 pub extern fn grown(b: Rect, by: f64) -> Rect sync {
     return Rect {
         corner: Point { x: b.corner.x - by, y: b.corner.y - by },
@@ -453,6 +475,16 @@ int main(void) {
     calc_Point_shift(&p, 0.5);
     status = calc_Point_sum(&p, &both);
     printf("point %d %.1f %.1f %.1f\n", status, p.x, p.y, both);
+    calc_Point many[3] = {{1.0, 0.0}, {7.0, 0.0}, {3.0, 0.0}};
+    double most = 0;
+    status = calc_widest(many, 3, &most);
+    printf("widest %d %.1f\n", status, most);
+    size_t count = 0;
+    status = calc_diagonal(3, NULL, 0, &count);
+    printf("diagonal asked %d %zu\n", status, count);
+    printf("diagonal too small %d\n", calc_diagonal(3, many, 2, &count));
+    status = calc_diagonal(3, many, 3, &count);
+    printf("diagonal %d %zu %.1f %.1f\n", status, count, many[2].x, many[2].y);
     box.light = (calc_Light)9;
     printf("no such light in a box %d\n", calc_grown(box, 0.5, &bigger));
     status = calc_after(CALC_LIGHT_GREEN, &light);
@@ -560,7 +592,7 @@ fn a_c_program_calls_the_library() {
     assert!(ran.status.success(), "{}", said(&ran));
     assert_eq!(
         String::from_utf8_lossy(&ran.stdout),
-        "size query 0 10\ntoo small -2 10\ngreet 0 Hello, Ada\nnot utf-8 -1\nno address -1\ntotal 0 10\nsize 0 3\nnapped 0 62\ngrown 0 0.5 1.5 4.0 5.0 1\npoint 0 1.5 2.5 4.0\nno such light in a box -1\nafter 0 1\nno such light -1\n"
+        "size query 0 10\ntoo small -2 10\ngreet 0 Hello, Ada\nnot utf-8 -1\nno address -1\ntotal 0 10\nsize 0 3\nnapped 0 62\ngrown 0 0.5 1.5 4.0 5.0 1\npoint 0 1.5 2.5 4.0\nwidest 0 7.0\ndiagonal asked 0 3\ndiagonal too small -2\ndiagonal 0 3 2.0 4.0\nno such light in a box -1\nafter 0 1\nno such light -1\n"
     );
 
     std::fs::write(root.join("handle.c"), HANDLE_CALLER).expect("the caller");
@@ -775,6 +807,8 @@ assert (grown.corner.x, grown.width, grown.light) == (0.5, 4.0, calc.Light.Green
 point = calc.Point(1.0, 2.0)
 point.shift(0.5)
 assert (point.x, point.sum()) == (1.5, 4.0)
+assert calc.widest([calc.Point(1.0, 0.0), calc.Point(7.0, 0.0)]) == 7.0
+assert [(p.x, p.y) for p in calc.diagonal(3)] == [(0.0, 0.0), (1.0, 2.0), (2.0, 4.0)]
 try:
     calc.checked(-1)
     raise AssertionError("no exception")

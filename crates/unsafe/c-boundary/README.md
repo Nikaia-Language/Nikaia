@@ -27,6 +27,7 @@ assert_eq!((status, written, &room[..5]), (c_boundary::OK, 5, &b"hello"[..]));
 | :--- | :--- | :--- |
 | `run` (an `unsafe fn`) | `slice::from_raw_parts` | the caller's contract, which is the C caller's: `at` points at `len` values it keeps alive for the call. A length of `0` reads nothing, whatever `at` is; a null address with a length is refused rather than read. |
 | `text` (an `unsafe fn`) | `run` | `run`'s contract; what is not UTF-8 is refused, not read as text |
+| `hand_back_run` (an `unsafe fn`) | `hand_back`'s writes, counted in values | `hand_back`'s contract, with `cap` counted in values of `T`: at most `cap` are copied, and none where they do not fit. |
 | `read` (an `unsafe fn`) | a read through `at` | the caller's contract: `at` is null, refused, or one initialised `T` nothing writes during the call - a struct C keeps and lends to a method as `self`. |
 | `put` (an `unsafe fn`) | a write through `out` | the caller's contract: `out` is null or a place for one `T`. Null writes nothing. |
 | `shared`, `exclusive` (`unsafe fn`s) | `&*at` | the caller's contract: `at` is null, refused as `E_ARGUMENT`, or a handle `handle` made with `Box::into_raw` and `free` has not freed. The value is reached only through its `RwLock`, held for the call; a thread that holds it already is `E_REENTRANT` rather than a deadlock. |

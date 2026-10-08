@@ -8,6 +8,15 @@ or the specification. A change only to the guide, the notes, the README, the
 website, the tests, the examples or the tooling around them raises nothing and
 has no heading here; `CLAUDE.md` draws the line.
 
+## [0.0.692] — 2026-10-08
+
+**A run of `pub extern struct`s crosses to C** (ADR-284 D16; #88). An entry
+point takes `ref Array[T]` or `Vec[T]` of one as `const T*` and a count. Each
+struct is checked as a single one is, and a bad one is `E_ARGUMENT`. A `Vec[T]`
+comes back into the caller's buffer counted in structs, with the size query
+and `E_TOO_SMALL` (`c-boundary`'s `hand_back_run`). In the Python binding it is
+a list in and a list out.
+
 ## [0.0.691] — 2026-10-08
 
 **A `pub extern struct`'s methods are entry points** (ADR-284 D16; #88).

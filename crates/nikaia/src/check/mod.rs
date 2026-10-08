@@ -20197,6 +20197,14 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// Whether this unit declares a `pub extern struct` by that name.
+    fn an_extern_struct_named(&self, name: &str) -> bool {
+        self.parsed.program.items.iter().any(|item| {
+            matches!(&item.node, Item::Struct { name: declared, is_extern: true, .. }
+                if self.parsed.text(*declared) == name)
+        })
+    }
+
     /// A field type an `extern` struct may hold (ADR-284 D15).
     fn a_c_value(&self, ty: &crate::ast::Type) -> bool {
         if ty.is_view || ty.is_nullable || ty.is_tuple || ty.code.is_some() {
@@ -20284,6 +20292,13 @@ impl<'a> Checker<'a> {
             ("Bytes", [], _, _) => Ok(()),
             ("Vec", [element], false, true) if element == "u8" => Ok(()),
             ("Array", [element], true, false) if a_number(element) => Ok(()),
+            // **A run of `extern` structs** (ADR-284 D16): in as an array C
+            // keeps, out into the caller's buffer counted in structs.
+            ("Array", [element], true, false) | ("Vec", [element], false, _)
+                if self.an_extern_struct_named(element) =>
+            {
+                Ok(())
+            }
             ("Vec" | "Array", _, _, false) => Err("Take `ref Array[T]` of a number: C keeps the array and lends it for the call.".to_string()),
             (_, [], _, _) if declared => Ok(()),
             ("Locked" | "Shared" | "SharedMut" | "Seen", _, _, _) => Err(format!(

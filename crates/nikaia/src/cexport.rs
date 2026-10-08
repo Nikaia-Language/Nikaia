@@ -97,6 +97,9 @@ enum In {
     Absent(Box<In>),
     /// A `pub extern struct`, by value (D14).
     Record(usize),
+    /// `ref Array[T]` or `Vec[T]` of a `pub extern struct`: an address and a
+    /// count C keeps for the call (D16). `true` where the callee takes it whole.
+    Records(usize, bool),
     /// `fn(A…) -> R sync`: a function pointer and the `void *ctx` C hands it
     /// back (D5).
     Callback {
@@ -156,6 +159,9 @@ enum Out {
     AbsentHandle(usize),
     /// A `pub extern struct`, by value (D14).
     Record(usize),
+    /// `Vec[T]` of a `pub extern struct`: the caller's buffer, counted in
+    /// structs (D16).
+    Records(usize),
 }
 
 /// **A `pub extern struct`** of the entry file (ADR-284 D14, D15): C's layout,
@@ -380,6 +386,16 @@ fn taken(
     if let Some(at) = record_of(parsed, records, ty) {
         return Some(In::Record(at));
     }
+    if let (name @ ("Array" | "Vec"), [element]) = (parsed.text(ty.name), ty.generics.as_slice())
+        && !ty.is_nullable
+        && let Some(at) = record_of(parsed, records, element)
+    {
+        return match (name, ty.is_view) {
+            ("Array", true) => Some(In::Records(at, false)),
+            ("Vec", false) => Some(In::Records(at, true)),
+            _ => None,
+        };
+    }
     if ty.code.is_some() {
         return callback(parsed, plains, ty);
     }
@@ -434,6 +450,15 @@ fn handed(
 ) -> Option<Out> {
     if let Some(at) = record_of(parsed, records, ty) {
         return Some(Out::Record(at));
+    }
+    if let ("Vec", [element], false, false) = (
+        parsed.text(ty.name),
+        ty.generics.as_slice(),
+        ty.is_view,
+        ty.is_nullable,
+    ) && let Some(at) = record_of(parsed, records, element)
+    {
+        return Some(Out::Records(at));
     }
     if ty.is_nullable && !ty.is_view {
         let mut present = ty.clone();
@@ -1053,6 +1078,26 @@ pub fn export(
                     ));
                     call_args.push(format!("&{local}"));
                 }
+                Some(In::Records(at, whole)) => {
+                    let ty = &records[at].name;
+                    rust_params.push(format!(
+                        "{local}: *const __nikaia_c_{ty}, {local}_len: usize"
+                    ));
+                    c_params.push(format!("const {prefix}_{ty} *{param}, size_t {param}_len"));
+                    // A length with no address, or a struct no value of the
+                    // type is, is `E_ARGUMENT` (ADR-284 D5, D16).
+                    checks.push_str(&format!(
+                        "    // SAFETY: the C caller keeps `{param}_len` structs at `{param}` for the call (ADR-284 D16).\n    \
+                         let Some({local}) = (unsafe {{ nikaia_std::c_boundary::run({local}, {local}_len) }}) else {{ return -1; }};\n    \
+                         let Some({local}) = {local}.iter().map(|one| one.into_nikaia()).collect::<Option<Vec<{ty}>>>() else {{ return -1; }};\n"
+                    ));
+                    let lent = !whole
+                        || contract.is_some_and(|c| crate::contracts::keeps::lends(c, position));
+                    call_args.push(match lent {
+                        true => format!("&{local}"),
+                        false => local,
+                    });
+                }
                 Some(In::Record(at)) => {
                     let ty = &records[at].name;
                     rust_params.push(format!("{local}: __nikaia_c_{ty}"));
@@ -1139,6 +1184,14 @@ pub fn export(
                     ));
                     c_params.push(format!("{prefix}_{ty} **out"));
                     Some(Out::Handle(at))
+                }
+                Some(Out::Records(at)) => {
+                    let ty = &records[at].name;
+                    rust_params.push(format!(
+                        "out: *mut __nikaia_c_{ty}, cap: usize, written: *mut usize"
+                    ));
+                    c_params.push(format!("{prefix}_{ty} *out, size_t cap, size_t *written"));
+                    Some(Out::Records(at))
                 }
                 Some(Out::Record(at)) => {
                     let ty = &records[at].name;
@@ -1230,6 +1283,13 @@ pub fn export(
                  unsafe { nikaia_std::c_boundary::put(out, nikaia_std::c_boundary::handle(value)) };\n            \
                  }\n            0\n        }"
                 .to_string(),
+            Some(Out::Records(at)) => format!(
+                "Ok(value) => {{\n            \
+                 let values: Vec<__nikaia_c_{0}> = value.into_iter().map(__nikaia_c_{0}::from_nikaia).collect();\n            \
+                 // SAFETY: the C caller hands room for `cap` structs at `out` and a place for the count, or NULL (ADR-284 D16).\n            \
+                 unsafe {{ nikaia_std::c_boundary::hand_back_run(&values, out, cap, written) }}\n        }}",
+                records[*at].name
+            ),
             Some(Out::Record(at)) => format!(
                 "Ok(value) => {{\n            \
                  // SAFETY: the C caller hands a place for one value, or NULL (ADR-284 D7).\n            \
@@ -1659,6 +1719,14 @@ impl Python {
                     argtypes.push(records[at].name.clone());
                     args.push(name);
                 }
+                Some(In::Records(at, _)) => {
+                    let ty = &records[at].name;
+                    argtypes.push(format!("ctypes.POINTER({ty})"));
+                    argtypes.push("ctypes.c_size_t".to_string());
+                    before.push(format!("{name}_at, {name}_len = _run({ty}, {name})"));
+                    args.push(format!("{name}_at"));
+                    args.push(format!("{name}_len"));
+                }
                 Some(In::Handle(_)) => {
                     argtypes.push("ctypes.c_void_p".to_string());
                     args.push(format!("{name}._live()"));
@@ -1764,6 +1832,21 @@ impl Python {
                     false => "return got".to_string(),
                 });
             }
+            Some(Out::Records(at)) => {
+                let ty = &records[*at].name;
+                argtypes.push(format!("ctypes.POINTER({ty})"));
+                argtypes.push("ctypes.c_size_t".to_string());
+                argtypes.push("ctypes.POINTER(ctypes.c_size_t)".to_string());
+                let mut asked = args.clone();
+                asked.push("out".to_string());
+                asked.push("cap".to_string());
+                asked.push("written".to_string());
+                body_call = format!(
+                    "got = _structs({ty}, lambda out, cap, written: {})",
+                    call(&asked)
+                );
+                after.push("return got".to_string());
+            }
             Some(out) => {
                 let (ctype, back) = match out {
                     Out::Value(shape) => (
@@ -1790,7 +1873,7 @@ impl Python {
                             handles[*at].name
                         ),
                     ),
-                    Out::Buffer => unreachable!("handled above"),
+                    Out::Buffer | Out::Records(_) => unreachable!("handled above"),
                 };
                 argtypes.push(format!("ctypes.POINTER({ctype})"));
                 before.push(format!("out = {ctype}()"));
@@ -1810,7 +1893,8 @@ impl Python {
         // call at its next pause point. Not for a result into a buffer, whose
         // size cannot be asked before the call has run, nor for a callback,
         // whose exception has nowhere to go.
-        let asyncable = pauses && raising.is_empty() && !matches!(result, Some(Out::Buffer));
+        let asyncable =
+            pauses && raising.is_empty() && !matches!(result, Some(Out::Buffer | Out::Records(_)));
         let async_lines: Vec<String> = match asyncable {
             false => Vec::new(),
             true => {
@@ -2072,7 +2156,16 @@ impl Python {
              return bytes(room[: written.value])\n\
              \n\
              \n\
-             def _said():\n    \
+             def _structs(kind, call):\n    \
+             \"\"\"Asks the count, then hands room for it, counted in structs (ADR-284 D16).\"\"\"\n    \
+             written = ctypes.c_size_t(0)\n    \
+             _check(call(None, 0, ctypes.byref(written)))\n    \
+             room = (kind * max(written.value, 1))()\n    \
+             _check(call(room, written.value, ctypes.byref(written)))\n    \
+             return list(room[: written.value])\n\
+             \n\
+             \n\
+                          def _said():\n    \
              written = ctypes.c_size_t(0)\n    \
              _lib.{prefix}_last_error(None, 0, ctypes.byref(written))\n    \
              room = (ctypes.c_uint8 * max(written.value, 1))()\n    \
