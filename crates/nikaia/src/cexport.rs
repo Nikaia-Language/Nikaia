@@ -37,6 +37,8 @@ use anyhow::Result;
 use crate::ast::{Item, Type};
 use crate::modules::Program;
 
+mod node;
+
 /// The two halves of a library's boundary.
 pub struct Exported {
     /// Appended to the entry file's lowering.
@@ -45,6 +47,13 @@ pub struct Exported {
     pub header: String,
     /// `<package>/__init__.py`, what `nikaia bind python` writes (D26).
     pub python: String,
+    /// `node/<package>.c`, what `nikaia bind node` writes (D28).
+    pub node: String,
+}
+
+/// `node/binding.gyp`, which builds `nikaia bind node`'s module (D28).
+pub fn node_gyp(package: &str) -> String {
+    node::gyp(package)
 }
 
 /// Where the header names the ledger's digest, filled in once the lowering
@@ -824,6 +833,7 @@ pub fn export(
     ));
     let mut declarations = String::new();
     let mut python = Python::default();
+    let mut node = node::Node::default();
     let mut any_pause = false;
     let found = entries(program)?;
     let Some(unit) = program.units.first() else {
@@ -1434,6 +1444,9 @@ pub fn export(
         python.entry(
             entry, &symbol, parsed, &plains, &handles, &records, text_out, pauses,
         );
+        node.entry(
+            entry, &symbol, prefix, parsed, &plains, &handles, &records, text_out,
+        );
         // **The `_async` form** (D9, D19): the same call on a library thread,
         // `done` called exactly once with its status, and a ticket that
         // cancels it at its next pause point. What C handed it stays C's to
@@ -1639,6 +1652,7 @@ pub fn export(
     let python = python.module(
         package, prefix, &codes, &plains, &handles, &held, &records, any_pause,
     );
+    let node = node.module(package, prefix, &codes, &plains, &handles, &held, &records);
     Ok(Exported {
         rust: match declarations.is_empty() {
             true => String::new(),
@@ -1646,6 +1660,7 @@ pub fn export(
         },
         header,
         python,
+        node,
     }
     .exporting(!declarations.is_empty()))
 }

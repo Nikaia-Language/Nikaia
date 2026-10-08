@@ -250,10 +250,12 @@ pub enum Command {
     /// language ([ADR-284](../../../docs/specification/adr/adr-284.md) D26).
     ///
     /// `python` writes `target/nikaia/c-library/<package>/__init__.py`, a
-    /// `ctypes` module over the library beside it. The library stays the one
+    /// `ctypes` module over the library beside it; `node` writes
+    /// `target/nikaia/c-library/node/<package>.c` and a `binding.gyp`, an N-API
+    /// module the host's toolchain compiles. The library stays the one
     /// artifact: a binding is generated source the host loads.
     Bind {
-        /// The language: `python`.
+        /// The language: `python` or `node`.
         #[arg(value_name = "LANGUAGE")]
         language: String,
         #[arg(long)]
@@ -571,10 +573,11 @@ fn project_command(args: &Cli, command: &Command) -> Result<i32> {
     let (subcommand, directory, program_args) = match command {
         Command::Build { project } => ("build", project.clone(), Vec::new()),
         Command::Bind { language, project } => {
-            if language != "python" {
+            if language != "python" && language != "node" {
                 refuse!(
-                    "`nikaia bind {language}` is not built: `python` is (ADR-284 D26). JavaScript \
-                     is served by the WebAssembly build, which is not built yet either."
+                    "`nikaia bind {language}` is not built: `python` and `node` are (ADR-284 D26, \
+                     D28). JavaScript in a browser is served by the WebAssembly build, which is not \
+                     built yet."
                 );
             }
             let start = match project {

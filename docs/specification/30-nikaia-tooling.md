@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part III: Tooling, Ecosystem & Interoperability**
-**Version:** 0.0.696 (Draft)
+**Version:** 0.0.697 (Draft)
 **Date:** 2026-10-08
 
 ---
@@ -653,7 +653,11 @@ generates `<package>.h` from the ledger. The caller owns the memory, and a call 
   convention is `"C"` on every target;
 * `nikaia bind python` writes a `ctypes` binding from the ledger — exceptions for statuses,
   `str`/`bytes` for buffers, classes for handles, generators for streams, awaitables for `_async` —
-  and `nikaia bind js` is the WebAssembly build's `.js`; there is no second artifact.
+  `nikaia bind node` writes an N-API module in C and its `binding.gyp`, which the host's toolchain
+  compiles — an `Error` whose `code` is the header's name for the status, `string` and `Buffer` for
+  buffers, an `i64` a `number` where it is a safe integer and a `bigint` beyond, classes for handles,
+  plain objects for `extern` structs, functions for callbacks — and `nikaia bind js` is the
+  WebAssembly build's `.js`; there is no second artifact.
 
 ### 15.2. Rust Integration (Deep Integration)
 The compiler verifies safety properties at the boundary with a Rust crate.

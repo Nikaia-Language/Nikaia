@@ -139,8 +139,8 @@ pub struct Settings {
     /// choice like the others, so the cache and the wrapper both see it.
     pub tests: bool,
     /// **A binding to write beside the library** (`nikaia bind <language>`,
-    /// [ADR-284](../../docs/specification/adr/adr-284.md) D26): `python`, or
-    /// none for a plain build.
+    /// [ADR-284](../../docs/specification/adr/adr-284.md) D26): `python` or `node`,
+    /// or none for a plain build.
     pub bind: Option<String>,
 }
 
@@ -479,6 +479,8 @@ pub struct Lowered {
     pub header: Option<String>,
     /// Its Python binding, which `nikaia bind python` writes (ADR-284 D26).
     pub python: Option<String>,
+    /// Its N-API module in C, which `nikaia bind node` writes (ADR-284 D28).
+    pub node: Option<String>,
 }
 
 /// Stage 0: parse, check, lower, infer - or serve all four from the cache.
@@ -1303,7 +1305,7 @@ pub fn lower_reading(
     // (ADR-284 D4, D7, D12), whether the cache answered or not; the header
     // carries the digest of the ledger this lowering wrote.
     let digest = crate::assets::digest(ledger.as_bytes());
-    let (rust, header, python) = match exported {
+    let (rust, header, python, node) = match exported {
         Some(exported) => (
             rust + &exported.rust,
             Some(
@@ -1316,8 +1318,13 @@ pub fn lower_reading(
                     .python
                     .replace(crate::cexport::LEDGER_DIGEST, &digest),
             ),
+            Some(
+                exported
+                    .node
+                    .replace(crate::cexport::LEDGER_DIGEST, &digest),
+            ),
         ),
-        None => (rust, None, None),
+        None => (rust, None, None, None),
     };
 
     Ok(Lowered {
@@ -1330,6 +1337,7 @@ pub fn lower_reading(
         proofs,
         header,
         python,
+        node,
     })
 }
 
@@ -2706,6 +2714,7 @@ impl Project {
         // (ADR-284 D12).
         let mut header: Option<String> = None;
         let mut python: Option<String> = None;
+        let mut node: Option<String> = None;
         let mut link_flags: Vec<String> = Vec::new();
         for at in order {
             let member = &members[at];
@@ -2786,6 +2795,7 @@ impl Project {
                 eprint!("{}", lowered.notes);
                 header = lowered.header.clone();
                 python = lowered.python.clone();
+                node = lowered.node.clone();
             }
             rust[at] = Some(lowered.rust);
         }
@@ -2974,6 +2984,21 @@ impl Project {
                     .with_context(|| format!("making {}", module.display()))?;
                 write_if_changed(&module.join("__init__.py"), python)?;
                 println!("binding: {}", module.join("__init__.py").display());
+            }
+            // `node/<package>.c` and its `binding.gyp` (D28), which the
+            // host's toolchain compiles against the library.
+            if self.settings.bind.as_deref() == Some("node")
+                && let Some(node) = &node
+            {
+                let module = made.join("node");
+                std::fs::create_dir_all(&module)
+                    .with_context(|| format!("making {}", module.display()))?;
+                write_if_changed(&module.join(format!("{package}.c")), node)?;
+                write_if_changed(
+                    &module.join("binding.gyp"),
+                    &crate::cexport::node_gyp(&package),
+                )?;
+                println!("binding: {}", module.join(format!("{package}.c")).display());
             }
             for built in libraries_in(&messages) {
                 if let Some(name) = built.file_name() {

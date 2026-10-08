@@ -951,7 +951,135 @@ fn python_calls_the_library_through_its_binding() {
 
     let refused = nikaia_with(&root, &["bind", "cobol"]);
     assert!(!refused.status.success());
-    assert!(said(&refused).contains("`python` is"), "{}", said(&refused));
+    assert!(
+        said(&refused).contains("`python` and `node` are"),
+        "{}",
+        said(&refused)
+    );
+}
+
+/// **`nikaia bind node`** (ADR-284 D26, D28): an N-API module in C over the
+/// library, compiled by the host's C compiler against Node's headers, and used
+/// as Node uses a module.
+const NODE_CALLER: &str = r#"const assert = require("assert");
+const calc = require(process.argv[2]);
+
+assert.strictEqual(calc.add(2, 40), 42);
+assert.strictEqual(calc.add(2n ** 60n, 2n ** 60n), 2n ** 61n);
+assert.strictEqual(calc.add(2n, 40), 42);
+assert.throws(() => calc.add(2n ** 63n - 1n, 1), { code: "CALC_E_PANICKED" });
+calc.shutdown();
+calc.init();
+assert.throws(() => calc.add(1.5, 1), TypeError);
+assert.strictEqual(calc.halve(5.0), 2.5);
+assert.strictEqual(calc.is_vowel("e"), true);
+assert.throws(() => calc.is_vowel("ee"), TypeError);
+assert.strictEqual(calc.greet("Ada"), "Hello, Ada");
+assert.strictEqual(calc.greet("x".repeat(300)).length, 307);
+assert.strictEqual(calc.total([1, 2, 3, 4]), 10);
+assert.strictEqual(calc.size(Buffer.from([1, 2, 3])), 3);
+assert.strictEqual(calc.after(calc.Light.Green), calc.Light.Amber);
+assert.throws(() => calc.after(7), { code: "CALC_E_ARGUMENT", status: -1 });
+const grown = calc.grown({ corner: { x: 1, y: 2 }, width: 3, height: 4, light: calc.Light.Red }, 0.5);
+assert.deepStrictEqual(grown, { corner: { x: 0.5, y: 1.5 }, width: 4, height: 5, light: calc.Light.Green });
+const point = { x: 1, y: 2 };
+calc.Point.shift(point, 0.5);
+assert.deepStrictEqual([point.x, calc.Point.sum(point)], [1.5, 4]);
+const quad = { sides: [1, 2, 3, 4.5], lights: [calc.Light.Red, calc.Light.Green], corners: [{ x: 10, y: 0 }, { x: 20, y: 0 }] };
+assert.strictEqual(calc.perimeter(quad), 40.5);
+assert.deepStrictEqual(calc.flipped(quad).lights, [calc.Light.Green, calc.Light.Red]);
+assert.throws(() => calc.perimeter({ sides: [1], lights: [0, 0], corners: [] }), TypeError);
+assert.strictEqual(calc.widest([{ x: 1, y: 0 }, { x: 7, y: 0 }]), 7);
+assert.deepStrictEqual(calc.diagonal(3), [{ x: 0, y: 0 }, { x: 1, y: 2 }, { x: 2, y: 4 }]);
+assert.strictEqual(calc.diagonal(20).length, 20);
+assert.throws(() => calc.checked(-1), (error) => error.code === "CALC_E_NEGATIVE" && error.status === 1 && error.message.includes("a negative count"));
+assert.throws(() => calc.checked(500), (error) => error.code === "CALC_E_TOOLARGE" && error.message.includes("500 is too large"));
+const counter = new calc.Counter("clicks");
+counter.bump(5);
+assert.strictEqual(counter.bump(2), 7);
+assert.deepStrictEqual([counter.count, counter.name, counter.light], [7, "clicks", calc.Light.Red]);
+assert.strictEqual(counter.steps(), 2);
+assert.throws(() => calc.looking_at(counter, () => counter.bump(1)), { code: "CALC_E_REENTRANT" });
+assert.throws(() => calc.looking_at(counter, () => { throw new RangeError("from the callback"); }), RangeError);
+const other = new calc.Counter("other");
+other.bump(3);
+assert.strictEqual(calc.sum_of(counter, other), 10);
+assert.throws(() => calc.sum_of(counter, {}), TypeError);
+counter.close();
+assert.throws(() => counter.bump(1), { code: "CALC_E_ARGUMENT" });
+assert.strictEqual(calc.found(0), null);
+const found = calc.found(4);
+assert.ok(found instanceof calc.Counter);
+assert.strictEqual(calc.count_of(found), 4);
+assert.strictEqual(calc.count_of(null), -1);
+assert.strictEqual(calc.length_of(undefined), 4);
+assert.strictEqual(calc.length_of(""), 0);
+assert.strictEqual(calc.count_up(10, (i) => i < 3), 3);
+const seen = [];
+calc.words("one two", (word, light) => seen.push([word, light]));
+assert.deepStrictEqual(seen, [["one", calc.Light.Amber], ["two", calc.Light.Amber]]);
+assert.strictEqual(calc.napped(20), 62);
+const hits = new calc.Hits();
+hits.hit();
+assert.strictEqual(hits.hit(), 2);
+// A handle nobody closed is freed by the collector.
+for (let i = 0; i < 1000; i++) new calc.Counter("dropped");
+global.gc();
+console.log("ok");
+"#;
+
+#[test]
+fn node_calls_the_library_through_its_binding() {
+    let have = |tool: &str| Command::new(tool).arg("--version").output().is_ok();
+    if !have("cc") || !have("node") {
+        eprintln!("skipped: no C compiler or no node");
+        return;
+    }
+    let headers = Command::new("node")
+        .args([
+            "-p",
+            "require('path').join(process.execPath, '..', '..', 'include', 'node')",
+        ])
+        .output()
+        .expect("node runs");
+    let headers = PathBuf::from(String::from_utf8_lossy(&headers.stdout).trim());
+    if !headers.join("node_api.h").is_file() {
+        eprintln!("skipped: no node_api.h beside node");
+        return;
+    }
+    let root = package("c-library-node", "artifact = \"c-library\"\n", LIBRARY);
+    let bound = nikaia_with(&root, &["bind", "node"]);
+    assert!(bound.status.success(), "{}", said(&bound));
+    let made = root.join("target/nikaia/c-library");
+    assert!(made.join("node/binding.gyp").is_file(), "the build file");
+    let module = made.join("node/calc.node");
+    let compiled = Command::new("cc")
+        .args([
+            "-shared", "-fPIC", "-std=c11", "-Wall", "-Wextra", "-Werror",
+        ])
+        .arg("-I")
+        .arg(&headers)
+        .arg("-I")
+        .arg(&made)
+        .arg(made.join("node/calc.c"))
+        .arg("-L")
+        .arg(&made)
+        .arg("-lcalc")
+        .arg(format!("-Wl,-rpath,{}", made.display()))
+        .arg("-o")
+        .arg(&module)
+        .output()
+        .expect("cc runs");
+    assert!(compiled.status.success(), "{}", said(&compiled));
+    std::fs::write(root.join("use.js"), NODE_CALLER).expect("the caller");
+    let ran = Command::new("node")
+        .arg("--expose-gc")
+        .arg(root.join("use.js"))
+        .arg(&module)
+        .output()
+        .expect("node runs");
+    assert!(ran.status.success(), "{}", said(&ran));
+    assert_eq!(String::from_utf8_lossy(&ran.stdout), "ok\n");
 }
 
 fn nikaia_with(root: &Path, args: &[&str]) -> Output {

@@ -8,6 +8,25 @@ or the specification. A change only to the guide, the notes, the README, the
 website, the tests, the examples or the tooling around them raises nothing and
 has no heading here; `CLAUDE.md` draws the line.
 
+## [0.0.697] — 2026-10-08
+
+**`nikaia bind node`** (ADR-284 D26, D28; #88). It writes
+`target/nikaia/c-library/node/<package>.c`, an N-API module in C over the
+library, and a `binding.gyp` that builds it against the library with
+`node-gyp`. No `napi` dependency enters the emitted crate.
+- A status is an `Error`. Its `code` is the header's name for the status, its
+  `status` the number, and its message what `last_error` said.
+- Text is a `string`; bytes are a `Buffer` (a `Uint8Array` or an `ArrayBuffer`
+  going in); a run is an array.
+- An `i64` is a `number` where it is a safe integer, and a `bigint` beyond.
+- A handle is a class with its methods, getters and `close()`, freed by the
+  collector where nobody closed it.
+- An `extern` struct is a plain object. Its methods are functions of
+  `<Struct>`, and a method that changes it writes the fields back.
+- An `enum` is a frozen object of numbers.
+- A callback is a function. What it throws, the call throws.
+- A function that may pause is called in its blocking form.
+
 ## [0.0.696] — 2026-10-08
 
 **A library takes the caller's allocator** (ADR-284 D6, D10; #88).
