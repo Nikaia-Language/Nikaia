@@ -21,3 +21,16 @@ test "a crashed task is an error to its joiner" {
     assert(said == "boom")
     assert(n == 42)
 }
+
+fn task_panics_checked(n: i64) -> i64 sync {
+    if n < 0 {
+        panic("a count below zero")
+    }
+    return n
+}
+
+// Stopping is not pausing (Part I 7.2): a `sync` function may panic.
+test "a sync function may panic" {
+    let n = task_panics_checked(3)
+    assert(n == 3)
+}

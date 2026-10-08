@@ -4,6 +4,13 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.665] — 2026-10-08
+
+**A `sync` function may panic** (Part I 7.2). `panic` stops and never pauses,
+as a failed `assert` does, and the `sync` inference and `NK2202` read it so: a
+function that panics may be `sync`, and an entry point C calls (ADR-284 D5)
+may panic on purpose. Found building #88.
+
 ## [0.0.664] — 2026-10-08
 
 **A package is built as a library C calls** (ADR-284 D4, D5, D7, D8, D12, D13;

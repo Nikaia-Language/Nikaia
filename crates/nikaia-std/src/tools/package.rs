@@ -17183,6 +17183,7 @@ fn sync_call(callee: Option<&Callee>, span: &Span, code: &collections::BTreeMap<
 }
 
 fn opaque_call(name: Option<&str>, span: &Span, code: &collections::BTreeMap<String, bool>, node: &mut SyncNode) {
+    if a_stop(name) { return; }
     if name.is_none() {
         node.reach.blocked = true;
         first_site(span, "something this compiler cannot see the end of", node);
@@ -17307,6 +17308,7 @@ fn pausing_call(callee: Option<&Callee>, span: &Span, promise: &Promise, own: &L
             if !never_pauses { found.push(violation(promise, span, key, true, false, false)); }
         },
         Callee::Opaque(name) => {
+            if a_stop((name).as_deref()) { return; }
             let called = nikaia_std::index::or(match name {
                 Some(__nikaia_it) => Some(__nikaia_it.to_owned()),
                 None => None,
@@ -17315,6 +17317,11 @@ fn pausing_call(callee: Option<&Callee>, span: &Span, promise: &Promise, own: &L
         },
         _ => { },
     }
+}
+
+fn a_stop(name: Option<&str>) -> bool {
+    let called = match name { Some(__nikaia_value) => __nikaia_value, None => return false };
+    called == "panic"
 }
 
 fn unpromised(claim: &Sync) -> bool { matches!(claim, Sync::Unpromised) }

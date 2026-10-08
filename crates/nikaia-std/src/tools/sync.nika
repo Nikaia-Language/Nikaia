@@ -291,6 +291,9 @@ fn sync_call(callee: ref Callee?, span: ref Span, code: ref collections::BTreeMa
 // (ADR-288 D29): one that may pause takes the claim away as `blocked` does, kept
 // apart so that a function whose only pausing is its lambdas' can be named.
 fn opaque_call(name: ref String?, span: ref Span, code: ref collections::BTreeMap[String, bool], mut node: SyncNode) {
+    if a_stop(name) {
+        return
+    }
     if name == null {
         node.reach.blocked = true
         first_site(span, "something this compiler cannot see the end of", node)
@@ -446,11 +449,22 @@ fn pausing_call(callee: ref Callee?, span: ref Span, promise: ref Promise, own: 
             }
         }
         Callee::Opaque(name) => {
+            if a_stop(name) {
+                return
+            }
             let called = name?.clone() ?? "something this compiler cannot resolve"
             found.push(violation(promise, span, called, false, false, false))
         }
         else => {}
     }
+}
+
+// **`panic` stops; it does not pause** (Part I 7.2): a `sync` function - an
+// entry point C calls among them (ADR-284 D5) - may panic, as it may fail an
+// `assert`. The language's own word, which no ledger describes.
+fn a_stop(name: ref String?) -> bool {
+    let called = name ?? return false
+    return called == "panic"
 }
 
 fn unpromised(claim: ref Sync) -> bool {
