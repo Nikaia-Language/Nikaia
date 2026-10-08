@@ -8,6 +8,16 @@ or the specification. A change only to the guide, the notes, the README, the
 website, the tests, the examples or the tooling around them raises nothing and
 has no heading here; `CLAUDE.md` draws the line.
 
+## [0.0.701] — 2026-10-08
+
+**A type the language does not offer is refused; `f32` is offered** (#470).
+- Decided, not built: a written `usize`, `isize`, `i8`, `i16`, `u16`, `i128`,
+  `u128` or `str` is `NK1135` outside an `extern "C"` declaration (ADR-286 D36,
+  Part I 2.2, Part III C.3).
+- Decided, not built: `f32` is a type of the language (ADR-285 D33): a float
+  literal is an `f32` where its use asks for one, `f32` and `f64` do not mix
+  without `as`, and `f64 as f32` aborts beyond the `f32` range (Part I 2.2).
+
 ## [0.0.700] — 2026-10-08
 
 **What is written down is what can be called** (ADR-286 D36, #509).

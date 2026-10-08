@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part I: The Language Core**
-**Version:** 0.0.700 (Draft)
+**Version:** 0.0.701 (Draft)
 **Date:** 2026-10-08
 
 ---
@@ -233,6 +233,10 @@ Nikaia provides basic types to represent simple values.
     * `f64`: a double-precision floating-point number. A literal may carry an
       **exponent**, always written `e`: `1.5e-4`, `2e3`,
       `9.54791938424326609e-04`. `1E5` is refused.
+    * `f32`: a single-precision floating-point number, for data where the size
+      of a value matters more than its digits. A float literal is an `f64`
+      unless its use asks for an `f32`: `let w: f32 = 0.5`. An `f32` and an
+      `f64` do not mix without `as`.
 * **Booleans:** logic values.
     * `bool`: `true` or `false`.
 * **Text:**
@@ -300,7 +304,9 @@ same way.
 an `i64` is a `u64`'s: `let basis: u64 = 0xcbf29ce484222325`.
 
 **These five are the integer types a program writes:** `i64`, `i32`, `u8`,
-`u64` and `u32`. The specification does not offer others (`usize`, `i8`). A **length** is an `i64`:
+`u64` and `u32`. The specification does not offer others: a written `usize`,
+`isize`, `i8`, `i16`, `u16`, `i128` or `u128` is refused with `NK1135`, and so is
+`str`, outside an `extern "C"` declaration (Part III 15.1). A **length** is an `i64`:
 `for i in 0..<xs.len()` gives an `i64`, `xs[i]` takes one, and neither
 conversion is written, because the compiler emits both. A negative index
 reports as an access out of bounds (Part III, A.2).
@@ -453,6 +459,9 @@ Two conversions are checked or unchecked in a way the code does not show:
 
 * **An `f64` to an integer** aborts where the value does not fit: `1e20 as i32`,
   `-1e20 as i32`, and a value that is not a number all abort.
+* **An `f64` to an `f32`** rounds to the nearest `f32`. A finite value beyond
+  the `f32` range aborts; an infinity and a value that is not a number carry
+  over. An `f32` to an `f64` always fits.
 * **An integer to an `f64`** is **not** checked. Digits are lost at large values
   without anything overflowing: `9007199254740993` through an `f64` comes back
   `9007199254740992`. This is a limit of the language, not an abort.
