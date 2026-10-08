@@ -177,6 +177,9 @@ enum Part {
     Value(ByValue),
     Choice(usize),
     Record(usize),
+    /// `Array[T, N]` of a number or `bool`: laid out as C lays out `T x[N]`
+    /// (ADR-152 D2, ADR-284 D15), copied as it is.
+    Array(ByValue, i64),
 }
 
 fn records(parsed: &crate::parser::Parsed, plains: &[Plain]) -> Result<Vec<Record>> {
@@ -205,6 +208,12 @@ fn records(parsed: &crate::parser::Parsed, plains: &[Plain]) -> Result<Vec<Recor
                         Part::Value(shape)
                     } else if let Some(at) = choice(parsed, plains, &field.ty) {
                         Part::Choice(at)
+                    } else if let ("Array", [element, size]) =
+                        (parsed.text(field.ty.name), field.ty.generics.as_slice())
+                        && let Some(shape) = by_value(parsed, element).filter(|shape| !shape.scalar)
+                        && let Some(count) = size.count
+                    {
+                        Part::Array(shape, count)
                     } else if let Some(at) = declared
                         .iter()
                         .position(|(other, _)| *other == parsed.text(field.ty.name))
@@ -276,6 +285,11 @@ fn mirror(record: &Record, records: &[Record], plains: &[Plain]) -> String {
             ),
             Part::Value(shape) => (
                 shape.rust.to_string(),
+                format!("self.{local}"),
+                format!("value.{local}"),
+            ),
+            Part::Array(shape, count) => (
+                format!("[{}; {count}]", shape.rust),
                 format!("self.{local}"),
                 format!("value.{local}"),
             ),
@@ -1512,12 +1526,13 @@ pub fn export(
             .fields
             .iter()
             .map(|(field, part)| {
-                let c = match part {
-                    Part::Value(shape) => shape.c.to_string(),
-                    Part::Choice(at) => format!("{prefix}_{}", plains[*at].name),
-                    Part::Record(at) => format!("{prefix}_{}", records[*at].name),
+                let (c, size) = match part {
+                    Part::Value(shape) => (shape.c.to_string(), String::new()),
+                    Part::Choice(at) => (format!("{prefix}_{}", plains[*at].name), String::new()),
+                    Part::Record(at) => (format!("{prefix}_{}", records[*at].name), String::new()),
+                    Part::Array(shape, count) => (shape.c.to_string(), format!("[{count}]")),
                 };
-                format!("    {c} {field};")
+                format!("    {c} {field}{size};")
             })
             .collect();
         types.push_str(&format!(
@@ -2352,6 +2367,7 @@ impl Python {
                         Part::Value(shape) => python_scalar(shape).to_string(),
                         Part::Choice(_) => "ctypes.c_int".to_string(),
                         Part::Record(at) => records[*at].name.clone(),
+                        Part::Array(shape, count) => format!("{} * {count}", python_scalar(shape)),
                     };
                     format!("(\"{field}\", {ty})")
                 })

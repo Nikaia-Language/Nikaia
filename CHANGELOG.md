@@ -8,6 +8,14 @@ or the specification. A change only to the guide, the notes, the README, the
 website, the tests, the examples or the tooling around them raises nothing and
 has no heading here; `CLAUDE.md` draws the line.
 
+## [0.0.693] — 2026-10-08
+
+**An `extern` struct's `Array[T, N]` field crosses to C** (ADR-284 D15,
+ADR-152 D2; #88). A field that is a fixed array of a number or `bool` is
+`T name[N]` in the header and `ctypes.c_double * N` (and so on) in the Python
+binding, laid out as C lays it out. An array of `scalar`, of an `enum` or of
+another struct is not exported yet.
+
 ## [0.0.692] — 2026-10-08
 
 **A run of `pub extern struct`s crosses to C** (ADR-284 D16; #88). An entry

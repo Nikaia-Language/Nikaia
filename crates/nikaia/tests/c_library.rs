@@ -157,6 +157,18 @@ impl Point {
     }
 }
 
+pub extern struct Quad {
+    sides: Array[f64, 4],
+}
+
+pub extern fn perimeter(q: Quad) -> f64 sync {
+    let mut sum = 0.0
+    for side in q.sides {
+        sum = sum + side
+    }
+    return sum
+}
+
 pub extern fn widest(points: ref Array[Point]) -> f64 sync {
     let mut most = 0.0
     for p in points {
@@ -476,6 +488,10 @@ int main(void) {
     status = calc_Point_sum(&p, &both);
     printf("point %d %.1f %.1f %.1f\n", status, p.x, p.y, both);
     calc_Point many[3] = {{1.0, 0.0}, {7.0, 0.0}, {3.0, 0.0}};
+    calc_Quad quad = {{1.0, 2.0, 3.0, 4.5}};
+    double around = 0;
+    status = calc_perimeter(quad, &around);
+    printf("perimeter %d %.1f\n", status, around);
     double most = 0;
     status = calc_widest(many, 3, &most);
     printf("widest %d %.1f\n", status, most);
@@ -592,7 +608,7 @@ fn a_c_program_calls_the_library() {
     assert!(ran.status.success(), "{}", said(&ran));
     assert_eq!(
         String::from_utf8_lossy(&ran.stdout),
-        "size query 0 10\ntoo small -2 10\ngreet 0 Hello, Ada\nnot utf-8 -1\nno address -1\ntotal 0 10\nsize 0 3\nnapped 0 62\ngrown 0 0.5 1.5 4.0 5.0 1\npoint 0 1.5 2.5 4.0\nwidest 0 7.0\ndiagonal asked 0 3\ndiagonal too small -2\ndiagonal 0 3 2.0 4.0\nno such light in a box -1\nafter 0 1\nno such light -1\n"
+        "size query 0 10\ntoo small -2 10\ngreet 0 Hello, Ada\nnot utf-8 -1\nno address -1\ntotal 0 10\nsize 0 3\nnapped 0 62\ngrown 0 0.5 1.5 4.0 5.0 1\npoint 0 1.5 2.5 4.0\nperimeter 0 10.5\nwidest 0 7.0\ndiagonal asked 0 3\ndiagonal too small -2\ndiagonal 0 3 2.0 4.0\nno such light in a box -1\nafter 0 1\nno such light -1\n"
     );
 
     std::fs::write(root.join("handle.c"), HANDLE_CALLER).expect("the caller");
@@ -807,6 +823,7 @@ assert (grown.corner.x, grown.width, grown.light) == (0.5, 4.0, calc.Light.Green
 point = calc.Point(1.0, 2.0)
 point.shift(0.5)
 assert (point.x, point.sum()) == (1.5, 4.0)
+assert calc.perimeter(calc.Quad((1.0, 2.0, 3.0, 4.5))) == 10.5
 assert calc.widest([calc.Point(1.0, 0.0), calc.Point(7.0, 0.0)]) == 7.0
 assert [(p.x, p.y) for p in calc.diagonal(3)] == [(0.0, 0.0), (1.0, 2.0), (2.0, 4.0)]
 try:
