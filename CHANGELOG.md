@@ -4,6 +4,18 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.671] — 2026-10-08
+
+**A library's entry point takes a callback** (ADR-284 D5, D11; #88). A
+`fn(A…) -> R sync` parameter is a C function pointer `R (*f)(A…, void *ctx)` and
+`void *f_ctx`, called on the calling thread; NULL is `E_ARGUMENT`. The callback
+receives numbers, `bool`, `scalar`, an `enum` without payload and `ref String`
+(an address and a length that live for the call), and hands back a number, a
+`bool` or nothing. A call from a callback into a handle the library holds is
+`E_REENTRANT`. Fixed on the way: an entry point that hands back nothing did not
+compile. Not built yet: a callback that throws or hands back text, and the
+async form's library thread.
+
 ## [0.0.670] — 2026-10-08
 
 **A library starts and stops** (ADR-284 D8, D10; #88). `<prefix>_init()` and

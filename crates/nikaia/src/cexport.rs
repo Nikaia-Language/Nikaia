@@ -22,7 +22,9 @@
 // numbers (`ref Array[T]`) in; an `enum` without payload in and out, as a C
 // `enum`; a `pub struct` as a handle - out as a new one, in as `ref T`, with
 // its `extern` constructor and methods, a getter per `pub` field and `_free`,
-// each call holding its lock (D11) - of a function or method that does not
+// each call holding its lock (D11); a callback that does not pause or throw,
+// as a function pointer and a `void *ctx`, taking values, enums and text and
+// handing back a number or nothing - of a function or method that does not
 // pause, declared in the package's entry file, throwing at most one `enum` of
 // it. Every raw pointer is read and written
 // through `c-boundary` (ADR-218). Every other entry point is refused here,
@@ -87,6 +89,50 @@ enum In {
     Choice(usize),
     /// `ref T` of a handle: held shared for the call.
     Handle(usize),
+    /// `fn(A…) -> R sync`: a function pointer and the `void *ctx` C hands it
+    /// back (D5).
+    Callback {
+        args: Vec<Lent>,
+        result: Option<ByValue>,
+    },
+}
+
+/// What a callback hands C (ADR-284 D5, D6).
+enum Lent {
+    Value(ByValue),
+    Choice(usize),
+    /// `ref String`: an address and a length that live for the call.
+    Text,
+}
+
+/// A callback C may be: one that does not pause or throw, takes values, enums
+/// and text, and hands back a number or `bool`, or nothing.
+fn callback(parsed: &crate::parser::Parsed, plains: &[Plain], ty: &Type) -> Option<In> {
+    let code = (*ty.code).as_ref()?;
+    if !code.is_sync || code.can_throw || ty.is_nullable {
+        return None;
+    }
+    let args = ty
+        .generics
+        .iter()
+        .map(|arg| {
+            if let Some(shape) = by_value(parsed, arg) {
+                return Some(Lent::Value(shape));
+            }
+            if let Some(at) = choice(parsed, plains, arg) {
+                return Some(Lent::Choice(at));
+            }
+            let text = arg.is_view
+                && arg.generics.is_empty()
+                && matches!(parsed.text(arg.name), "String" | "str");
+            text.then_some(Lent::Text)
+        })
+        .collect::<Option<Vec<_>>>()?;
+    let result = match &*code.result {
+        None => None,
+        Some(result) => Some(by_value(parsed, result).filter(|shape| !shape.scalar)?),
+    };
+    Some(In::Callback { args, result })
 }
 
 /// What a result hands back (ADR-284 D5, D6).
@@ -155,6 +201,9 @@ fn taken(
     handles: &[Handled],
     ty: &Type,
 ) -> Option<In> {
+    if ty.code.is_some() {
+        return callback(parsed, plains, ty);
+    }
     if let Some(at) = handle_of(parsed, handles, ty) {
         // A handle taken by value would end it: not exported yet.
         return ty.is_view.then_some(In::Handle(at));
@@ -634,6 +683,78 @@ pub fn export(program: &Program, prefix: &str, package: &str) -> Result<Option<E
                     ));
                     call_args.push(local);
                 }
+                Some(In::Callback { args, result }) => {
+                    // **A function pointer and the context C hands it back**
+                    // (D5); called on the calling thread, and NULL is
+                    // `E_ARGUMENT`. Calling it is the C caller's contract that
+                    // it is a function of this signature.
+                    let mut rust_args = Vec::new();
+                    let mut c_args = Vec::new();
+                    let mut closure_params = Vec::new();
+                    let mut passed = Vec::new();
+                    for (at, lent) in args.iter().enumerate() {
+                        let name = format!("__nikaia_{at}");
+                        match lent {
+                            Lent::Value(shape) => {
+                                rust_args.push(shape.rust.to_string());
+                                c_args.push(shape.c.to_string());
+                                let lowered = match shape.scalar {
+                                    true => "char",
+                                    false => shape.rust,
+                                };
+                                closure_params.push(format!("{name}: {lowered}"));
+                                passed.push(match shape.scalar {
+                                    true => format!("{name} as u32"),
+                                    false => name,
+                                });
+                            }
+                            Lent::Choice(which) => {
+                                let plain = &plains[*which];
+                                crossing[*which] = true;
+                                rust_args.push("std::ffi::c_int".to_string());
+                                c_args.push(format!("{prefix}_{}", plain.name));
+                                let arms: Vec<String> = plain
+                                    .variants
+                                    .iter()
+                                    .enumerate()
+                                    .map(|(number, variant)| {
+                                        format!("{}::{variant} => {number},", plain.name)
+                                    })
+                                    .collect();
+                                closure_params.push(format!("{name}: {}", plain.name));
+                                passed.push(format!("match {name} {{ {} }}", arms.join(" ")));
+                            }
+                            Lent::Text => {
+                                rust_args.push("*const u8, usize".to_string());
+                                c_args.push("const uint8_t *, size_t".to_string());
+                                closure_params.push(format!("{name}: &str"));
+                                passed.push(format!("{name}.as_ptr(), {name}.len()"));
+                            }
+                        }
+                    }
+                    rust_args.push("*mut std::ffi::c_void".to_string());
+                    c_args.push("void *ctx".to_string());
+                    let (rust_result, c_result) = match &result {
+                        Some(shape) => (format!(" -> {}", shape.rust), shape.c),
+                        None => (String::new(), "void"),
+                    };
+                    rust_params.push(format!(
+                        "{local}: Option<extern \"C\" fn({}){rust_result}>, {local}_ctx: *mut std::ffi::c_void",
+                        rust_args.join(", ")
+                    ));
+                    c_params.push(format!(
+                        "{c_result} (*{param})({}), void *{param}_ctx",
+                        c_args.join(", ")
+                    ));
+                    passed.push(format!("{local}_ctx"));
+                    checks.push_str(&format!(
+                        "    let Some({local}) = {local} else {{ return -1; }};\n    \
+                         let {local} = move |{}|{rust_result} {{ {local}({}) }};\n",
+                        closure_params.join(", "),
+                        passed.join(", ")
+                    ));
+                    call_args.push(format!("&{local}"));
+                }
                 Some(In::Handle(at)) => {
                     let ty = &handles[at].name;
                     rust_params.push(format!(
@@ -734,7 +855,7 @@ pub fn export(program: &Program, prefix: &str, package: &str) -> Result<Option<E
                  unsafe { nikaia_std::c_boundary::put(out, nikaia_std::c_boundary::handle(value)) };\n            \
                  }\n            0\n        }"
                 .to_string(),
-            None => "Ok(()) => 0".to_string(),
+            None => "Ok(()) => 0,".to_string(),
         };
         // A failure is the variant's code, and its message, with its site,
         // is what `<prefix>_last_error` hands back (D7).

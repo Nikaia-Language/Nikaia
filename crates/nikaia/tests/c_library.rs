@@ -86,6 +86,27 @@ pub extern fn sum_of(a: ref Counter, b: ref Counter) -> i64 sync {
     return a.count + b.count
 }
 
+pub extern fn count_up(to: i64, each: fn(i64) -> bool sync) -> i64 sync {
+    let mut i = 0
+    while i < to {
+        if !each(i) {
+            return i
+        }
+        i = i + 1
+    }
+    return i
+}
+
+pub extern fn words(text: ref String, each: fn(ref String, Light) sync) sync {
+    for w in text.split(\" \") {
+        each(w, Light::Amber)
+    }
+}
+
+pub extern fn looking_at(c: ref Counter, each: fn(i64) sync) sync {
+    each(c.count)
+}
+
 pub enum Refusal {
     Negative,
     TooLarge(i64),
@@ -194,6 +215,43 @@ int main(void) {
     printf("same twice %d\n", calc_sum_of(counter, counter, &n));
     printf("no handle %d\n", calc_Counter_steps(NULL, &n));
     printf("free %d %d %d\n", calc_Counter_free(counter), calc_Counter_free(other), calc_Counter_free(NULL));
+    return CALC_OK;
+}
+"#;
+
+/// A callback is a function pointer and a `void *ctx` (ADR-284 D5), called
+/// on the calling thread; a call back into a handle the library holds for
+/// the call is `E_REENTRANT` rather than a deadlock (D11).
+const CALLBACK_CALLER: &str = r#"#include <stdio.h>
+#include "calc.h"
+
+static bool below(int64_t i, void *ctx) {
+    return i < *(int64_t *)ctx;
+}
+
+static void word(const uint8_t *w, size_t len, calc_Light light, void *ctx) {
+    (void)ctx;
+    printf("word %.*s %d\n", (int)len, (const char *)w, light == CALC_LIGHT_AMBER);
+}
+
+static void again(int64_t count, void *ctx) {
+    int64_t n = 0;
+    int status = calc_Counter_bump((calc_Counter *)ctx, 1, &n);
+    printf("looking at %lld, bump %d\n", (long long)count, status);
+}
+
+int main(void) {
+    int64_t limit = 3;
+    int64_t n = 0;
+    int status = calc_count_up(10, below, &limit, &n);
+    printf("count up %d %lld\n", status, (long long)n);
+    printf("no callback %d\n", calc_count_up(10, NULL, NULL, &n));
+    calc_words((const uint8_t *)"one two", 7, word, NULL);
+    calc_Counter *counter = NULL;
+    calc_Counter_new((const uint8_t *)"c", 1, &counter);
+    status = calc_looking_at(counter, again, counter);
+    printf("looking %d\n", status);
+    calc_Counter_free(counter);
     return CALC_OK;
 }
 "#;
@@ -351,6 +409,29 @@ fn a_c_program_calls_the_library() {
     assert_eq!(
         String::from_utf8_lossy(&ran.stdout),
         "new 0 1\nbump 0 7\nsteps 2\ncount 7\nname 0 clicks\nlight 1\nsum 17\nsame twice -5\nno handle -1\nfree 0 0 0\n"
+    );
+
+    std::fs::write(root.join("callback.c"), CALLBACK_CALLER).expect("the caller");
+    let program = root.join("callback");
+    let compiled = Command::new("cc")
+        .arg("-I")
+        .arg(&made)
+        .arg(root.join("callback.c"))
+        .arg("-L")
+        .arg(&made)
+        .args(["-lcalc", "-o"])
+        .arg(&program)
+        .output()
+        .expect("cc runs");
+    assert!(compiled.status.success(), "{}", said(&compiled));
+    let ran = Command::new(&program)
+        .env("LD_LIBRARY_PATH", &made)
+        .output()
+        .expect("the caller runs");
+    assert!(ran.status.success(), "{}", said(&ran));
+    assert_eq!(
+        String::from_utf8_lossy(&ran.stdout),
+        "count up 0 3\nno callback -1\nword one 1\nword two 1\nlooking at 0, bump -5\nlooking 0\n"
     );
 
     std::fs::write(root.join("throwing.c"), THROWING_CALLER).expect("the caller");
