@@ -4,6 +4,14 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.668] — 2026-10-08
+
+**A library's entry points take and return an `enum` without payload** (ADR-284
+D5, D13; #88). It is a C `enum` in the header, `<prefix>_<Type>`, its values
+`<PREFIX>_<TYPE>_<VARIANT>` numbered in declaration order; a number no variant
+has is `E_ARGUMENT`. An `enum` with payload, `T?`, structs and callbacks are
+not exported yet.
+
 ## [0.0.667] — 2026-10-08
 
 **A library's entry point may throw** (ADR-284 D7; #88). Each variant of an

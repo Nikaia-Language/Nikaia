@@ -18,8 +18,9 @@
 // **What is built of D5's table**: numbers, `bool` and `scalar` in and out;
 // text (`ref String`) and bytes (`Bytes`) in as an address and a length, and
 // out (`String`, `Bytes`, `Vec[u8]`) into the caller's buffer (D6); a run of
-// numbers (`ref Array[T]`) in - of a function that neither pauses nor throws,
-// declared in the package's entry file. Every raw pointer is read and written
+// numbers (`ref Array[T]`) in; an `enum` without payload in and out, as a C
+// `enum` - of a function that does not pause, declared in the package's entry
+// file, throwing at most one `enum` of it. Every raw pointer is read and written
 // through `c-boundary` (ADR-218). Every other entry point is refused here,
 // saying which part is not built yet, rather than exported half-way.
 
@@ -78,6 +79,8 @@ enum In {
     },
     /// `Bytes`: the same, made a `Bytes` of its own.
     Bytes,
+    /// An `enum` without payload: a C `enum`, its number checked on the way in.
+    Choice(usize),
 }
 
 /// What a result hands back (ADR-284 D5, D6).
@@ -85,11 +88,56 @@ enum Out {
     Value(ByValue),
     /// `String`, `Bytes` or `Vec[u8]`: into the caller's buffer.
     Buffer,
+    /// An `enum` without payload: its number.
+    Choice(usize),
 }
 
-fn taken(parsed: &crate::parser::Parsed, ty: &Type) -> Option<In> {
+/// An `enum` without payload the entry file declares (ADR-284 D5): its name
+/// and its variants, numbered in declaration order.
+struct Plain {
+    name: String,
+    variants: Vec<String>,
+}
+
+fn plain_enums(parsed: &crate::parser::Parsed) -> Vec<Plain> {
+    parsed
+        .program
+        .items
+        .iter()
+        .filter_map(|item| match &item.node {
+            Item::Enum { name, variants, .. }
+                if variants
+                    .iter()
+                    .all(|variant| matches!(variant.fields, crate::ast::VariantFields::Unit)) =>
+            {
+                Some(Plain {
+                    name: parsed.text(*name).to_string(),
+                    variants: variants
+                        .iter()
+                        .map(|variant| parsed.text(variant.name).to_string())
+                        .collect(),
+                })
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+/// Which of `plains` a type names, when it is one of them as written.
+fn choice(parsed: &crate::parser::Parsed, plains: &[Plain], ty: &Type) -> Option<usize> {
+    if ty.is_view || ty.is_nullable || ty.is_tuple || !ty.generics.is_empty() || ty.code.is_some() {
+        return None;
+    }
+    let name = parsed.text(ty.name);
+    plains.iter().position(|plain| plain.name == name)
+}
+
+fn taken(parsed: &crate::parser::Parsed, plains: &[Plain], ty: &Type) -> Option<In> {
     if let Some(shape) = by_value(parsed, ty) {
         return Some(In::Value(shape));
+    }
+    if let Some(at) = choice(parsed, plains, ty) {
+        return Some(In::Choice(at));
     }
     if ty.is_nullable || ty.code.is_some() {
         return None;
@@ -114,9 +162,12 @@ fn taken(parsed: &crate::parser::Parsed, ty: &Type) -> Option<In> {
     }
 }
 
-fn handed(parsed: &crate::parser::Parsed, ty: &Type) -> Option<Out> {
+fn handed(parsed: &crate::parser::Parsed, plains: &[Plain], ty: &Type) -> Option<Out> {
     if let Some(shape) = by_value(parsed, ty) {
         return Some(Out::Value(shape));
+    }
+    if let Some(at) = choice(parsed, plains, ty) {
+        return Some(Out::Choice(at));
     }
     if ty.is_nullable || ty.is_view || ty.code.is_some() {
         return None;
@@ -206,6 +257,13 @@ pub fn export(program: &Program, prefix: &str, package: &str) -> Result<Option<E
     // order** (D7): every variant of every error `enum` the entry file
     // declares and an entry point throws.
     let codes = variant_codes(program);
+    let plains = program
+        .units
+        .first()
+        .map(|unit| plain_enums(&unit.parsed))
+        .unwrap_or_default();
+    // The ones an entry point's signature names, which the header declares.
+    let mut crossing = vec![false; plains.len()];
     let mut constants = String::new();
     for (error, variants) in &codes {
         for (variant, code) in variants {
@@ -235,9 +293,9 @@ pub fn export(program: &Program, prefix: &str, package: &str) -> Result<Option<E
             let not_yet = |what: &str| -> anyhow::Error {
                 anyhow::anyhow!(
                     "`{written}` is an entry point whose {what} this compiler does not export yet: \
-                     what is built is numbers, `bool` and `scalar` in and out, text and bytes in \
-                     and out, and a run of numbers in, of a function in `src/main.nika` that \
-                     neither pauses nor throws (ADR-284 D5)."
+                     what is built is numbers, `bool`, `scalar` and an `enum` without payload in \
+                     and out, text and bytes in and out, and a run of numbers in, of a function \
+                     in `src/main.nika` that does not pause (ADR-284 D5)."
                 )
             };
             if at != 0 {
@@ -266,7 +324,7 @@ pub fn export(program: &Program, prefix: &str, package: &str) -> Result<Option<E
             for (position, arg) in args.iter().enumerate() {
                 let param = parsed.text(arg.name).to_string();
                 let local = crate::emit::escaped(&param).into_owned();
-                match taken(parsed, &arg.ty) {
+                match taken(parsed, &plains, &arg.ty) {
                     Some(In::Value(shape)) => {
                         rust_params.push(format!("{local}: {}", shape.rust));
                         c_params.push(format!("{} {param}", shape.c));
@@ -313,11 +371,31 @@ pub fn export(program: &Program, prefix: &str, package: &str) -> Result<Option<E
                             false => local,
                         });
                     }
+                    Some(In::Choice(at)) => {
+                        let plain = &plains[at];
+                        crossing[at] = true;
+                        rust_params.push(format!("{local}: std::ffi::c_int"));
+                        c_params.push(format!("{prefix}_{} {param}", plain.name));
+                        // A number no variant has is `E_ARGUMENT` (ADR-284 D5).
+                        let arms: Vec<String> = plain
+                            .variants
+                            .iter()
+                            .enumerate()
+                            .map(|(number, variant)| {
+                                format!("{number} => {}::{variant},", plain.name)
+                            })
+                            .collect();
+                        checks.push_str(&format!(
+                            "    let {local} = match {local} {{ {} _ => return -1 }};\n",
+                            arms.join(" ")
+                        ));
+                        call_args.push(local);
+                    }
                     None => return Err(not_yet(&format!("parameter `{param}`"))),
                 }
             }
             let result = match ret_type {
-                Some(ty) => match handed(parsed, ty) {
+                Some(ty) => match handed(parsed, &plains, ty) {
                     Some(Out::Value(shape)) => {
                         rust_params.push(format!("out: *mut {}", shape.rust));
                         c_params.push(format!("{} *out", shape.c));
@@ -328,6 +406,12 @@ pub fn export(program: &Program, prefix: &str, package: &str) -> Result<Option<E
                             .push("out: *mut u8, cap: usize, written: *mut usize".to_string());
                         c_params.push("uint8_t *out, size_t cap, size_t *written".to_string());
                         Some(Out::Buffer)
+                    }
+                    Some(Out::Choice(at)) => {
+                        crossing[at] = true;
+                        rust_params.push("out: *mut std::ffi::c_int".to_string());
+                        c_params.push(format!("{prefix}_{} *out", plains[at].name));
+                        Some(Out::Choice(at))
                     }
                     None => return Err(not_yet("result")),
                 },
@@ -354,6 +438,22 @@ pub fn export(program: &Program, prefix: &str, package: &str) -> Result<Option<E
                      // SAFETY: the C caller hands `cap` bytes at `out` and a place for the length, or NULL (ADR-284 D6).\n            \
                      unsafe { nikaia_std::c_boundary::hand_back(AsRef::<[u8]>::as_ref(&value), out, cap, written) }\n        }"
                     .to_string(),
+                Some(Out::Choice(at)) => {
+                    let plain = &plains[*at];
+                    let arms: Vec<String> = plain
+                        .variants
+                        .iter()
+                        .enumerate()
+                        .map(|(number, variant)| format!("{}::{variant} => {number},", plain.name))
+                        .collect();
+                    format!(
+                        "Ok(value) => {{\n            \
+                         let number: std::ffi::c_int = match value {{ {} }};\n            \
+                         // SAFETY: the C caller hands a place for one value, or NULL (ADR-284 D7).\n            \
+                         unsafe {{ nikaia_std::c_boundary::put(out, number) }};\n            0\n        }}",
+                        arms.join(" ")
+                    )
+                }
                 None => "Ok(()) => 0".to_string(),
             };
             // A failure is the variant's code, and its message, with its site,
@@ -399,6 +499,32 @@ pub fn export(program: &Program, prefix: &str, package: &str) -> Result<Option<E
             declarations.push_str(&format!("int {symbol}({c_params});\n"));
         }
     }
+    // **An `enum` without payload is a C `enum`**, numbered in declaration
+    // order (D5), each value `<PREFIX>_<TYPE>_<VARIANT>` (D13).
+    let mut types = String::new();
+    for (plain, _) in plains
+        .iter()
+        .zip(&crossing)
+        .filter(|(_, crosses)| **crosses)
+    {
+        let values: Vec<String> = plain
+            .variants
+            .iter()
+            .enumerate()
+            .map(|(number, variant)| {
+                format!(
+                    "    {upper}_{}_{} = {number}",
+                    plain.name.to_uppercase(),
+                    variant.to_uppercase()
+                )
+            })
+            .collect();
+        types.push_str(&format!(
+            "typedef enum {{\n{}\n}} {prefix}_{};\n\n",
+            values.join(",\n"),
+            plain.name
+        ));
+    }
     let guard = format!("{upper}_H");
     let header = format!(
         "/* {package}.h - GENERATED by nikaia from {package}'s ledger. Do not edit.\n \
@@ -417,6 +543,7 @@ pub fn export(program: &Program, prefix: &str, package: &str) -> Result<Option<E
          #define {upper}_E_CANCELLED (-7)\n\n\
          /* What the entry points throw, numbered per library (ADR-284 D7). */\n\
          {constants}\n\
+         {types}\
          /* This thread's last failure, with its site (ADR-284 D7). */\n\
          int {prefix}_last_error(uint8_t *out, size_t cap, size_t *written);\n\n\
          {declarations}\n\

@@ -45,6 +45,20 @@ pub extern fn size(b: Bytes) -> i64 sync {
     return b.len()
 }
 
+pub enum Light {
+    Red,
+    Amber,
+    Green,
+}
+
+pub extern fn after(light: Light) -> Light sync {
+    match light {
+        Light::Red => Light::Green
+        Light::Amber => Light::Red
+        Light::Green => Light::Amber
+    }
+}
+
 pub enum Refusal {
     Negative,
     TooLarge(i64),
@@ -137,6 +151,10 @@ int main(void) {
     int64_t n = 0;
     status = calc_size((const uint8_t *)"\x01\x02\x03", 3, &n);
     printf("size %d %lld\n", status, (long long)n);
+    calc_Light light = CALC_LIGHT_RED;
+    status = calc_after(CALC_LIGHT_GREEN, &light);
+    printf("after %d %d\n", status, light == CALC_LIGHT_AMBER);
+    printf("no such light %d\n", calc_after((calc_Light)7, &light));
     return CALC_OK;
 }
 "#;
@@ -190,6 +208,7 @@ fn a_c_program_calls_the_library() {
         "{header}"
     );
     assert!(header.contains("#define CALC_E_PANICKED (-4)"), "{header}");
+    assert!(header.contains("    CALC_LIGHT_AMBER = 1,"), "{header}");
     assert!(header.contains("ledger: "), "{header}");
     assert!(made.join("libcalc.a").is_file(), "the static library");
 
@@ -238,7 +257,7 @@ fn a_c_program_calls_the_library() {
     assert!(ran.status.success(), "{}", said(&ran));
     assert_eq!(
         String::from_utf8_lossy(&ran.stdout),
-        "size query 0 10\ntoo small -2 10\ngreet 0 Hello, Ada\nnot utf-8 -1\nno address -1\ntotal 0 10\nsize 0 3\n"
+        "size query 0 10\ntoo small -2 10\ngreet 0 Hello, Ada\nnot utf-8 -1\nno address -1\ntotal 0 10\nsize 0 3\nafter 0 1\nno such light -1\n"
     );
 
     std::fs::write(root.join("throwing.c"), THROWING_CALLER).expect("the caller");
