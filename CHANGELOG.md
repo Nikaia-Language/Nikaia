@@ -4,6 +4,24 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.661] — 2026-10-08
+
+**`supervisor::run` restarts the tasks it runs** (ADR-328, Part II 12.8, #95
+steps 3 and 4).
+- `supervisor::child(fn { … }; restart:)` and `supervisor::run([…];
+  strategy:)`: children start in list order and stop in reverse; `OneForOne`,
+  `OneForAll` and `RestForOne`; `Permanent`, `Transient` and `Temporary`.
+  Giving up stops every child and throws `supervisor::Escalated`. At both
+  settings, with a pool twin at `yes`.
+- `std`'s default policy: the first failure at once, then a delay that doubles
+  from 100 ms with jitter up to 30 s; an attempt of 60 s starts a new cycle,
+  and a cycle of 5 minutes gives up. The numbers are starting values.
+- `policy:` is not built: it takes a trait a program implements, and
+  `std.contracts` describes no trait yet.
+- The sharing analysis walks a list literal's elements, so a lambda kept by a
+  call inside one is seen to cross threads; a kept lambda that pauses takes a
+  handle of its own of each hull per call.
+
 ## [0.0.660] — 2026-10-08
 
 **A `'…'` is a `u8` where a byte is wanted** (ADR-320, #453 step 2, first

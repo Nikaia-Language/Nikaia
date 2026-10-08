@@ -3896,6 +3896,59 @@ throws = ["io::IoError"]
 keeps = ["handler"]
 signature = "(address: ref String, handler: fn(net::Connection) throws)"
 
+# --- `supervisor`: tasks restarted when they end (ADR-328, Part II 12.8) -------
+#
+# **The `policy:` option is not here yet**: it takes a value of a trait a
+# program implements (`supervisor::Restart`), and this file describes no trait.
+# Every child is restarted by `std`'s default until it does.
+
+# Which siblings restart with a child that crashed.
+[type."supervisor::Strategy"]
+pub = true
+crosses = true
+compares = true
+copies = true
+variants = ["OneForOne", "OneForAll", "RestForOne"]
+
+# Which ends of a child are restarted: every end, a crash, or none.
+[type."supervisor::Kind"]
+pub = true
+crosses = true
+compares = true
+copies = true
+variants = ["Permanent", "Transient", "Temporary"]
+
+# One task a supervisor runs, made by `supervisor::child`.
+[type."supervisor::Child"]
+pub = true
+crosses = true
+
+# What `supervisor::run` throws when it gives up: what the last crash said.
+[type."supervisor::Escalated"]
+pub = true
+crosses = true
+compares = true
+fields = ["pub message: String"]
+
+# **`body` is kept**: the supervisor calls it again for every attempt.
+# A task for a supervisor to run, and which of its ends restart it.
+[fn."supervisor::child"]
+pub = true
+sync = true
+touches = []
+keeps = ["body"]
+signature = "(body: fn() throws; restart: supervisor::Kind = supervisor::Kind::Permanent) -> supervisor::Child"
+
+# No `touches`, the fail-closed answer: what the children do is theirs.
+# Run the children until the supervisor gives up.
+#
+# They start in list order and stop in reverse. It returns only when it gives
+# up, after stopping every child, and throws `supervisor::Escalated` then.
+[fn."supervisor::run"]
+pub = true
+throws = ["supervisor::Escalated"]
+signature = "(children: Vec[supervisor::Child]; strategy: supervisor::Strategy = supervisor::Strategy::OneForOne)"
+
 # Close it now rather than when it is dropped.
 #
 # Dropping one closes it, which is the language below's answer; a program that

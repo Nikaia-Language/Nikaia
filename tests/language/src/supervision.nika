@@ -1,0 +1,46 @@
+// A supervisor runs tasks and restarts them when they end (ADR-328, Part II
+// 12.8): what a child's kind and the strategy restart, at both settings. The
+// default policy's delays and its giving up are `std`'s own tests
+// (`crates/nikaia-std/src/supervisor.rs`).
+
+use std::supervisor
+
+fn supervision_flaky(attempts: SharedMut[i64]) throws {
+    attempts.update fn(mut v) { v += 1 }
+    if attempts.get() < 3 {
+        panic("not yet")
+    }
+}
+
+fn supervision_counted(starts: SharedMut[i64]) throws {
+    starts.update fn(mut v) { v += 1 }
+}
+
+test "a transient child is restarted until it ends normally" {
+    let attempts = SharedMut(0)
+    supervisor::run([
+        supervisor::child(fn { supervision_flaky(attempts) }; restart: supervisor::Kind::Transient),
+    ])
+    let tried = attempts.get()
+    assert(tried == 3)
+}
+
+test "one for all restarts the siblings of a child that crashed" {
+    let attempts = SharedMut(1)
+    let starts = SharedMut(0)
+    supervisor::run([
+        supervisor::child(fn { supervision_flaky(attempts) }; restart: supervisor::Kind::Transient),
+        supervisor::child(fn { supervision_counted(starts) }; restart: supervisor::Kind::Transient),
+    ]; strategy: supervisor::Strategy::OneForAll)
+    let started = starts.get()
+    assert(started == 2)
+}
+
+test "a temporary child is not restarted" {
+    let attempts = SharedMut(0)
+    supervisor::run([
+        supervisor::child(fn { supervision_flaky(attempts) }; restart: supervisor::Kind::Temporary),
+    ])
+    let tried = attempts.get()
+    assert(tried == 1)
+}

@@ -9153,7 +9153,19 @@ impl<'p> Emitter<'p> {
                         changed: &changed,
                         ..Flow::PLAIN
                     };
+                    // **Each call takes a handle of its own of each hull**:
+                    // the closure is called again (a supervisor's child, every
+                    // connection of `net::serve`), and the future each call
+                    // makes owns what it uses, so the closure's own handle is
+                    // cloned per call rather than moved out of it.
                     if pauses {
+                        if !hulls.is_empty() {
+                            out.push("{ ");
+                            for hull in &hulls {
+                                let hull = escaped(hull);
+                                out.push(&format!("let {hull} = {hull}.clone(); "));
+                            }
+                        }
                         out.push("Box::pin(async move ");
                     }
                     // A type that may fail hands back a `Result`, as a
@@ -9171,6 +9183,9 @@ impl<'p> Emitter<'p> {
                     }
                     if pauses {
                         out.push(&format!(") as {}<_>", self.boxed_future()));
+                        if !hulls.is_empty() {
+                            out.push(" }");
+                        }
                     }
                     out.push("))");
                     if !hulls.is_empty() {
@@ -10536,18 +10551,24 @@ impl<'p> Emitter<'p> {
         }
 
         self.expr(out, func, depth, flow)?;
-        // **`net::serve` runs each connection in a task** (ADR-326 D1), and
-        // where tasks run on threads its handler crosses one: the pool's twin,
+        // **What runs a kept function in a task of its own** - `net::serve`'s
+        // handler (ADR-326 D1), a supervisor's children (ADR-328) - has a twin
+        // where tasks run on threads, whose functions cross one: the pool's,
         // as `spawn` has, from one written call.
         if self.build.overlaps_user_code()
             && let Expr::Path(segments) = func
-            && self.parsed.unaliased(
-                &segments
-                    .iter()
-                    .map(|s| self.text(*s))
-                    .collect::<Vec<_>>()
-                    .join("::"),
-            ) == "net::serve"
+            && ON_THE_POOL.contains(
+                &self
+                    .parsed
+                    .unaliased(
+                        &segments
+                            .iter()
+                            .map(|s| self.text(*s))
+                            .collect::<Vec<_>>()
+                            .join("::"),
+                    )
+                    .as_str(),
+            )
         {
             out.push("_on_pool");
         }
@@ -14954,6 +14975,10 @@ pub(crate) fn names_borrowing(ty: &Type, borrowing: &HashSet<Symbol>) -> bool {
     }
     borrowing.contains(&ty.name) || ty.generics.iter().any(|g| names_borrowing(g, borrowing))
 }
+
+/// The `std` entries with a twin for `user_parallelism = yes`, named
+/// `<name>_on_pool`: each runs a kept function in a task of its own.
+const ON_THE_POOL: [&str; 3] = ["net::serve", "supervisor::child", "supervisor::run"];
 
 /// A Rust string literal for text the template wrote itself.
 ///

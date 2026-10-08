@@ -61,6 +61,7 @@ pub mod range;
 pub mod rt;
 pub mod search;
 pub mod seq;
+pub mod supervisor;
 pub mod task;
 pub mod tether;
 /// **An index the compiler proved inside**, read and written without its
@@ -569,6 +570,7 @@ pub mod prelude {
     pub use crate::http1;
     pub use crate::io;
     pub use crate::list::ListExt;
+    pub use crate::supervisor;
     pub use crate::task;
     // **A duration and the call that waits one out**
     // ([ADR-150](../../../docs/specification/adr/adr-150.md) D1, D2). The type

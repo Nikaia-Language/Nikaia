@@ -16168,6 +16168,7 @@ fn sharing_expression(expr: &Expr, asked: &Asked<'_>, holes_of: &impl Fn(&Expr) 
             sharing_expression(start, asked, holes_of, ty_of, walk);
             sharing_expression(end, asked, holes_of, ty_of, walk);
         },
+        Expr::ListLit { items, .. } => { for item in items.iter() { sharing_expression(item, asked, holes_of, ty_of, walk); } },
         _ => { },
     }
 }

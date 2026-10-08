@@ -547,7 +547,7 @@ impl<T> Slot<T> {
         crate::rt::ring_the_bell();
     }
 
-    fn take(&self, context: &mut Context<'_>) -> Poll<Result<T, crate::task::Crashed>> {
+    pub(crate) fn take(&self, context: &mut Context<'_>) -> Poll<Result<T, crate::task::Crashed>> {
         let mut inner = self.inner.lock().expect("the slot's lock");
         // **A task that panicked has no value**, and the joiner is told so
         // with an error it may catch (ADR-328 D8).

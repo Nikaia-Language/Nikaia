@@ -271,6 +271,15 @@ impl<T: 'static> TaskHandle<T> {
 }
 
 impl<T> TaskHandle<T> {
+    /// Whether the task has ended, without taking the handle: what a
+    /// supervisor asks of every child at once (ADR-328).
+    pub(crate) fn poll_ended(
+        &self,
+        context: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Result<T, Crashed>> {
+        self.slot.take(context)
+    }
+
     /// **Stop the task** ([ADR-292](../../../docs/specification/adr/adr-292.md)
     /// D3), with exactly the semantics losing a `select` has.
     ///

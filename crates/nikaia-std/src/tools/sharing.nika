@@ -1342,6 +1342,14 @@ fn sharing_expression(expr: ref Expr, asked: ref Asked, holes_of: fn(ref Expr) -
             sharing_expression(start, asked, holes_of, ty_of, walk)
             sharing_expression(end, asked, holes_of, ty_of, walk)
         }
+        // **A list's elements are walked as any expression is**: a call in
+        // one may hand a lambda to a parameter that keeps it - a supervisor's
+        // children are such a list (ADR-328) - and a crossing there was missed.
+        Expr::ListLit { items, .. } => {
+            for item in items {
+                sharing_expression(item, asked, holes_of, ty_of, walk)
+            }
+        }
         else => {}
     }
 }
