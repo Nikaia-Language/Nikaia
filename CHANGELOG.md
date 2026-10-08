@@ -8,6 +8,11 @@ or the specification. A change only to the guide, the notes, the README, the
 website, the tests, the examples or the tooling around them raises nothing and
 has no heading here; `CLAUDE.md` draws the line.
 
+## [0.0.708] — 2026-10-08
+
+**`parse_f32` and `parse_f64` read `inf`, `-inf` and `nan`** (ADR-285 D35,
+#504). Decided, not built. Part III 17.1.
+
 ## [0.0.707] — 2026-10-08
 
 **Text becomes a number by a function per type** (ADR-285 D35, #504).
