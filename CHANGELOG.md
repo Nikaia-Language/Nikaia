@@ -8,6 +8,18 @@ or the specification. A change only to the guide, the notes, the README, the
 website, the tests, the examples or the tooling around them raises nothing and
 has no heading here; `CLAUDE.md` draws the line.
 
+## [0.0.703] — 2026-10-08
+
+**Every narrowing `as` is written only where it is shown to fit** (ADR-285
+D12, D13, #552).
+- Decided, not built: `f64 as f32`'s rule from 0.0.702 holds for integers
+  too. A constant that does not fit is `NK1116`; a value the prover shows to
+  fit converts with no check; any other narrowing `as` is `NK1241`, and the
+  program writes `checked_<T>()` (a `T?`) or `truncating_<T>()` (the backend's
+  conversion). `checked_*` also converts out of an `f64`.
+- A conversion is no longer in Part III A.2's list of run-time stops.
+  Arithmetic overflow (D5) is unchanged.
+
 ## [0.0.702] — 2026-10-08
 
 **`f64 as f32` is written only where it is shown to fit** (ADR-285 D33, #552).

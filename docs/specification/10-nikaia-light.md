@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part I: The Language Core**
-**Version:** 0.0.702 (Draft)
+**Version:** 0.0.703 (Draft)
 **Date:** 2026-10-08
 
 ---
@@ -409,8 +409,8 @@ refused (`NK1215`), and the program writes `(a as i64) << 3` or
 
 **A value the compiler shows is not negative goes into an unsigned type
 without `as`**: a length, and a value after `if k >= 0` or `assert k >= 0`.
-Where nothing shows it, the conversion is `k as u64`, which aborts on a
-negative value.
+Where nothing shows it, `k as u64` is refused with `NK1241`, and the program
+writes `k.checked_u64()` or `k.truncating_u64()`.
 
 **Widening plays no part in deciding a type.** A number without an annotation
 (2.4) and a type parameter (4.6) take the type their uses ask for, and two uses
@@ -418,15 +418,20 @@ asking two types are refused (`NK1200`) though one would widen into the other.
 `pick(a, b)` for `fn pick[T](a: T, b: T)` over an `i32` and an `i64` is
 refused; `pick(a as i64, b)` is not.
 
-**A conversion is written `as`, and one that may not fit aborts too.**
+**A conversion is written `as` where it always fits, or where the compiler shows it does.**
 
 ```nika
 let average = (total as f64) / (count as f64)     // widening, always fits
-let small = big as i32                            // aborts if `big` does not fit
+let small = big as i32                            // only where `big` is shown to fit
 ```
 
-The check does not depend on a build option: `5000000000 as i32` aborts in
-every build.
+A conversion that can lose a value - a wider integer to a narrower one, a
+signed one to an unsigned one or back, an `f64` to an integer or to an `f32` -
+is written `as` only where it is shown to fit. A constant that does not fit is
+refused with `NK1116`. A value the compiler proves within the destination's
+range converts. Any other such `as` is refused with `NK1241`, and the program
+says by name what it means: the low digits, or whether it fits. This does not
+depend on a build option.
 
 **Where a program means to keep only the low digits, it says so by name**, as
 it does for wrapping. The name carries the type it converts to:
@@ -439,6 +444,8 @@ let n = text.bytes.len().truncating_i32()         // a count that may not fit
 
 The names are `truncating_i32`, `truncating_i64`, `truncating_u32` and
 `truncating_u64`. Each converts out of a wider integer and out of an `f64`.
+`rounding_f32` is the nearest `f32` out of an `f64`, and an infinity beyond
+the `f32` range.
 
 **Where a program means to ask whether it fits, it says so by name too**
 ([ADR-315](adr/adr-315.md)), and the answer is optional:
@@ -452,21 +459,15 @@ The arithmetic names are `checked_add`, `checked_sub`, `checked_mul`,
 `checked_div`, `checked_rem`, `checked_neg` and `checked_abs`, for the four
 types the wrapping names have and without `_neg` and `_abs` on an unsigned one;
 a division by zero is `null` too. The conversions are `checked_i32`,
-`checked_i64`, `checked_u32` and `checked_u64`, out of an integer type that has
-values the destination lacks.
+`checked_i64`, `checked_u32`, `checked_u64` and `checked_f32`, out of an
+integer type that has values the destination lacks and out of an `f64`. A
+value that is not a number fits no integer; an infinity and a value that is
+not a number carry over into an `f32`.
 
-Two conversions are checked or unchecked in a way the code does not show:
+Two conversions lose digits without anything failing:
 
-* **An `f64` to an integer** aborts where the value does not fit: `1e20 as i32`,
-  `-1e20 as i32`, and a value that is not a number all abort.
-* **An `f64` to an `f32`** is written `as f32` only where it is shown to fit:
-  a constant beyond the `f32` range is refused with `NK1116`, a value the
-  compiler proves within the range converts to the nearest `f32`, and any
-  other `as f32` is refused with `NK1241`. The program then says what it means:
-  `x.checked_f32()` is an `f32?`, `null` beyond the range; `x.rounding_f32()`
-  is the nearest `f32`, and an infinity beyond the range. An infinity and a
-  value that is not a number carry over in all three. An `f32` to an `f64`
-  always fits.
+* **An `f64` to an `f32`** rounds to the nearest `f32` where it is within the
+  range. An `f32` to an `f64` always fits.
 * **An integer to an `f64`** is **not** checked. Digits are lost at large values
   without anything overflowing: `9007199254740993` through an `f64` comes back
   `9007199254740992`. This is a limit of the language, not an abort.
