@@ -8,6 +8,17 @@ or the specification. A change only to the guide, the notes, the README, the
 website, the tests, the examples or the tooling around them raises nothing and
 has no heading here; `CLAUDE.md` draws the line.
 
+## [0.0.679] — 2026-10-08
+
+**`std::fs` makes, removes, renames, copies and reads directories** (Part III
+17.1; #546). `create_dir` and `remove` (each with `recursive`), `rename`, `copy`,
+`metadata` (`len`, `is_dir`, `is_file`) and `read_dir`. `read_dir` gives the names
+in byte order, the same on every machine. Each resolves its names under the
+root as `exists` does, so a name that leaves an `fs::Root::Dir` is `Outside`
+before anything is touched. `tests/guide` makes its projects with
+`fs::create_dir` and no longer runs `mkdir -p`. Not built yet: `open` and
+`File`, and `Metadata`'s `modified`, whose type no record names.
+
 ## [0.0.678] — 2026-10-08
 
 **`.clone()` of a text method's view is text of its own when returned or

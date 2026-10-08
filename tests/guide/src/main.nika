@@ -130,8 +130,7 @@ fn run_all(root: ref fs::Root, dir: ref String) -> Vec[Verdict] throws {
             }
             n += 1
             let project = f"b{n}"
-            // `fs::create_dir` is specified (Part III 17.1) and not in `std` yet (#546).
-            process::run("mkdir", ["-p", f"{project}/src"]; dir: ref dir)
+            fs::create_dir(f"{project}/src", root; recursive: true)
             fs::write(f"{project}/nikaia.toml", root, f"[package]\nname = \"b{n}\"\nversion = \"0.1.0\"\n")
             for (path, code) in beside {
                 fs::write(f"{project}/{path}", root, code)

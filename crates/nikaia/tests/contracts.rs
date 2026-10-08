@@ -1328,6 +1328,9 @@ fn a_sync_function_may_not_pause_inside_a_hole_either() {
 /// **And the ninth to eleventh** (0.0.232): the other three collections got
 /// their constructors and first methods when `collections::HashSet()` was
 /// found reaching `rustc`, and a set's size is a length like any other.
+///
+/// **And the twelfth** (#546): `fs::Metadata::len`, a file's size in bytes,
+/// which Part III 17.1 names `len` beside `is_dir` and `is_file`.
 #[test]
 fn the_lengths_are_i64_and_are_all_called_len() {
     let library = Ledger::parse(nikaia::contracts::STD).expect("std's ledger parses");
@@ -1350,6 +1353,7 @@ fn the_lengths_are_i64_and_are_all_called_len() {
             "collections::BTreeSet::len",
             "collections::HashMap::len",
             "collections::HashSet::len",
+            "fs::Metadata::len",
             "http1::Buffer::len",
             "str::len",
         ],

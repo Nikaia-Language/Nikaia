@@ -310,6 +310,133 @@ pub fn exists(path: impl AsRef<FilePath>, root: &Root) -> Result<bool, crate::io
     std::fs::exists(&resolved).map_err(|e| crate::io::IoError::of(e, asked))
 }
 
+/// **Making, removing, renaming and copying names** (Part III 17.1, #546).
+///
+/// Each resolves its names under the root as [`exists`] does, so a name that
+/// leaves a `Root::Dir` is `Outside` before anything is touched; `rename` and
+/// `copy` resolve both names under the one root they are given.
+///
+/// **Not `async`**, as `exists` and `scratch` are not: each is one system call,
+/// or a walk of one tree for `recursive`, and none of it goes through the I/O
+/// reactor.
+pub fn create_dir(
+    path: impl AsRef<FilePath>,
+    root: &Root,
+    recursive: bool,
+) -> Result<(), crate::io::IoError> {
+    let asked = path.as_ref();
+    let resolved = resolve(asked, root)?;
+    let made = match recursive {
+        true => std::fs::create_dir_all(&resolved),
+        false => std::fs::create_dir(&resolved),
+    };
+    made.map_err(|e| crate::io::IoError::of(e, asked))
+}
+
+/// **A file, or a directory**: an empty one, or with everything in it where
+/// `recursive` says so. A link is removed, never what it leads to.
+pub fn remove(
+    path: impl AsRef<FilePath>,
+    root: &Root,
+    recursive: bool,
+) -> Result<(), crate::io::IoError> {
+    let asked = path.as_ref();
+    let resolved = resolve(asked, root)?;
+    let of = |e| crate::io::IoError::of(e, asked);
+    let kind = std::fs::symlink_metadata(&resolved).map_err(of)?;
+    let removed = match (kind.is_dir(), recursive) {
+        (true, true) => std::fs::remove_dir_all(&resolved),
+        (true, false) => std::fs::remove_dir(&resolved),
+        (false, _) => std::fs::remove_file(&resolved),
+    };
+    removed.map_err(of)
+}
+
+/// **A name given to what another had**, both under `root`.
+pub fn rename(
+    from: impl AsRef<FilePath>,
+    to: impl AsRef<FilePath>,
+    root: &Root,
+) -> Result<(), crate::io::IoError> {
+    let (from, to) = (from.as_ref(), to.as_ref());
+    let source = resolve(from, root)?;
+    let target = resolve(to, root)?;
+    std::fs::rename(&source, &target).map_err(|e| crate::io::IoError::of(e, from))
+}
+
+/// **A file's bytes, written to another name** under the same root; how many
+/// were copied.
+pub fn copy(
+    from: impl AsRef<FilePath>,
+    to: impl AsRef<FilePath>,
+    root: &Root,
+) -> Result<u64, crate::io::IoError> {
+    let (from, to) = (from.as_ref(), to.as_ref());
+    let source = resolve(from, root)?;
+    let target = resolve(to, root)?;
+    std::fs::copy(&source, &target).map_err(|e| crate::io::IoError::of(e, from))
+}
+
+/// **What the system knows of a name** (Part III 17.1): its length and what it
+/// is, following a link to what it leads to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Metadata {
+    len: u64,
+    is_dir: bool,
+    is_file: bool,
+}
+
+impl Metadata {
+    /// Its length in bytes, an `i64` as a length is (Part I 2.2).
+    ///
+    /// No `is_empty`: Part III 17.1 names `len`, `is_dir` and `is_file`, and a
+    /// file of no bytes is `len() == 0`.
+    #[allow(clippy::len_without_is_empty)]
+    pub fn len(&self) -> i64 {
+        i64::try_from(self.len).unwrap_or(i64::MAX)
+    }
+
+    /// Whether it is a directory.
+    pub fn is_dir(&self) -> bool {
+        self.is_dir
+    }
+
+    /// Whether it is a file.
+    pub fn is_file(&self) -> bool {
+        self.is_file
+    }
+}
+
+/// What the system knows of the name, which [`Metadata`] holds.
+pub fn metadata(path: impl AsRef<FilePath>, root: &Root) -> Result<Metadata, crate::io::IoError> {
+    let asked = path.as_ref();
+    let resolved = resolve(asked, root)?;
+    let known = std::fs::metadata(&resolved).map_err(|e| crate::io::IoError::of(e, asked))?;
+    Ok(Metadata {
+        len: known.len(),
+        is_dir: known.is_dir(),
+        is_file: known.is_file(),
+    })
+}
+
+/// **The names in a directory**, each its own name and not joined to the
+/// directory's, in byte order - so a program that prints them prints the same
+/// lines on every machine, whatever order the system keeps them in.
+pub type DirEntries = Vec<Path>;
+
+/// The names in the directory, as [`DirEntries`].
+pub fn read_dir(path: impl AsRef<FilePath>, root: &Root) -> Result<DirEntries, crate::io::IoError> {
+    let asked = path.as_ref();
+    let resolved = resolve(asked, root)?;
+    let of = |e| crate::io::IoError::of(e, asked);
+    let mut names = Vec::new();
+    for entry in std::fs::read_dir(&resolved).map_err(of)? {
+        names.push(Path::from(entry.map_err(of)?.file_name()));
+    }
+    names.sort();
+    Ok(names)
+}
+
 /// A file's bytes, addressable as text for as long as the value lives.
 ///
 /// Part III, 17.1: a memory mapping. The pages *are* the buffer, so a 13 GB

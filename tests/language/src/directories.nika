@@ -1,0 +1,68 @@
+// **Names made, removed, renamed and copied** (Part III 17.1, #546): each
+// under a root of the test's own, and none of them able to leave it.
+
+use std::fs
+
+test "a directory is made, recursively where asked" {
+    let root = fs::scratch()
+    fs::create_dir("a/b", root; recursive: true)
+    fs::create_dir("c", root)
+    let nested = fs::metadata("a/b", root)
+    let flat = fs::metadata("c", root)
+    assert(nested.is_dir())
+    assert(flat.is_dir())
+    let mut refused = false
+    fs::create_dir("d/e", root) catch { refused = true }
+    assert(refused)
+}
+
+test "a file is copied, renamed and measured" {
+    let root = fs::scratch()
+    fs::write("one.txt", root, "hello")
+    let copied = fs::copy("one.txt", "two.txt", root)
+    fs::rename("two.txt", "three.txt", root)
+    let meta = fs::metadata("three.txt", root)
+    assert(copied == 5)
+    assert(meta.len() == 5)
+    assert(meta.is_file())
+    assert(!meta.is_dir())
+    let moved = !fs::exists("two.txt", root)
+    assert(moved)
+}
+
+test "a directory's names are read in byte order" {
+    let root = fs::scratch()
+    fs::create_dir("d", root)
+    fs::write("d/b.txt", root, "")
+    fs::write("d/a.txt", root, "")
+    fs::create_dir("d/c", root)
+    let mut seen = ""
+    for name in fs::read_dir("d", root) {
+        seen = f"{seen}{name.to_text()} "
+    }
+    assert(seen == "a.txt b.txt c ")
+}
+
+test "a file and a tree are removed" {
+    let root = fs::scratch()
+    fs::create_dir("t/u", root; recursive: true)
+    fs::write("t/u/f.txt", root, "x")
+    fs::write("g.txt", root, "x")
+    fs::remove("g.txt", root)
+    let mut kept = false
+    fs::remove("t", root) catch { kept = true }
+    assert(kept)
+    fs::remove("t", root; recursive: true)
+    let file_gone = !fs::exists("g.txt", root)
+    let tree_gone = !fs::exists("t", root)
+    assert(file_gone)
+    assert(tree_gone)
+}
+
+test "a name that leaves the root is refused before anything is touched" {
+    let root = fs::scratch()
+    let mut said = ""
+    fs::create_dir("../out", root) catch { said = f"{error}" }
+    let leaves = said.contains("leaves the root")
+    assert(leaves)
+}

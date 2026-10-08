@@ -323,6 +323,58 @@ touches = ["file(path) read"]
 throws = ["io::IoError"]
 signature = "(path: ref fs::Path, root: ref fs::Root) -> bool"
 
+# **Making, removing, renaming and copying names** (Part III 17.1, #546). Each
+# resolves its names under the root first, as `exists` does: a name that leaves
+# an `fs::Root::Dir` throws `Outside` before anything is touched. `sync`, as
+# `exists` is: one system call, or one walk of a tree for `recursive`.
+[fn."fs::create_dir"]
+pub = true
+sync = true
+touches = ["file(path) write"]
+throws = ["io::IoError"]
+signature = "(path: ref fs::Path, root: ref fs::Root; recursive: bool = false)"
+
+# A link is removed, never what it leads to.
+[fn."fs::remove"]
+pub = true
+sync = true
+touches = ["file(path) write"]
+throws = ["io::IoError"]
+signature = "(path: ref fs::Path, root: ref fs::Root; recursive: bool = false)"
+
+# Both names under the one root.
+[fn."fs::rename"]
+pub = true
+sync = true
+touches = ["file(from) write", "file(to) write"]
+throws = ["io::IoError"]
+signature = "(from: ref fs::Path, to: ref fs::Path, root: ref fs::Root)"
+
+# How many bytes were copied.
+[fn."fs::copy"]
+pub = true
+sync = true
+touches = ["file(from) read", "file(to) write"]
+throws = ["io::IoError"]
+signature = "(from: ref fs::Path, to: ref fs::Path, root: ref fs::Root) -> u64"
+
+# A name's length and what it is, a link followed to what it leads to.
+[fn."fs::metadata"]
+pub = true
+sync = true
+touches = ["file(path) read"]
+throws = ["io::IoError"]
+signature = "(path: ref fs::Path, root: ref fs::Root) -> fs::Metadata"
+
+# The names in a directory, each its own name, in byte order: the same on
+# every machine whatever order the system keeps them in.
+[fn."fs::read_dir"]
+pub = true
+sync = true
+touches = ["file(path) read"]
+throws = ["io::IoError"]
+signature = "(path: ref fs::Path, root: ref fs::Root) -> Vec[fs::Path]"
+
 # **A test's own directory, as a root** (ADR-247 D5). `sync`: making one
 # directory is one system call, the same size of blocking as `cli::args`'s read.
 # A fresh, empty directory, as an `fs::Root::Dir`.
@@ -3334,6 +3386,31 @@ pub = false
 sync = true
 touches = []
 signature = "(self: ref fs::Path) -> String"
+
+# What `fs::metadata` answers (Part III 17.1).
+[type."fs::Metadata"]
+pub = true
+crosses = true
+compares = true
+
+# Its length in bytes, an `i64` as a length is.
+[fn."fs::Metadata::len"]
+pub = true
+sync = true
+touches = []
+signature = "(self: ref fs::Metadata) -> i64"
+
+[fn."fs::Metadata::is_dir"]
+pub = true
+sync = true
+touches = []
+signature = "(self: ref fs::Metadata) -> bool"
+
+[fn."fs::Metadata::is_file"]
+pub = true
+sync = true
+touches = []
+signature = "(self: ref fs::Metadata) -> bool"
 
 [type."fs::Mapped"]
 pub = true
