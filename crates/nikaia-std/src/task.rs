@@ -155,7 +155,10 @@ impl<F: std::future::Future<Output = T>, T, Q: crate::cleanup::Queue> Cancellabl
             Ok(polled) => polled,
             Err(payload) => {
                 self.body = None;
-                self.slot.fail(panic_message(payload.as_ref()));
+                self.slot.fail(Crashed {
+                    message: panic_message(payload.as_ref()),
+                    site: SITE.with(|held| std::mem::take(&mut *held.borrow_mut())),
+                });
                 return std::task::Poll::Ready(());
             }
         };
@@ -172,6 +175,41 @@ impl<F: std::future::Future<Output = T>, T, Q: crate::cleanup::Queue> Cancellabl
             }
         }
     }
+}
+
+/// **What `join` throws for a task that panicked**
+/// ([ADR-328](../../../docs/specification/adr/adr-328.md) D8): the crash
+/// happened in another task, so the joiner's own state is whole and the crash
+/// is an error it may catch, as any other is.
+///
+/// `message` is what the panic said; `site` is where, as the hook named it
+/// (`src/main.nika:4`), or empty where no `.nika` line is known.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Crashed {
+    pub message: String,
+    pub site: String,
+}
+
+impl std::fmt::Display for Crashed {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.site.is_empty() {
+            true => write!(f, "the task crashed: {}", self.message),
+            false => write!(f, "the task crashed at {}: {}", self.site, self.message),
+        }
+    }
+}
+
+impl std::error::Error for Crashed {}
+
+thread_local! {
+    /// **Where the last panic on this thread happened**, as the hook named it:
+    /// the catch at the task's edge has the payload and not the location.
+    static SITE: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) };
+}
+
+/// The hook's half of [`Crashed::site`]: where a task's panic happened.
+pub(crate) fn panicked_at(site: String) {
+    SITE.with(|held| *held.borrow_mut() = site);
 }
 
 /// What a panic said, in the two shapes a payload comes in.
@@ -295,7 +333,8 @@ impl<T: Send + 'static> TaskHandle<T> {
     }
 
     /// The task's value, once it has one. **A suspension point**, not a wait.
-    pub async fn join(self) -> T {
+    /// A task that panicked has none, and this throws [`Crashed`] (ADR-328 D8).
+    pub async fn join(self) -> Result<T, Crashed> {
         crate::rt::exec::Waiting::on(self.slot).await
     }
 }

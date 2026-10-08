@@ -107,7 +107,7 @@ fn a_join_is_an_await() {
          \x20   return n * 2\n\
          }\n\
          \n\
-         fn main() {\n\
+         fn main() throws {\n\
          \x20   let handle = spawn fn { work(21) }\n\
          \x20   println(\"started\")\n\
          \x20   let answer = handle.join()\n\
@@ -144,7 +144,7 @@ fn two_tasks_are_in_flight_before_either_finishes() {
          \x20   return text.len()\n\
          }\n\
          \n\
-         fn main() {\n\
+         fn main() throws {\n\
          \x20   let first = spawn fn { size(\"eins.txt\") }\n\
          \x20   let second = spawn fn { size(\"zwei.txt\") }\n\
          \x20   println(\"both started\")\n\
@@ -391,7 +391,7 @@ fn a_task_that_never_finishes_is_abandoned_at_the_deadline() {
 #[test]
 fn the_switch_decides_which_executor_a_task_is_started_on() {
     let source = "fn work() -> i64 { return 1 }\n\
-                  fn main() { let t = spawn fn { work() } println(f\"{t.join()}\") }";
+                  fn main() throws { let t = spawn fn { work() } println(f\"{t.join()}\") }";
 
     let at_no = lower_at(source, "no");
     assert!(

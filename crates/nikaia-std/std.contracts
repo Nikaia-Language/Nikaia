@@ -3399,16 +3399,29 @@ pub = true
 # `TaskHandle` a program writes. It takes `self` by value because a value can
 # only be joined once.
 #
-# No `throws`: a task's failure is the task's, and what `join` hands back is
-# whatever the body's last statement was. A task whose body can fail hands back
-# a value that says so, which is the same shape any other function has.
+# **`throws = ["task::Crashed"]`** ([ADR-328](../../docs/specification/adr/adr-328.md)
+# D8): a task that panicked has no value to hand back. Otherwise what `join`
+# hands back is whatever the body's last statement was; a task whose body can
+# fail hands back a value that says so, which is the same shape any other
+# function has.
 # Wait for the task and take what it produced.
 #
 # It gives the thread up rather than holding it, so other work runs while this
-# waits. A handle can be joined once, because joining takes it.
+# waits. A handle can be joined once, because joining takes it. A task that
+# panicked makes this throw `task::Crashed`.
 [fn."TaskHandle::join"]
 pub = true
 signature = "[T](self: TaskHandle[T]) -> T"
+throws = ["task::Crashed"]
+
+# **What a task that panicked hands its joiner**
+# ([ADR-328](../../docs/specification/adr/adr-328.md) D8): what the panic said,
+# and where, as `src/main.nika:4` - empty where no line of the program is known.
+[type."task::Crashed"]
+pub = true
+crosses = true
+compares = true
+fields = ["pub message: String", "pub site: String"]
 
 # **One mechanism, said three ways rather than three things**
 # ([ADR-292](../../docs/specification/adr/adr-292.md) D14): a program's own

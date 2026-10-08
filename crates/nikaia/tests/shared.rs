@@ -533,7 +533,7 @@ fn a_shared_around_a_lock_is_refused_and_names_the_short_form() {
 /// the same program with no `spawn` takes the cheap pair at `yes`, so this is the
 /// per-value answer and not a floor.
 const SHARED_WITH_A_TASK: &str = "\
-fn main() {
+fn main() throws {
     let counter = SharedMut(0)
     let t = spawn fn { counter.update fn(mut alt) { alt += 1 } }
     t.join()
@@ -598,7 +598,7 @@ fn bump(counter: SharedMut[i64], times: i64) {
     }
 }
 
-fn main() {
+fn main() throws {
     let counter = SharedMut(0)
     let a = spawn fn { bump(counter, 2500) }
     let b = spawn fn { bump(counter, 2500) }

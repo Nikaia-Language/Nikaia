@@ -60,7 +60,15 @@ fn four_tasks_joined_from_main_run_at_the_same_time() {
         let d = nikaia_std::task::TaskHandle::start_on_pool(async move {
             spin(std::time::Instant::now() + slice)
         });
-        a.join().await + b.join().await + c.join().await + d.join().await
+        [
+            a.join().await,
+            b.join().await,
+            c.join().await,
+            d.join().await,
+        ]
+        .into_iter()
+        .map(|n| n.expect("no task crashed"))
+        .sum::<i64>()
     });
     let took = began.elapsed();
     assert_eq!(total, 4, "every task's value came back through its slot");

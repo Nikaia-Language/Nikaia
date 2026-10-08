@@ -86,7 +86,7 @@ test "a kept function that may fail is propagated" {
 }
 
 // A kept function handed to a task travels with it, at both settings.
-fn kept_functions_holds(f: fn() -> String) -> String {
+fn kept_functions_holds(f: fn() -> String) -> String throws {
     let t = spawn fn { f() }
     return t.join()
 }

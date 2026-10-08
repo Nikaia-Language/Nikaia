@@ -141,9 +141,9 @@ pub fn run(name: &str, start_on_pool: bool) {
             };
             let read = io::begin_read(text);
             let main_alone = here(&read);
-            let task_alone = reader.join().await;
+            let task_alone = reader.join().await.expect("the reader did not crash");
             done.store(true, Ordering::Release);
-            waiter.join().await;
+            waiter.join().await.expect("the waiter did not crash");
             (main_alone, task_alone, read)
         }
     });

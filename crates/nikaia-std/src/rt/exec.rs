@@ -495,7 +495,7 @@ struct Inner<T> {
     /// **What the task panicked with**, where it did
     /// ([ADR-326](../../../docs/specification/adr/adr-326.md) D4): there is no
     /// value coming, and a `join` says so.
-    panicked: Option<String>,
+    panicked: Option<crate::task::Crashed>,
 }
 
 impl<T> Slot<T> {
@@ -535,10 +535,10 @@ impl<T> Slot<T> {
 
     /// **The task panicked**, so no value is coming: whoever joins it is told
     /// (ADR-326 D4).
-    pub fn fail(&self, said: String) {
+    pub fn fail(&self, crashed: crate::task::Crashed) {
         let waiting = {
             let mut inner = self.inner.lock().expect("the slot's lock");
-            inner.panicked = Some(said);
+            inner.panicked = Some(crashed);
             inner.waiting.take()
         };
         if let Some(waker) = waiting {
@@ -547,17 +547,15 @@ impl<T> Slot<T> {
         crate::rt::ring_the_bell();
     }
 
-    fn take(&self, context: &mut Context<'_>) -> Poll<T> {
+    fn take(&self, context: &mut Context<'_>) -> Poll<Result<T, crate::task::Crashed>> {
         let mut inner = self.inner.lock().expect("the slot's lock");
-        // **A `join` of a task that panicked panics in the joiner**, naming
-        // what the task said: the value it waits for does not exist. A `main`
-        // that joins it ends the program, as a panic in `main` does.
-        if let Some(said) = inner.panicked.take() {
-            drop(inner);
-            panic!("the task this joins stopped: {said}");
+        // **A task that panicked has no value**, and the joiner is told so
+        // with an error it may catch (ADR-328 D8).
+        if let Some(crashed) = inner.panicked.take() {
+            return Poll::Ready(Err(crashed));
         }
         match inner.value.take() {
-            Some(value) => Poll::Ready(value),
+            Some(value) => Poll::Ready(Ok(value)),
             None => {
                 inner.waiting = Some(context.waker().clone());
                 Poll::Pending
@@ -578,9 +576,9 @@ impl<T> Waiting<T> {
 }
 
 impl<T> Future for Waiting<T> {
-    type Output = T;
+    type Output = Result<T, crate::task::Crashed>;
 
-    fn poll(self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<T> {
+    fn poll(self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<Self::Output> {
         self.slot.take(context)
     }
 }
@@ -690,7 +688,7 @@ mod tests {
                 Yield::once().await;
                 filling.fill(41);
             });
-            Waiting::on(slot).await + 1
+            Waiting::on(slot).await.expect("the task did not crash") + 1
         });
         assert_eq!(answer, 42);
     }

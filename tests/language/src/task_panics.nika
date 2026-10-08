@@ -10,3 +10,14 @@ test "a task that panics ends alone and another finishes" {
     let total = other.get()
     assert(total == 2)
 }
+
+// `join` on a task that panicked throws `task::Crashed`, with what the panic
+// said and where (ADR-328 D8); the joiner goes on.
+test "a crashed task is an error to its joiner" {
+    let t = spawn fn { panic("boom") }
+    let said = t.join() catch { f"{error.message}" }
+    let u = spawn fn { 41 + 1 }
+    let n = u.join() catch { 0 }
+    assert(said == "boom")
+    assert(n == 42)
+}

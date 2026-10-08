@@ -136,6 +136,7 @@ pub fn report_in_nikaia_terms(table: &'static [Site]) {
             // sentence says which ended.
             Some((file, line)) if crate::task::in_a_task() => {
                 eprintln!("{file}:{line}: a task stopped: {}", said(info));
+                crate::task::panicked_at(format!("{file}:{line}"));
             }
             Some((file, line)) => {
                 eprintln!("{file}:{line}: the program stopped: {}", said(info));

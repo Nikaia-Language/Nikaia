@@ -4,6 +4,17 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.657] — 2026-10-08
+
+**`join` on a task that panicked throws `task::Crashed`** (ADR-328 D8, #95
+step 1).
+- `task::Crashed` carries `message` and `site` (`src/main.nika:4`), and is
+  caught as any error is. `TaskHandle::join` says `throws = ["task::Crashed"]`,
+  so a function that joins without a `catch` declares `throws` (NK2605), as for
+  any call that can fail.
+- The test programs that join say so; Part II's `task::scope` block is now
+  refused for its own names rather than for an unknown `task::`.
+
 ## [0.0.656] — 2026-10-08
 
 **A panic in a task ends that task, and a poisoned value is never read
