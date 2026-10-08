@@ -107,6 +107,23 @@ pub extern fn looking_at(c: ref Counter, each: fn(i64) sync) sync {
     each(c.count)
 }
 
+pub extern fn found(n: i64) -> Counter? sync {
+    if n > 0 {
+        let mut c = Counter(\"found\")
+        c.bump(n)
+        return c
+    }
+    return null
+}
+
+pub extern fn count_of(c: ref Counter?) -> i64 sync {
+    return c?.count ?? -1
+}
+
+pub extern fn length_of(name: ref String?) -> i64 sync {
+    return (name ?? \"none\").len()
+}
+
 pub enum Refusal {
     Negative,
     TooLarge(i64),
@@ -215,6 +232,20 @@ int main(void) {
     printf("same twice %d\n", calc_sum_of(counter, counter, &n));
     printf("no handle %d\n", calc_Counter_steps(NULL, &n));
     printf("free %d %d %d\n", calc_Counter_free(counter), calc_Counter_free(other), calc_Counter_free(NULL));
+    calc_Counter *maybe = counter;
+    status = calc_found(0, &maybe);
+    printf("not found %d %d\n", status, maybe == NULL);
+    status = calc_found(4, &maybe);
+    printf("found %d %d\n", status, maybe != NULL);
+    calc_count_of(maybe, &n);
+    printf("count of %lld\n", (long long)n);
+    calc_count_of(NULL, &n);
+    printf("count of null %lld\n", (long long)n);
+    calc_Counter_free(maybe);
+    calc_length_of(NULL, 0, &n);
+    printf("length of null %lld\n", (long long)n);
+    calc_length_of((const uint8_t *)"", 0, &n);
+    printf("length of empty %lld\n", (long long)n);
     return CALC_OK;
 }
 "#;
@@ -408,7 +439,7 @@ fn a_c_program_calls_the_library() {
     assert!(ran.status.success(), "{}", said(&ran));
     assert_eq!(
         String::from_utf8_lossy(&ran.stdout),
-        "new 0 1\nbump 0 7\nsteps 2\ncount 7\nname 0 clicks\nlight 1\nsum 17\nsame twice -5\nno handle -1\nfree 0 0 0\n"
+        "new 0 1\nbump 0 7\nsteps 2\ncount 7\nname 0 clicks\nlight 1\nsum 17\nsame twice -5\nno handle -1\nfree 0 0 0\nnot found 0 1\nfound 0 1\ncount of 4\ncount of null -1\nlength of null 4\nlength of empty 0\n"
     );
 
     std::fs::write(root.join("callback.c"), CALLBACK_CALLER).expect("the caller");

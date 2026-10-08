@@ -22,7 +22,8 @@
 // numbers (`ref Array[T]`) in; an `enum` without payload in and out, as a C
 // `enum`; a `pub struct` as a handle - out as a new one, in as `ref T`, with
 // its `extern` constructor and methods, a getter per `pub` field and `_free`,
-// each call holding its lock (D11); a callback that does not pause or throw,
+// each call holding its lock (D11); `ref String?` and `ref T?` of a handle
+// in, and `T?` of a handle out, NULL for `null`; a callback that does not pause or throw,
 // as a function pointer and a `void *ctx`, taking values, enums and text and
 // handing back a number or nothing - of a function or method that does not
 // pause, declared in the package's entry file, throwing at most one `enum` of
@@ -89,6 +90,8 @@ enum In {
     Choice(usize),
     /// `ref T` of a handle: held shared for the call.
     Handle(usize),
+    /// `ref String?` or `ref T?` of a handle: NULL is `null` (D5).
+    Absent(Box<In>),
     /// `fn(A…) -> R sync`: a function pointer and the `void *ctx` C hands it
     /// back (D5).
     Callback {
@@ -144,6 +147,8 @@ enum Out {
     Choice(usize),
     /// A `pub struct`: a new handle, which the caller frees.
     Handle(usize),
+    /// `T?` of a handle: NULL for `null` (D5).
+    AbsentHandle(usize),
 }
 
 /// An `enum` without payload the entry file declares (ADR-284 D5): its name
@@ -186,9 +191,9 @@ fn choice(parsed: &crate::parser::Parsed, plains: &[Plain], ty: &Type) -> Option
     plains.iter().position(|plain| plain.name == name)
 }
 
-/// Which of `handles` a type names, as a view or not.
+/// Which of `handles` a type names, as a view or not, nullable or not.
 fn handle_of(parsed: &crate::parser::Parsed, handles: &[Handled], ty: &Type) -> Option<usize> {
-    if ty.is_nullable || ty.is_tuple || !ty.generics.is_empty() || ty.code.is_some() {
+    if ty.is_tuple || !ty.generics.is_empty() || ty.code.is_some() {
         return None;
     }
     let name = parsed.text(ty.name);
@@ -203,6 +208,15 @@ fn taken(
 ) -> Option<In> {
     if ty.code.is_some() {
         return callback(parsed, plains, ty);
+    }
+    if ty.is_nullable {
+        let mut present = ty.clone();
+        present.is_nullable = false;
+        return match taken(parsed, plains, handles, &present)? {
+            text @ In::Run { as_text: true, .. } => Some(In::Absent(Box::new(text))),
+            handle @ In::Handle(_) => Some(In::Absent(Box::new(handle))),
+            _ => None,
+        };
     }
     if let Some(at) = handle_of(parsed, handles, ty) {
         // A handle taken by value would end it: not exported yet.
@@ -243,6 +257,11 @@ fn handed(
     handles: &[Handled],
     ty: &Type,
 ) -> Option<Out> {
+    if ty.is_nullable && !ty.is_view {
+        let mut present = ty.clone();
+        present.is_nullable = false;
+        return handle_of(parsed, handles, &present).map(Out::AbsentHandle);
+    }
     if let Some(at) = handle_of(parsed, handles, ty) {
         return (!ty.is_view).then_some(Out::Handle(at));
     }
@@ -755,6 +774,36 @@ pub fn export(program: &Program, prefix: &str, package: &str) -> Result<Option<E
                     ));
                     call_args.push(format!("&{local}"));
                 }
+                Some(In::Absent(present)) => match *present {
+                    In::Run { .. } => {
+                        rust_params.push(format!("{local}: *const u8, {local}_len: usize"));
+                        c_params.push(format!("const uint8_t *{param}, size_t {param}_len"));
+                        checks.push_str(&format!(
+                            "    let {local} = match {local}.is_null() {{\n        \
+                             true => None,\n        \
+                             // SAFETY: the C caller keeps `{param}_len` bytes at `{param}` for the call (ADR-284 D5).\n        \
+                             false => match unsafe {{ nikaia_std::c_boundary::text({local}, {local}_len) }} {{ Some(text) => Some(text), None => return -1 }},\n    \
+                             }};\n"
+                        ));
+                        call_args.push(local);
+                    }
+                    In::Handle(at) => {
+                        let ty = &handles[at].name;
+                        rust_params.push(format!(
+                            "{local}: *const nikaia_std::c_boundary::Handle<{ty}>"
+                        ));
+                        c_params.push(format!("const {prefix}_{ty} *{param}"));
+                        checks.push_str(&format!(
+                            "    let {local} = match {local}.is_null() {{\n        \
+                             true => None,\n        \
+                             // SAFETY: the C caller hands a handle this library made and has not freed (ADR-284 D5).\n        \
+                             false => match unsafe {{ nikaia_std::c_boundary::shared({local}) }} {{ Ok(held) => Some(held), Err(status) => return status }},\n    \
+                             }};\n"
+                        ));
+                        call_args.push(format!("{local}.as_deref()"));
+                    }
+                    _ => return Err(not_yet(&written, &format!("parameter `{param}`"))),
+                },
                 Some(In::Handle(at)) => {
                     let ty = &handles[at].name;
                     rust_params.push(format!(
@@ -795,6 +844,14 @@ pub fn export(program: &Program, prefix: &str, package: &str) -> Result<Option<E
                     ));
                     c_params.push(format!("{prefix}_{ty} **out"));
                     Some(Out::Handle(at))
+                }
+                Some(Out::AbsentHandle(at)) => {
+                    let ty = &handles[at].name;
+                    rust_params.push(format!(
+                        "out: *mut *mut nikaia_std::c_boundary::Handle<{ty}>"
+                    ));
+                    c_params.push(format!("{prefix}_{ty} **out"));
+                    Some(Out::AbsentHandle(at))
                 }
                 None => {
                     return Err(not_yet(
@@ -853,6 +910,14 @@ pub fn export(program: &Program, prefix: &str, package: &str) -> Result<Option<E
                  if !out.is_null() {\n                \
                  // SAFETY: the C caller hands a place for one handle (ADR-284 D7).\n                \
                  unsafe { nikaia_std::c_boundary::put(out, nikaia_std::c_boundary::handle(value)) };\n            \
+                 }\n            0\n        }"
+                .to_string(),
+            // `null` is NULL (D5).
+            Some(Out::AbsentHandle(_)) => "Ok(value) => {\n            \
+                 if !out.is_null() {\n                \
+                 let made = value.map_or(std::ptr::null_mut(), nikaia_std::c_boundary::handle);\n                \
+                 // SAFETY: the C caller hands a place for one handle (ADR-284 D7).\n                \
+                 unsafe { nikaia_std::c_boundary::put(out, made) };\n            \
                  }\n            0\n        }"
                 .to_string(),
             None => "Ok(()) => 0,".to_string(),

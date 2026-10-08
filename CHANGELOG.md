@@ -4,6 +4,15 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.672] — 2026-10-08
+
+**`null` crosses to C as NULL** (ADR-284 D5; #88). An entry point takes
+`ref String?` as an address and a length where a NULL address is `null`, and
+an empty text is not. It takes `ref T?` of a handle as a pointer where NULL is
+`null`, and hands `T?` of a handle back as a new handle or NULL. Not built yet:
+`String?` handed back, and `T?` of a number, whose `<PACKAGE>_NONE` status has
+no value yet.
+
 ## [0.0.671] — 2026-10-08
 
 **A library's entry point takes a callback** (ADR-284 D5, D11; #88). A
