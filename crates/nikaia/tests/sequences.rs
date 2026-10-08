@@ -430,9 +430,19 @@ fn no_loose_program_in_the_repository_is_refused() {
         if name.contains("fortunes.nika") {
             continue;
         }
+        // **A library's entry points are `NK1238` to a check that has no
+        // manifest** (ADR-284 D4): the build that drops it is the one that reads
+        // `artifact = "c-library"`, and this harness hands the file over alone.
+        let a_library = path
+            .ancestors()
+            .map(|dir| dir.join("nikaia.toml"))
+            .find(|manifest| manifest.is_file())
+            .and_then(|manifest| std::fs::read_to_string(manifest).ok())
+            .is_some_and(|manifest| manifest.contains("artifact = \"c-library\""));
         for finding in nikaia::check::check(&parsed, &own, &library)
             .findings
             .iter()
+            .filter(|finding| !(a_library && finding.code == "NK1238"))
         {
             reported.push_str(&nikaia::diagnostics::render_finding(
                 finding, &name, &source,

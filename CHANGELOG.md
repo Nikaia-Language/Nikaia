@@ -8,6 +8,15 @@ or the specification. A change only to the guide, the notes, the README, the
 website, the tests, the examples or the tooling around them raises nothing and
 has no heading here; `CLAUDE.md` draws the line.
 
+## [0.0.689] — 2026-10-08
+
+**`develop` is green again** (fixed forward). Since 0.0.673, two corpus tests
+(`sequences`, `typecheck`) refused `examples/c-library`: they check each file
+without its manifest, so a library's entry points were `NK1238`. Both now drop
+that code for a package whose `[build]` says `artifact = "c-library"`.
+`hello-http` reads `request.path()` once, and the corpus's count of method
+calls on receivers the loose harness cannot type is back under its ceiling.
+
 ## [0.0.688] — 2026-10-08
 
 **`SharedMut::supervised(fn { … })`** (ADR-327 D3, ADR-328 D9; #95 step 7). A

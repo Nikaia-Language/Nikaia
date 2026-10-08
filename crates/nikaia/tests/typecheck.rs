@@ -91,7 +91,20 @@ fn no_program_in_the_repository_has_a_type_error() {
                 checked += 1;
                 continue;
             }
-            for finding in check::check(&parsed, &own, &library).findings {
+            // **A library's entry points are `NK1238` to a check that has no
+            // manifest** (ADR-284 D4): the build drops it where `[build]` says
+            // `artifact = "c-library"`, and this harness reads the file alone.
+            let a_library = path
+                .ancestors()
+                .map(|dir| dir.join("nikaia.toml"))
+                .find(|manifest| manifest.is_file())
+                .and_then(|manifest| std::fs::read_to_string(manifest).ok())
+                .is_some_and(|manifest| manifest.contains("artifact = \"c-library\""));
+            for finding in check::check(&parsed, &own, &library)
+                .findings
+                .into_iter()
+                .filter(|finding| !(a_library && finding.code == "NK1238"))
+            {
                 reported.push_str(&nikaia::diagnostics::render_finding(
                     &finding, &name, &source,
                 ));

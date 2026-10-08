@@ -65,6 +65,7 @@ fn serve(at: ref String, refreshed: SharedMut[i64], asked: SharedMut[i64], crash
     // One function answers every request and decides by method and path.
     // Nothing is served that this function does not name.
     http::listen(at) fn(request) {
+        let path = request.path()
         if request.method() == http::Method::Post {
             let size = request.body().len()
             return http::Response::text(f"you sent {size} bytes")
@@ -72,36 +73,36 @@ fn serve(at: ref String, refreshed: SharedMut[i64], asked: SharedMut[i64], crash
         // A missing value is not an empty string: `?name=` gives "" and no
         // `name` at all gives nothing. `??` supplies a value for the second
         // case only.
-        if request.path() == "/" {
+        if path == "/" {
             let who = request.query("name") ?? "world"
             return http::Response::text(f"Hello, {who}")
         }
-        if request.path() == "/who" {
+        if path == "/who" {
             let host = request.header("host") ?? "nobody"
             return http::Response::text(f"you asked {host}")
         }
-        if request.path() == "/refreshed" {
+        if path == "/refreshed" {
             let rounds = refreshed.get()
             return http::Response::text(f"{rounds}")
         }
-        if request.path() == "/crash" {
+        if path == "/crash" {
             asked.update fn(mut v) { v += 1 }
             return http::Response::text("the refresher will crash")
         }
-        if request.path() == "/crashes" {
+        if path == "/crashes" {
             let times = crashed.get()
             return http::Response::text(f"{times}")
         }
         // A file the program never reads (ADR-289 D23): looked at when the
         // answer is made, read only when it is sent. Its name is resolved
         // under the directory the server runs in, and may not leave it.
-        if request.path() == "/source" {
+        if path == "/source" {
             return http::Response::file(http::File("src/main.nika", fs::Root::Dir(".")))
         }
-        if request.path() == "/missing" {
+        if path == "/missing" {
             return http::Response::file(http::File("no-such-file.txt", fs::Root::Dir(".")))
         }
-        if request.path() == "/outside" {
+        if path == "/outside" {
             return http::Response::file(http::File("../hello-http/src/main.nika", fs::Root::Dir("src")))
         }
         return http::Response::not_found()
