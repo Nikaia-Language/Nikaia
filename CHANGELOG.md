@@ -4,6 +4,18 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.674] — 2026-10-08
+
+**`pub extern struct`: C's layout, crossing by value** (ADR-284 D14-D17,
+ADR-324 D6; #88). The struct is lowered `#[repr(C)]` with every field `pub`.
+`NK1145` refuses a field that is not a C value (text, an optional, a list, a
+struct without the word, …) and its help names the handle. `NK1237` refuses an
+`extern` struct that is not `pub`, and type parameters are `NK1145`. In a library
+build each one is a `typedef struct` in the header. An entry point takes it and
+hands it back by value; an enum field no variant has, or a `scalar` that is
+none, is `E_ARGUMENT`. Not built yet: `Array[T, N]` fields at the boundary, its
+methods, and a `Vec` of them.
+
 ## [0.0.673] — 2026-10-08
 
 **`examples/c-library`: a library C calls** (ADR-284; #88). A word tally C

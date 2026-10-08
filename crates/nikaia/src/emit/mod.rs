@@ -3496,9 +3496,13 @@ impl<'p> Emitter<'p> {
                 generics,
                 fields,
                 is_public,
-                ..
+                is_extern,
             } => {
                 out.push(&self.derives(*name));
+                // **C's layout** (ADR-284 D14), and every field `pub` (D15).
+                if *is_extern {
+                    out.push("#[repr(C)]\n");
+                }
                 let vis = if *is_public { "pub " } else { "" };
                 // The input lifetime first and the type parameters after it,
                 // which is the order Rust wants them in (ADR-295 D3).
@@ -3520,7 +3524,11 @@ impl<'p> Emitter<'p> {
                     );
                     out.push(&format!(
                         "    {}{}: {},\n",
-                        if field.is_public { "pub " } else { "" },
+                        if field.is_public || *is_extern {
+                            "pub "
+                        } else {
+                            ""
+                        },
                         self.name(field.name),
                         self.boxed_ty(self.text(*name), self.text(field.name), lowered)
                     ));

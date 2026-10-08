@@ -2156,8 +2156,12 @@ grammar! {
         // **permission** and not an assertion — and D3 keeps it out of this
         // grammar until the state it permits is built, so a program that writes
         // it gets the parse error listing what is possible.
+        //
+        // `extern` before it gives it C's layout (ADR-284 D14, ADR-324 D6);
+        // what its fields may be is the checker's to say.
         rule struct_item -> Item =
             vis:kw_pub?
+            laid_out:kw_extern?
             KW_STRUCT
             name:NAME
             generics:generic_list?
@@ -2170,6 +2174,7 @@ grammar! {
                     generics: generics.unwrap_or_default(),
                     fields: fields.unwrap_or_default(),
                     is_public: vis.is_some(),
+                    is_extern: laid_out.is_some(),
                 }
             }
 

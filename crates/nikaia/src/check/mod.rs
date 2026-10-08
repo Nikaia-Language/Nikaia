@@ -4766,6 +4766,7 @@ impl<'a> Checker<'a> {
                     for field in fields {
                         self.a_field_default(field);
                     }
+                    self.an_extern_struct(&item.node, &item.span);
                 }
                 Item::Impl {
                     target,
@@ -20087,6 +20088,121 @@ impl<'a> Checker<'a> {
                  (Part III 15.1).",
                 help,
             );
+        }
+    }
+
+    /// **What a `pub extern struct` may hold**
+    /// ([ADR-284](../../docs/specification/adr/adr-284.md) D14, D15): it is
+    /// `pub`, it is not generic, and every field is a C value.
+    fn an_extern_struct(&mut self, item: &Item, span: &Span) {
+        let Item::Struct {
+            name,
+            generics,
+            fields,
+            is_public,
+            is_extern: true,
+        } = item
+        else {
+            return;
+        };
+        let written = self.parsed.text(*name).to_string();
+        let refuse =
+            |checker: &mut Self, code: &'static str, at: Span, message: String, help: String| {
+                checker.checked.findings.push(Finding {
+                    severity: Severity::Error,
+                    span: at,
+                    code,
+                    message,
+                    notes: vec![
+                        "An `extern` struct has C's layout and crosses to C by value: its fields \
+                     are numbers, `bool`, `scalar`, enums without payload, other `extern` \
+                     structs and `Array[T, N]` of these."
+                            .to_string(),
+                    ],
+                    help: Some(help),
+                    labels: Vec::new(),
+                });
+            };
+        if !is_public {
+            refuse(
+                self,
+                "NK1237",
+                *span,
+                format!("`{written}` is `extern` but not `pub`."),
+                format!(
+                    "Write `pub extern struct {written}`, or leave out `extern` for a struct only this program uses."
+                ),
+            );
+        }
+        if !generics.is_empty() {
+            refuse(
+                self,
+                "NK1145",
+                *span,
+                format!(
+                    "`{written}` is an `extern` struct with type parameters, and C's layout has none."
+                ),
+                format!("Declare one `extern` struct for each type `{written}` is used with."),
+            );
+        }
+        for field in fields {
+            if !self.a_c_value(&field.ty) {
+                let field_name = self.parsed.text(field.name).to_string();
+                let ty = self.parsed.text(field.ty.name).to_string();
+                refuse(
+                    self,
+                    "NK1145",
+                    field.span,
+                    format!("`{written}.{field_name}` is a `{ty}`, which is not a C value."),
+                    format!(
+                        "Leave out `extern`: a `pub struct` crosses to C as a handle, with a getter for `{field_name}`."
+                    ),
+                );
+            }
+        }
+    }
+
+    /// A field type an `extern` struct may hold (ADR-284 D15).
+    fn a_c_value(&self, ty: &crate::ast::Type) -> bool {
+        if ty.is_view || ty.is_nullable || ty.is_tuple || ty.code.is_some() {
+            return false;
+        }
+        let name = self.parsed.text(ty.name);
+        if ty.generics.is_empty() {
+            if matches!(
+                name,
+                "i32" | "i64" | "u8" | "f64" | "bool" | "scalar" | "char"
+            ) {
+                return true;
+            }
+            return self
+                .parsed
+                .program
+                .items
+                .iter()
+                .any(|item| match &item.node {
+                    Item::Enum {
+                        name: declared,
+                        variants,
+                        ..
+                    } => {
+                        self.parsed.text(*declared) == name
+                            && variants.iter().all(|variant| {
+                                matches!(variant.fields, crate::ast::VariantFields::Unit)
+                            })
+                    }
+                    Item::Struct {
+                        name: declared,
+                        is_extern: true,
+                        ..
+                    } => self.parsed.text(*declared) == name,
+                    _ => false,
+                });
+        }
+        // `Array[T, N]`: inline, laid out as C lays it out (ADR-152 D2).
+        match (name, ty.generics.as_slice()) {
+            ("Array", [element, _]) => self.a_c_value(element),
+            _ => false,
         }
     }
 

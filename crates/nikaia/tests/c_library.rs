@@ -125,6 +125,27 @@ pub extern fn length_of(name: ref String?) -> i64 sync {
     return (name ?? \"none\").len()
 }
 
+pub extern struct Rect {
+    corner: Point,
+    width: f64,
+    height: f64,
+    light: Light,
+}
+
+pub extern struct Point {
+    x: f64,
+    y: f64,
+}
+
+pub extern fn grown(b: Rect, by: f64) -> Rect sync {
+    return Rect {
+        corner: Point { x: b.corner.x - by, y: b.corner.y - by },
+        width: b.width + 2.0 * by,
+        height: b.height + 2.0 * by,
+        light: Light::Green,
+    }
+}
+
 pub enum Refusal {
     Negative,
     TooLarge(i64),
@@ -312,6 +333,13 @@ int main(void) {
     status = calc_size((const uint8_t *)"\x01\x02\x03", 3, &n);
     printf("size %d %lld\n", status, (long long)n);
     calc_Light light = CALC_LIGHT_RED;
+    calc_Rect box = {{1.0, 2.0}, 3.0, 4.0, CALC_LIGHT_RED};
+    calc_Rect bigger;
+    status = calc_grown(box, 0.5, &bigger);
+    printf("grown %d %.1f %.1f %.1f %.1f %d\n", status, bigger.corner.x, bigger.corner.y,
+           bigger.width, bigger.height, bigger.light == CALC_LIGHT_GREEN);
+    box.light = (calc_Light)9;
+    printf("no such light in a box %d\n", calc_grown(box, 0.5, &bigger));
     status = calc_after(CALC_LIGHT_GREEN, &light);
     printf("after %d %d\n", status, light == CALC_LIGHT_AMBER);
     printf("no such light %d\n", calc_after((calc_Light)7, &light));
@@ -417,7 +445,7 @@ fn a_c_program_calls_the_library() {
     assert!(ran.status.success(), "{}", said(&ran));
     assert_eq!(
         String::from_utf8_lossy(&ran.stdout),
-        "size query 0 10\ntoo small -2 10\ngreet 0 Hello, Ada\nnot utf-8 -1\nno address -1\ntotal 0 10\nsize 0 3\nafter 0 1\nno such light -1\n"
+        "size query 0 10\ntoo small -2 10\ngreet 0 Hello, Ada\nnot utf-8 -1\nno address -1\ntotal 0 10\nsize 0 3\ngrown 0 0.5 1.5 4.0 5.0 1\nno such light in a box -1\nafter 0 1\nno such light -1\n"
     );
 
     std::fs::write(root.join("handle.c"), HANDLE_CALLER).expect("the caller");

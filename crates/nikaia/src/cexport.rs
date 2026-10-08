@@ -92,6 +92,8 @@ enum In {
     Handle(usize),
     /// `ref String?` or `ref T?` of a handle: NULL is `null` (D5).
     Absent(Box<In>),
+    /// A `pub extern struct`, by value (D14).
+    Record(usize),
     /// `fn(A…) -> R sync`: a function pointer and the `void *ctx` C hands it
     /// back (D5).
     Callback {
@@ -149,6 +151,148 @@ enum Out {
     Handle(usize),
     /// `T?` of a handle: NULL for `null` (D5).
     AbsentHandle(usize),
+    /// A `pub extern struct`, by value (D14).
+    Record(usize),
+}
+
+/// **A `pub extern struct`** of the entry file (ADR-284 D14, D15): C's layout,
+/// crossing by value. The wrapper reads and writes it through a mirror whose
+/// enum and `scalar` fields are plain numbers, checked on the way in.
+struct Record {
+    name: String,
+    fields: Vec<(String, Part)>,
+}
+
+/// One field of a [`Record`].
+enum Part {
+    Value(ByValue),
+    Choice(usize),
+    Record(usize),
+}
+
+fn records(parsed: &crate::parser::Parsed, plains: &[Plain]) -> Result<Vec<Record>> {
+    let declared: Vec<(&str, &Vec<crate::ast::FieldDef>)> = parsed
+        .program
+        .items
+        .iter()
+        .filter_map(|item| match &item.node {
+            Item::Struct {
+                name,
+                fields,
+                is_extern: true,
+                ..
+            } => Some((parsed.text(*name), fields)),
+            _ => None,
+        })
+        .collect();
+    declared
+        .iter()
+        .map(|(name, fields)| {
+            let fields = fields
+                .iter()
+                .map(|field| {
+                    let field_name = parsed.text(field.name).to_string();
+                    let part = if let Some(shape) = by_value(parsed, &field.ty) {
+                        Part::Value(shape)
+                    } else if let Some(at) = choice(parsed, plains, &field.ty) {
+                        Part::Choice(at)
+                    } else if let Some(at) = declared
+                        .iter()
+                        .position(|(other, _)| *other == parsed.text(field.ty.name))
+                        .filter(|_| field.ty.generics.is_empty() && !field.ty.is_nullable)
+                    {
+                        Part::Record(at)
+                    } else {
+                        return Err(not_yet(
+                            &format!("{name}.{field_name}"),
+                            "field of an `extern` struct",
+                        ));
+                    };
+                    Ok((field_name, part))
+                })
+                .collect::<Result<Vec<_>>>()?;
+            Ok(Record {
+                name: name.to_string(),
+                fields,
+            })
+        })
+        .collect()
+}
+
+fn record_of(parsed: &crate::parser::Parsed, records: &[Record], ty: &Type) -> Option<usize> {
+    if ty.is_view || ty.is_nullable || ty.is_tuple || !ty.generics.is_empty() || ty.code.is_some() {
+        return None;
+    }
+    let name = parsed.text(ty.name);
+    records.iter().position(|record| record.name == name)
+}
+
+/// The mirror of a [`Record`] the wrapper takes and hands back, and its two
+/// conversions: `None` where C's value is no value of the struct.
+fn mirror(record: &Record, records: &[Record], plains: &[Plain]) -> String {
+    let ty = &record.name;
+    let mut fields = String::new();
+    let mut into = Vec::new();
+    let mut from = Vec::new();
+    for (field, part) in &record.fields {
+        let local = crate::emit::escaped(field);
+        let (lowered, inward, outward) = match part {
+            Part::Value(shape) if shape.scalar => (
+                "u32".to_string(),
+                format!("char::from_u32(self.{local})?"),
+                format!("value.{local} as u32"),
+            ),
+            Part::Value(shape) => (
+                shape.rust.to_string(),
+                format!("self.{local}"),
+                format!("value.{local}"),
+            ),
+            Part::Choice(at) => {
+                let plain = &plains[*at];
+                let inward: Vec<String> = plain
+                    .variants
+                    .iter()
+                    .enumerate()
+                    .map(|(number, variant)| format!("{number} => {}::{variant},", plain.name))
+                    .collect();
+                let outward: Vec<String> = plain
+                    .variants
+                    .iter()
+                    .enumerate()
+                    .map(|(number, variant)| format!("{}::{variant} => {number},", plain.name))
+                    .collect();
+                (
+                    "std::ffi::c_int".to_string(),
+                    format!(
+                        "match self.{local} {{ {} _ => return None }}",
+                        inward.join(" ")
+                    ),
+                    format!("match value.{local} {{ {} }}", outward.join(" ")),
+                )
+            }
+            Part::Record(at) => {
+                let inner = &records[*at].name;
+                (
+                    format!("__nikaia_c_{inner}"),
+                    format!("self.{local}.into_nikaia()?"),
+                    format!("__nikaia_c_{inner}::from_nikaia(value.{local})"),
+                )
+            }
+        };
+        fields.push_str(&format!("    {local}: {lowered},\n"));
+        into.push(format!("{local}: {inward}"));
+        from.push(format!("{local}: {outward}"));
+    }
+    format!(
+        "\n/// `{ty}` as C lays it out and hands it over (ADR-284 D14).\n\
+         #[repr(C)]\n#[derive(Clone, Copy)]\n#[allow(non_camel_case_types)]\n\
+         pub struct __nikaia_c_{ty} {{\n{fields}}}\n\
+         \n#[allow(dead_code)]\nimpl __nikaia_c_{ty} {{\n    \
+         fn into_nikaia(self) -> Option<{ty}> {{\n        Some({ty} {{ {} }})\n    }}\n    \
+         fn from_nikaia(value: {ty}) -> Self {{\n        Self {{ {} }}\n    }}\n}}\n",
+        into.join(", "),
+        from.join(", ")
+    )
 }
 
 /// An `enum` without payload the entry file declares (ADR-284 D5): its name
@@ -204,15 +348,19 @@ fn taken(
     parsed: &crate::parser::Parsed,
     plains: &[Plain],
     handles: &[Handled],
+    records: &[Record],
     ty: &Type,
 ) -> Option<In> {
+    if let Some(at) = record_of(parsed, records, ty) {
+        return Some(In::Record(at));
+    }
     if ty.code.is_some() {
         return callback(parsed, plains, ty);
     }
     if ty.is_nullable {
         let mut present = ty.clone();
         present.is_nullable = false;
-        return match taken(parsed, plains, handles, &present)? {
+        return match taken(parsed, plains, handles, records, &present)? {
             text @ In::Run { as_text: true, .. } => Some(In::Absent(Box::new(text))),
             handle @ In::Handle(_) => Some(In::Absent(Box::new(handle))),
             _ => None,
@@ -255,8 +403,12 @@ fn handed(
     parsed: &crate::parser::Parsed,
     plains: &[Plain],
     handles: &[Handled],
+    records: &[Record],
     ty: &Type,
 ) -> Option<Out> {
+    if let Some(at) = record_of(parsed, records, ty) {
+        return Some(Out::Record(at));
+    }
     if ty.is_nullable && !ty.is_view {
         let mut present = ty.clone();
         present.is_nullable = false;
@@ -350,6 +502,7 @@ fn handled_structs(parsed: &crate::parser::Parsed) -> Vec<Handled<'_>> {
                 generics,
                 fields,
                 is_public: true,
+                is_extern: false,
             } if generics.is_empty() => Some(Handled {
                 name: parsed.text(*name).to_string(),
                 fields: fields
@@ -518,6 +671,7 @@ pub fn export(program: &Program, prefix: &str, package: &str) -> Result<Option<E
     let codes = variant_codes(program, &found);
     let plains = plain_enums(parsed);
     let handles = handled_structs(parsed);
+    let records = records(parsed, &plains)?;
     // The enums and the handles an entry point names, which the header declares.
     let mut crossing = vec![false; plains.len()];
     let mut held = vec![false; handles.len()];
@@ -552,6 +706,15 @@ pub fn export(program: &Program, prefix: &str, package: &str) -> Result<Option<E
                 getter: true,
             });
         }
+    }
+    // **Every `pub extern struct` is in the header**, as C lays it out (D14).
+    for record in &records {
+        for (_, part) in &record.fields {
+            if let Part::Choice(at) = part {
+                crossing[*at] = true;
+            }
+        }
+        rust.push_str(&mirror(record, &records, &plains));
     }
     let mut constants = String::new();
     for (error, variants) in &codes {
@@ -637,7 +800,7 @@ pub fn export(program: &Program, prefix: &str, package: &str) -> Result<Option<E
         for (position, arg) in entry.args.iter().enumerate() {
             let param = parsed.text(arg.name).to_string();
             let local = crate::emit::escaped(&param).into_owned();
-            match taken(parsed, &plains, &handles, &arg.ty) {
+            match taken(parsed, &plains, &handles, &records, &arg.ty) {
                 Some(In::Value(shape)) => {
                     rust_params.push(format!("{local}: {}", shape.rust));
                     c_params.push(format!("{} {param}", shape.c));
@@ -774,6 +937,22 @@ pub fn export(program: &Program, prefix: &str, package: &str) -> Result<Option<E
                     ));
                     call_args.push(format!("&{local}"));
                 }
+                Some(In::Record(at)) => {
+                    let ty = &records[at].name;
+                    rust_params.push(format!("{local}: __nikaia_c_{ty}"));
+                    c_params.push(format!("{prefix}_{ty} {param}"));
+                    // An enum field no variant has, or a `scalar` that is
+                    // none, is `E_ARGUMENT` (ADR-284 D5).
+                    checks.push_str(&format!(
+                        "    let Some({local}) = {local}.into_nikaia() else {{ return -1; }};\n"
+                    ));
+                    let lent =
+                        contract.is_some_and(|c| crate::contracts::keeps::lends(c, position));
+                    call_args.push(match lent {
+                        true => format!("&{local}"),
+                        false => local,
+                    });
+                }
                 Some(In::Absent(present)) => match *present {
                     In::Run { .. } => {
                         rust_params.push(format!("{local}: *const u8, {local}_len: usize"));
@@ -820,7 +999,7 @@ pub fn export(program: &Program, prefix: &str, package: &str) -> Result<Option<E
             }
         }
         let result = match entry.ret_type {
-            Some(ty) => match handed(parsed, &plains, &handles, ty) {
+            Some(ty) => match handed(parsed, &plains, &handles, &records, ty) {
                 Some(Out::Value(shape)) => {
                     rust_params.push(format!("out: *mut {}", shape.rust));
                     c_params.push(format!("{} *out", shape.c));
@@ -844,6 +1023,12 @@ pub fn export(program: &Program, prefix: &str, package: &str) -> Result<Option<E
                     ));
                     c_params.push(format!("{prefix}_{ty} **out"));
                     Some(Out::Handle(at))
+                }
+                Some(Out::Record(at)) => {
+                    let ty = &records[at].name;
+                    rust_params.push(format!("out: *mut __nikaia_c_{ty}"));
+                    c_params.push(format!("{prefix}_{ty} *out"));
+                    Some(Out::Record(at))
                 }
                 Some(Out::AbsentHandle(at)) => {
                     let ty = &handles[at].name;
@@ -912,6 +1097,12 @@ pub fn export(program: &Program, prefix: &str, package: &str) -> Result<Option<E
                  unsafe { nikaia_std::c_boundary::put(out, nikaia_std::c_boundary::handle(value)) };\n            \
                  }\n            0\n        }"
                 .to_string(),
+            Some(Out::Record(at)) => format!(
+                "Ok(value) => {{\n            \
+                 // SAFETY: the C caller hands a place for one value, or NULL (ADR-284 D7).\n            \
+                 unsafe {{ nikaia_std::c_boundary::put(out, __nikaia_c_{}::from_nikaia(value)) }};\n            0\n        }}",
+                records[*at].name
+            ),
             // `null` is NULL (D5).
             Some(Out::AbsentHandle(_)) => "Ok(value) => {\n            \
                  if !out.is_null() {\n                \
@@ -997,6 +1188,44 @@ pub fn export(program: &Program, prefix: &str, package: &str) -> Result<Option<E
             "typedef enum {{\n{}\n}} {prefix}_{};\n\n",
             values.join(",\n"),
             plain.name
+        ));
+    }
+    // A struct a field holds comes first: C wants it complete.
+    // One that holds itself has no size, which rustc says; this only must
+    // not walk it forever.
+    fn ordered(at: usize, records: &[Record], seen: &mut Vec<usize>, walking: &mut Vec<usize>) {
+        if seen.contains(&at) || walking.contains(&at) {
+            return;
+        }
+        walking.push(at);
+        for (_, part) in &records[at].fields {
+            if let Part::Record(inner) = part {
+                ordered(*inner, records, seen, walking);
+            }
+        }
+        seen.push(at);
+    }
+    let mut order = Vec::new();
+    for at in 0..records.len() {
+        ordered(at, &records, &mut order, &mut Vec::new());
+    }
+    for record in order.iter().map(|at| &records[*at]) {
+        let fields: Vec<String> = record
+            .fields
+            .iter()
+            .map(|(field, part)| {
+                let c = match part {
+                    Part::Value(shape) => shape.c.to_string(),
+                    Part::Choice(at) => format!("{prefix}_{}", plains[*at].name),
+                    Part::Record(at) => format!("{prefix}_{}", records[*at].name),
+                };
+                format!("    {c} {field};")
+            })
+            .collect();
+        types.push_str(&format!(
+            "typedef struct {{\n{}\n}} {prefix}_{};\n\n",
+            fields.join("\n"),
+            record.name
         ));
     }
     let guard = format!("{upper}_H");

@@ -15,7 +15,7 @@ fn found(source: &str) -> Vec<check::Finding> {
     check::check_program(&parsed, &own, &library, &std::collections::BTreeSet::new())
         .findings
         .into_iter()
-        .filter(|f| f.code.starts_with("NK123") || f.code == "NK1240")
+        .filter(|f| f.code.starts_with("NK123") || f.code == "NK1240" || f.code == "NK1145")
         .collect()
 }
 
@@ -81,4 +81,37 @@ fn a_signature_that_does_not_cross_is_refused_with_its_shape() {
         helps.iter().any(|h| h.contains("Hand back `String`")),
         "{helps:?}"
     );
+}
+
+/// **`NK1145`**: an `extern` struct has C's layout, so each field is a C
+/// value: a number, `bool`, `scalar`, an enum without payload, another
+/// `extern` struct, or a fixed array of these. Its message names the handle.
+#[test]
+fn an_extern_struct_holds_c_values_only() {
+    assert!(
+        codes(
+            "pub enum Light { Red, Green }\n\
+             pub extern struct Point { x: f64, y: f64 }\n\
+             pub extern struct Rect { corner: Point, light: Light, sides: Array[f64, 4], on: bool }\n\
+             fn main() { }\n"
+        )
+        .is_empty()
+    );
+    let refused = found(
+        "pub struct Plain { n: i64 }\n\
+         pub extern struct Bad { name: String, n: i64?, inner: Plain }\n\
+         fn main() { }\n",
+    );
+    let nk1145: Vec<_> = refused.iter().filter(|f| f.code == "NK1145").collect();
+    assert_eq!(nk1145.len(), 3, "{refused:?}");
+    assert!(nk1145[0].message.contains("`Bad.name`"), "{:?}", nk1145[0]);
+    assert!(
+        nk1145[0]
+            .help
+            .as_deref()
+            .is_some_and(|help| help.contains("handle")),
+        "{:?}",
+        nk1145[0]
+    );
+    assert!(codes("extern struct Hidden { x: f64 }\nfn main() { }\n").contains(&"NK1237"));
 }

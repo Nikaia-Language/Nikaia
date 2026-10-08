@@ -595,7 +595,7 @@ impl LedgerOps for Ledger {
                         generics,
                         fields,
                         is_public,
-                        ..
+                        is_extern,
                     } => {
                         let parameters: BTreeSet<String> = generics
                             .iter()
@@ -613,7 +613,8 @@ impl LedgerOps for Ledger {
                             .map(|(at, f)| FieldContract {
                                 name: parsed.text(f.name).to_string(),
                                 ty: ty::Ty::from_ast(parsed, &f.ty).parameterise(&parameters),
-                                public: f.is_public,
+                                // Every field of an `extern` struct is `pub` (ADR-284 D15).
+                                public: f.is_public || *is_extern,
                                 // A literal is its own text; anything else is
                                 // computed with the options' defaults below
                                 // (ADR-331 D5, ADR-318 D1-D3).

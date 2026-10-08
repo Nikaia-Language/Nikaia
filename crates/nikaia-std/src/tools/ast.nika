@@ -144,6 +144,10 @@ pub enum Item {
         generics: Vec[GenericParam],
         fields: Vec[FieldDef],
         is_public: bool,
+        /// **`pub extern struct`: C's layout, crossing by value**
+        /// ([ADR-284](../../../../docs/specification/adr/adr-284.md) D14,
+        /// ADR-324 D6).
+        is_extern: bool,
     },
 
     // Kap 4.2: impl User { ... }
