@@ -25,9 +25,10 @@
 // each call holding its lock (D11); `ref String?` and `ref T?` of a handle
 // in, and `T?` of a handle out, NULL for `null`; a callback that does not pause or throw,
 // as a function pointer and a `void *ctx`, taking values, enums and text and
-// handing back a number or nothing - of a function or method that does not
-// pause, declared in the package's entry file, throwing at most one `enum` of
-// it. Every raw pointer is read and written
+// handing back a number or nothing; a function that may pause, blocking and
+// `_async` with a ticket `<prefix>_cancel` cancels at its next pause point
+// (D9, D19) - of a function or method declared in the package's entry file,
+// throwing at most one `enum` of it. Every raw pointer is read and written
 // through `c-boundary` (ADR-218). Every other entry point is refused here,
 // saying which part is not built yet, rather than exported half-way.
 
@@ -434,6 +435,35 @@ fn handed(
     }
 }
 
+/// The names of a wrapper's parameters, as `name: type` lists write them -
+/// a type may hold commas of its own (`fn(i64, *mut c_void)`), so only a
+/// comma outside brackets ends one.
+fn parameter_names(params: &[String]) -> Vec<String> {
+    let mut names = Vec::new();
+    for list in params {
+        let mut depth = 0_i32;
+        let mut start = 0;
+        let bytes = list.as_bytes();
+        for (at, byte) in bytes.iter().enumerate() {
+            match byte {
+                b'<' | b'(' | b'[' => depth += 1,
+                b'>' if at > 0 && bytes[at - 1] == b'-' => {}
+                b'>' | b')' | b']' => depth -= 1,
+                b',' if depth == 0 => {
+                    names.push(list[start..at].trim().to_string());
+                    start = at + 1;
+                }
+                _ => {}
+            }
+        }
+        names.push(list[start..].trim().to_string());
+    }
+    names
+        .into_iter()
+        .filter_map(|param| param.split(':').next().map(|name| name.trim().to_string()))
+        .collect()
+}
+
 /// The refusal for an entry point whose `what` is not exported yet.
 fn not_yet(written: &str, what: &str) -> anyhow::Error {
     anyhow::anyhow!(
@@ -679,6 +709,7 @@ pub fn export(
          return -6;\n    }}\n    0\n}}\n"
     ));
     let mut declarations = String::new();
+    let mut any_pause = false;
     let found = entries(program)?;
     let Some(unit) = program.units.first() else {
         return Ok(None);
@@ -1080,7 +1111,7 @@ pub fn export(
         let call = match pauses {
             true => format!(
                 "{{ let _ = nikaia_std::rt::start(nikaia_std::rt::UserCode::{user_code}); \
-                 nikaia_std::rt::exec::block_on({call}) }}"
+                 nikaia_std::rt::exec::block_on(__nikaia_cancellable({call})) }}"
             ),
             false => call,
         };
@@ -1167,12 +1198,26 @@ pub fn export(
             }
         };
         // `AssertUnwindSafe`: after a panic the library is poisoned, and
-        // nothing it held is looked at again (D8).
+        // nothing it held is looked at again (D8). A call that pauses may be
+        // cancelled at a pause point instead, which is `E_CANCELLED` (D19).
+        let ran = match pauses {
+            true => format!(
+                "let __nikaia_ran = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {call}));\n    \
+                 let __nikaia_ran = match __nikaia_ran {{\n        \
+                 Ok(Some(value)) => Ok(value),\n        \
+                 Ok(None) => {{\n            __nikaia_failed(\"the call was cancelled\".to_string());\n            return -7;\n        }}\n        \
+                 Err(panic) => Err(panic),\n    }};\n    \
+                 match __nikaia_ran"
+            ),
+            false => format!(
+                "match std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {call}))"
+            ),
+        };
         rust.push_str(&format!(
             "\n#[unsafe(no_mangle)]\npub extern \"C\" fn {symbol}({}) -> std::ffi::c_int {{\n    \
              if let Err(status) = __nikaia_enter() {{\n        return status;\n    }}\n\
              {checks}    \
-             match std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {call})) {{\n        {handed_back}{failed}\n        \
+             {ran} {{\n        {handed_back}{failed}\n        \
              Err(_) => {{\n            __NIKAIA_POISONED.store(true, std::sync::atomic::Ordering::SeqCst);\n            \
              __nikaia_failed(\"the library panicked; it answers E_PANICKED until shutdown and init have run\".to_string());\n            \
              -4\n        }}\n    }}\n}}\n",
@@ -1183,9 +1228,111 @@ pub fn export(
             false => c_params.join(", "),
         };
         declarations.push_str(&format!("int {symbol}({c_params});\n"));
+        // **The `_async` form** (D9, D19): the same call on a library thread,
+        // `done` called exactly once with its status, and a ticket that
+        // cancels it at its next pause point. What C handed it stays C's to
+        // keep until `done`.
+        if pauses {
+            any_pause = true;
+            let names = parameter_names(&rust_params);
+            let forwarded = names.join(", ");
+            let mut async_params = rust_params.clone();
+            async_params.push(
+                "__nikaia_done: Option<extern \"C\" fn(std::ffi::c_int, *mut std::ffi::c_void)>, \
+                 __nikaia_done_ctx: *mut std::ffi::c_void, \
+                 __nikaia_op: *mut *mut nikaia_std::c_boundary::Handle<std::sync::Arc<__NikaiaTicket>>"
+                    .to_string(),
+            );
+            let async_symbol = format!("{symbol}_async");
+            claim(&async_symbol, &written)?;
+            rust.push_str(&format!(
+                "\n#[unsafe(no_mangle)]\npub extern \"C\" fn {async_symbol}({}) -> std::ffi::c_int {{\n    \
+                 if let Err(status) = __nikaia_enter() {{\n        return status;\n    }}\n    \
+                 let Some(__nikaia_done) = __nikaia_done else {{ return -1; }};\n    \
+                 let ticket = std::sync::Arc::new(__NikaiaTicket::default());\n    \
+                 if !__nikaia_op.is_null() {{\n        \
+                 // SAFETY: the C caller hands a place for one ticket (ADR-284 D19).\n        \
+                 unsafe {{ nikaia_std::c_boundary::put(__nikaia_op, nikaia_std::c_boundary::handle(ticket.clone())) }};\n    \
+                 }}\n    \
+                 // SAFETY: the C caller keeps what it handed this call, and `done`'s context, until `done` (ADR-284 D9).\n    \
+                 let sent = unsafe {{ nikaia_std::c_boundary::sent(({forwarded}, __nikaia_done_ctx)) }};\n    \
+                 std::thread::spawn(move || {{\n        \
+                 let ({forwarded}, __nikaia_done_ctx) = sent.into_inner();\n        \
+                 __NIKAIA_TICKET.with(|current| *current.borrow_mut() = Some(ticket.clone()));\n        \
+                 let status = {symbol}({forwarded});\n        \
+                 ticket.done.store(true, std::sync::atomic::Ordering::SeqCst);\n        \
+                 __nikaia_done(status, __nikaia_done_ctx);\n    \
+                 }});\n    0\n}}\n",
+                async_params.join(", "),
+            ));
+            let mut c_async = match c_params.as_str() {
+                "void" => Vec::new(),
+                some => vec![some.to_string()],
+            };
+            c_async.push(format!(
+                "void (*done)(int status, void *ctx), void *ctx, {prefix}_op **op"
+            ));
+            declarations.push_str(&format!("int {async_symbol}({});\n", c_async.join(", ")));
+        }
+    }
+    // **The ticket of an `_async` call** (D19): `cancel` and `op_free`, and the
+    // cancellation every pausing call is driven under.
+    if any_pause {
+        for own in ["cancel", "op_free"] {
+            claim(&format!("{prefix}_{own}"), own)?;
+        }
+        rust.push_str(&format!(
+            "\n/// An `_async` call's ticket (ADR-284 D19).\n\
+             #[derive(Default)]\npub struct __NikaiaTicket {{\n    \
+             cancelled: std::sync::atomic::AtomicBool,\n    \
+             done: std::sync::atomic::AtomicBool,\n    \
+             waker: std::sync::Mutex<Option<std::task::Waker>>,\n}}\n\
+             \nimpl __NikaiaTicket {{\n    \
+             fn cancel(&self) {{\n        \
+             self.cancelled.store(true, std::sync::atomic::Ordering::SeqCst);\n        \
+             let waker = self.waker.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).take();\n        \
+             if let Some(waker) = waker {{\n            waker.wake();\n        }}\n    }}\n}}\n\
+             \nstd::thread_local! {{\n    \
+             /// The ticket of the `_async` call this library thread runs.\n    \
+             static __NIKAIA_TICKET: std::cell::RefCell<Option<std::sync::Arc<__NikaiaTicket>>> = const {{ std::cell::RefCell::new(None) }};\n}}\n\
+             \n/// `work`, or `None` once its ticket is cancelled: at the next pause point (ADR-284 D19).\n\
+             async fn __nikaia_cancellable<T>(work: impl std::future::Future<Output = T>) -> Option<T> {{\n    \
+             let ticket = __NIKAIA_TICKET.with(|current| current.borrow().clone());\n    \
+             let mut work = std::pin::pin!(work);\n    \
+             std::future::poll_fn(|context| {{\n        \
+             if let Some(ticket) = &ticket {{\n            \
+             *ticket.waker.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(context.waker().clone());\n            \
+             if ticket.cancelled.load(std::sync::atomic::Ordering::SeqCst) {{\n                \
+             return std::task::Poll::Ready(None);\n            }}\n        }}\n        \
+             work.as_mut().poll(context).map(Some)\n    \
+             }})\n    .await\n}}\n\
+             \n/// Cancels an `_async` call at its next pause point; after `done`, or twice, it is `OK` (ADR-284 D19).\n\
+             #[unsafe(no_mangle)]\npub extern \"C\" fn {prefix}_cancel(op: *const nikaia_std::c_boundary::Handle<std::sync::Arc<__NikaiaTicket>>) -> std::ffi::c_int {{\n    \
+             // SAFETY: the C caller hands a ticket this library made and has not freed, or NULL (ADR-284 D19).\n    \
+             match unsafe {{ nikaia_std::c_boundary::shared(op) }} {{\n        \
+             Ok(ticket) => {{\n            ticket.cancel();\n            0\n        }}\n        \
+             Err(status) => status,\n    }}\n}}\n\
+             \n/// Frees a ticket after `done`; before it, `E_ARGUMENT`, and the ticket is kept (ADR-284 D19).\n\
+             #[unsafe(no_mangle)]\npub extern \"C\" fn {prefix}_op_free(op: *mut nikaia_std::c_boundary::Handle<std::sync::Arc<__NikaiaTicket>>) -> std::ffi::c_int {{\n    \
+             if op.is_null() {{\n        return 0;\n    }}\n    \
+             // SAFETY: as `cancel`'s.\n    \
+             let finished = match unsafe {{ nikaia_std::c_boundary::shared(op) }} {{\n        \
+             Ok(ticket) => ticket.done.load(std::sync::atomic::Ordering::SeqCst),\n        \
+             Err(status) => return status,\n    }};\n    \
+             if !finished {{\n        return -1;\n    }}\n    \
+             // SAFETY: the C caller uses the ticket no more (ADR-284 D19).\n    \
+             unsafe {{ nikaia_std::c_boundary::free(op) }}\n}}\n"
+        ));
+        declarations.push_str(&format!(
+            "\n/* An _async call's ticket: cancel it at its next pause point, free it after done (ADR-284 D19). */\n\
+             int {prefix}_cancel({prefix}_op *op);\nint {prefix}_op_free({prefix}_op *op);\n"
+        ));
     }
     // **A handle is an opaque struct** C holds by its address (D5).
     let mut types = String::new();
+    if any_pause {
+        types.push_str(&format!("typedef struct {prefix}_op {prefix}_op;\n\n"));
+    }
     for (handle, _) in handles.iter().zip(&held).filter(|(_, held)| **held) {
         types.push_str(&format!(
             "typedef struct {prefix}_{0} {prefix}_{0};\n\n",

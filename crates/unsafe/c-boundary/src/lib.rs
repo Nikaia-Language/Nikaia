@@ -221,6 +221,33 @@ pub unsafe fn free<T>(at: *mut Handle<T>) -> core::ffi::c_int {
     OK
 }
 
+/// **What C handed a call, taken to the thread that runs it** (ADR-284 D9):
+/// the addresses and values of an `_async` call, which C keeps until its
+/// `done` is called.
+pub struct Sent<T>(T);
+
+// SAFETY: `sent`'s contract - what the addresses point at is the C caller's,
+// kept alive and left alone until `done`, so the one thread that uses them
+// is the library's.
+unsafe impl<T> Send for Sent<T> {}
+
+/// **`value`, to be moved to the library thread that runs the call.**
+///
+/// # Safety
+///
+/// Every address in `value` stays valid, and nothing else touches what it
+/// points at, until the call it is handed to has ended.
+pub unsafe fn sent<T>(value: T) -> Sent<T> {
+    Sent(value)
+}
+
+impl<T> Sent<T> {
+    /// What was sent, on the thread it was sent to.
+    pub fn into_inner(self) -> T {
+        self.0
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -293,6 +320,16 @@ mod tests {
         }
         assert!(unsafe { exclusive(counter) }.is_ok());
         assert_eq!(unsafe { free(counter) }, OK);
+    }
+
+    #[test]
+    fn an_address_is_sent_to_the_thread_that_uses_it() {
+        let mut out = 0_i64;
+        let at = unsafe { sent(&mut out as *mut i64) };
+        std::thread::spawn(move || unsafe { put(at.into_inner(), 9) })
+            .join()
+            .expect("joined");
+        assert_eq!(out, 9);
     }
 
     #[test]

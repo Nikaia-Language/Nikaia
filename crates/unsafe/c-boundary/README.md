@@ -30,6 +30,7 @@ assert_eq!((status, written, &room[..5]), (c_boundary::OK, 5, &b"hello"[..]));
 | `put` (an `unsafe fn`) | a write through `out` | the caller's contract: `out` is null or a place for one `T`. Null writes nothing. |
 | `shared`, `exclusive` (`unsafe fn`s) | `&*at` | the caller's contract: `at` is null, refused as `E_ARGUMENT`, or a handle `handle` made with `Box::into_raw` and `free` has not freed. The value is reached only through its `RwLock`, held for the call; a thread that holds it already is `E_REENTRANT` rather than a deadlock. |
 | `free` (an `unsafe fn`) | `Box::from_raw` | the caller's contract: a handle `handle` made and nobody uses any more. Null frees nothing; a handle this thread holds is `E_REENTRANT` and stays. |
+| `Sent` (`unsafe impl Send`), `sent` (an `unsafe fn`) | moves raw addresses to the library thread that runs an `_async` call | `sent`'s contract, which is the C caller's: what the addresses point at stays alive and untouched until `done` is called. The one thread that uses them is that call's. |
 | `hand_back` (an `unsafe fn`) | writes through `written`, copies into `out` | the caller's contract: `written` is null or a place for one `usize`, and `out` is null or `cap` bytes of room. At most `cap` bytes are copied, and nothing is where the bytes do not fit. |
 
 ## How it is checked

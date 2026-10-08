@@ -8,6 +8,19 @@ or the specification. A change only to the guide, the notes, the README, the
 website, the tests, the examples or the tooling around them raises nothing and
 has no heading here; `CLAUDE.md` draws the line.
 
+## [0.0.676] — 2026-10-08
+
+**A pausing entry point is exported `_async` too** (ADR-284 D9, D19; #88).
+`<prefix>_<fn>_async(…, done, ctx, op)` takes the same parameters as the blocking
+form and runs the call on a library thread. `done(status, ctx)` is called
+exactly once: with the work's status, or `E_CANCELLED` when `<prefix>_cancel(op)`
+came first, which cancels at the next pause point. Cancelling twice or after
+`done` is `OK`. `<prefix>_op_free` frees the ticket after `done`; before it, the
+answer is `E_ARGUMENT`. A NULL `op` makes no ticket, and a NULL `done` is
+`E_ARGUMENT`. What C hands the call stays C's to keep until `done`; the move to
+the library thread goes through `c-boundary`'s `Sent`. Not built yet: a library
+executor in place of one thread per call.
+
 ## [0.0.675] — 2026-10-08
 
 **A library's entry point may pause** (ADR-284 D9, D10; #88). Its blocking

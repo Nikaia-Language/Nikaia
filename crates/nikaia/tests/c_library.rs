@@ -318,6 +318,48 @@ int main(void) {
 }
 "#;
 
+/// A function that may pause is exported `_async` too (ADR-284 D9, D19):
+/// `done` is called once, on a library thread, with the work's status or
+/// `E_CANCELLED`; the ticket is freed after it and not before.
+const ASYNC_CALLER: &str = r#"#include <stdio.h>
+#include <unistd.h>
+#include "calc.h"
+
+static _Atomic int finished = 0;
+static int reported = 99;
+
+static void on_done(int status, void *ctx) {
+    reported = status;
+    *(int *)ctx += 1;
+    finished = 1;
+}
+
+int main(void) {
+    int64_t n = 0;
+    int calls = 0;
+    calc_op *op = NULL;
+    int status = calc_napped_async(200, &n, on_done, &calls, &op);
+    printf("started %d %d\n", status, op != NULL);
+    printf("freed too early %d\n", calc_op_free(op));
+    while (!finished) usleep(1000);
+    printf("done %d %lld %d\n", reported, (long long)n, calls);
+    status = calc_cancel(op);
+    printf("cancel after done %d\n", status);
+    printf("freed %d\n", calc_op_free(op));
+
+    finished = 0;
+    status = calc_napped_async(60000, &n, on_done, &calls, &op);
+    calc_cancel(op);
+    status = calc_cancel(op);
+    printf("cancel twice %d\n", status);
+    while (!finished) usleep(1000);
+    printf("cancelled %d %d\n", reported == CALC_E_CANCELLED, calls);
+    calc_op_free(op);
+    printf("no done %d\n", calc_napped_async(1, &n, NULL, NULL, NULL));
+    return CALC_OK;
+}
+"#;
+
 /// Text, bytes and a run of numbers (ADR-284 D5, D6): in as an address and a
 /// length, out into the caller's buffer.
 const TEXT_CALLER: &str = r#"#include <stdio.h>
@@ -503,6 +545,30 @@ fn a_c_program_calls_the_library() {
     assert_eq!(
         String::from_utf8_lossy(&ran.stdout),
         "count up 0 3\nno callback -1\nword one 1\nword two 1\nlooking at 0, bump -5\nlooking 0\n"
+    );
+
+    std::fs::write(root.join("async.c"), ASYNC_CALLER).expect("the caller");
+    let program = root.join("async");
+    let compiled = Command::new("cc")
+        .arg("-I")
+        .arg(&made)
+        .arg(root.join("async.c"))
+        .arg("-L")
+        .arg(&made)
+        .args(["-lcalc", "-o"])
+        .arg(&program)
+        .output()
+        .expect("cc runs");
+    assert!(compiled.status.success(), "{}", said(&compiled));
+    let ran = Command::new(&program)
+        .env("LD_LIBRARY_PATH", &made)
+        .output()
+        .expect("the caller runs");
+    assert!(ran.status.success(), "{}", said(&ran));
+    assert_eq!(
+        String::from_utf8_lossy(&ran.stdout),
+        "started 0 1\nfreed too early -1\ndone 0 242 1\ncancel after done 0\nfreed 0\n\
+         cancel twice 0\ncancelled 1 2\nno done -1\n"
     );
 
     std::fs::write(root.join("throwing.c"), THROWING_CALLER).expect("the caller");
