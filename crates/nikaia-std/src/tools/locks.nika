@@ -281,7 +281,7 @@ pub fn locking(itself: ref collections::BTreeMap[String, Lock], callees: ref col
     let mut answer = Locking { functions: collections::BTreeMap(), fields: collections::BTreeMap() }
     for (name, holds) in touches {
         if name.starts_with("field:") {
-            let c: Vec[char] = name.chars().collect()
+            let c: Vec[scalar] = name.chars().collect()
             let field = slice(c, 6, c.len())
             // **A published field is stored into by packages that do not exist
             // yet** (ADR-230 D1), so what this one stores is not all there is.
@@ -333,7 +333,7 @@ fn is_a_variant(declared: ref collections::BTreeSet[String], callee: ref String)
 
 /// Whether `Type.field` is a public field of a public type.
 fn published(own: ref Ledger, field: ref String) -> bool {
-    let c: Vec[char] = field.chars().collect()
+    let c: Vec[scalar] = field.chars().collect()
     let dot = find_text(c, 0, ".")
     if dot < 0 {
         return false

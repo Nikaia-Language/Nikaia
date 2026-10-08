@@ -104,21 +104,21 @@ pub fn generic_of(written: ref String, name: ref String) -> String? {
     if !text.starts_with(name) {
         return null
     }
-    let c: Vec[char] = text.chars().collect()
-    let n: Vec[char] = name.chars().collect()
+    let c: Vec[scalar] = text.chars().collect()
+    let n: Vec[scalar] = name.chars().collect()
     let after = slice(c, n.len(), c.len())
     let rest = after.trim_start()
     if !rest.starts_with("<") || !rest.ends_with(">") {
         return null
     }
-    let r: Vec[char] = rest.chars().collect()
+    let r: Vec[scalar] = rest.chars().collect()
     return slice(r, 1, r.len() - 1)
 }
 
 /// Whether a bound list names `Send` as a **word**: `Sender` and `Resend`
 /// contain the letters and are not the bound.
 pub fn bounds_send(text: ref String) -> bool {
-    let c: Vec[char] = text.chars().collect()
+    let c: Vec[scalar] = text.chars().collect()
     let mut start = 0
     for at in 0..<c.len() + 1 {
         let ends = at == c.len() || !(c[at].is_alphanumeric() || c[at] == '_')

@@ -918,7 +918,7 @@ fn prover_a_test_function(name: ref String?) -> bool {
     if !text.starts_with(prefix) || text.len() == prefix.len() {
         return false
     }
-    let c: Vec[char] = text.chars().collect()
+    let c: Vec[scalar] = text.chars().collect()
     for k in 14..<c.len() {
         if c[k] < '0' || c[k] > '9' {
             return false

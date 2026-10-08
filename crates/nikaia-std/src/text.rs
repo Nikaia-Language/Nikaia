@@ -4,7 +4,7 @@
 
 // sync (Part II, 12.1): pure CPU, cannot pause. Checked before
 // this was written - see `contracts::sync`.
-pub fn digit_value(c: char) -> i32 { c as i32 - 48 }
+pub fn digit_value(c: scalar) -> i32 { c as i32 - 48 }
 
 // sync (Part II, 12.1): pure CPU, cannot pause. Checked before
 // this was written - see `contracts::sync`.

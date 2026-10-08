@@ -66,7 +66,7 @@ test "an arm of a statement match ends in a statement" {
 // step - the largest single cost of reading a ledger in Nikaia.
 test "the characters of a text are listed at their size" {
     let word = "héllo"
-    let c: Vec[char] = word.chars().collect()
+    let c: Vec[scalar] = word.chars().collect()
     let size = c.len()
     assert(size == 5)
     assert(c[1] == 'é')

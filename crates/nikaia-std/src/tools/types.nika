@@ -85,7 +85,7 @@ fn known_traits(names: ref winnow_grammar::InternerContext, items: ref Vec[Spann
 // `key`, and what stands after its last `::`.
 fn with_its_last_segment(key: ref String, mut known: collections::BTreeSet[String]) {
     known.insert(key.clone())
-    let c: Vec[char] = key.chars().collect()
+    let c: Vec[scalar] = key.chars().collect()
     let mut last = -1
     for at in 0..<c.len() {
         if at + 1 < c.len() && c[at] == ':' && c[at + 1] == ':' {
@@ -386,6 +386,13 @@ fn written_at_the_boundary(names: ref winnow_grammar::InternerContext, ty: ref T
         return
     }
     let name = names.resolve(ty.name).clone()
+    // **There is no `char`** (ADR-320, Part I 2.6): one character of text is
+    // a `scalar`, and one byte of it a `u8`. A ledger may still write the old
+    // word (`ty.nika` reads it as `scalar`); a program's own type may not.
+    if name == "char" {
+        out.push(refusal("NK1135", span.clone(), "There's no type called `char`.", ["One Unicode character is a `scalar`, and one byte of text is a `u8`: which of the two a character is depends on how the text is read (Part I 2.6)."], "Write `scalar` for a character, or `u8` for a byte."))
+        return
+    }
     if !a_parameter && !ty.is_view && !ty.is_slice && ty.count == null && ty.generics.len() == 1 && name == "Array" {
         let element = names.resolve(ty.generics[0].name).clone()
         out.push(refusal("NK1182", span.clone(), f"`Array[{element}]` needs a length here.", [f"`Array[{element}]` without a length only works for a parameter, where each call supplies the length. A field or a result has no call to take it from."], f"Use `Vec[{element}]` for a list that can grow, `ref Array[{element}]` to look at elements something else keeps, or `Array[{element}, N]` to write the length down."))
@@ -434,7 +441,7 @@ pub fn nobody_knows(name: ref String, own: ref Ledger, library: ref Ledger) -> b
     if BUILT_IN.contains(name) || own.types.contains_key(name) || library.types.contains_key(name) {
         return false
     }
-    let c: Vec[char] = name.chars().collect()
+    let c: Vec[scalar] = name.chars().collect()
     let mut last = -1
     for at in 0..<c.len() {
         if at + 1 < c.len() && c[at] == ':' && c[at + 1] == ':' {
@@ -464,7 +471,7 @@ fn std_module_of(name: ref String, known: ref collections::BTreeSet[String]) -> 
     let ending = f"::{name}"
     for key in known {
         if key.ends_with(ref ending) {
-            let c: Vec[char] = key.chars().collect()
+            let c: Vec[scalar] = key.chars().collect()
             let at = find_text(c, 0, "::")
             let module = slice(c, 0, at)
             for one in STD_MODULES {

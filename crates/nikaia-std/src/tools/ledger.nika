@@ -359,7 +359,7 @@ fn header(mut ledger: Ledger, key: ref String, value: ref String, n: i64) throws
 // `[impl."A for T"]`: the trait `A`, and `T`, which answers for it (ADR-295
 // D1).
 fn implemented(name: ref String, n: i64) -> (String, String) throws {
-    let c: Vec[char] = name.chars().collect()
+    let c: Vec[scalar] = name.chars().collect()
     let at = find_text(c, 0, " for ")
     if at < 0 {
         throw Refused::Because(f"line {n}: an `impl` entry is `A for T`: {name}")
@@ -505,7 +505,7 @@ fn type_key(mut entry: TypeContract, key: ref String, value: ref String, n: i64)
     } else if key == "variant_attributes" {
         // `Spot: Tag { text: "s" }`, after `variants` (ADR-331 D8).
         for one in entries(value, n) {
-            let c: Vec[char] = one.chars().collect()
+            let c: Vec[scalar] = one.chars().collect()
             let colon = find(c, 0, ':')
             if colon < 0 {
                 throw Refused::Because(f"line {n}: a variant's attribute is `Variant: Value {{ … }}`, not `{one}`")
@@ -523,7 +523,7 @@ fn type_key(mut entry: TypeContract, key: ref String, value: ref String, n: i64)
         // (ADR-331 D8): the value goes to the field the name before the
         // first colon says.
         for one in entries(value, n) {
-            let c: Vec[char] = one.chars().collect()
+            let c: Vec[scalar] = one.chars().collect()
             let colon = find(c, 0, ':')
             if colon < 0 {
                 throw Refused::Because(f"line {n}: a field's attribute is `field: Value {{ … }}`, not `{one}`")
@@ -565,7 +565,7 @@ fn sync_of(value: ref String, n: i64) -> Sync throws {
     if value == "\"inferred\"" {
         return Sync::Inferred
     }
-    let c: Vec[char] = value.chars().collect()
+    let c: Vec[scalar] = value.chars().collect()
     if value.ends_with(")\"") && (value.starts_with("\"sync(") || value.starts_with("\"from(")) && c.len() >= 8 {
         let inside = slice(c, 6, c.len() - 2)
         let name = inside.trim()
@@ -589,7 +589,7 @@ fn throws_of(value: ref String, n: i64) -> Vec[String] throws {
 
 // `ref(a | b)`, and `borrows(a | b)`, the spelling before ADR-251 D4.
 fn borrows_of(value: ref String, n: i64) -> Vec[String] throws {
-    let c: Vec[char] = value.chars().collect()
+    let c: Vec[scalar] = value.chars().collect()
     let mut from = -1
     if value.ends_with(")") {
         if value.starts_with("ref(") {
@@ -626,7 +626,7 @@ fn provenance_of(value: ref String, n: i64) -> Provenance throws {
 /// write`.
 pub fn touch_of(written: ref String) -> Touch throws {
     let whole = written.trim()
-    let c: Vec[char] = whole.chars().collect()
+    let c: Vec[scalar] = whole.chars().collect()
     let space = find_last(c, ' ')
     if space < 0 {
         throw Refused::Because(f"a touch is `resource read` or `resource write`, found `{whole}`")
@@ -641,7 +641,7 @@ pub fn touch_of(written: ref String) -> Touch throws {
     }
     let before = slice(c, 0, space)
     let resource = before.trim()
-    let r: Vec[char] = resource.chars().collect()
+    let r: Vec[scalar] = resource.chars().collect()
     let open = find(r, 0, '(')
     let mut kind: String = resource.clone()
     let mut parameter: String? = null
@@ -662,7 +662,7 @@ pub fn touch_of(written: ref String) -> Touch throws {
 
 /// `position: borrowed` or `position: tethered`, or nothing.
 pub fn held_of(written: ref String) -> Held? {
-    let c: Vec[char] = written.chars().collect()
+    let c: Vec[scalar] = written.chars().collect()
     let colon = find_last(c, ':')
     if colon < 0 {
         return null
@@ -677,7 +677,7 @@ pub fn held_of(written: ref String) -> Held? {
 
 /// `a | b: plain`, or nothing where no member or no count is written.
 pub fn class_of(written: ref String) -> Class? {
-    let c: Vec[char] = written.chars().collect()
+    let c: Vec[scalar] = written.chars().collect()
     let colon = find_last(c, ':')
     if colon < 0 {
         return null
@@ -703,7 +703,7 @@ pub fn class_of(written: ref String) -> Class? {
 /// A variant back from `Name`, `Name(A, B)` or `Name { a: A }`.
 pub fn variant_of(written: ref String) -> VariantContract {
     let whole = written.trim()
-    let c: Vec[char] = whole.chars().collect()
+    let c: Vec[scalar] = whole.chars().collect()
     let paren = find(c, 0, '(')
     if paren >= 0 {
         let named = slice(c, 0, paren)
@@ -724,7 +724,7 @@ pub fn variant_of(written: ref String) -> VariantContract {
         let inside = without_last(rest.trim_end(), '}')
         let mut holds: Vec[FieldContract] = []
         for part in split_args(inside) {
-            let p: Vec[char] = part.chars().collect()
+            let p: Vec[scalar] = part.chars().collect()
             let colon = find(p, 0, ':')
             if colon >= 0 {
                 let field = slice(p, 0, colon)
@@ -748,7 +748,7 @@ fn field_of(written: ref String) -> FieldContract {
         let rest = from_char(field, 4)
         field = rest.trim().clone()
     }
-    let c: Vec[char] = field.chars().collect()
+    let c: Vec[scalar] = field.chars().collect()
     let colon = find(c, 0, ':')
     if colon < 0 {
         return FieldContract { name: field.clone(), ty: Ty::Unknown, public: public, default: "", attributes: [] }
@@ -1031,7 +1031,7 @@ fn a_receiver() -> String {
 // The type an entry's receiver is when it is written `self`: what stands
 // before the last `::` of its key.
 fn owner_of(key: ref String) -> String? {
-    let c: Vec[char] = key.chars().collect()
+    let c: Vec[scalar] = key.chars().collect()
     let mut last = -1
     for at in 0..<c.len() {
         if at + 1 < c.len() && c[at] == ':' && c[at + 1] == ':' {
@@ -1045,7 +1045,7 @@ fn owner_of(key: ref String) -> String? {
 }
 
 // Where `target` first stands at or after `from`, or -1.
-fn find(c: ref Array[char], from: i64, target: char) -> i64 {
+fn find(c: ref Array[scalar], from: i64, target: scalar) -> i64 {
     for at in from..<c.len() {
         if c[at] == target {
             return at
@@ -1055,7 +1055,7 @@ fn find(c: ref Array[char], from: i64, target: char) -> i64 {
 }
 
 // Where `target` last stands, or -1.
-fn find_last(c: ref Array[char], target: char) -> i64 {
+fn find_last(c: ref Array[scalar], target: scalar) -> i64 {
     let mut found = -1
     for at in 0..<c.len() {
         if c[at] == target {
@@ -1066,8 +1066,8 @@ fn find_last(c: ref Array[char], target: char) -> i64 {
 }
 
 // Where `word` first stands at or after `from`, or -1.
-fn find_text(c: ref Array[char], from: i64, word: ref String) -> i64 {
-    let w: Vec[char] = word.chars().collect()
+fn find_text(c: ref Array[scalar], from: i64, word: ref String) -> i64 {
+    let w: Vec[scalar] = word.chars().collect()
     if w.len() == 0 || c.len() < w.len() {
         return -1
     }
@@ -1086,7 +1086,7 @@ fn find_text(c: ref Array[char], from: i64, word: ref String) -> i64 {
 }
 
 // The characters from `from` up to `to`, as text.
-fn slice(c: ref Array[char], from: i64, to: i64) -> String {
+fn slice(c: ref Array[scalar], from: i64, to: i64) -> String {
     let mut out: String = ""
     for k in from..<to {
         out.push(c[k])
@@ -1096,7 +1096,7 @@ fn slice(c: ref Array[char], from: i64, to: i64) -> String {
 
 // `written` from its `front`th character on.
 fn from_char(written: ref String, front: i64) -> String {
-    let c: Vec[char] = written.chars().collect()
+    let c: Vec[scalar] = written.chars().collect()
     return slice(c, front, c.len())
 }
 
@@ -1105,13 +1105,13 @@ fn after_prefix(written: ref String, prefix: ref String) -> String? {
     if !written.starts_with(prefix) {
         return null
     }
-    let p: Vec[char] = prefix.chars().collect()
+    let p: Vec[scalar] = prefix.chars().collect()
     return from_char(written, p.len())
 }
 
 // `written` with every `last` at its end taken off.
-fn without_last(written: ref String, last: char) -> String {
-    let c: Vec[char] = written.chars().collect()
+fn without_last(written: ref String, last: scalar) -> String {
+    let c: Vec[scalar] = written.chars().collect()
     let mut end = c.len()
     while end > 0 && c[end - 1] == last {
         end -= 1
@@ -1158,7 +1158,7 @@ pub struct Spelled {
 /// The compiler's signature text, `key`'s entry, into the file's spelling.
 /// Text that is not a signature stays as it is, and says neither fact.
 pub fn spell(text: ref String, key: ref String, borrows: ref Vec[String], mutates: bool) -> Spelled {
-    let c: Vec[char] = text.trim().chars().collect()
+    let c: Vec[scalar] = text.trim().chars().collect()
     // The bracket list's entries, where there is one.
     let mut declared: Vec[String] = []
     let mut open = 0
@@ -1185,7 +1185,7 @@ pub fn spell(text: ref String, key: ref String, borrows: ref Vec[String], mutate
     if close < 0 {
         return as_written(text)
     }
-    let inside: Vec[char] = slice(c, open + 1, close).chars().collect()
+    let inside: Vec[scalar] = slice(c, open + 1, close).chars().collect()
     let mut result = slice(c, close + 1, c.len())
 
     // The positional parameters, and the options after a `;`.
@@ -1278,7 +1278,7 @@ fn is_named(part: ref String) -> bool {
     while rest.starts_with("mut ") {
         rest = from_char(rest, 4)
     }
-    let c: Vec[char] = rest.chars().collect()
+    let c: Vec[scalar] = rest.chars().collect()
     let mut end = 0
     while end < c.len() && is_word_char(c[end]) {
         end += 1
@@ -1291,7 +1291,7 @@ fn is_named(part: ref String) -> bool {
 }
 
 // Where the bracket opened just before `from` closes, or -1.
-fn matching(c: ref Array[char], from: i64, open: char, close: char) -> i64 {
+fn matching(c: ref Array[scalar], from: i64, open: scalar, close: scalar) -> i64 {
     let mut depth = 0
     for at in from..<c.len() {
         if c[at] == open {
@@ -1307,7 +1307,7 @@ fn matching(c: ref Array[char], from: i64, open: char, close: char) -> i64 {
 }
 
 // Where the first `;` outside a bracket stands, or -1.
-fn top_level_semicolon(c: ref Array[char]) -> i64 {
+fn top_level_semicolon(c: ref Array[scalar]) -> i64 {
     let mut depth = 0
     for at in 0..<c.len() {
         if c[at] == '[' || c[at] == '(' {
@@ -1325,8 +1325,8 @@ fn top_level_semicolon(c: ref Array[char]) -> i64 {
 
 // Where `word` stands in `text` as a word of its own, followed by a blank.
 fn word_starts(text: ref String, word: ref String) -> Vec[i64] {
-    let c: Vec[char] = text.chars().collect()
-    let w: Vec[char] = word.chars().collect()
+    let c: Vec[scalar] = text.chars().collect()
+    let w: Vec[scalar] = word.chars().collect()
     let mut starts: Vec[i64] = []
     let mut at = find_text(c, 0, word)
     while at >= 0 {
@@ -1342,7 +1342,7 @@ fn word_starts(text: ref String, word: ref String) -> Vec[i64] {
 
 // Every `ref ` in `text`, written `by ` instead.
 fn replace_ref(text: ref String, by: ref String) -> String {
-    let c: Vec[char] = text.chars().collect()
+    let c: Vec[scalar] = text.chars().collect()
     let mut out: String = ""
     let mut from = 0
     for at in word_starts(text, "ref") {
@@ -1356,7 +1356,7 @@ fn replace_ref(text: ref String, by: ref String) -> String {
 
 // Every `$T` in `text`, by name, in the order each first appears.
 fn variables(text: ref String) -> Vec[String] {
-    let c: Vec[char] = text.chars().collect()
+    let c: Vec[scalar] = text.chars().collect()
     let mut out: Vec[String] = []
     for at in 0..<c.len() {
         if c[at] == '$' {
@@ -1401,10 +1401,10 @@ fn trimmed_start(written: ref String) -> String {
     return written.trim_start().clone()
 }
 
-fn is_word_char(c: char) -> bool {
+fn is_word_char(c: scalar) -> bool {
     return is_lower(c) || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_'
 }
 
-fn is_lower(c: char) -> bool {
+fn is_lower(c: scalar) -> bool {
     return c >= 'a' && c <= 'z'
 }

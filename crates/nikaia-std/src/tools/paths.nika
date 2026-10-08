@@ -42,8 +42,8 @@ pub fn after(path: ref String, word: ref String) -> String? {
     if !path.starts_with(ref lead) {
         return null
     }
-    let c: Vec[char] = path.chars().collect()
-    let w: Vec[char] = lead.chars().collect()
+    let c: Vec[scalar] = path.chars().collect()
+    let w: Vec[scalar] = lead.chars().collect()
     return slice(c, w.len(), c.len())
 }
 
@@ -56,7 +56,7 @@ pub fn module_of(relative: ref String) -> String? {
     if !relative.starts_with("src/") || !relative.ends_with(".rs") {
         return null
     }
-    let c: Vec[char] = relative.chars().collect()
+    let c: Vec[scalar] = relative.chars().collect()
     let inside = slice(c, 4, c.len() - 3)
     if inside == "lib" {
         return ""
@@ -68,7 +68,7 @@ pub fn module_of(relative: ref String) -> String? {
     if inside == "mod" {
         path = ""
     } else if inside.ends_with("/mod") {
-        let i: Vec[char] = inside.chars().collect()
+        let i: Vec[scalar] = inside.chars().collect()
         path = slice(i, 0, i.len() - 4)
     }
     let mut out: String = ""
@@ -92,7 +92,7 @@ pub fn joined(at: ref String, name: ref String) -> String {
 /// What one `pub use` offers, from the text between the keyword and the `;`.
 pub fn exported(at: ref String, text: ref String) -> Vec[Export] {
     let whole = text.trim()
-    let c: Vec[char] = whole.chars().collect()
+    let c: Vec[scalar] = whole.chars().collect()
     let mut out: Vec[Export] = []
     // A brace group is the only place several names stand, and the `::` before
     // it is the last one outside it.
@@ -120,7 +120,7 @@ pub fn exported(at: ref String, text: ref String) -> Vec[Export] {
         path = before.trim().clone()
         alias = after_it.trim().clone()
     }
-    let p: Vec[char] = path.chars().collect()
+    let p: Vec[scalar] = path.chars().collect()
     let cut = find_last_text(p, "::")
     let mut prefix: String = ""
     let mut name = path.clone()
@@ -137,7 +137,7 @@ pub fn exported(at: ref String, text: ref String) -> Vec[Export] {
 /// One entry of a `use` list: `name`, or `name as other`.
 pub fn named(written: ref String) -> Named {
     let one = written.trim()
-    let c: Vec[char] = one.chars().collect()
+    let c: Vec[scalar] = one.chars().collect()
     let space = find_text(c, 0, " as ")
     if space < 0 {
         return Named { name: one.clone(), alias: one.clone() }
@@ -168,7 +168,7 @@ pub fn bases(export: ref Export) -> Vec[String] {
     }
     let from_up = after(prefix, "super")
     if from_up != null {
-        let a: Vec[char] = export.at.chars().collect()
+        let a: Vec[scalar] = export.at.chars().collect()
         let cut = find_last_text(a, "::")
         let mut parent: String = ""
         if cut >= 0 {
@@ -211,8 +211,8 @@ pub fn split_top_level(text: ref String) -> Vec[String] {
 }
 
 // Where `word` last stands, or -1.
-fn find_last_text(c: ref Array[char], word: ref String) -> i64 {
-    let w: Vec[char] = word.chars().collect()
+fn find_last_text(c: ref Array[scalar], word: ref String) -> i64 {
+    let w: Vec[scalar] = word.chars().collect()
     let mut found = -1
     if w.is_empty() || c.len() < w.len() {
         return found
@@ -226,7 +226,7 @@ fn find_last_text(c: ref Array[char], word: ref String) -> i64 {
 }
 
 // Whether `w` stands in `c` at `at`.
-fn stands_at(c: ref Array[char], at: i64, w: ref Array[char]) -> bool {
+fn stands_at(c: ref Array[scalar], at: i64, w: ref Array[scalar]) -> bool {
     for k in 0..<w.len() {
         if c[at + k] != w[k] {
             return false

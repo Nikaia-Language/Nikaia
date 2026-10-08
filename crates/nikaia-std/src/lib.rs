@@ -80,6 +80,9 @@ pub use winnow_grammar;
 /// is - the compiler's output, committed - rather than as something written by
 /// hand here.
 pub mod text {
+    /// The language's word for one character, which the lowered file writes.
+    #[allow(unused_imports)]
+    use crate::prelude::scalar;
     include!("text.rs");
 }
 
@@ -167,6 +170,10 @@ pub mod tools {
     // the file it serves; `sysroot::HAND_WRITTEN` puts its names in that
     // file's module.
     include!("tools/package.rs");
+
+    /// `scalar`, which the lowered files write for one character (ADR-320).
+    #[allow(unused_imports)]
+    use crate::prelude::scalar;
 
     /// What a lowered `throws` of `std`'s `io` names: a tool has no prelude
     /// to bring it in.

@@ -24,7 +24,7 @@ use std::collections
 /// wrong program: the parameter it invents has to be passed, and the message
 /// names it.
 pub fn parameters(body: ref String) -> Vec[String] sync {
-    let c: Vec[char] = body.chars().collect()
+    let c: Vec[scalar] = body.chars().collect()
     let mut found: Vec[String] = Vec()
     let mut i = 0
     while i < c.len() {
@@ -64,14 +64,14 @@ pub fn parameters(body: ref String) -> Vec[String] sync {
 // A character a name goes on with: a letter, a digit or `_`, in ASCII - which
 // is what the compiler's own names are. A pattern's range includes both ends
 // (ADR-291 D12).
-fn a_name_goes_on(c: char) -> bool sync {
+fn a_name_goes_on(c: scalar) -> bool sync {
     return match c {
         'a'..'z' | 'A'..'Z' | '0'..'9' | '_' => true,
         else => false,
     }
 }
 
-fn a_name_begins(c: char) -> bool sync {
+fn a_name_begins(c: scalar) -> bool sync {
     return match c {
         'a'..'z' | 'A'..'Z' | '_' => true,
         else => false,

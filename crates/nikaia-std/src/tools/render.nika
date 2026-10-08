@@ -58,7 +58,7 @@ struct Placed {
 
 /// The finding, laid out.
 pub fn rendered(shown: ref Shown, path: ref String, source: ref String) -> String {
-    let chars: Vec[char] = source.chars().collect()
+    let chars: Vec[scalar] = source.chars().collect()
     let lines: Vec[ref String] = source.split("\n").collect()
     let mut labels: Vec[Marked] = shown.labels.clone()
     // One layout for every message: a finding that names no place of its own
@@ -172,7 +172,7 @@ fn line_of(lines: ref Vec[ref String], line: i64) -> String {
 }
 
 // The 1-based line and the 1-based column, in characters, of a byte offset.
-fn line_column(chars: ref Vec[char], offset: u32) -> (i64, i64) {
+fn line_column(chars: ref Vec[scalar], offset: u32) -> (i64, i64) {
     let wanted = offset as i64
     let mut bytes = 0
     let mut line = 1
@@ -195,7 +195,7 @@ fn line_column(chars: ref Vec[char], offset: u32) -> (i64, i64) {
 // How many characters of its first line a span covers, without the trailing
 // space: what a label with no word of its own underlines. One at least, so a
 // place is always marked.
-fn spanned_width(chars: ref Vec[char], span: ref Span) -> i64 {
+fn spanned_width(chars: ref Vec[scalar], span: ref Span) -> i64 {
     let start = span.start as i64
     let end = span.end as i64
     let mut bytes = 0
@@ -220,7 +220,7 @@ fn spanned_width(chars: ref Vec[char], span: ref Span) -> i64 {
 }
 
 // How many bytes a character takes in UTF-8.
-fn utf8_width(c: char) -> i64 {
+fn utf8_width(c: scalar) -> i64 {
     let point = c as u32
     if point < 128 {
         return 1
@@ -304,7 +304,7 @@ fn package_and_function(callee: ref String) -> (String, String) {
 /// `an` before a word that starts with a vowel the way these names are
 /// written, `a` otherwise.
 pub fn an_or_a(word: ref String) -> String {
-    let first: Vec[char] = word.chars().collect()
+    let first: Vec[scalar] = word.chars().collect()
     if first.len() > 0 && (first[0] == 'i' || first[0] == 'a' || first[0] == 'e' || first[0] == 'o' || first[0] == 'I' || first[0] == 'A' || first[0] == 'E' || first[0] == 'O') {
         return "an"
     }

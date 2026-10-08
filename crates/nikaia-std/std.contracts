@@ -2078,7 +2078,7 @@ pub = true
 sync = true
 touches = []
 returns = "ref(self)"
-signature = "(ref self) -> Seq[char] sync ends"
+signature = "(ref self) -> Seq[scalar] sync ends"
 
 # How many **bytes** the text is.
 #
@@ -2103,7 +2103,7 @@ pub = true
 sync = true
 touches = []
 keeps = ["c"]
-signature = "(ref mut self, c: char)"
+signature = "(ref mut self, c: scalar)"
 
 # Add text to the end of this text.
 [fn."String::push_str"]
@@ -2821,7 +2821,7 @@ pub = true
 sync = true
 touches = []
 returns = "ref(self)"
-signature = "(self: ref String) -> Seq[char] sync ends"
+signature = "(self: ref String) -> Seq[scalar] sync ends"
 
 # How many **bytes** the text is.
 #
@@ -2891,7 +2891,7 @@ signature = "(self) -> bool"
 pub = true
 sync = true
 touches = []
-signature = "(self) -> char"
+signature = "(self) -> scalar"
 
 # Whether the text begins with this.
 [fn."str::starts_with"]
@@ -3099,7 +3099,7 @@ sync = true
 touches = []
 ensures = ["result == c - 48"]
 from = ["return"]
-signature = "(c: char) -> i32"
+signature = "(c: scalar) -> i32"
 
 # The whole number this text writes, or nothing where it writes none.
 #

@@ -34,16 +34,16 @@ fn line(out: &str, text: &str) -> String {
 }
 
 const SOURCE: &str = "\
-fn digit_value(c: char) -> i32 {
+fn digit_value(c: scalar) -> i32 {
     return c as i32 - 48
 }
 
-fn twice(c: char) -> i64 {
+fn twice(c: scalar) -> i64 {
     let code = c as i64
     return code * 2 + 1
 }
 
-fn far(c: char) -> i32 {
+fn far(c: scalar) -> i32 {
     return c as i32 * 4096
 }
 
@@ -103,7 +103,7 @@ fn a_code_is_the_same_number_without_the_check() {
 const ACROSS: &str = "\
 use text
 
-fn tens(c: char) -> i32 {
+fn tens(c: scalar) -> i32 {
     return text::digit_value(c) * 10
 }
 
@@ -123,7 +123,7 @@ fn a_callees_ensures_is_a_fact_at_the_call() {
 #[test]
 fn an_expression_function_publishes_what_it_returns() {
     let parsed = parse_to_ast(
-        "fn code(c: char) -> i64 sync {\n    return c as i64 - 48\n}\n\n\
+        "fn code(c: scalar) -> i64 sync {\n    return c as i64 - 48\n}\n\n\
          fn twice(n: i64) -> i64 sync {\n    return n * 2\n}\n\n\
          fn square(n: i64) -> i64 sync {\n    return n * n\n}\n",
     )

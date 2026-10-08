@@ -2293,7 +2293,7 @@ fn bounding_range(walk: &mut BoundsWalk, expr: &Expr, facts: &BoundsFacts, conte
 }
 
 fn bounding_dropped(text: &str, count: i64) -> String {
-    let c: Vec<char> = nikaia_std::list::chars(text.chars());
+    let c: Vec<scalar> = nikaia_std::list::chars(text.chars());
     let mut out: String = String::from("");
     for k in count..c.len() as i64 { out.push(*nikaia_std::index::get(&c, nikaia_std::index::at(k))); }
     out
@@ -2412,7 +2412,7 @@ fn bounding_push(walk: &BoundsWalk, facts: &mut BoundsFacts, fact: i64) {
 
 fn bounding_base_of(name: &str) -> String {
     if !name.ends_with(".len()") { return name.to_owned(); }
-    let c: Vec<char> = nikaia_std::list::chars(name.chars());
+    let c: Vec<scalar> = nikaia_std::list::chars(name.chars());
     let mut out: String = String::from("");
     for k in 0..c.len() as i64 - 6 { out.push(*nikaia_std::index::get(&c, (k) as usize)); }
     out
@@ -5614,7 +5614,7 @@ pub fn indented_text(text: &str) -> String {
 }
 
 pub fn brace_groups(text: &str) -> Vec<String> {
-    let c: Vec<char> = nikaia_std::list::chars(text.chars());
+    let c: Vec<scalar> = nikaia_std::list::chars(text.chars());
     let mut found: Vec<String> = vec![];
     let mut at: i64 = 0;
     while ((at) as usize) < c.len() {
@@ -5684,7 +5684,7 @@ pub fn claim_names_in(expr: &Expr, words: &winnow_grammar::InternerContext, hole
 pub fn is_a_parameter(name: &str, params: &collections::BTreeSet<String>) -> bool {
     if params.contains(name) { return true; }
     if !name.ends_with(".len()") { return false; }
-    let c: Vec<char> = nikaia_std::list::chars(name.chars());
+    let c: Vec<scalar> = nikaia_std::list::chars(name.chars());
     let mut base: String = String::from("");
     for k in 0..c.len() as i64 - 6 { base.push(*nikaia_std::index::get(&c, (k) as usize)); }
     params.contains(&base)
@@ -5863,17 +5863,17 @@ pub fn is_plain(name: &str) -> bool {
 pub fn generic_of(written: &str, name: &str) -> Option<String> {
     let text = written.trim();
     if !text.starts_with(name) { return None; }
-    let c: Vec<char> = nikaia_std::list::chars(text.chars());
-    let n: Vec<char> = nikaia_std::list::chars(name.chars());
+    let c: Vec<scalar> = nikaia_std::list::chars(text.chars());
+    let n: Vec<scalar> = nikaia_std::list::chars(name.chars());
     let after = slice(&c, n.len() as i64, c.len() as i64);
     let rest = after.trim_start();
     if !rest.starts_with("<") || !rest.ends_with(">") { return None; }
-    let r: Vec<char> = nikaia_std::list::chars(rest.chars());
+    let r: Vec<scalar> = nikaia_std::list::chars(rest.chars());
     Some(slice(&r, 1, r.len() as i64 - 1))
 }
 
 pub fn bounds_send(text: &str) -> bool {
-    let c: Vec<char> = nikaia_std::list::chars(text.chars());
+    let c: Vec<scalar> = nikaia_std::list::chars(text.chars());
     let mut start: i64 = 0;
     for at in 0..c.len() as i64 + 1 {
         let ends = at == c.len() as i64 || !((*nikaia_std::index::get(&c, nikaia_std::index::at(at))).is_alphanumeric() || *nikaia_std::index::get(&c, nikaia_std::index::at(at)) == '_');
@@ -6318,7 +6318,7 @@ pub fn differing_lines(expected: &str, produced: &str) -> String {
         }
         i -= 1;
     }
-    let mut marks: Vec<char> = vec![];
+    let mut marks: Vec<scalar> = vec![];
     let mut lines: Vec<String> = vec![];
     let mut x: i64 = 0;
     let mut y: i64 = 0;
@@ -6373,7 +6373,7 @@ fn same_lines(a: &[String], b: &[String]) -> bool {
 // sync (Part II, 12.1): pure CPU, cannot pause. Checked before
 // this was written - see `contracts::sync`.
 pub fn parameters(body: &str) -> Vec<String> {
-    let c: Vec<char> = nikaia_std::list::chars(body.chars());
+    let c: Vec<scalar> = nikaia_std::list::chars(body.chars());
     let mut found: Vec<String> = Vec::new();
     let mut i: i64 = 0;
     while i < c.len() as i64 {
@@ -6402,11 +6402,11 @@ pub fn parameters(body: &str) -> Vec<String> {
 
 // sync (Part II, 12.1): pure CPU, cannot pause. Checked before
 // this was written - see `contracts::sync`.
-fn a_name_goes_on(c: char) -> bool { matches!(c, 'a'..='z' | 'A'..='Z' | '0'..='9' | '_') }
+fn a_name_goes_on(c: scalar) -> bool { matches!(c, 'a'..='z' | 'A'..='Z' | '0'..='9' | '_') }
 
 // sync (Part II, 12.1): pure CPU, cannot pause. Checked before
 // this was written - see `contracts::sync`.
-fn a_name_begins(c: char) -> bool { matches!(c, 'a'..='z' | 'A'..='Z' | '_') }
+fn a_name_begins(c: scalar) -> bool { matches!(c, 'a'..='z' | 'A'..='Z' | '_') }
 
 const TEMPLATE: &str = "html";
 
@@ -6918,14 +6918,14 @@ pub struct NotAnEscape {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum EscapeRead {
-    Means { value: char, next: i64 },
+    Means { value: scalar, next: i64 },
     Nothing { refused: NotAnEscape },
 }
 
 const HEX: &str = "0123456789abcdef";
 
-pub fn an_escape_nothing_names(literal: &str, char_of: &impl Fn(i64) -> Option<char>) -> Option<NotAnEscape> {
-    let c: Vec<char> = nikaia_std::list::chars(literal.chars());
+pub fn an_escape_nothing_names(literal: &str, char_of: &impl Fn(i64) -> Option<scalar>) -> Option<NotAnEscape> {
+    let c: Vec<scalar> = nikaia_std::list::chars(literal.chars());
     let mut at: i64 = 0;
     while at < c.len() as i64 {
         if *nikaia_std::index::get(&c, nikaia_std::index::at(at)) != '\\' {
@@ -6940,8 +6940,8 @@ pub fn an_escape_nothing_names(literal: &str, char_of: &impl Fn(i64) -> Option<c
     None
 }
 
-pub fn decoded(literal: &str, char_of: &impl Fn(i64) -> Option<char>) -> Option<String> {
-    let c: Vec<char> = nikaia_std::list::chars(literal.chars());
+pub fn decoded(literal: &str, char_of: &impl Fn(i64) -> Option<scalar>) -> Option<String> {
+    let c: Vec<scalar> = nikaia_std::list::chars(literal.chars());
     let mut out: String = String::from("");
     let mut at: i64 = 0;
     while at < c.len() as i64 {
@@ -6973,7 +6973,7 @@ pub fn as_a_literal(text: &str) -> String {
     out
 }
 
-fn one_escape(c: &[char], at: i64, char_of: &impl Fn(i64) -> Option<char>) -> EscapeRead {
+fn one_escape(c: &[scalar], at: i64, char_of: &impl Fn(i64) -> Option<scalar>) -> EscapeRead {
     let mut written: String = String::from("\\");
     if at >= c.len() as i64 { return not_an_escape(&written, "a `\\` at the end of a literal escapes nothing"); }
     let first = *nikaia_std::index::get(&c, nikaia_std::index::at(at));
@@ -6984,7 +6984,7 @@ fn one_escape(c: &[char], at: i64, char_of: &impl Fn(i64) -> Option<char>) -> Es
     EscapeRead::Means { value, next: at + 1 }
 }
 
-fn a_byte(c: &[char], from: i64, so_far: &str, char_of: &impl Fn(i64) -> Option<char>) -> EscapeRead {
+fn a_byte(c: &[scalar], from: i64, so_far: &str, char_of: &impl Fn(i64) -> Option<scalar>) -> EscapeRead {
     let mut written = so_far.to_owned();
     let mut end = from;
     while end < from + 2 && end < c.len() as i64 {
@@ -7001,7 +7001,7 @@ fn a_byte(c: &[char], from: i64, so_far: &str, char_of: &impl Fn(i64) -> Option<
     EscapeRead::Means { value: byte, next: end }
 }
 
-fn a_character(c: &[char], from: i64, so_far: &str, char_of: &impl Fn(i64) -> Option<char>) -> EscapeRead {
+fn a_character(c: &[scalar], from: i64, so_far: &str, char_of: &impl Fn(i64) -> Option<scalar>) -> EscapeRead {
     let mut written = so_far.to_owned();
     if from >= c.len() as i64 || *nikaia_std::index::get(&c, nikaia_std::index::at(from)) != '{' { return not_an_escape(&written, "`\\u` takes its digits in braces, as `\\u{1F600}`"); }
     written.push('{');
@@ -7021,7 +7021,7 @@ fn a_character(c: &[char], from: i64, so_far: &str, char_of: &impl Fn(i64) -> Op
 
 // sync (Part II, 12.1): pure CPU, cannot pause. Checked before
 // this was written - see `contracts::sync`.
-fn code_point(c: &[char], from: i64, to: i64) -> Option<i64> {
+fn code_point(c: &[scalar], from: i64, to: i64) -> Option<i64> {
     if from >= to || *nikaia_std::index::get(&c, nikaia_std::index::at(from)) == '_' { return None; }
     let mut value: i64 = 0;
     let mut digits = 0;
@@ -7040,7 +7040,7 @@ fn code_point(c: &[char], from: i64, to: i64) -> Option<i64> {
 
 // sync (Part II, 12.1): pure CPU, cannot pause. Checked before
 // this was written - see `contracts::sync`.
-fn named_escape(c: char) -> Option<char> {
+fn named_escape(c: scalar) -> Option<scalar> {
     if c == 'n' { return Some('\n'); }
     if c == 'r' { return Some('\r'); }
     if c == 't' { return Some('\t'); }
@@ -7051,7 +7051,7 @@ fn named_escape(c: char) -> Option<char> {
 
 // sync (Part II, 12.1): pure CPU, cannot pause. Checked before
 // this was written - see `contracts::sync`.
-fn hex_digit(c: char) -> Option<i64> {
+fn hex_digit(c: scalar) -> Option<i64> {
     if c >= '0' && c <= '9' { return Some(c as i64 - 48); }
     if c >= 'a' && c <= 'f' { return Some(c as i64 - 87); }
     if c >= 'A' && c <= 'F' { return Some(c as i64 - 55); }
@@ -7060,8 +7060,8 @@ fn hex_digit(c: char) -> Option<i64> {
 
 fn hex_of(n: i64) -> String {
     if n == 0 { return String::from("0"); }
-    let digits: Vec<char> = nikaia_std::list::chars(HEX.chars());
-    let mut backwards: Vec<char> = vec![];
+    let digits: Vec<scalar> = nikaia_std::list::chars(HEX.chars());
+    let mut backwards: Vec<scalar> = vec![];
     let mut rest = n;
     while rest > 0 {
         backwards.push(*nikaia_std::index::get(&digits, nikaia_std::index::at(rest % 16)));
@@ -7078,7 +7078,7 @@ fn hex_of(n: i64) -> String {
 
 // sync (Part II, 12.1): pure CPU, cannot pause. Checked before
 // this was written - see `contracts::sync`.
-fn a_control_character(c: char) -> bool {
+fn a_control_character(c: scalar) -> bool {
     let n = c as i64;
     n < 32 || n >= 127 && n <= 159
 }
@@ -9012,7 +9012,7 @@ fn header(ledger: &mut Ledger, key: &str, value: &str, n: i64) -> Result<(), nik
 }
 
 fn implemented(name: &str, n: i64) -> Result<(String, String), nikaia_std::error::Thrown<Refused>> {
-    let c: Vec<char> = nikaia_std::list::chars(name.chars());
+    let c: Vec<scalar> = nikaia_std::list::chars(name.chars());
     let at = find_text(&c, 0, " for ");
     if at < 0 { return Err(nikaia_std::error::throwing(Refused::Because(format!("line {}: an `impl` entry is `A for T`: {}", n, name)), &"implemented")); }
     Ok((trimmed(&slice(&c, 0, at)), trimmed(&slice(&c, at + 5, c.len() as i64))))
@@ -9070,7 +9070,7 @@ fn type_key(entry: &mut TypeContract, key: &str, value: &str, n: i64) -> Result<
         entry.fields = fields;
     } else if key == "attributes" { entry.attributes = entries(value, n)?; } else if key == "variant_attributes" {
         for one in entries(value, n)? {
-            let c: Vec<char> = nikaia_std::list::chars(one.chars());
+            let c: Vec<scalar> = nikaia_std::list::chars(one.chars());
             let colon = find(&c, 0, ':');
             if colon < 0 { return Err(nikaia_std::error::throwing(Refused::Because(format!("line {}: a variant's attribute is `Variant: Value {{ … }}`, not `{}`", n, one)), &"type_key")); }
             let named = slice(&c, 0, colon).trim().to_owned();
@@ -9079,7 +9079,7 @@ fn type_key(entry: &mut TypeContract, key: &str, value: &str, n: i64) -> Result<
         }
     } else if key == "field_attributes" {
         for one in entries(value, n)? {
-            let c: Vec<char> = nikaia_std::list::chars(one.chars());
+            let c: Vec<scalar> = nikaia_std::list::chars(one.chars());
             let colon = find(&c, 0, ':');
             if colon < 0 { return Err(nikaia_std::error::throwing(Refused::Because(format!("line {}: a field's attribute is `field: Value {{ … }}`, not `{}`", n, one)), &"type_key")); }
             let field = slice(&c, 0, colon);
@@ -9103,7 +9103,7 @@ fn sync_of(value: &str, n: i64) -> Result<Sync, nikaia_std::error::Thrown<Refuse
     if value == "true" { return Ok(Sync::Asserted); }
     if value == "false" { return Ok(Sync::No); }
     if value == "\"inferred\"" { return Ok(Sync::Inferred); }
-    let c: Vec<char> = nikaia_std::list::chars(value.chars());
+    let c: Vec<scalar> = nikaia_std::list::chars(value.chars());
     if value.ends_with(")\"") && (value.starts_with("\"sync(") || value.starts_with("\"from(")) && c.len() >= 8 {
         let inside = slice(&c, 6, c.len() as i64 - 2);
         let name = inside.trim();
@@ -9121,7 +9121,7 @@ fn throws_of(value: &str, n: i64) -> Result<Vec<String>, nikaia_std::error::Thro
 }
 
 fn borrows_of(value: &str, n: i64) -> Result<Vec<String>, nikaia_std::error::Thrown<Refused>> {
-    let c: Vec<char> = nikaia_std::list::chars(value.chars());
+    let c: Vec<scalar> = nikaia_std::list::chars(value.chars());
     let mut from: i64 = -1;
     if value.ends_with(")") { if value.starts_with("ref(") { from = 4; } else if value.starts_with("borrows(") { from = 8; } }
     if from < 0 { return Err(nikaia_std::error::throwing(Refused::Because(format!("line {}: expected `ref(…)`, found `{}`", n, value)), &"borrows_of")); }
@@ -9143,7 +9143,7 @@ fn provenance_of(value: &str, n: i64) -> Result<Provenance, nikaia_std::error::T
 pub fn touch_of(written: &str) -> Result<Touch, nikaia_std::error::Thrown<Refused>> {
     let __keep_frame = nikaia_std::tether::Keep::new();
     let whole = written.trim();
-    let c: Vec<char> = nikaia_std::list::chars(whole.chars());
+    let c: Vec<scalar> = nikaia_std::list::chars(whole.chars());
     let space = find_last(&c, ' ');
     if space < 0 { return Err(nikaia_std::error::throwing(Refused::Because(format!("a touch is `resource read` or `resource write`, found `{}`", whole)), &"touch_of")); }
     let said = slice(&c, space + 1, c.len() as i64);
@@ -9152,7 +9152,7 @@ pub fn touch_of(written: &str) -> Result<Touch, nikaia_std::error::Thrown<Refuse
     if access == "write" { write = true; } else if access != "read" { return Err(nikaia_std::error::throwing(Refused::Because(format!("a touch is `read` or `write`, not `{}` (in `{}`)", access, whole)), &"touch_of")); }
     let before = slice(&c, 0, space);
     let resource = before.trim();
-    let r: Vec<char> = nikaia_std::list::chars(resource.chars());
+    let r: Vec<scalar> = nikaia_std::list::chars(resource.chars());
     let open = find(&r, 0, '(');
     let mut kind: String = resource.to_owned();
     let mut parameter: Option<String> = None;
@@ -9168,7 +9168,7 @@ pub fn touch_of(written: &str) -> Result<Touch, nikaia_std::error::Thrown<Refuse
 }
 
 pub fn held_of(written: &str) -> Option<Held> {
-    let c: Vec<char> = nikaia_std::list::chars(written.chars());
+    let c: Vec<scalar> = nikaia_std::list::chars(written.chars());
     let colon = find_last(&c, ':');
     if colon < 0 { return None; }
     let state = State::parse(&slice(&c, colon + 1, c.len() as i64));
@@ -9178,7 +9178,7 @@ pub fn held_of(written: &str) -> Option<Held> {
 }
 
 pub fn class_of(written: &str) -> Option<Class> {
-    let c: Vec<char> = nikaia_std::list::chars(written.chars());
+    let c: Vec<scalar> = nikaia_std::list::chars(written.chars());
     let colon = find_last(&c, ':');
     if colon < 0 { return None; }
     let named = slice(&c, 0, colon);
@@ -9196,7 +9196,7 @@ pub fn class_of(written: &str) -> Option<Class> {
 pub fn variant_of(written: &str) -> VariantContract {
     let __keep_frame = nikaia_std::tether::Keep::new();
     let whole = written.trim();
-    let c: Vec<char> = nikaia_std::list::chars(whole.chars());
+    let c: Vec<scalar> = nikaia_std::list::chars(whole.chars());
     let paren = find(&c, 0, '(');
     if paren >= 0 {
         let named = slice(&c, 0, paren);
@@ -9217,7 +9217,7 @@ pub fn variant_of(written: &str) -> VariantContract {
         let inside = without_last(rest.trim_end(), '}');
         let mut holds: Vec<FieldContract> = vec![];
         for part in split_args(&inside) {
-            let p: Vec<char> = nikaia_std::list::chars(part.chars());
+            let p: Vec<scalar> = nikaia_std::list::chars(part.chars());
             let colon = find(&p, 0, ':');
             if colon >= 0 {
                 let field = __keep_frame.put(slice(&p, 0, colon));
@@ -9239,7 +9239,7 @@ fn field_of(written: &str) -> FieldContract {
         let rest = __keep_frame.put(from_char(&field, 4));
         field = rest.trim().to_owned();
     }
-    let c: Vec<char> = nikaia_std::list::chars(field.chars());
+    let c: Vec<scalar> = nikaia_std::list::chars(field.chars());
     let colon = find(&c, 0, ':');
     if colon < 0 { return FieldContract { name: field.to_owned(), ty: Ty::Unknown, public, default: String::from(""), attributes: vec![] }; }
     let name = slice(&c, 0, colon);
@@ -9605,26 +9605,26 @@ fn a_receiver() -> String {
 }
 
 fn owner_of(key: &str) -> Option<String> {
-    let c: Vec<char> = nikaia_std::list::chars(key.chars());
+    let c: Vec<scalar> = nikaia_std::list::chars(key.chars());
     let mut last: i64 = -1;
     for at in 0..c.len() as i64 { if ((at + 1) as usize) < c.len() && *nikaia_std::index::get(&c, (at) as usize) == ':' && *nikaia_std::index::get(&c, (at + 1) as usize) == ':' { last = at; } }
     if last < 0 { return None; }
     Some(slice(&c, 0, last))
 }
 
-fn find(c: &[char], from: i64, target: char) -> i64 {
+fn find(c: &[scalar], from: i64, target: scalar) -> i64 {
     for at in from..c.len() as i64 { if *nikaia_std::index::get(&c, nikaia_std::index::at(at)) == target { return at; } }
     -1
 }
 
-fn find_last(c: &[char], target: char) -> i64 {
+fn find_last(c: &[scalar], target: scalar) -> i64 {
     let mut found: i64 = -1;
     for at in 0..c.len() as i64 { if *nikaia_std::index::get(&c, (at) as usize) == target { found = at; } }
     found
 }
 
-fn find_text(c: &[char], from: i64, word: &str) -> i64 {
-    let w: Vec<char> = nikaia_std::list::chars(word.chars());
+fn find_text(c: &[scalar], from: i64, word: &str) -> i64 {
+    let w: Vec<scalar> = nikaia_std::list::chars(word.chars());
     if w.is_empty() || (c.len() as i64) < w.len() as i64 { return -1; }
     for at in from..c.len() as i64 - w.len() as i64 + 1 {
         let mut same = true;
@@ -9634,25 +9634,25 @@ fn find_text(c: &[char], from: i64, word: &str) -> i64 {
     -1
 }
 
-fn slice(c: &[char], from: i64, to: i64) -> String {
+fn slice(c: &[scalar], from: i64, to: i64) -> String {
     let mut out: String = String::from("");
     for k in from..to { out.push(*nikaia_std::index::get(&c, nikaia_std::index::at(k))); }
     out
 }
 
 fn from_char(written: &str, front: i64) -> String {
-    let c: Vec<char> = nikaia_std::list::chars(written.chars());
+    let c: Vec<scalar> = nikaia_std::list::chars(written.chars());
     slice(&c, front, c.len() as i64)
 }
 
 fn after_prefix(written: &str, prefix: &str) -> Option<String> {
     if !written.starts_with(prefix) { return None; }
-    let p: Vec<char> = nikaia_std::list::chars(prefix.chars());
+    let p: Vec<scalar> = nikaia_std::list::chars(prefix.chars());
     Some(from_char(written, p.len() as i64))
 }
 
-fn without_last(written: &str, last: char) -> String {
-    let c: Vec<char> = nikaia_std::list::chars(written.chars());
+fn without_last(written: &str, last: scalar) -> String {
+    let c: Vec<scalar> = nikaia_std::list::chars(written.chars());
     let mut end = c.len() as i64;
     while end > 0 && *nikaia_std::index::get(&c, nikaia_std::index::at(end - 1)) == last { end -= 1; }
     slice(&c, 0, end)
@@ -9670,7 +9670,7 @@ pub struct Spelled {
 }
 
 pub fn spell(text: &str, key: &str, borrows: &[String], mutates: bool) -> Spelled {
-    let c: Vec<char> = nikaia_std::list::chars(text.trim().chars());
+    let c: Vec<scalar> = nikaia_std::list::chars(text.trim().chars());
     let mut declared: Vec<String> = vec![];
     let mut open: i64 = 0;
     if !c.is_empty() && *nikaia_std::index::get(&c, 0) == '[' {
@@ -9686,7 +9686,7 @@ pub fn spell(text: &str, key: &str, borrows: &[String], mutates: bool) -> Spelle
     if open >= c.len() as i64 || *nikaia_std::index::get(&c, nikaia_std::index::at(open)) != '(' { return as_written(text); }
     let close = matching(&c, open + 1, '(', ')');
     if close < 0 { return as_written(text); }
-    let inside: Vec<char> = nikaia_std::list::chars(slice(&c, open + 1, close).chars());
+    let inside: Vec<scalar> = nikaia_std::list::chars(slice(&c, open + 1, close).chars());
     let mut result = slice(&c, close + 1, c.len() as i64);
     let semicolon = top_level_semicolon(&inside);
     let positional = if semicolon < 0 { slice(&inside, 0, inside.len() as i64) } else { slice(&inside, 0, semicolon) };
@@ -9748,7 +9748,7 @@ fn receiver(written: &str, key: &str, mutates: bool) -> String {
 fn is_named(part: &str) -> bool {
     let mut rest = trimmed(part);
     while rest.starts_with("mut ") { rest = from_char(&rest, 4); }
-    let c: Vec<char> = nikaia_std::list::chars(rest.chars());
+    let c: Vec<scalar> = nikaia_std::list::chars(rest.chars());
     let mut end: i64 = 0;
     while end < c.len() as i64 && is_word_char(*nikaia_std::index::get(&c, nikaia_std::index::at(end))) { end += 1; }
     if end == 0 || !(is_lower(*nikaia_std::index::get(&c, 0)) || *nikaia_std::index::get(&c, 0) == '_') { return false; }
@@ -9756,7 +9756,7 @@ fn is_named(part: &str) -> bool {
     after.starts_with(":") && !after.starts_with("::")
 }
 
-fn matching(c: &[char], from: i64, open: char, close: char) -> i64 {
+fn matching(c: &[scalar], from: i64, open: scalar, close: scalar) -> i64 {
     let mut depth = 0;
     for at in from..c.len() as i64 {
         if *nikaia_std::index::get(&c, nikaia_std::index::at(at)) == open { depth += 1; } else if *nikaia_std::index::get(&c, nikaia_std::index::at(at)) == close {
@@ -9767,15 +9767,15 @@ fn matching(c: &[char], from: i64, open: char, close: char) -> i64 {
     -1
 }
 
-fn top_level_semicolon(c: &[char]) -> i64 {
+fn top_level_semicolon(c: &[scalar]) -> i64 {
     let mut depth = 0;
     for at in 0..c.len() as i64 { if *nikaia_std::index::get(&c, (at) as usize) == '[' || *nikaia_std::index::get(&c, (at) as usize) == '(' { depth += 1; } else if *nikaia_std::index::get(&c, (at) as usize) == ']' || *nikaia_std::index::get(&c, (at) as usize) == ')' { if depth > 0 { depth -= 1; } } else if *nikaia_std::index::get(&c, (at) as usize) == ';' && depth == 0 { return at; } }
     -1
 }
 
 fn word_starts(text: &str, word: &str) -> Vec<i64> {
-    let c: Vec<char> = nikaia_std::list::chars(text.chars());
-    let w: Vec<char> = nikaia_std::list::chars(word.chars());
+    let c: Vec<scalar> = nikaia_std::list::chars(text.chars());
+    let w: Vec<scalar> = nikaia_std::list::chars(word.chars());
     let mut starts: Vec<i64> = vec![];
     let mut at = find_text(&c, 0, word);
     while at >= 0 {
@@ -9788,7 +9788,7 @@ fn word_starts(text: &str, word: &str) -> Vec<i64> {
 }
 
 fn replace_ref(text: &str, by: &str) -> String {
-    let c: Vec<char> = nikaia_std::list::chars(text.chars());
+    let c: Vec<scalar> = nikaia_std::list::chars(text.chars());
     let mut out: String = String::from("");
     let mut from: i64 = 0;
     for at in word_starts(text, "ref") {
@@ -9801,7 +9801,7 @@ fn replace_ref(text: &str, by: &str) -> String {
 }
 
 fn variables(text: &str) -> Vec<String> {
-    let c: Vec<char> = nikaia_std::list::chars(text.chars());
+    let c: Vec<scalar> = nikaia_std::list::chars(text.chars());
     let mut out: Vec<String> = vec![];
     for at in 0..c.len() as i64 {
         if *nikaia_std::index::get(&c, (at) as usize) == '$' {
@@ -9831,9 +9831,9 @@ fn without_dollars(text: &str) -> String {
 
 fn trimmed_start(written: &str) -> String { written.trim_start().to_owned() }
 
-fn is_word_char(c: char) -> bool { is_lower(c) || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '_' }
+fn is_word_char(c: scalar) -> bool { is_lower(c) || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '_' }
 
-fn is_lower(c: char) -> bool { c >= 'a' && c <= 'z' }
+fn is_lower(c: scalar) -> bool { c >= 'a' && c <= 'z' }
 
 
 // --- ledger_ops.nika ---
@@ -9959,7 +9959,7 @@ fn widen(ledger: &mut Ledger, name: String, types: &collections::BTreeSet<String
 }
 
 fn qualified_default(text: &str, prefix: &str, declared: &collections::BTreeSet<String>) -> String {
-    let c: Vec<char> = nikaia_std::list::chars(text.chars());
+    let c: Vec<scalar> = nikaia_std::list::chars(text.chars());
     let mut out: String = String::from("");
     let mut at: i64 = 0;
     let mut quoted = false;
@@ -10560,7 +10560,7 @@ pub fn locking(itself: &collections::BTreeMap<String, Lock>, callees: &collectio
     let mut answer = Locking { functions: collections::BTreeMap::new(), fields: collections::BTreeMap::new() };
     for (name, holds) in touches.iter() {
         if name.starts_with("field:") {
-            let c: Vec<char> = nikaia_std::list::chars(name.chars());
+            let c: Vec<scalar> = nikaia_std::list::chars(name.chars());
             let field = slice(&c, 6, c.len() as i64);
             let settled = if published(own, &field) { holds.clone().or(Lock::Undecided) } else { holds.clone() };
             answer.fields.insert(field, settled);
@@ -10594,7 +10594,7 @@ fn is_a_variant(declared: &collections::BTreeSet<String>, callee: &str) -> bool 
 }
 
 fn published(own: &Ledger, field: &str) -> bool {
-    let c: Vec<char> = nikaia_std::list::chars(field.chars());
+    let c: Vec<scalar> = nikaia_std::list::chars(field.chars());
     let dot = find_text(&c, 0, ".");
     if dot < 0 { return false; }
     let owner = slice(&c, 0, dot);
@@ -11531,7 +11531,7 @@ fn padded_right(text: &str, width: i64) -> String {
 // --- parse_notes.nika ---
 
 pub fn previous_token(source: &str, end: i64) -> String {
-    let c: Vec<char> = nikaia_std::list::chars(source.chars());
+    let c: Vec<scalar> = nikaia_std::list::chars(source.chars());
     if end <= 0 { return String::from(""); }
     let last = *nikaia_std::index::get(&c, nikaia_std::index::at(end - 1));
     let mut start = end - 1;
@@ -11539,12 +11539,12 @@ pub fn previous_token(source: &str, end: i64) -> String {
     slice(&c, start, end)
 }
 
-fn a_word_char(c: char) -> bool { c.is_alphanumeric() || c == '_' }
+fn a_word_char(c: scalar) -> bool { c.is_alphanumeric() || c == '_' }
 
-fn an_operator_char(c: char) -> bool { c == '=' || c == '+' || c == '-' || c == '*' || c == '/' || c == '%' || c == '<' || c == '>' || c == '!' || c == '&' || c == '|' }
+fn an_operator_char(c: scalar) -> bool { c == '=' || c == '+' || c == '-' || c == '*' || c == '/' || c == '%' || c == '<' || c == '>' || c == '!' || c == '&' || c == '|' }
 
 pub fn unclosed_quote(source: &str) -> i64 {
-    let c: Vec<char> = nikaia_std::list::chars(source.chars());
+    let c: Vec<scalar> = nikaia_std::list::chars(source.chars());
     let mut open: i64 = -1;
     let mut at: i64 = 0;
     while at < c.len() as i64 {
@@ -11564,7 +11564,7 @@ pub fn unclosed_quote(source: &str) -> i64 {
 }
 
 pub fn unclosed_bracket(source: &str) -> i64 {
-    let c: Vec<char> = nikaia_std::list::chars(source.chars());
+    let c: Vec<scalar> = nikaia_std::list::chars(source.chars());
     let mut stack: Vec<i64> = vec![];
     let mut in_string = false;
     let mut at: i64 = 0;
@@ -11585,14 +11585,14 @@ pub fn unclosed_bracket(source: &str) -> i64 {
     *nikaia_std::index::get(&stack, nikaia_std::index::at(stack.len() as i64 - 1))
 }
 
-fn past_the_line(c: &[char], at: i64) -> i64 {
+fn past_the_line(c: &[scalar], at: i64) -> i64 {
     let mut k = at;
     while k < c.len() as i64 && *nikaia_std::index::get(&c, nikaia_std::index::at(k)) != '\n' { k += 1; }
     k + 1
 }
 
 pub fn opening_of_an_unclosed_comment(source: &str) -> i64 {
-    let c: Vec<char> = nikaia_std::list::chars(source.chars());
+    let c: Vec<scalar> = nikaia_std::list::chars(source.chars());
     let mut open: Vec<i64> = vec![];
     let mut at: i64 = 0;
     while at < c.len() as i64 {
@@ -11629,7 +11629,7 @@ pub fn opening_of_an_unclosed_comment(source: &str) -> i64 {
 }
 
 pub fn first_sentence(text: &str) -> Vec<String> {
-    let c: Vec<char> = nikaia_std::list::chars(text.chars());
+    let c: Vec<scalar> = nikaia_std::list::chars(text.chars());
     let mut quoted = false;
     for at in 0..c.len() as i64 {
         if *nikaia_std::index::get(&c, (at) as usize) == '`' { quoted = !quoted; } else if *nikaia_std::index::get(&c, (at) as usize) == '.' && !quoted && ((at + 1) as usize) < c.len() && *nikaia_std::index::get(&c, (at + 1) as usize) == ' ' {
@@ -11689,20 +11689,20 @@ pub fn after(path: &str, word: &str) -> Option<String> {
     if path == word { return Some(String::from("")); }
     let lead = format!("{}::", word);
     if !path.starts_with(&lead) { return None; }
-    let c: Vec<char> = nikaia_std::list::chars(path.chars());
-    let w: Vec<char> = nikaia_std::list::chars(lead.chars());
+    let c: Vec<scalar> = nikaia_std::list::chars(path.chars());
+    let w: Vec<scalar> = nikaia_std::list::chars(lead.chars());
     Some(slice(&c, w.len() as i64, c.len() as i64))
 }
 
 pub fn module_of(relative: &str) -> Option<String> {
     if !relative.starts_with("src/") || !relative.ends_with(".rs") { return None; }
-    let c: Vec<char> = nikaia_std::list::chars(relative.chars());
+    let c: Vec<scalar> = nikaia_std::list::chars(relative.chars());
     let inside = slice(&c, 4, c.len() as i64 - 3);
     if inside == "lib" { return Some(String::from("")); }
     if inside == "main" || inside.starts_with("bin/") { return None; }
     let mut path = inside.to_owned();
     if inside == "mod" { path = String::from(""); } else if inside.ends_with("/mod") {
-        let i: Vec<char> = nikaia_std::list::chars(inside.chars());
+        let i: Vec<scalar> = nikaia_std::list::chars(inside.chars());
         path = slice(&i, 0, i.len() as i64 - 4);
     }
     let mut out: String = String::from("");
@@ -11719,7 +11719,7 @@ pub fn joined(at: &str, name: &str) -> String {
 pub fn exported(at: &str, text: &str) -> Vec<Export> {
     let __keep_frame = nikaia_std::tether::Keep::new();
     let whole = text.trim();
-    let c: Vec<char> = nikaia_std::list::chars(whole.chars());
+    let c: Vec<scalar> = nikaia_std::list::chars(whole.chars());
     let mut out: Vec<Export> = vec![];
     let open = find_text(&c, 0, "::{");
     if open >= 0 && whole.ends_with("}") {
@@ -11741,7 +11741,7 @@ pub fn exported(at: &str, text: &str) -> Vec<Export> {
         path = before.trim().to_owned();
         alias = Some(after_it.trim().to_owned());
     }
-    let p: Vec<char> = nikaia_std::list::chars(path.chars());
+    let p: Vec<scalar> = nikaia_std::list::chars(path.chars());
     let cut = find_last_text(&p, "::");
     let mut prefix: String = String::from("");
     let mut name = path.to_owned();
@@ -11757,7 +11757,7 @@ pub fn exported(at: &str, text: &str) -> Vec<Export> {
 
 pub fn named(written: &str) -> Named {
     let one = written.trim();
-    let c: Vec<char> = nikaia_std::list::chars(one.chars());
+    let c: Vec<scalar> = nikaia_std::list::chars(one.chars());
     let space = find_text(&c, 0, " as ");
     if space < 0 { return Named { name: one.to_owned(), alias: one.to_owned() }; }
     let before = slice(&c, 0, space);
@@ -11780,7 +11780,7 @@ pub fn bases(export: &Export) -> Vec<String> {
     }
     let from_up = after(prefix, "super");
     if from_up.is_some() {
-        let a: Vec<char> = nikaia_std::list::chars(export.at.chars());
+        let a: Vec<scalar> = nikaia_std::list::chars(export.at.chars());
         let cut = find_last_text(&a, "::");
         let mut parent: String = String::from("");
         if cut >= 0 { parent = slice(&a, 0, cut); }
@@ -11811,15 +11811,15 @@ pub fn split_top_level(text: &str) -> Vec<String> {
     out
 }
 
-fn find_last_text(c: &[char], word: &str) -> i64 {
-    let w: Vec<char> = nikaia_std::list::chars(word.chars());
+fn find_last_text(c: &[scalar], word: &str) -> i64 {
+    let w: Vec<scalar> = nikaia_std::list::chars(word.chars());
     let mut found: i64 = -1;
     if w.is_empty() || (c.len() as i64) < w.len() as i64 { return found; }
     for at in 0..c.len() as i64 - w.len() as i64 + 1 { if stands_at(c, at, &w) { found = at; } }
     found
 }
 
-fn stands_at(c: &[char], at: i64, w: &[char]) -> bool {
+fn stands_at(c: &[scalar], at: i64, w: &[scalar]) -> bool {
     for k in 0..w.len() as i64 { if *nikaia_std::index::get(&c, nikaia_std::index::at(at + k)) != *nikaia_std::index::get(&w, (k) as usize) { return false; } }
     true
 }
@@ -12006,7 +12006,7 @@ fn rust_joined(op: &str, parts: &[i64], empty: &str, term_of: &impl Fn(i64) -> S
 
 pub fn rust_of_name(name: &str, escape: &impl Fn(&str) -> String) -> String {
     if name.ends_with(".len()") {
-        let c: Vec<char> = nikaia_std::list::chars(name.chars());
+        let c: Vec<scalar> = nikaia_std::list::chars(name.chars());
         let mut base: String = String::from("");
         for k in 0..c.len() as i64 - 6 { base.push(*nikaia_std::index::get(&c, (k) as usize)); }
         return format!("({}.len() as i128)", escape(&base));
@@ -12097,7 +12097,7 @@ pub fn shown(values: &collections::BTreeMap<String, i64>) -> String {
 }
 
 pub fn lowered_first(text: &str) -> String {
-    let c: Vec<char> = nikaia_std::list::chars(text.chars());
+    let c: Vec<scalar> = nikaia_std::list::chars(text.chars());
     if c.is_empty() { return String::from(""); }
     let mut head: String = String::from("");
     head.push(*nikaia_std::index::get(&c, 0));
@@ -12691,7 +12691,7 @@ fn assert_of(contract: &FnContract, at: i64) -> String {
     if at >= contract.from.len() as i64 { return String::from(""); }
     let from = nikaia_std::index::get(&contract.from, nikaia_std::index::at(at));
     if !from.starts_with("assert(") || !from.ends_with(")") { return String::from(""); }
-    let c: Vec<char> = nikaia_std::list::chars(from.chars());
+    let c: Vec<scalar> = nikaia_std::list::chars(from.chars());
     let mut inner: String = String::from("");
     for k in 7..c.len() as i64 - 1 { inner.push(*nikaia_std::index::get(&c, (k) as usize)); }
     inner
@@ -13462,7 +13462,7 @@ fn returned_before(before_return: &collections::BTreeMap<i64, String>, at: i64) 
 }
 
 fn without_full_stops(text: &str) -> String {
-    let c: Vec<char> = nikaia_std::list::chars(text.chars());
+    let c: Vec<scalar> = nikaia_std::list::chars(text.chars());
     let mut end = c.len() as i64;
     while end > 0 && *nikaia_std::index::get(&c, nikaia_std::index::at(end - 1)) == '.' { end -= 1; }
     let mut out: String = String::from("");
@@ -14157,7 +14157,7 @@ fn prover_a_test_function(name: Option<&str>) -> bool {
     let text = match name { Some(__nikaia_value) => __nikaia_value, None => return false };
     let prefix = "__nikaia_test_";
     if !text.starts_with(prefix) || (text.len() as i64) == prefix.len() as i64 { return false; }
-    let c: Vec<char> = nikaia_std::list::chars(text.chars());
+    let c: Vec<scalar> = nikaia_std::list::chars(text.chars());
     for k in 14..c.len() as i64 { if *nikaia_std::index::get(&c, (k) as usize) < '0' || *nikaia_std::index::get(&c, (k) as usize) > '9' { return false; } }
     true
 }
@@ -14208,7 +14208,7 @@ struct Placed {
 }
 
 pub fn rendered(shown: &Shown, path: &str, source: &str) -> String {
-    let chars: Vec<char> = nikaia_std::list::chars(source.chars());
+    let chars: Vec<scalar> = nikaia_std::list::chars(source.chars());
     let lines: Vec<&str> = source.split("\n").collect::<Vec<_>>();
     let mut labels: Vec<Marked> = shown.labels.to_owned();
     if labels.is_empty() { labels.push(Marked { span: shown.span.clone(), word: String::from(""), text: String::from(""), main: true }); }
@@ -14308,7 +14308,7 @@ fn line_of(lines: &[&str], line: i64) -> String {
     (*nikaia_std::index::get(&lines, nikaia_std::index::at(line - 1))).to_owned()
 }
 
-fn line_column(chars: &[char], offset: u32) -> (i64, i64) {
+fn line_column(chars: &[scalar], offset: u32) -> (i64, i64) {
     let wanted = offset as i64;
     let mut bytes: i64 = 0;
     let mut line = 1;
@@ -14325,7 +14325,7 @@ fn line_column(chars: &[char], offset: u32) -> (i64, i64) {
     (line, column)
 }
 
-fn spanned_width(chars: &[char], span: &Span) -> i64 {
+fn spanned_width(chars: &[scalar], span: &Span) -> i64 {
     let start = span.start as i64;
     let end = span.end as i64;
     let mut bytes: i64 = 0;
@@ -14344,7 +14344,7 @@ fn spanned_width(chars: &[char], span: &Span) -> i64 {
     width
 }
 
-fn utf8_width(c: char) -> i64 {
+fn utf8_width(c: scalar) -> i64 {
     let point = c as u32;
     if point < 128u32 { return 1; }
     if point < 2048u32 { return 2; }
@@ -14399,7 +14399,7 @@ fn package_and_function(callee: &str) -> (String, String) {
 }
 
 pub fn an_or_a(word: &str) -> String {
-    let first: Vec<char> = nikaia_std::list::chars(word.chars());
+    let first: Vec<scalar> = nikaia_std::list::chars(word.chars());
     if !first.is_empty() && (*nikaia_std::index::get(&first, 0) == 'i' || *nikaia_std::index::get(&first, 0) == 'a' || *nikaia_std::index::get(&first, 0) == 'e' || *nikaia_std::index::get(&first, 0) == 'o' || *nikaia_std::index::get(&first, 0) == 'I' || *nikaia_std::index::get(&first, 0) == 'A' || *nikaia_std::index::get(&first, 0) == 'E' || *nikaia_std::index::get(&first, 0) == 'O') { return String::from("an"); }
     String::from("a")
 }
@@ -15078,8 +15078,8 @@ pub fn both_sides_the_same(message: &str) -> Option<String> {
 }
 
 fn backticked_after(message: &str, word: &str) -> Option<String> {
-    let c: Vec<char> = nikaia_std::list::chars(message.chars());
-    let w: Vec<char> = nikaia_std::list::chars(word.chars());
+    let c: Vec<scalar> = nikaia_std::list::chars(message.chars());
+    let w: Vec<scalar> = nikaia_std::list::chars(word.chars());
     let at = find_text(&c, 0, word);
     if at < 0 { return None; }
     let open = find(&c, at + w.len() as i64, '`');
@@ -15090,7 +15090,7 @@ fn backticked_after(message: &str, word: &str) -> Option<String> {
 }
 
 fn shared_names(message: &str) -> String {
-    let c: Vec<char> = nikaia_std::list::chars(message.chars());
+    let c: Vec<scalar> = nikaia_std::list::chars(message.chars());
     let mut out: String = String::from("");
     let mut last = ' ';
     let mut at: i64 = 0;
@@ -15099,7 +15099,7 @@ fn shared_names(message: &str) -> String {
         for hull in ["std::rc::Rc<", "alloc::rc::Rc<", "std::sync::Arc<", "alloc::sync::Arc<", "Rc<", "Arc<"] {
             if !taken && begins_at(&c, at, hull) {
                 let preceded_by_a_name = !hull.contains("::") && at > 0 && (last.is_alphanumeric() || last == '_' || last == ':');
-                let h: Vec<char> = nikaia_std::list::chars(hull.chars());
+                let h: Vec<scalar> = nikaia_std::list::chars(hull.chars());
                 let close = closing_angle(&c, at + h.len() as i64);
                 if !preceded_by_a_name && close >= 0 {
                     out.push_str("Shared[");
@@ -15120,7 +15120,7 @@ fn shared_names(message: &str) -> String {
     out
 }
 
-fn closing_angle(c: &[char], from: i64) -> i64 {
+fn closing_angle(c: &[scalar], from: i64) -> i64 {
     let mut depth = 1;
     for at in from..c.len() as i64 {
         if *nikaia_std::index::get(&c, nikaia_std::index::at(at)) == '<' { depth += 1; } else if *nikaia_std::index::get(&c, nikaia_std::index::at(at)) == '>' {
@@ -15131,16 +15131,16 @@ fn closing_angle(c: &[char], from: i64) -> i64 {
     -1
 }
 
-fn begins_at(c: &[char], at: i64, word: &str) -> bool {
-    let w: Vec<char> = nikaia_std::list::chars(word.chars());
+fn begins_at(c: &[scalar], at: i64, word: &str) -> bool {
+    let w: Vec<scalar> = nikaia_std::list::chars(word.chars());
     if (at + w.len() as i64) > c.len() as i64 { return false; }
     for k in 0..w.len() as i64 { if *nikaia_std::index::get(&c, nikaia_std::index::at(at + k)) != *nikaia_std::index::get(&w, (k) as usize) { return false; } }
     true
 }
 
 fn replaced(text: &str, from: &str, to: &str) -> String {
-    let c: Vec<char> = nikaia_std::list::chars(text.chars());
-    let f: Vec<char> = nikaia_std::list::chars(from.chars());
+    let c: Vec<scalar> = nikaia_std::list::chars(text.chars());
+    let f: Vec<scalar> = nikaia_std::list::chars(from.chars());
     let mut out: String = String::from("");
     let mut at: i64 = 0;
     let mut next = find_text(&c, 0, from);
@@ -15155,7 +15155,7 @@ fn replaced(text: &str, from: &str, to: &str) -> String {
 }
 
 pub fn said(text: &str) -> String {
-    let c: Vec<char> = nikaia_std::list::chars(text.trim_end().chars());
+    let c: Vec<scalar> = nikaia_std::list::chars(text.trim_end().chars());
     if c.is_empty() { return String::from(""); }
     let mut first: String = String::from("");
     first.push(*nikaia_std::index::get(&c, 0));
@@ -15176,8 +15176,8 @@ pub fn headed(level: &str, code: &str) -> String {
 }
 
 pub fn word_in(line: &str, column: i64, word: &str) -> (i64, i64) {
-    let c: Vec<char> = nikaia_std::list::chars(line.chars());
-    let w: Vec<char> = nikaia_std::list::chars(word.chars());
+    let c: Vec<scalar> = nikaia_std::list::chars(line.chars());
+    let w: Vec<scalar> = nikaia_std::list::chars(word.chars());
     if w.is_empty() { return (column, 1); }
     let starts_wordy = a_wordy_char(*nikaia_std::index::get(&w, 0));
     let ends_wordy = a_wordy_char(*nikaia_std::index::get(&w, nikaia_std::index::at(w.len() as i64 - 1)));
@@ -15197,7 +15197,7 @@ pub fn word_in(line: &str, column: i64, word: &str) -> (i64, i64) {
     (column, 1)
 }
 
-fn a_wordy_char(c: char) -> bool { c.is_alphanumeric() || c == '_' }
+fn a_wordy_char(c: scalar) -> bool { c.is_alphanumeric() || c == '_' }
 
 
 // --- sharing.nika ---
@@ -16373,7 +16373,7 @@ pub fn translate(written: &str, crate_word: &str, parameters: &[String], types: 
     let text = written.trim();
     if text.starts_with("&mut ") { return Translated { ty: Ty::Unknown, kept: false }; }
     if text.starts_with("&") {
-        let c: Vec<char> = nikaia_std::list::chars(text.chars());
+        let c: Vec<scalar> = nikaia_std::list::chars(text.chars());
         let rest = slice(&c, 1, c.len() as i64);
         let inner = translate(&rest, crate_word, parameters, types, mentioned);
         return Translated { ty: view_of(inner.ty), kept: false };
@@ -16441,7 +16441,7 @@ pub fn sends(bounds: &str) -> Vec<String> {
     let __keep_frame = nikaia_std::tether::Keep::new();
     let mut out: Vec<String> = vec![];
     for one in split_top_level(bounds) {
-        let c: Vec<char> = nikaia_std::list::chars(one.chars());
+        let c: Vec<scalar> = nikaia_std::list::chars(one.chars());
         let colon = find(&c, 0, ':');
         if colon < 0 { continue; }
         let head = __keep_frame.put(slice(&c, 0, colon));
@@ -16454,13 +16454,13 @@ pub fn sends(bounds: &str) -> Vec<String> {
 }
 
 fn unreferenced(ty: &str) -> String {
-    let c: Vec<char> = nikaia_std::list::chars(ty.chars());
+    let c: Vec<scalar> = nikaia_std::list::chars(ty.chars());
     let mut from: i64 = 0;
     while from < c.len() as i64 && (*nikaia_std::index::get(&c, nikaia_std::index::at(from)) == '&' || *nikaia_std::index::get(&c, nikaia_std::index::at(from)) == ' ') { from += 1; }
     let rest = slice(&c, from, c.len() as i64);
     let trimmed = rest.trim();
     if trimmed.starts_with("mut ") {
-        let t: Vec<char> = nikaia_std::list::chars(trimmed.chars());
+        let t: Vec<scalar> = nikaia_std::list::chars(trimmed.chars());
         let after = slice(&t, 4, t.len() as i64);
         return after.to_owned();
     }
@@ -16583,7 +16583,7 @@ pub fn discusses_a_refusal(code: &str) -> bool {
 }
 
 pub fn is_a_sketch(code: &str) -> bool {
-    let c: Vec<char> = nikaia_std::list::chars(code.chars());
+    let c: Vec<scalar> = nikaia_std::list::chars(code.chars());
     let mut at: i64 = 0;
     while ((at) as usize) < c.len() {
         if *nikaia_std::index::get(&c, (at) as usize) == '…' { return true; }
@@ -16677,7 +16677,7 @@ pub fn opening(code: &str) -> String {
     for line in code.split("\n") {
         let trimmed = line.trim();
         if trimmed.is_empty() { continue; }
-        let c: Vec<char> = nikaia_std::list::chars(trimmed.chars());
+        let c: Vec<scalar> = nikaia_std::list::chars(trimmed.chars());
         if c.len() <= 56 { return trimmed.to_owned(); }
         let mut cut: String = String::from("");
         for k in 0..55 { cut.push(*nikaia_std::index::get(&c, (k) as usize)); }
@@ -16693,8 +16693,8 @@ pub fn opening(code: &str) -> String {
 // sync (Part II, 12.1): pure CPU, cannot pause. Checked before
 // this was written - see `contracts::sync`.
 pub fn distance(a: &str, b: &str) -> i64 {
-    let x: Vec<char> = nikaia_std::list::chars(a.chars());
-    let y: Vec<char> = nikaia_std::list::chars(b.chars());
+    let x: Vec<scalar> = nikaia_std::list::chars(a.chars());
+    let y: Vec<scalar> = nikaia_std::list::chars(b.chars());
     let rows = x.len() as i64 + 1;
     let cols = y.len() as i64 + 1;
     let mut d: Vec<Vec<i64>> = Vec::new();
@@ -16721,8 +16721,8 @@ pub fn distance(a: &str, b: &str) -> i64 {
 // this was written - see `contracts::sync`.
 pub fn one_edit_apart(a: &str, b: &str) -> bool {
     if a == b { return false; }
-    let x: Vec<char> = nikaia_std::list::chars(a.chars());
-    let y: Vec<char> = nikaia_std::list::chars(b.chars());
+    let x: Vec<scalar> = nikaia_std::list::chars(a.chars());
+    let y: Vec<scalar> = nikaia_std::list::chars(b.chars());
     if (x.len() as i64) == y.len() as i64 {
         let mut differ = 0;
         for i in 0..x.len() as i64 { if *nikaia_std::index::get(&x, (i) as usize) != *nikaia_std::index::get(&y, (i) as usize) { differ += 1; } }
@@ -16736,7 +16736,7 @@ pub fn one_edit_apart(a: &str, b: &str) -> bool {
 // sync (Part II, 12.1): pure CPU, cannot pause. Checked before
 // this was written - see `contracts::sync`.
 fn one_put_in(long: &str, short: &str) -> bool {
-    let kept: Vec<char> = nikaia_std::list::chars(short.chars());
+    let kept: Vec<scalar> = nikaia_std::list::chars(short.chars());
     let mut at: i64 = 0;
     let mut skipped = false;
     for c in long.chars() { if ((at) as usize) < kept.len() && *nikaia_std::index::get(&kept, (at) as usize) == c { at += 1; } else if skipped { return false; } else { skipped = true; } }
@@ -16948,15 +16948,15 @@ fn function_of(f: &Fun<'_>, imports: &collections::BTreeMap<String, String>) -> 
 
 fn directly_under(path: &str, under: &str) -> Option<String> {
     if !path.starts_with(under) { return None; }
-    let c: Vec<char> = nikaia_std::list::chars(path.chars());
-    let u: Vec<char> = nikaia_std::list::chars(under.chars());
+    let c: Vec<scalar> = nikaia_std::list::chars(path.chars());
+    let u: Vec<scalar> = nikaia_std::list::chars(under.chars());
     let rest = between(&c, u.len() as i64, c.len() as i64);
     if rest.contains("::") { return None; }
     Some(rest)
 }
 
 fn before_colon(written: &str) -> String {
-    let c: Vec<char> = nikaia_std::list::chars(written.chars());
+    let c: Vec<scalar> = nikaia_std::list::chars(written.chars());
     let mut end = c.len() as i64;
     for at in 0..c.len() as i64 { if *nikaia_std::index::get(&c, (at) as usize) == ':' && end == c.len() as i64 { end = at; } }
     let head = between(&c, 0, end);
@@ -17417,7 +17417,7 @@ pub fn illegal_message(expr: &str, at: &Position) -> String {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Splitter {
-    c: Vec<char>,
+    c: Vec<scalar>,
     at: i64,
     scan: Scan,
 }
@@ -17515,7 +17515,7 @@ impl Splitter {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Scan {
     state: ScanState,
-    tail: Vec<char>,
+    tail: Vec<scalar>,
     attribute: String,
 }
 
@@ -17524,7 +17524,7 @@ enum ScanState {
     Text,
     Tag,
     Equals,
-    Quoted(char),
+    Quoted(scalar),
     Unquoted,
     Script,
     Style,
@@ -17558,10 +17558,10 @@ impl Scan {
     }
     // sync (Part II, 12.1): pure CPU, cannot pause. Checked before
     // this was written - see `contracts::sync`.
-    fn feed(&mut self, c: char) {
+    fn feed(&mut self, c: scalar) {
         self.tail.push(c.to_ascii_lowercase());
         if self.tail.len() > 9 {
-            let mut kept: Vec<char> = vec![];
+            let mut kept: Vec<scalar> = vec![];
             for k in self.tail.len() as i64 - 9..self.tail.len() as i64 { kept.push(*nikaia_std::index::get(&self.tail, nikaia_std::index::at(k))); }
             self.tail = kept;
         }
@@ -17586,7 +17586,7 @@ impl Scan {
     }
     // sync (Part II, 12.1): pure CPU, cannot pause. Checked before
     // this was written - see `contracts::sync`.
-    fn in_a_tag(&mut self, c: char) {
+    fn in_a_tag(&mut self, c: scalar) {
         let tag = matches!(self.state, ScanState::Tag);
         let equals = matches!(self.state, ScanState::Equals);
         let unquoted = matches!(self.state, ScanState::Unquoted);
@@ -17620,7 +17620,7 @@ fn quoted(attribute: &str) -> Position {
 
 // sync (Part II, 12.1): pure CPU, cannot pause. Checked before
 // this was written - see `contracts::sync`.
-fn blank(c: char) -> bool { c.is_whitespace() }
+fn blank(c: scalar) -> bool { c.is_whitespace() }
 
 
 // --- tether.nika ---
@@ -17919,7 +17919,7 @@ pub fn unaliased_in(aliases: &collections::BTreeMap<String, String>, name: &str)
     let mut bare = name.to_owned();
     if name.starts_with("&") {
         amp = String::from("&");
-        let chars: Vec<char> = nikaia_std::list::chars(name.chars());
+        let chars: Vec<scalar> = nikaia_std::list::chars(name.chars());
         bare = String::from("");
         for k in 1..chars.len() as i64 { bare.push(*nikaia_std::index::get(&chars, (k) as usize)); }
     }
@@ -20338,7 +20338,7 @@ pub fn split_args(written: &str) -> Vec<String> {
 
 pub fn a_view_of(written: &str) -> Option<String> {
     if written.starts_with("ref(") {
-        let c: Vec<char> = nikaia_std::list::chars(written.chars());
+        let c: Vec<scalar> = nikaia_std::list::chars(written.chars());
         let close = closing(&c, 4, ')');
         if close >= 0 {
             let rest = between(&c, close + 1, c.len() as i64);
@@ -20362,18 +20362,18 @@ fn each(parts: &[String]) -> Vec<Ty> {
     read
 }
 
-fn between(c: &[char], from: i64, to: i64) -> String {
+fn between(c: &[scalar], from: i64, to: i64) -> String {
     let mut out: String = String::from("");
     for k in from..to { out.push(*nikaia_std::index::get(&c, nikaia_std::index::at(k))); }
     out
 }
 
 fn cut(written: &str, front: i64, back: i64) -> String {
-    let c: Vec<char> = nikaia_std::list::chars(written.chars());
+    let c: Vec<scalar> = nikaia_std::list::chars(written.chars());
     between(&c, front, c.len() as i64 - back)
 }
 
-fn closing(c: &[char], from: i64, closer: char) -> i64 {
+fn closing(c: &[scalar], from: i64, closer: scalar) -> i64 {
     let mut depth = 0;
     for at in from..c.len() as i64 {
         let ch = *nikaia_std::index::get(&c, nikaia_std::index::at(at));
@@ -20390,8 +20390,8 @@ fn closing(c: &[char], from: i64, closer: char) -> i64 {
 
 fn word_off(tail: &str, word: &str) -> Option<String> {
     if !tail.ends_with(word) { return None; }
-    let c: Vec<char> = nikaia_std::list::chars(tail.chars());
-    let w: Vec<char> = nikaia_std::list::chars(word.chars());
+    let c: Vec<scalar> = nikaia_std::list::chars(tail.chars());
+    let w: Vec<scalar> = nikaia_std::list::chars(word.chars());
     let shorter = between(&c, 0, c.len() as i64 - w.len() as i64);
     if shorter.is_empty() { return Some(shorter); }
     if (*nikaia_std::index::get(&c, nikaia_std::index::at(c.len() as i64 - w.len() as i64 - 1))).is_whitespace() { return Some(shorter.trim_end().to_owned()); }
@@ -20434,7 +20434,7 @@ fn pointed_at(viewed: &str) -> Option<Ty> {
 }
 
 fn a_function(written: &str) -> Option<Ty> {
-    let c: Vec<char> = nikaia_std::list::chars(written.chars());
+    let c: Vec<scalar> = nikaia_std::list::chars(written.chars());
     let close = closing(&c, 3, ')');
     if close < 0 { return None; }
     let after = between(&c, close + 1, c.len() as i64);
@@ -20466,11 +20466,11 @@ fn a_function(written: &str) -> Option<Ty> {
 
 fn a_sequence(written: &str, word: &str, parallel: bool) -> Option<Ty> {
     if !written.starts_with(word) { return None; }
-    let w: Vec<char> = nikaia_std::list::chars(word.chars());
+    let w: Vec<scalar> = nikaia_std::list::chars(word.chars());
     let after_word = cut(written, w.len() as i64, 0);
     let rest: String = after_word.trim_start().to_owned();
     if !rest.starts_with("[") { return None; }
-    let c: Vec<char> = nikaia_std::list::chars(rest.chars());
+    let c: Vec<scalar> = nikaia_std::list::chars(rest.chars());
     let close = closing(&c, 1, ']');
     if close < 0 { return None; }
     let after = between(&c, close + 1, c.len() as i64);
@@ -20532,7 +20532,7 @@ fn a_name(rest: &str, view: bool) -> Ty {
     if view && rest == TEXT { return Ty::Named { name: TEXT_VIEW.to_owned(), args: vec![], view: true }; }
     if rest == "char" { return Ty::Named { name: String::from("scalar"), args: vec![], view }; }
     if !rest.ends_with("]") { return Ty::Named { name: rest.to_owned(), args: vec![], view }; }
-    let c: Vec<char> = nikaia_std::list::chars(rest.chars());
+    let c: Vec<scalar> = nikaia_std::list::chars(rest.chars());
     let mut open: i64 = -1;
     for at in 0..c.len() as i64 { if open < 0 && *nikaia_std::index::get(&c, (at) as usize) == '[' { open = at; } }
     if open >= 0 {
@@ -21315,7 +21315,7 @@ fn renamed_name(name: &str, renames: &collections::BTreeMap<String, String>) -> 
 }
 
 fn renamed_path(name: &str, renames: &collections::BTreeMap<String, String>) -> String {
-    let c: Vec<char> = nikaia_std::list::chars(name.chars());
+    let c: Vec<scalar> = nikaia_std::list::chars(name.chars());
     for at in 0..c.len() as i64 {
         if at + 1 < c.len() as i64 && *nikaia_std::index::get(&c, nikaia_std::index::at(at)) == ':' && *nikaia_std::index::get(&c, nikaia_std::index::at(at + 1)) == ':' {
             let package = between(&c, 0, at);
@@ -21401,7 +21401,7 @@ fn known_traits(names: &winnow_grammar::InternerContext, items: &[Spanned<Item>]
 
 fn with_its_last_segment(key: &str, known: &mut collections::BTreeSet<String>) {
     known.insert(key.to_owned());
-    let c: Vec<char> = nikaia_std::list::chars(key.chars());
+    let c: Vec<scalar> = nikaia_std::list::chars(key.chars());
     let mut last: i64 = -1;
     for at in 0..c.len() as i64 { if ((at + 1) as usize) < c.len() && *nikaia_std::index::get(&c, (at) as usize) == ':' && *nikaia_std::index::get(&c, (at + 1) as usize) == ':' { last = at; } }
     if last >= 0 { known.insert(slice(&c, last + 2, c.len() as i64)); }
@@ -21616,6 +21616,10 @@ fn written_at_the_boundary(names: &winnow_grammar::InternerContext, ty: &Type, k
         return;
     }
     let name = names.resolve(ty.name).to_owned();
+    if name == "char" {
+        out.push(refusal("NK1135", span.clone(), String::from("There's no type called `char`."), vec![String::from("One Unicode character is a `scalar`, and one byte of text is a `u8`: which of the two a character is depends on how the text is read (Part I 2.6).")], String::from("Write `scalar` for a character, or `u8` for a byte.")));
+        return;
+    }
     if !a_parameter && !ty.is_view && !ty.is_slice && ty.count.is_none() && ty.generics.len() == 1 && name == "Array" {
         let element = names.resolve(nikaia_std::index::get(&ty.generics, 0).name).to_owned();
         out.push(refusal("NK1182", span.clone(), format!("`Array[{}]` needs a length here.", element), vec![format!("`Array[{}]` without a length only works for a parameter, where each call supplies the length. A field or a result has no call to take it from.", element)], format!("Use `Vec[{}]` for a list that can grow, `ref Array[{}]` to look at elements something else keeps, or `Array[{}, N]` to write the length down.", element, element, element)));
@@ -21639,7 +21643,7 @@ fn nothing_declares(name: &str, known: &collections::BTreeSet<String>, span: &Sp
 
 pub fn nobody_knows(name: &str, own: &Ledger, library: &Ledger) -> bool {
     if nikaia_std::list::contains(&BUILT_IN, &name) || own.types.contains_key(name) || library.types.contains_key(name) { return false; }
-    let c: Vec<char> = nikaia_std::list::chars(name.chars());
+    let c: Vec<scalar> = nikaia_std::list::chars(name.chars());
     let mut last: i64 = -1;
     for at in 0..c.len() as i64 { if ((at + 1) as usize) < c.len() && *nikaia_std::index::get(&c, (at) as usize) == ':' && *nikaia_std::index::get(&c, (at + 1) as usize) == ':' { last = at; } }
     let wanted = if last < 0 { format!("::{}", name) } else { format!("{}::", slice(&c, 0, last)) };
@@ -21654,7 +21658,7 @@ fn std_module_of(name: &str, known: &collections::BTreeSet<String>) -> String {
     let ending = format!("::{}", name);
     for key in known.iter() {
         if key.ends_with(&ending) {
-            let c: Vec<char> = nikaia_std::list::chars(key.chars());
+            let c: Vec<scalar> = nikaia_std::list::chars(key.chars());
             let at = find_text(&c, 0, "::");
             let module = slice(&c, 0, at);
             for one in STD_MODULES.iter() {

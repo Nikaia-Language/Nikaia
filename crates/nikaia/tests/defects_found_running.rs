@@ -223,7 +223,7 @@ fn a_graph_over_a_map_of_lists() {
 fn a_yes_or_no_match_and_a_field_named_as_its_value() {
     let source = "struct P { x: i64, y: i64 }\n\
                   \n\
-                  fn letter(c: char) -> bool {\n\
+                  fn letter(c: scalar) -> bool {\n\
                   \x20   return match c {\n\
                   \x20       'a'..'z' | 'A'..'Z' => true,\n\
                   \x20       else => false,\n\

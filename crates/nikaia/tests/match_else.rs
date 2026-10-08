@@ -94,7 +94,7 @@ fn a_bare_name_still_binds() {
 #[test]
 fn the_arm_works_in_statement_position_too() {
     let rust = lowered(
-        "fn f(c: char) {\n\
+        "fn f(c: scalar) {\n\
          \x20   match c { 'n' => { println(\"newline\") } else => { } }\n\
          }\n",
     )

@@ -202,7 +202,7 @@ pub fn unaliased_in(aliases: ref collections::BTreeMap[String, String], name: re
     let mut bare = name.clone()
     if name.starts_with("&") {
         amp = "&"
-        let chars: Vec[char] = name.chars().collect()
+        let chars: Vec[scalar] = name.chars().collect()
         bare = ""
         for k in 1..<chars.len() {
             bare.push(chars[k])

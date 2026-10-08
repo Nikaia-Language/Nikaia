@@ -258,7 +258,7 @@ test "a grammar reads a list with a separator" {
 // what the program computes.
 struct DefectsP { x: i64, y: i64 }
 
-fn defects_letter(c: char) -> bool {
+fn defects_letter(c: scalar) -> bool {
     return match c {
         'a'..'z' | 'A'..'Z' => true,
         else => false,

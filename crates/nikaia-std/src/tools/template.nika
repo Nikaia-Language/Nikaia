@@ -174,7 +174,7 @@ pub fn illegal_message(expr: ref String, at: ref Position) -> String sync {
 // The body as characters, how far it has been read, and the markup around the
 // place it has got to.
 struct Splitter {
-    c: Vec[char],
+    c: Vec[scalar],
     at: i64,
     scan: Scan,
 }
@@ -310,7 +310,7 @@ struct Scan {
     state: ScanState,
     // The last nine characters, lower-cased, for the markers that are longer
     // than one.
-    tail: Vec[char],
+    tail: Vec[scalar],
     // The attribute name currently being given a value, lower-cased.
     attribute: String,
 }
@@ -320,7 +320,7 @@ enum ScanState {
     Tag,
     // After `=` in a tag, before the value starts.
     Equals,
-    Quoted(char),
+    Quoted(scalar),
     Unquoted,
     Script,
     Style,
@@ -351,10 +351,10 @@ impl Scan {
         return tail.contains(word)
     }
 
-    fn feed(ref mut self, c: char) sync {
+    fn feed(ref mut self, c: scalar) sync {
         self.tail.push(c.to_ascii_lowercase())
         if self.tail.len() > 9 {
-            let mut kept: Vec[char] = []
+            let mut kept: Vec[scalar] = []
             for k in self.tail.len() - 9..<self.tail.len() {
                 kept.push(self.tail[k])
             }
@@ -395,7 +395,7 @@ impl Scan {
     }
 
     // `Tag`, `Equals` and `Unquoted`: inside a tag, outside quotes.
-    fn in_a_tag(ref mut self, c: char) sync {
+    fn in_a_tag(ref mut self, c: scalar) sync {
         let tag = match self.state {
             ScanState::Tag => true
             else => false
@@ -463,6 +463,6 @@ fn quoted(attribute: ref String) -> Position sync {
 }
 
 // A blank, as `split_whitespace` reads one.
-fn blank(c: char) -> bool sync {
+fn blank(c: scalar) -> bool sync {
     return c.is_whitespace()
 }

@@ -73,7 +73,7 @@ pub fn discusses_a_refusal(code: ref String) -> bool {
 /// dots against a name are the typed spread of ADR-296 D5, which a driver
 /// writes as code.
 pub fn is_a_sketch(code: ref String) -> bool {
-    let c: Vec[char] = code.chars().collect()
+    let c: Vec[scalar] = code.chars().collect()
     let mut at = 0
     while at < c.len() {
         if c[at] == '…' {
@@ -214,7 +214,7 @@ pub fn opening(code: ref String) -> String {
         if trimmed.len() == 0 {
             continue
         }
-        let c: Vec[char] = trimmed.chars().collect()
+        let c: Vec[scalar] = trimmed.chars().collect()
         if c.len() <= 56 {
             return trimmed.clone()
         }

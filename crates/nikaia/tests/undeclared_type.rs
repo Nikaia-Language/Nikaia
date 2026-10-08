@@ -84,7 +84,7 @@ fn an_argument_inside_a_type_is_read() {
 #[test]
 fn every_kind_of_declared_name_is_left_alone() {
     for source in [
-        "fn f(a: i64, b: f64, c: bool, d: char, e: String, g: ref String) { }\nfn main() { }\n",
+        "fn f(a: i64, b: f64, c: bool, d: scalar, e: String, g: ref String) { }\nfn main() { }\n",
         "fn f(a: u8, b: usize, c: i128) { }\nfn main() { }\n",
         "use std::collections\n\nfn f(a: Vec[i64], b: collections::HashMap[ref String, i64], c: collections::BTreeMap[ref String, i64]) { }\nfn main() { }\n",
         "fn f(a: Shared[i64], b: SharedMut[i64]) { }\nfn main() { }\n",
@@ -158,4 +158,18 @@ fn nothing_in_the_corpus_is_newly_refused() {
         found.is_empty(),
         "these programs are right and this refusal says otherwise: {found:#?}"
     );
+}
+
+/// **There is no `char`** (ADR-320, Part I 2.6): one character is a `scalar`
+/// and one byte a `u8`, and the refusal names both.
+#[test]
+fn char_is_refused_with_both_words() {
+    let found: Vec<check::Finding> =
+        findings("fn f(c: char) -> bool {\n    return c == 'a'\n}\nfn main() { }\n")
+            .into_iter()
+            .filter(|f| f.code == "NK1135")
+            .collect();
+    assert_eq!(found.len(), 1, "{found:#?}");
+    let help = found[0].help.clone().unwrap_or_default();
+    assert!(help.contains("scalar") && help.contains("u8"), "{help}");
 }

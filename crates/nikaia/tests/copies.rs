@@ -39,7 +39,7 @@ fn a_unit_only_enum_and_a_struct_of_numbers_are_copies() {
     let rust = lowered(
         "enum Op { Add, Sub }\n\
          struct Span { start: u32, end: u32 }\n\
-         struct Flags { on: bool, mark: char, op: Op, at: i64?, pair: (i32, f64) }\n\
+         struct Flags { on: bool, mark: scalar, op: Op, at: i64?, pair: (i32, f64) }\n\
          fn main() { print(\"x\") }\n",
     );
     for name in ["Op", "Span", "Flags"] {

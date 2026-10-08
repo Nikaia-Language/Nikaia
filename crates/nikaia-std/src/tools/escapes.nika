@@ -31,7 +31,7 @@ pub struct NotAnEscape {
 // What one escape reads as: the character it means and where the literal
 // goes on after it, or why it means none.
 enum EscapeRead {
-    Means { value: char, next: i64 },
+    Means { value: scalar, next: i64 },
     Nothing { refused: NotAnEscape },
 }
 
@@ -41,8 +41,8 @@ comptime HEX: ref String = "0123456789abcdef"
 /// **Reads the same table `decoded` does**: everything this names is
 /// something `decoded` answers `null` for, and `rustc` refuses in its own
 /// words.
-pub fn an_escape_nothing_names(literal: ref String, char_of: fn(i64) -> char? sync) -> NotAnEscape? {
-    let c: Vec[char] = literal.chars().collect()
+pub fn an_escape_nothing_names(literal: ref String, char_of: fn(i64) -> scalar? sync) -> NotAnEscape? {
+    let c: Vec[scalar] = literal.chars().collect()
     let mut at = 0
     while at < c.len() {
         if c[at] != '\\' {
@@ -65,8 +65,8 @@ pub fn an_escape_nothing_names(literal: ref String, char_of: fn(i64) -> char? sy
 /// or `null` where an escape is one `rustc` would reject: that program does
 /// not compile either way, and the evaluator says *cannot evaluate* rather
 /// than inventing a meaning for it.
-pub fn decoded(literal: ref String, char_of: fn(i64) -> char? sync) -> String? {
-    let c: Vec[char] = literal.chars().collect()
+pub fn decoded(literal: ref String, char_of: fn(i64) -> scalar? sync) -> String? {
+    let c: Vec[scalar] = literal.chars().collect()
     let mut out: String = ""
     let mut at = 0
     while at < c.len() {
@@ -119,7 +119,7 @@ pub fn as_a_literal(text: ref String) -> String {
 }
 
 // One escape, read off the characters from `at`, just after the `\`.
-fn one_escape(c: ref Vec[char], at: i64, char_of: fn(i64) -> char? sync) -> EscapeRead {
+fn one_escape(c: ref Vec[scalar], at: i64, char_of: fn(i64) -> scalar? sync) -> EscapeRead {
     let mut written: String = "\\"
     if at >= c.len() {
         return not_an_escape(written, "a `\\` at the end of a literal escapes nothing")
@@ -137,7 +137,7 @@ fn one_escape(c: ref Vec[char], at: i64, char_of: fn(i64) -> char? sync) -> Esca
 }
 
 // `\x41`, which Rust limits to the ASCII range inside a string.
-fn a_byte(c: ref Vec[char], from: i64, so_far: ref String, char_of: fn(i64) -> char? sync) -> EscapeRead {
+fn a_byte(c: ref Vec[scalar], from: i64, so_far: ref String, char_of: fn(i64) -> scalar? sync) -> EscapeRead {
     let mut written = so_far.clone()
     let mut end = from
     while end < from + 2 && end < c.len() {
@@ -160,7 +160,7 @@ fn a_byte(c: ref Vec[char], from: i64, so_far: ref String, char_of: fn(i64) -> c
 
 // `\u{…}`: one to six hexadecimal digits in braces, with `_` allowed between
 // them, naming a character.
-fn a_character(c: ref Vec[char], from: i64, so_far: ref String, char_of: fn(i64) -> char? sync) -> EscapeRead {
+fn a_character(c: ref Vec[scalar], from: i64, so_far: ref String, char_of: fn(i64) -> scalar? sync) -> EscapeRead {
     let mut written = so_far.clone()
     if from >= c.len() || c[from] != '{' {
         return not_an_escape(written, "`\\u` takes its digits in braces, as `\\u{1F600}`")
@@ -184,7 +184,7 @@ fn a_character(c: ref Vec[char], from: i64, so_far: ref String, char_of: fn(i64)
 
 // The number the digits between `from` and `to` write, as `rustc` reads a
 // `\u{…}`: at least one digit, at most six, and an `_` anywhere but first.
-fn code_point(c: ref Vec[char], from: i64, to: i64) -> i64? sync {
+fn code_point(c: ref Vec[scalar], from: i64, to: i64) -> i64? sync {
     if from >= to || c[from] == '_' {
         return null
     }
@@ -206,7 +206,7 @@ fn code_point(c: ref Vec[char], from: i64, to: i64) -> i64? sync {
 }
 
 // The escapes written as one character after the `\`: what each means.
-fn named_escape(c: char) -> char? sync {
+fn named_escape(c: scalar) -> scalar? sync {
     if c == 'n' {
         return '\n'
     }
@@ -225,7 +225,7 @@ fn named_escape(c: char) -> char? sync {
     return null
 }
 
-fn hex_digit(c: char) -> i64? sync {
+fn hex_digit(c: scalar) -> i64? sync {
     if c >= '0' && c <= '9' {
         return c as i64 - 48
     }
@@ -243,8 +243,8 @@ fn hex_of(n: i64) -> String {
     if n == 0 {
         return "0"
     }
-    let digits: Vec[char] = HEX.chars().collect()
-    let mut backwards: Vec[char] = []
+    let digits: Vec[scalar] = HEX.chars().collect()
+    let mut backwards: Vec[scalar] = []
     let mut rest = n
     while rest > 0 {
         backwards.push(digits[rest % 16])
@@ -261,7 +261,7 @@ fn hex_of(n: i64) -> String {
 
 // Unicode's control characters, the `Cc` category: `U+0000` to `U+001F`
 // and `U+007F` to `U+009F`.
-fn a_control_character(c: char) -> bool sync {
+fn a_control_character(c: scalar) -> bool sync {
     let n = c as i64
     return n < 32 || (n >= 127 && n <= 159)
 }

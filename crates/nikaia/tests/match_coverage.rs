@@ -58,7 +58,7 @@ fn a_missing_variant_is_named() {
 /// arms — and the message says that rather than listing one.
 #[test]
 fn an_open_ended_type_is_told_to_write_else() {
-    for scrutinee in ["n: i64", "c: char", "s: String"] {
+    for scrutinee in ["n: i64", "c: scalar", "s: String"] {
         let found = refusals(&format!(
             "fn f({scrutinee}) -> i64 {{ return match {} {{ 1 => 1 }} }}\n",
             scrutinee.split(':').next().unwrap().trim()

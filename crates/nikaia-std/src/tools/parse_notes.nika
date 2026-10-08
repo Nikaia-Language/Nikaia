@@ -11,7 +11,7 @@
 /// The token that ends at character `end`: a word, a run of operator
 /// characters, or one other character.
 pub fn previous_token(source: ref String, end: i64) -> String {
-    let c: Vec[char] = source.chars().collect()
+    let c: Vec[scalar] = source.chars().collect()
     if end <= 0 {
         return ""
     }
@@ -29,17 +29,17 @@ pub fn previous_token(source: ref String, end: i64) -> String {
     return slice(c, start, end)
 }
 
-fn a_word_char(c: char) -> bool {
+fn a_word_char(c: scalar) -> bool {
     return c.is_alphanumeric() || c == '_'
 }
 
-fn an_operator_char(c: char) -> bool {
+fn an_operator_char(c: scalar) -> bool {
     return c == '=' || c == '+' || c == '-' || c == '*' || c == '/' || c == '%' || c == '<' || c == '>' || c == '!' || c == '&' || c == '|'
 }
 
 /// Where the last string that is never closed opens, or -1.
 pub fn unclosed_quote(source: ref String) -> i64 {
-    let c: Vec[char] = source.chars().collect()
+    let c: Vec[scalar] = source.chars().collect()
     let mut open = -1
     let mut at = 0
     while at < c.len() {
@@ -65,7 +65,7 @@ pub fn unclosed_quote(source: ref String) -> i64 {
 /// The innermost bracket still open at the end of the text, outside strings
 /// and `//` comments, or -1.
 pub fn unclosed_bracket(source: ref String) -> i64 {
-    let c: Vec[char] = source.chars().collect()
+    let c: Vec[scalar] = source.chars().collect()
     let mut stack: Vec[i64] = []
     let mut in_string = false
     let mut at = 0
@@ -97,7 +97,7 @@ pub fn unclosed_bracket(source: ref String) -> i64 {
 }
 
 // Past the `\n` that ends the line `at` stands on.
-fn past_the_line(c: ref Array[char], at: i64) -> i64 {
+fn past_the_line(c: ref Array[scalar], at: i64) -> i64 {
     let mut k = at
     while k < c.len() && c[k] != '\n' {
         k += 1
@@ -109,7 +109,7 @@ fn past_the_line(c: ref Array[char], at: i64) -> i64 {
 /// string and a line comment are only themselves *outside* a block comment:
 /// a `//` inside one is comment, not a second comment, and so is a quote.
 pub fn opening_of_an_unclosed_comment(source: ref String) -> i64 {
-    let c: Vec[char] = source.chars().collect()
+    let c: Vec[scalar] = source.chars().collect()
     let mut open: Vec[i64] = []
     let mut at = 0
     while at < c.len() {
@@ -156,7 +156,7 @@ pub fn opening_of_an_unclosed_comment(source: ref String) -> i64 {
 /// A written message's first sentence, and the rest where there is one: a
 /// full stop followed by a space ends it, outside backticks.
 pub fn first_sentence(text: ref String) -> Vec[String] {
-    let c: Vec[char] = text.chars().collect()
+    let c: Vec[scalar] = text.chars().collect()
     let mut quoted = false
     for at in 0..<c.len() {
         if c[at] == '`' {

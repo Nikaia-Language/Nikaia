@@ -52,7 +52,7 @@ fn the_awkward_characters_are_characters() {
 /// `chars()` read as one - `examples/json/src/main.nika` decodes its escapes that way.
 #[test]
 fn a_character_literal_is_a_pattern() {
-    let source = "fn f(c: char) { match c { 'n' => { println(\"newline\") } else => { } } }";
+    let source = "fn f(c: scalar) { match c { 'n' => { println(\"newline\") } else => { } } }";
     let parsed = parse_to_ast(source).expect("parses");
     let Item::Fn { body, .. } = &parsed.program.items[0].node else {
         panic!("expected a function");

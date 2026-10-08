@@ -453,7 +453,7 @@ fn bounding_range(mut walk: BoundsWalk, expr: ref Expr, facts: ref BoundsFacts, 
 
 /// `text` without its first `count` characters.
 fn bounding_dropped(text: ref String, count: i64) -> String {
-    let c: Vec[char] = text.chars().collect()
+    let c: Vec[scalar] = text.chars().collect()
     let mut out: String = ""
     for k in count..<c.len() {
         out.push(c[k])
@@ -610,7 +610,7 @@ fn bounding_base_of(name: ref String) -> String {
     if !name.ends_with(".len()") {
         return name.clone()
     }
-    let c: Vec[char] = name.chars().collect()
+    let c: Vec[scalar] = name.chars().collect()
     let mut out: String = ""
     for k in 0..<c.len() - 6 {
         out.push(c[k])

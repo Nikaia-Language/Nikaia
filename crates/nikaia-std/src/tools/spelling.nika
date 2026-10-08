@@ -21,8 +21,8 @@
 /// most common typo there is outside any threshold worth having. This is the
 /// optimal-string-alignment variant, which charges one.
 pub fn distance(a: ref String, b: ref String) -> i64 sync {
-    let x: Vec[char] = a.chars().collect()
-    let y: Vec[char] = b.chars().collect()
+    let x: Vec[scalar] = a.chars().collect()
+    let y: Vec[scalar] = b.chars().collect()
     let rows = x.len() + 1
     let cols = y.len() + 1
     // `d[i][j]` is the distance between the first `i` characters of `a` and
@@ -68,8 +68,8 @@ pub fn one_edit_apart(a: ref String, b: ref String) -> bool sync {
     if a == b {
         return false
     }
-    let x: Vec[char] = a.chars().collect()
-    let y: Vec[char] = b.chars().collect()
+    let x: Vec[scalar] = a.chars().collect()
+    let y: Vec[scalar] = b.chars().collect()
     if x.len() == y.len() {
         let mut differ = 0
         for i in 0..<x.len() {
@@ -93,7 +93,7 @@ pub fn one_edit_apart(a: ref String, b: ref String) -> bool sync {
 // words and not their characters, because a `ref Vec[char]` is a `&Vec<char>`
 // below, which `clippy` refuses in `std` and a `&str` it does not.
 fn one_put_in(long: ref String, short: ref String) -> bool sync {
-    let kept: Vec[char] = short.chars().collect()
+    let kept: Vec[scalar] = short.chars().collect()
     let mut at = 0
     let mut skipped = false
     for c in long.chars() {

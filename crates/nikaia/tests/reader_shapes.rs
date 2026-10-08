@@ -33,7 +33,7 @@ fn lowered(purpose: &str, source: &str) -> String {
 fn the_characters_of_a_text_are_listed_at_their_size() {
     let source = r#"fn main() {
     let word = "héllo"
-    let c: Vec[char] = word.chars().collect()
+    let c: Vec[scalar] = word.chars().collect()
     println(f"{c.len()} {c[1]}")
 }
 "#;

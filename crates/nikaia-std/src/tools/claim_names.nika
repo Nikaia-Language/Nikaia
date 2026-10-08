@@ -22,7 +22,7 @@ pub fn is_a_parameter(name: ref String, params: ref collections::BTreeSet[String
     if !name.ends_with(".len()") {
         return false
     }
-    let c: Vec[char] = name.chars().collect()
+    let c: Vec[scalar] = name.chars().collect()
     let mut base: String = ""
     for k in 0..<c.len() - 6 {
         base.push(c[k])

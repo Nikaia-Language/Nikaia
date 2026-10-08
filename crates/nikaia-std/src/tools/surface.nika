@@ -361,8 +361,8 @@ fn directly_under(path: ref String, under: ref String) -> String? {
     if !path.starts_with(under) {
         return null
     }
-    let c: Vec[char] = path.chars().collect()
-    let u: Vec[char] = under.chars().collect()
+    let c: Vec[scalar] = path.chars().collect()
+    let u: Vec[scalar] = under.chars().collect()
     let rest = between(c, u.len(), c.len())
     if rest.contains("::") {
         return null
@@ -372,7 +372,7 @@ fn directly_under(path: ref String, under: ref String) -> String? {
 
 // The text before the first `:`, trimmed.
 fn before_colon(written: ref String) -> String {
-    let c: Vec[char] = written.chars().collect()
+    let c: Vec[scalar] = written.chars().collect()
     let mut end = c.len()
     for at in 0..<c.len() {
         if c[at] == ':' && end == c.len() {

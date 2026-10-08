@@ -62,8 +62,8 @@ pub fn both_sides_the_same(message: ref String) -> String? {
 
 // What stands between the first pair of backticks after `word`.
 fn backticked_after(message: ref String, word: ref String) -> String? {
-    let c: Vec[char] = message.chars().collect()
-    let w: Vec[char] = word.chars().collect()
+    let c: Vec[scalar] = message.chars().collect()
+    let w: Vec[scalar] = word.chars().collect()
     let at = find_text(c, 0, word)
     if at < 0 {
         return null
@@ -84,7 +84,7 @@ fn backticked_after(message: ref String, word: ref String) -> String? {
 // nested type comes through whole, and the inner one is substituted by the
 // same pass over it.
 fn shared_names(message: ref String) -> String {
-    let c: Vec[char] = message.chars().collect()
+    let c: Vec[scalar] = message.chars().collect()
     let mut out: String = ""
     let mut last = ' '
     let mut at = 0
@@ -95,7 +95,7 @@ fn shared_names(message: ref String) -> String {
                 // A bare `Rc<` must not eat the tail of `MyRc<`: a hull is a
                 // name, so what stands in front of it may not be one.
                 let preceded_by_a_name = !hull.contains("::") && at > 0 && (last.is_alphanumeric() || last == '_' || last == ':')
-                let h: Vec[char] = hull.chars().collect()
+                let h: Vec[scalar] = hull.chars().collect()
                 let close = closing_angle(c, at + h.len())
                 if !preceded_by_a_name && close >= 0 {
                     out.push_str("Shared[")
@@ -117,7 +117,7 @@ fn shared_names(message: ref String) -> String {
 }
 
 // Where the `>` stands that closes the `<` already read, or -1.
-fn closing_angle(c: ref Array[char], from: i64) -> i64 {
+fn closing_angle(c: ref Array[scalar], from: i64) -> i64 {
     let mut depth = 1
     for at in from..<c.len() {
         if c[at] == '<' {
@@ -133,8 +133,8 @@ fn closing_angle(c: ref Array[char], from: i64) -> i64 {
 }
 
 // Whether `word` stands in `c` at `at`.
-fn begins_at(c: ref Array[char], at: i64, word: ref String) -> bool {
-    let w: Vec[char] = word.chars().collect()
+fn begins_at(c: ref Array[scalar], at: i64, word: ref String) -> bool {
+    let w: Vec[scalar] = word.chars().collect()
     if at + w.len() > c.len() {
         return false
     }
@@ -148,8 +148,8 @@ fn begins_at(c: ref Array[char], at: i64, word: ref String) -> bool {
 
 // `text` with every `from` written `to`, left to right.
 fn replaced(text: ref String, from: ref String, to: ref String) -> String {
-    let c: Vec[char] = text.chars().collect()
-    let f: Vec[char] = from.chars().collect()
+    let c: Vec[scalar] = text.chars().collect()
+    let f: Vec[scalar] = from.chars().collect()
     let mut out: String = ""
     let mut at = 0
     let mut next = find_text(c, 0, from)
@@ -171,7 +171,7 @@ fn replaced(text: ref String, from: ref String, to: ref String) -> String {
 /// it does not already end in one - or in a `?`, a `!`, a `:`, a closing
 /// bracket after either, or an indented line that a list ends with.
 pub fn said(text: ref String) -> String {
-    let c: Vec[char] = text.trim_end().chars().collect()
+    let c: Vec[scalar] = text.trim_end().chars().collect()
     if c.len() == 0 {
         return ""
     }
@@ -209,8 +209,8 @@ pub fn headed(level: ref String, code: ref String) -> String {
 /// edge that is a word character: `}` or a space has no word to be part of.
 /// Where it is not there, the column asked and one character.
 pub fn word_in(line: ref String, column: i64, word: ref String) -> (i64, i64) {
-    let c: Vec[char] = line.chars().collect()
-    let w: Vec[char] = word.chars().collect()
+    let c: Vec[scalar] = line.chars().collect()
+    let w: Vec[scalar] = word.chars().collect()
     if w.len() == 0 {
         return (column, 1)
     }
@@ -238,6 +238,6 @@ pub fn word_in(line: ref String, column: i64, word: ref String) -> (i64, i64) {
     return (column, 1)
 }
 
-fn a_wordy_char(c: char) -> bool {
+fn a_wordy_char(c: scalar) -> bool {
     return c.is_alphanumeric() || c == '_'
 }

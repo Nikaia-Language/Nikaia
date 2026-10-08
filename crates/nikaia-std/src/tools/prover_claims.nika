@@ -172,7 +172,7 @@ fn assert_of(contract: ref FnContract, at: i64) -> String {
     if !from.starts_with("assert(") || !from.ends_with(")") {
         return ""
     }
-    let c: Vec[char] = from.chars().collect()
+    let c: Vec[scalar] = from.chars().collect()
     let mut inner: String = ""
     for k in 7..<c.len() - 1 {
         inner.push(c[k])

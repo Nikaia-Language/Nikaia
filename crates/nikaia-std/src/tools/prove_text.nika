@@ -50,7 +50,7 @@ fn rust_joined(op: ref String, parts: ref Vec[i64], empty: ref String, term_of: 
 /// A name of the proof as the language below reads it, in `i128`.
 pub fn rust_of_name(name: ref String, escape: fn(ref String) -> String sync) -> String {
     if name.ends_with(".len()") {
-        let c: Vec[char] = name.chars().collect()
+        let c: Vec[scalar] = name.chars().collect()
         let mut base: String = ""
         for k in 0..<c.len() - 6 {
             base.push(c[k])
@@ -162,7 +162,7 @@ pub fn shown(values: ref collections::BTreeMap[String, i64]) -> String {
 
 /// `"A method can't …"` as the rest of a sentence.
 pub fn lowered_first(text: ref String) -> String {
-    let c: Vec[char] = text.chars().collect()
+    let c: Vec[scalar] = text.chars().collect()
     if c.is_empty() {
         return ""
     }

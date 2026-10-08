@@ -459,7 +459,7 @@ fn a_parameter_bound_again_and_only_read_is_not_kept() {
 #[test]
 fn a_receiver_written_ref_is_not_kept() {
     let source = "enum Position { Text, Url }\n\
-                  struct Scan { tail: Vec[char], at: i64 }\n\
+                  struct Scan { tail: Vec[scalar], at: i64 }\n\
                   impl Position {\n\
                   \x20   fn escapable(ref self) -> bool {\n\
                   \x20       return match self { Position::Text => true\n Position::Url => false }\n\
@@ -498,10 +498,10 @@ fn a_lent_argument_a_match_takes_apart_is_not_kept() {
 
 /// **A receiver taken by value that copies is not moved out of**:
 /// `c.to_ascii_lowercase()` leaves the caller its `char`. Recorded as kept, it
-/// said `Scan::feed(ref mut self, c: char)` took the character.
+/// said `Scan::feed(ref mut self, c: scalar)` took the character.
 #[test]
 fn a_copied_receiver_a_method_takes_by_value_is_not_kept() {
-    let source = "fn lower(c: char) -> bool { return c.to_ascii_lowercase() == 'a' }";
+    let source = "fn lower(c: scalar) -> bool { return c.to_ascii_lowercase() == 'a' }";
     assert!(
         keeps(source, "lower").is_empty(),
         "{:?}",

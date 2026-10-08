@@ -85,7 +85,7 @@ pub fn differing_lines(expected: ref String, produced: ref String) -> String {
         i -= 1
     }
     // Each step: ' ', '-' or '+', and its line.
-    let mut marks: Vec[char] = []
+    let mut marks: Vec[scalar] = []
     let mut lines: Vec[String] = []
     let mut x = 0
     let mut y = 0

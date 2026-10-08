@@ -4,6 +4,16 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.659] — 2026-10-08
+
+**There is no `char`: one character is a `scalar`** (ADR-320, #453 step 1,
+second half).
+- `char` in a type position is `NK1135`, whose help names `scalar` and `u8`.
+  A ledger that still writes the old word reads as `scalar`.
+- `std.contracts`, `std::text`, the self-hosted tools and the test programs
+  write `scalar`; `nikaia lower-std` regenerated `text.rs` and `package.rs`,
+  and lowering them again changes nothing.
+
 ## [0.0.658] — 2026-10-08
 
 **`net::serve(at) fn(conn) { … }` runs each connection in a task of its own**

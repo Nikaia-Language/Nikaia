@@ -122,7 +122,7 @@ pub fn indented_text(text: ref String) -> String {
 /// Every `{…}` group in a string, by the text between the braces - a
 /// `\u{…}` escape is not one, and an empty group is left out.
 pub fn brace_groups(text: ref String) -> Vec[String] {
-    let c: Vec[char] = text.chars().collect()
+    let c: Vec[scalar] = text.chars().collect()
     let mut found: Vec[String] = []
     let mut at = 0
     while at < c.len() {

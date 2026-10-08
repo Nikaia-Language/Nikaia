@@ -701,7 +701,7 @@ fn an_element_taken_out_stays_held_and_a_field_is_written_through_the_handle() {
 #[test]
 fn a_buffer_assigned_whole_is_moved() {
     let source = "fn cut(written: ref String, front: i64) -> String {
-    let c: Vec[char] = written.chars().collect()
+    let c: Vec[scalar] = written.chars().collect()
     let mut out: String = \"\"
     for k in front..<c.len() {
         out.push(c[k])

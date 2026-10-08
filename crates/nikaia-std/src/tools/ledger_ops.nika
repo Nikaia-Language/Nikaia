@@ -203,7 +203,7 @@ fn widen(mut ledger: Ledger, name: String, types: ref collections::BTreeSet[Stri
 /// `geo::Point`. A word the package declares as a type, outside a string and
 /// not already after a `::`, is the one that changes.
 fn qualified_default(text: ref String, prefix: ref String, declared: ref collections::BTreeSet[String]) -> String {
-    let c: Vec[char] = text.chars().collect()
+    let c: Vec[scalar] = text.chars().collect()
     let mut out: String = ""
     let mut at = 0
     let mut quoted = false

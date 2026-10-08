@@ -40,7 +40,7 @@ pub fn translate(written: ref String, crate_word: ref String, parameters: ref Ve
         return Translated { ty: Ty::Unknown, kept: false }
     }
     if text.starts_with("&") {
-        let c: Vec[char] = text.chars().collect()
+        let c: Vec[scalar] = text.chars().collect()
         let rest = slice(c, 1, c.len())
         let inner = translate(rest, crate_word, parameters, types, mentioned)
         return Translated { ty: view_of(inner.ty), kept: false }
@@ -137,7 +137,7 @@ pub fn sent_across(names: ref Vec[String], types: ref Vec[String], bounds: ref S
 pub fn sends(bounds: ref String) -> Vec[String] {
     let mut out: Vec[String] = []
     for one in split_top_level(bounds) {
-        let c: Vec[char] = one.chars().collect()
+        let c: Vec[scalar] = one.chars().collect()
         let colon = find(c, 0, ':')
         if colon < 0 {
             continue
@@ -155,7 +155,7 @@ pub fn sends(bounds: ref String) -> Vec[String] {
 
 // A parameter's type without the `&`s and the `mut ` in front.
 fn unreferenced(ty: ref String) -> String {
-    let c: Vec[char] = ty.chars().collect()
+    let c: Vec[scalar] = ty.chars().collect()
     let mut from = 0
     while from < c.len() && (c[from] == '&' || c[from] == ' ') {
         from += 1
@@ -163,7 +163,7 @@ fn unreferenced(ty: ref String) -> String {
     let rest = slice(c, from, c.len())
     let trimmed = rest.trim()
     if trimmed.starts_with("mut ") {
-        let t: Vec[char] = trimmed.chars().collect()
+        let t: Vec[scalar] = trimmed.chars().collect()
         let after = slice(t, 4, t.len())
         return after.clone()
     }
