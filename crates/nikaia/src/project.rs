@@ -2625,17 +2625,25 @@ impl Project {
             // a lockfile is. Under `--locked` this is D4 — each is compared
             // byte for byte rather than rewritten, which is the check CI wants
             // and the one a development build must not pay for.
-            write_ledger(
-                &member.root.join("nikaia.contracts"),
-                &lowered.ledger,
-                locked,
-            )?;
-            write_ledger(
-                &member.root.join("nikaia.derived"),
-                &lowered.derived,
-                locked,
-            )?;
-            write_proofs(&member.root, lowered.proofs.as_ref(), locked)?;
+            //
+            // **Not the entry's, in `nikaia test`'s test build** (#534): it
+            // lowers the `test` blocks too, and they are no contract of the
+            // package's. A consumer reads the ledger the program's build
+            // writes, and `nikaia test` in a package must leave its committed
+            // files as they were.
+            if !(at == 0 && self.settings.tests && self.variant.is_some()) {
+                write_ledger(
+                    &member.root.join("nikaia.contracts"),
+                    &lowered.ledger,
+                    locked,
+                )?;
+                write_ledger(
+                    &member.root.join("nikaia.derived"),
+                    &lowered.derived,
+                    locked,
+                )?;
+                write_proofs(&member.root, lowered.proofs.as_ref(), locked)?;
+            }
             // **The note is the entry's** (ADR-288 D29): what a dependency's
             // author could promise is theirs to hear, in their own build.
             if at == 0 {

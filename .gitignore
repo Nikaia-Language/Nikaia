@@ -33,8 +33,8 @@ node_modules/
 /examples/nikaia.contracts
 /examples/nikaia.derived
 # What `nikaia test` or `nikaia run` leaves inside an example package: the build
-# and the lockfile of a run in place (ADR-247 runs its tests in a copy of nothing
-# but the package, and so does `tests/examples.rs`).
+# and the lockfile of a run in place, which is how `tests/examples.rs` runs them
+# (#534): its builds are reused from one run to the next.
 /examples/*/target/
 /examples/*/nikaia.lock
 /benches/*.rs

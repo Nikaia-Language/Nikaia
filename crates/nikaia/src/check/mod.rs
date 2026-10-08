@@ -9640,23 +9640,32 @@ impl<'a> Checker<'a> {
         // **The element type an empty list's first `push` gives it** (#523):
         // `let mut rows = Vec()` then `rows.push((fragment, tally.n))` makes
         // `rows` a list of what was pushed, for every read after.
-        if entry == "push"
-            && let Some(name) = self.pushed_into.take()
-            && let [pushed] = found.as_slice()
-            && !pushed.is_unknown()
-        {
-            let element = value_of_a_copy(pushed.clone());
-            if let Some(local) = self
-                .scope
-                .iter_mut()
-                .rev()
-                .find_map(|frame| frame.iter_mut().rev().find(|local| local.name == name))
+        if let Some(name) = self.pushed_into.take() {
+            let given: Option<(Option<String>, Vec<Ty>)> = match (entry, found.as_slice()) {
+                ("push", [pushed]) if !pushed.is_unknown() => Some((
+                    Some("Vec".to_string()),
+                    vec![value_of_a_copy(pushed.clone())],
+                )),
+                // `m.insert("a", 7)`: the key and the value, each as the map
+                // holds it; the map keeps the name it was made with.
+                ("insert", [key, value]) if !key.is_unknown() && !value.is_unknown() => Some((
+                    None,
+                    vec![value_of_a_copy(key.clone()), value_of_a_copy(value.clone())],
+                )),
+                _ => None,
+            };
+            if let Some((kind, elements)) = given
+                && let Some(local) = self
+                    .scope
+                    .iter_mut()
+                    .rev()
+                    .find_map(|frame| frame.iter_mut().rev().find(|local| local.name == name))
+                && let Ty::Named { name, args, .. } = &mut local.ty
             {
-                local.ty = Ty::Named {
-                    name: "Vec".to_string(),
-                    args: vec![element],
-                    view: false,
-                };
+                if let Some(kind) = kind {
+                    *name = kind;
+                }
+                *args = elements;
             }
         }
         let paused_here = std::mem::replace(&mut self.paused_args, outer_paused);
@@ -11658,6 +11667,7 @@ impl<'a> Checker<'a> {
                 let found = self.expr(value, span);
                 if op.is_none() {
                     self.a_map_read_assigned(&into, value, span);
+                    self.a_map_first_written(target, &found);
                 }
                 // **An assignment keeps what it is given**, so a text literal
                 // assigned to a `String` place - a name, a field, a map's or a
@@ -12669,11 +12679,22 @@ impl<'a> Checker<'a> {
                 // - a `set` on something that is not a lock takes this back.
                 // **An empty list's first `push`** (#523, ADR-135 D2): the
                 // name is held for `call_on`, which has the argument's type.
+                // **And an empty map's first `insert`** (#543): its key and
+                // value types, the same way.
                 self.pushed_into = match (&**receiver, self.parsed.text(*method), args.len()) {
                     (Expr::Variable(name), "push", 1)
                         if self.binding(self.parsed.text(*name)).is_some_and(|local| {
                             matches!(&local.ty, Ty::Named { name, args, .. }
                                 if name == "Vec" && matches!(args.as_slice(), [] | [Ty::Unknown]))
+                        }) =>
+                    {
+                        Some(self.parsed.text(*name).to_string())
+                    }
+                    (Expr::Variable(name), "insert", 2)
+                        if self.binding(self.parsed.text(*name)).is_some_and(|local| {
+                            matches!(&local.ty, Ty::Named { name, args, .. }
+                                if a_map(name)
+                                    && matches!(args.as_slice(), [] | [Ty::Unknown, Ty::Unknown]))
                         }) =>
                     {
                         Some(self.parsed.text(*name).to_string())
@@ -26713,6 +26734,59 @@ fn is_a_view_of_a_string(ty: &Ty) -> bool {
 
 /// A view of a value that copies read as the value, and anything else as it is
 /// ([ADR-233](../../docs/specification/adr/adr-233.md) D4).
+impl Checker<'_> {
+    /// **An empty map's first `m[k] = v`** (#543, ADR-135 D2's rule for a
+    /// map): its key and value types, as a first `insert` gives them. The key
+    /// is asked by its form, a text literal or a name, because the `Index` arm
+    /// has walked it already and a second walk would record its reads twice.
+    fn a_map_first_written(&mut self, target: &Expr, found: &Ty) {
+        let Expr::Index { base, index } = target else {
+            return;
+        };
+        let Expr::Variable(name) = &**base else {
+            return;
+        };
+        let name = self.parsed.text(*name).to_string();
+        let open = self.binding(&name).is_some_and(|local| {
+            matches!(&local.ty, Ty::Named { name, args, .. }
+                if a_map(name)
+                    && matches!(args.as_slice(), [] | [Ty::Unknown, Ty::Unknown]))
+        });
+        if !open || found.is_unknown() {
+            return;
+        }
+        let key = match &**index {
+            Expr::LitStr { .. } => Ty::Named {
+                name: ty::TEXT.to_string(),
+                args: Vec::new(),
+                view: false,
+            },
+            Expr::Variable(key) => match self.lookup(self.parsed.text(*key)) {
+                Some(ty) if !ty.is_unknown() => value_of_a_copy(ty),
+                _ => return,
+            },
+            _ => return,
+        };
+        let value = value_of_a_copy(found.clone());
+        if let Some(local) = self
+            .scope
+            .iter_mut()
+            .rev()
+            .find_map(|frame| frame.iter_mut().rev().find(|local| local.name == name))
+            && let Ty::Named { args, .. } = &mut local.ty
+        {
+            *args = vec![key, value];
+        }
+    }
+}
+
+/// The map types whose key and value a first `insert` decides (#543).
+/// By the last segment: the type is `collections::HashMap` where the `use`
+/// named the module.
+fn a_map(name: &str) -> bool {
+    ["HashMap", "BTreeMap", "Map"].contains(&name.rsplit("::").next().unwrap_or(name))
+}
+
 fn value_of_a_copy(ty: Ty) -> Ty {
     nikaia_std::tools::check_types::value_of_a_copy(&ty)
 }

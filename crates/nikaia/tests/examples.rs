@@ -9,7 +9,7 @@
 //! [ADR-247](../../../docs/specification/adr/adr-247.md)): each is a package
 //! whose `tests/` says what it must print and write - `NAME.stdout`,
 //! `NAME.out/`, with `NAME.in/`, `.args` and `.stdin` as what it is given - and
-//! this file runs `nikaia test --both-settings` in a copy of each. At **both
+//! this file runs `nikaia test --both-settings --locked` on each, in place. At **both
 //! settings of `user_parallelism`**, because that is the claim the switches
 //! rest on (Part I 1.2): the same source means the same thing either way.
 //!
@@ -137,8 +137,14 @@ fn checks_itself(dir: &Path) -> bool {
 /// **Every example package passes `nikaia test`, at both settings** - which
 /// runs its output tests against the program and its `test` blocks against
 /// the test build, and fails an outcome that differs between the settings
-/// (ADR-269 D12). Run in a copy, because a project build writes `target/`
-/// into the project, and the examples are the repository's.
+/// (ADR-269 D12).
+///
+/// **In place, not in a copy** (#534): each package keeps one path, so its
+/// builds are Cargo's to reuse and a second run compiles nothing. Under
+/// `--locked`, because the ledger files beside each example are the
+/// repository's: a run compares them rather than writing them, and one that
+/// changed fails here, saying what to commit. What a build writes into the
+/// package, `target/` and `nikaia.lock`, is ignored by git.
 #[test]
 fn every_example_package_passes_its_own_tests() {
     let mut packages: Vec<PathBuf> = std::fs::read_dir(repo_root().join("examples"))
@@ -149,49 +155,46 @@ fn every_example_package_passes_its_own_tests() {
         .collect();
     packages.sort();
     assert!(packages.len() >= 11, "{packages:?}");
+    let trace_dir = common::scratch_dir("example-packages");
     for package in packages {
         let name = package
             .file_name()
             .expect("a name")
             .to_string_lossy()
             .to_string();
-        let copy = common::scratch_dir(&format!("example-package-{name}"));
-        copy_tree(&package, &copy);
-        let out = Command::new(env!("CARGO_BIN_EXE_nikaia"))
-            .args(["test", "--both-settings", "--project"])
-            .arg(&copy)
-            .env(
-                "NIKAIA_CACHE_DIR",
-                repo_root().join("target").join("nikaia-project-tests"),
-            )
-            .env_remove("CARGO_TARGET_DIR")
-            .output()
-            .expect("the nikaia binary runs");
-        assert!(
-            out.status.success(),
-            "examples/{name} fails its own tests:\n{}\n{}",
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
+        let lowered = |run: &str| {
+            let trace = trace_dir.join(format!("{name}-{run}.log"));
+            let out = Command::new(env!("CARGO_BIN_EXE_nikaia"))
+                .args(["test", "--both-settings", "--locked", "--project"])
+                .arg(&package)
+                .env(
+                    "NIKAIA_CACHE_DIR",
+                    repo_root().join("target").join("nikaia-project-tests"),
+                )
+                .env("NIKAIA_WRAPPER_TRACE", &trace)
+                .env_remove("CARGO_TARGET_DIR")
+                .output()
+                .expect("the nikaia binary runs");
+            assert!(
+                out.status.success(),
+                "examples/{name} fails its own tests:\n{}\n{}",
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            );
+            std::fs::read_to_string(&trace)
+                .unwrap_or_default()
+                .lines()
+                .filter(|line| line.ends_with(" lowered"))
+                .count()
+        };
+        lowered("first");
+        assert_eq!(
+            lowered("second"),
+            0,
+            "examples/{name}: a second run with nothing changed lowers nothing"
         );
-        std::fs::remove_dir_all(&copy).ok();
     }
-}
-
-fn copy_tree(from: &Path, to: &Path) {
-    std::fs::create_dir_all(to).expect("a directory");
-    for entry in std::fs::read_dir(from).expect("read a directory") {
-        let path = entry.expect("an entry").path();
-        let name = path.file_name().expect("a name");
-        if name == "target" {
-            continue;
-        }
-        match path.is_dir() {
-            true => copy_tree(&path, &to.join(name)),
-            false => {
-                std::fs::copy(&path, to.join(name)).expect("copy a file");
-            }
-        }
-    }
+    std::fs::remove_dir_all(&trace_dir).ok();
 }
 
 /// Every file the specification-level list names must actually be there, so a

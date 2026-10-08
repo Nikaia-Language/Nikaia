@@ -4,6 +4,19 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.655] — 2026-10-08
+
+**A map's first write types it, and the examples are tested in place.**
+- **#543**: an empty map's first `insert`, or first write through the
+  brackets, gives it its key and value types, as a list's first `push` does
+  (ADR-135 D2). A bare number literal leaves them open, as it leaves a list's;
+  `compared_numbers` stays for that case.
+- **#534**: `tests/examples.rs` runs `nikaia test --both-settings --locked` in
+  each example rather than in a copy, so a second run lowers nothing. The test
+  build of `nikaia test` no longer writes the package's ledger files: it lowers
+  the `test` blocks too, which are no contract of the package's.
+- `examples/json/nikaia.contracts` records `Json` as tethered (#544).
+
 ## [0.0.654] — 2026-10-08
 
 **Three faults filed by 0.0.652 are fixed.**
