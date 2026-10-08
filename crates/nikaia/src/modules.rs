@@ -1118,6 +1118,7 @@ fn with_tests_as_functions(mut units: Vec<Unit>) -> Result<(Vec<Unit>, Vec<TestC
                 sync_by: Vec::new(),
                 is_public: false,
                 can_throw: true,
+                is_extern: false,
             };
         }
     }

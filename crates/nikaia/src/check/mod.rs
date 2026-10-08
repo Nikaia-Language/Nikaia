@@ -4758,7 +4758,10 @@ impl<'a> Checker<'a> {
                         labels: Vec::new(),
                     });
                 }
-                Item::Fn { .. } => self.function(&item.node, None),
+                Item::Fn { .. } => {
+                    self.an_entry_point(&item.node, &item.span, false);
+                    self.function(&item.node, None)
+                }
                 Item::Struct { fields, .. } => {
                     for field in fields {
                         self.a_field_default(field);
@@ -4769,6 +4772,9 @@ impl<'a> Checker<'a> {
                     methods,
                     trait_name,
                 } => {
+                    for method in methods {
+                        self.an_entry_point(&method.node, &method.span, trait_name.is_some());
+                    }
                     if trait_name.is_some_and(|t| self.parsed.text(t) == "Cleanup") {
                         self.a_cleanup_shaped(self.parsed.text(target.name), methods, &item.span);
                     }
@@ -19971,6 +19977,174 @@ impl<'a> Checker<'a> {
                 )),
                 labels: Vec::new(),
             });
+        }
+    }
+
+    /// **What an entry point may be** ([ADR-284](../../docs/specification/adr/adr-284.md)
+    /// D4, D5): `extern` before a function with a body exports it to C, and four
+    /// shapes are refused at the declaration.
+    fn an_entry_point(&mut self, item: &Item, span: &Span, of_a_trait: bool) {
+        let Item::Fn {
+            name,
+            generics,
+            receiver,
+            args,
+            ret_type,
+            is_public,
+            is_extern: true,
+            ..
+        } = item
+        else {
+            return;
+        };
+        let written = name
+            .map(|n| self.parsed.text(n).to_string())
+            .unwrap_or_else(|| "new".to_string());
+        let refuse =
+            |checker: &mut Self, code: &'static str, message: String, note: &str, help: String| {
+                checker.checked.findings.push(Finding {
+                    severity: Severity::Error,
+                    span: *span,
+                    code,
+                    message,
+                    notes: vec![note.to_string()],
+                    help: Some(help),
+                    labels: Vec::new(),
+                });
+            };
+        // `NK1237`: an entry point is the package's surface.
+        if !is_public {
+            refuse(
+                self,
+                "NK1237",
+                format!("`{written}` is `extern` but not `pub`."),
+                "`extern` before a function with a body exports it to C, and what a package \
+                 exports is part of its surface.",
+                format!(
+                    "Write `pub extern fn {written}`, or leave out `extern` for a function only this program calls."
+                ),
+            );
+        }
+        // `NK1238`: a function C calls needs a library for C to call into.
+        refuse(
+            self,
+            "NK1238",
+            format!("`{written}` is an entry point, and this build makes no library."),
+            "Only a build with `artifact = \"c-library\"` in `[build]` exports its \
+             `extern` functions, and this compiler does not make that artifact yet.",
+            format!(
+                "Leave out `extern` until the package is built as a library; `{written}` is an ordinary function without it."
+            ),
+        );
+        // `NK1239`: C has neither generics nor traits.
+        if !generics.is_empty() || of_a_trait {
+            let (what, help) = match of_a_trait {
+                true => (
+                    "a trait's method",
+                    format!("Export a plain function that calls `{written}`."),
+                ),
+                false => (
+                    "generic",
+                    format!(
+                        "Export one function for each type `{written}` is called with, each calling it."
+                    ),
+                ),
+            };
+            refuse(
+                self,
+                "NK1239",
+                format!("`{written}` is {what}, and C cannot call one."),
+                "A C function has one signature and no dispatch: what a generic function or a \
+                 trait's method stands for is decided in Nikaia, not by the caller.",
+                help,
+            );
+        }
+        // `NK1240`: what crosses is D5's table, both ways.
+        let _ = receiver;
+        for arg in args {
+            if let Err(help) = self.crosses_to_c(&arg.ty, false) {
+                let param = self.parsed.text(arg.name).to_string();
+                refuse(
+                    self,
+                    "NK1240",
+                    format!("`{param}` of `{written}` cannot cross to C."),
+                    "An entry point takes numbers, `bool` and `scalar` by value, text and bytes as \
+                     a view, a list of numbers, a struct or an enum of the package, an optional of \
+                     those, and a callback that does not pause (Part III 15.1).",
+                    help,
+                );
+            }
+        }
+        if let Some(result) = ret_type
+            && let Err(help) = self.crosses_to_c(result, true)
+        {
+            refuse(
+                self,
+                "NK1240",
+                format!("What `{written}` hands back cannot cross to C."),
+                "An entry point hands back numbers, `bool` and `scalar`, text and bytes into the \
+                 caller's buffer, a struct or an enum of the package, or an optional of those \
+                 (Part III 15.1).",
+                help,
+            );
+        }
+    }
+
+    /// Whether `ty` crosses to C at an entry point (ADR-284 D5), `out` for a
+    /// result: the shape to use where it does not.
+    fn crosses_to_c(&self, ty: &crate::ast::Type, out: bool) -> Result<(), String> {
+        let name = self.parsed.text(ty.name).to_string();
+        let args: Vec<String> = ty
+            .generics
+            .iter()
+            .map(|g| self.parsed.text(g.name).to_string())
+            .collect();
+        let a_number =
+            |n: &str| matches!(n, "i32" | "i64" | "u8" | "f64" | "bool" | "scalar" | "char");
+        if let Some(code) = &*ty.code {
+            if out {
+                return Err(
+                    "Hand back a value; a function is a parameter's shape: a callback.".to_string(),
+                );
+            }
+            if !code.is_sync {
+                return Err("Write the callback `sync`: C calls it on its own thread, where nothing may pause.".to_string());
+            }
+            for part in ty.generics.iter().chain((*code.result).iter()) {
+                self.crosses_to_c(part, false)?;
+            }
+            return Ok(());
+        }
+        if ty.is_tuple {
+            return Err(
+                "Hand a tuple's parts over one by one, or as a `pub extern struct`.".to_string(),
+            );
+        }
+        let declared = self.structs.contains_key(&name)
+            || self.enums.contains_key(&name)
+            || self.own.types.contains_key(&name);
+        let base = name.rsplit("::").next().unwrap_or(&name);
+        match (base, args.as_slice(), ty.is_view, out) {
+            (n, [], false, _) if a_number(n) => Ok(()),
+            ("String" | "str", [], true, false) => Ok(()),
+            ("String", [], false, true) => Ok(()),
+            ("String", [], false, false) => Err("Take `ref String`: C keeps the text and lends it for the call.".to_string()),
+            ("String" | "str", [], true, true) => Err("Hand back `String`: it is written into the caller's buffer.".to_string()),
+            ("Bytes", [], _, _) => Ok(()),
+            ("Vec", [element], false, true) if element == "u8" => Ok(()),
+            ("Array", [element], true, false) if a_number(element) => Ok(()),
+            ("Vec" | "Array", _, _, false) => Err("Take `ref Array[T]` of a number: C keeps the array and lends it for the call.".to_string()),
+            (_, [], _, _) if declared => Ok(()),
+            ("Locked" | "Shared" | "SharedMut" | "Seen", _, _, _) => Err(format!(
+                "Keep the `{name}` inside the package, in a `pub struct` C holds as a handle."
+            )),
+            ("HashMap" | "BTreeMap" | "Map", _, _, _) => {
+                Err("Keep the map in a `pub struct` C holds as a handle, or hand its entries to a callback.".to_string())
+            }
+            ("Vec" | "Array", _, _, true) => Err("Hand many results to a callback, or put them in a `pub struct` C holds as a handle.".to_string()),
+            _ => Err(format!(
+                "Declare `{name}` in the package as a `pub struct`, which C holds as a handle."
+            )),
         }
     }
 

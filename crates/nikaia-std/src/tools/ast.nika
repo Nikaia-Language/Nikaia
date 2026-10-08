@@ -125,6 +125,10 @@ pub enum Item {
         /// Kap 7.1: `throws`. Named `can_throw` because `throws` is a word the
         /// language keeps, and the tree is declared in it (ADR-294).
         can_throw: bool,
+        /// **`extern` before a function with a body: an entry point** C calls
+        /// ([ADR-284](../../../../docs/specification/adr/adr-284.md) D4,
+        /// ADR-324 D6).
+        is_extern: bool,
     },
 
     // Kap 4.4: enum Message { Quit, Move { x: i32 }, Write(String) }

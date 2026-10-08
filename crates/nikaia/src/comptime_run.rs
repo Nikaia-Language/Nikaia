@@ -742,6 +742,7 @@ fn a_function(
         sync_by: Vec::new(),
         is_public: false,
         can_throw: false,
+        is_extern: false,
     }
 }
 

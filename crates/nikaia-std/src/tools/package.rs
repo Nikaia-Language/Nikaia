@@ -106,7 +106,7 @@ pub struct Program {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Item {
-    Fn { name: Option<winnow_grammar::Symbol>, generics: Vec<GenericParam>, receiver: Option<Receiver>, args: Vec<FnArg>, config: Vec<ConfigParam>, spread: Option<winnow_grammar::Symbol>, ret_type: Option<Type>, body: Block, is_sync: bool, sync_by: Vec<winnow_grammar::Symbol>, is_public: bool, can_throw: bool },
+    Fn { name: Option<winnow_grammar::Symbol>, generics: Vec<GenericParam>, receiver: Option<Receiver>, args: Vec<FnArg>, config: Vec<ConfigParam>, spread: Option<winnow_grammar::Symbol>, ret_type: Option<Type>, body: Block, is_sync: bool, sync_by: Vec<winnow_grammar::Symbol>, is_public: bool, can_throw: bool, is_extern: bool },
     Enum { name: winnow_grammar::Symbol, variants: Vec<EnumVariant>, is_public: bool },
     Struct { name: winnow_grammar::Symbol, generics: Vec<GenericParam>, fields: Vec<FieldDef>, is_public: bool },
     Impl { trait_name: Option<winnow_grammar::Symbol>, target: Type, methods: Vec<Spanned<Item>> },

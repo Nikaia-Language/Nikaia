@@ -1819,8 +1819,12 @@ grammar! {
         // A declaration with **no** result type writes them in the same place,
         // because there is nothing for them to be before or after:
         // `fn tick() sync { … }` is untouched.
+        // **`extern` before a function with a body makes it an entry point**
+        // C calls ([ADR-284](../../../../docs/specification/adr/adr-284.md) D4,
+        // ADR-324 D6). What an entry point may be is the checker's to say.
         rule fn_item -> Item =
             vis:kw_pub?
+            exported:kw_extern?
             KW_FN
             head:fn_head
             promise_before_the_arrow?
@@ -1843,8 +1847,11 @@ grammar! {
                     sync_by,
                     is_public: vis.is_some(),
                     can_throw: throws,
+                    is_extern: exported.is_some(),
                 }
             }
+
+        rule kw_extern -> () = KW_EXTERN -> { () }
 
         // **A function declared without parameters may omit the parentheses**
         // (Part I 5.1, *Optional Parentheses*): `fn init { … }` is

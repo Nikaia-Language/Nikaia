@@ -4,6 +4,17 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.663] — 2026-10-08
+
+**`pub extern fn` with a body parses, and four shapes of an entry point are
+refused** (ADR-284 D4, D5, ADR-324 D6; #88, the first step of ADR-284 §5).
+- The tree records `is_extern` on a function.
+- `NK1237` an entry point that is not `pub`; `NK1238` an entry point in a
+  build that makes no library - every build for now, since the
+  `c-library` artifact is not built; `NK1239` a generic entry point or a
+  trait's method; `NK1240` a parameter or result that does not cross to C,
+  with the shape that does. The four codes are new in Part III's table.
+
 ## [0.0.662] — 2026-10-08
 
 **`NK1229`: a supervisor's child that captures a `mut` binding is refused**
