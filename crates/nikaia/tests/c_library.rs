@@ -59,6 +59,33 @@ pub extern fn after(light: Light) -> Light sync {
     }
 }
 
+pub struct Counter {
+    pub count: i64,
+    pub name: String,
+    pub light: Light,
+    steps: i64,
+}
+
+impl Counter {
+    pub extern fn(name: ref String) -> Counter sync {
+        return Counter { count: 0, name: name.clone(), light: Light::Red, steps: 0 }
+    }
+
+    pub extern fn bump(ref mut self, by: i64) -> i64 sync {
+        self.count = self.count + by
+        self.steps = self.steps + 1
+        return self.count
+    }
+
+    pub extern fn steps(ref self) -> i64 sync {
+        return self.steps
+    }
+}
+
+pub extern fn sum_of(a: ref Counter, b: ref Counter) -> i64 sync {
+    return a.count + b.count
+}
+
 pub enum Refusal {
     Negative,
     TooLarge(i64),
@@ -124,6 +151,42 @@ int main(void) {
     status = calc_checked(500, &n);
     calc_last_error((uint8_t *)said, sizeof said, &written);
     printf("too large %d %.16s\n", status == CALC_E_TOOLARGE, said);
+    return CALC_OK;
+}
+"#;
+
+/// A `pub struct` is a handle (ADR-284 D5, D11): made by its constructor,
+/// changed and read by its methods and getters, freed by `_free`.
+const HANDLE_CALLER: &str = r#"#include <stdio.h>
+#include "calc.h"
+
+int main(void) {
+    calc_Counter *counter = NULL;
+    calc_Counter *other = NULL;
+    int status = calc_Counter_new((const uint8_t *)"clicks", 6, &counter);
+    printf("new %d %d\n", status, counter != NULL);
+    calc_Counter_new((const uint8_t *)"taps", 4, &other);
+    int64_t n = 0;
+    calc_Counter_bump(counter, 5, &n);
+    status = calc_Counter_bump(counter, 2, &n);
+    printf("bump %d %lld\n", status, (long long)n);
+    calc_Counter_bump(other, 10, &n);
+    calc_Counter_steps(counter, &n);
+    printf("steps %lld\n", (long long)n);
+    calc_Counter_count(counter, &n);
+    printf("count %lld\n", (long long)n);
+    char name[16];
+    size_t written = 0;
+    status = calc_Counter_name(counter, (uint8_t *)name, sizeof name, &written);
+    printf("name %d %.*s\n", status, (int)written, name);
+    calc_Light light = CALC_LIGHT_GREEN;
+    calc_Counter_light(counter, &light);
+    printf("light %d\n", light == CALC_LIGHT_RED);
+    calc_sum_of(counter, other, &n);
+    printf("sum %lld\n", (long long)n);
+    printf("same twice %d\n", calc_sum_of(counter, counter, &n));
+    printf("no handle %d\n", calc_Counter_steps(NULL, &n));
+    printf("free %d %d %d\n", calc_Counter_free(counter), calc_Counter_free(other), calc_Counter_free(NULL));
     return CALC_OK;
 }
 "#;
@@ -258,6 +321,29 @@ fn a_c_program_calls_the_library() {
     assert_eq!(
         String::from_utf8_lossy(&ran.stdout),
         "size query 0 10\ntoo small -2 10\ngreet 0 Hello, Ada\nnot utf-8 -1\nno address -1\ntotal 0 10\nsize 0 3\nafter 0 1\nno such light -1\n"
+    );
+
+    std::fs::write(root.join("handle.c"), HANDLE_CALLER).expect("the caller");
+    let program = root.join("handle");
+    let compiled = Command::new("cc")
+        .arg("-I")
+        .arg(&made)
+        .arg(root.join("handle.c"))
+        .arg("-L")
+        .arg(&made)
+        .args(["-lcalc", "-o"])
+        .arg(&program)
+        .output()
+        .expect("cc runs");
+    assert!(compiled.status.success(), "{}", said(&compiled));
+    let ran = Command::new(&program)
+        .env("LD_LIBRARY_PATH", &made)
+        .output()
+        .expect("the caller runs");
+    assert!(ran.status.success(), "{}", said(&ran));
+    assert_eq!(
+        String::from_utf8_lossy(&ran.stdout),
+        "new 0 1\nbump 0 7\nsteps 2\ncount 7\nname 0 clicks\nlight 1\nsum 17\nsame twice -5\nno handle -1\nfree 0 0 0\n"
     );
 
     std::fs::write(root.join("throwing.c"), THROWING_CALLER).expect("the caller");

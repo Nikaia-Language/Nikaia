@@ -19,8 +19,11 @@
 // text (`ref String`) and bytes (`Bytes`) in as an address and a length, and
 // out (`String`, `Bytes`, `Vec[u8]`) into the caller's buffer (D6); a run of
 // numbers (`ref Array[T]`) in; an `enum` without payload in and out, as a C
-// `enum` - of a function that does not pause, declared in the package's entry
-// file, throwing at most one `enum` of it. Every raw pointer is read and written
+// `enum`; a `pub struct` as a handle - out as a new one, in as `ref T`, with
+// its `extern` constructor and methods, a getter per `pub` field and `_free`,
+// each call holding its lock (D11) - of a function or method that does not
+// pause, declared in the package's entry file, throwing at most one `enum` of
+// it. Every raw pointer is read and written
 // through `c-boundary` (ADR-218). Every other entry point is refused here,
 // saying which part is not built yet, rather than exported half-way.
 
@@ -81,6 +84,8 @@ enum In {
     Bytes,
     /// An `enum` without payload: a C `enum`, its number checked on the way in.
     Choice(usize),
+    /// `ref T` of a handle: held shared for the call.
+    Handle(usize),
 }
 
 /// What a result hands back (ADR-284 D5, D6).
@@ -90,6 +95,8 @@ enum Out {
     Buffer,
     /// An `enum` without payload: its number.
     Choice(usize),
+    /// A `pub struct`: a new handle, which the caller frees.
+    Handle(usize),
 }
 
 /// An `enum` without payload the entry file declares (ADR-284 D5): its name
@@ -132,7 +139,25 @@ fn choice(parsed: &crate::parser::Parsed, plains: &[Plain], ty: &Type) -> Option
     plains.iter().position(|plain| plain.name == name)
 }
 
-fn taken(parsed: &crate::parser::Parsed, plains: &[Plain], ty: &Type) -> Option<In> {
+/// Which of `handles` a type names, as a view or not.
+fn handle_of(parsed: &crate::parser::Parsed, handles: &[Handled], ty: &Type) -> Option<usize> {
+    if ty.is_nullable || ty.is_tuple || !ty.generics.is_empty() || ty.code.is_some() {
+        return None;
+    }
+    let name = parsed.text(ty.name);
+    handles.iter().position(|handle| handle.name == name)
+}
+
+fn taken(
+    parsed: &crate::parser::Parsed,
+    plains: &[Plain],
+    handles: &[Handled],
+    ty: &Type,
+) -> Option<In> {
+    if let Some(at) = handle_of(parsed, handles, ty) {
+        // A handle taken by value would end it: not exported yet.
+        return ty.is_view.then_some(In::Handle(at));
+    }
     if let Some(shape) = by_value(parsed, ty) {
         return Some(In::Value(shape));
     }
@@ -162,7 +187,15 @@ fn taken(parsed: &crate::parser::Parsed, plains: &[Plain], ty: &Type) -> Option<
     }
 }
 
-fn handed(parsed: &crate::parser::Parsed, plains: &[Plain], ty: &Type) -> Option<Out> {
+fn handed(
+    parsed: &crate::parser::Parsed,
+    plains: &[Plain],
+    handles: &[Handled],
+    ty: &Type,
+) -> Option<Out> {
+    if let Some(at) = handle_of(parsed, handles, ty) {
+        return (!ty.is_view).then_some(Out::Handle(at));
+    }
     if let Some(shape) = by_value(parsed, ty) {
         return Some(Out::Value(shape));
     }
@@ -180,25 +213,157 @@ fn handed(parsed: &crate::parser::Parsed, plains: &[Plain], ty: &Type) -> Option
     }
 }
 
-/// Every error `enum` the entry file declares and an entry point throws, with
-/// the code of each variant: `1…` in declaration order across the library.
-fn variant_codes(program: &Program) -> Vec<(String, Vec<(String, i64)>)> {
-    let Some(unit) = program.units.first() else {
-        return Vec::new();
-    };
-    let parsed = &unit.parsed;
-    let thrown: std::collections::BTreeSet<String> = parsed
+/// The refusal for an entry point whose `what` is not exported yet.
+fn not_yet(written: &str, what: &str) -> anyhow::Error {
+    anyhow::anyhow!(
+        "`{written}` is an entry point whose {what} this compiler does not export yet: \
+         what is built is numbers, `bool`, `scalar` and an `enum` without payload in and \
+         out, text and bytes in and out, a run of numbers in, and a `pub struct` as a \
+         handle, of a function in `src/main.nika` that does not pause (ADR-284 D5)."
+    )
+}
+
+/// How a call holds a handle (ADR-284 D11): shared to read it, alone to change it.
+#[derive(Clone, Copy, PartialEq)]
+enum Hold {
+    Shared,
+    Exclusive,
+}
+
+/// **One function C calls**: an entry point, a handle's method or constructor,
+/// or the getter of one of its `pub` fields.
+struct Entry<'a> {
+    /// The handle type it belongs to.
+    owner: Option<String>,
+    /// As written: `new` for the anonymous constructor, the field for a getter.
+    name: String,
+    /// How it holds `self`, where it has one.
+    receiver: Option<Hold>,
+    args: &'a [crate::ast::FnArg],
+    ret_type: Option<&'a Type>,
+    /// A getter reads its field rather than calling anything.
+    getter: bool,
+}
+
+impl Entry<'_> {
+    /// The name the ledger knows it by.
+    fn key(&self) -> String {
+        match &self.owner {
+            Some(owner) => format!("{owner}::{}", self.name),
+            None => self.name.clone(),
+        }
+    }
+
+    /// As a refusal names it.
+    fn written(&self) -> String {
+        match &self.owner {
+            Some(owner) => format!("{owner}.{}", self.name),
+            None => self.name.clone(),
+        }
+    }
+}
+
+/// A `pub struct` of the entry file C holds as a handle (ADR-284 D5), with
+/// its `pub` fields, each of which gets a getter.
+struct Handled<'a> {
+    name: String,
+    fields: Vec<(String, &'a Type)>,
+}
+
+fn handled_structs(parsed: &crate::parser::Parsed) -> Vec<Handled<'_>> {
+    parsed
         .program
         .items
         .iter()
         .filter_map(|item| match &item.node {
-            Item::Fn {
-                name: Some(name),
-                is_extern: true,
-                ..
-            } => program.contracts.functions.get(parsed.text(*name)),
+            Item::Struct {
+                name,
+                generics,
+                fields,
+                is_public: true,
+            } if generics.is_empty() => Some(Handled {
+                name: parsed.text(*name).to_string(),
+                fields: fields
+                    .iter()
+                    .filter(|field| field.is_public)
+                    .map(|field| (parsed.text(field.name).to_string(), &field.ty))
+                    .collect(),
+            }),
             _ => None,
         })
+        .collect()
+}
+
+/// Every `extern` function and method the program's own files declare.
+fn entries<'a>(program: &'a Program) -> Result<Vec<Entry<'a>>> {
+    let mut out = Vec::new();
+    for (at, unit) in program.units.iter().enumerate() {
+        if unit.package.is_some() {
+            continue;
+        }
+        let parsed = &unit.parsed;
+        let mut take = |owner: Option<String>, item: &'a Item| -> Result<()> {
+            let Item::Fn {
+                name,
+                receiver,
+                args,
+                ret_type,
+                is_extern: true,
+                ..
+            } = item
+            else {
+                return Ok(());
+            };
+            let name = name
+                .map(|n| parsed.text(n).to_string())
+                .unwrap_or_else(|| "new".to_string());
+            if at != 0 {
+                return Err(not_yet(&name, "file"));
+            }
+            let receiver = match receiver {
+                None => None,
+                Some(r) if r.is_ref && r.is_mut => Some(Hold::Exclusive),
+                Some(r) if r.is_ref => Some(Hold::Shared),
+                Some(_) => return Err(not_yet(&name, "`self` taken by value")),
+            };
+            out.push(Entry {
+                owner,
+                name,
+                receiver,
+                args,
+                ret_type: ret_type.as_ref(),
+                getter: false,
+            });
+            Ok(())
+        };
+        for item in &parsed.program.items {
+            match &item.node {
+                Item::Impl {
+                    trait_name: None,
+                    target,
+                    methods,
+                } => {
+                    for method in methods {
+                        take(Some(parsed.text(target.name).to_string()), &method.node)?;
+                    }
+                }
+                node => take(None, node)?,
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// Every error `enum` the entry file declares and an entry point throws, with
+/// the code of each variant: `1…` in declaration order across the library.
+fn variant_codes(program: &Program, entries: &[Entry]) -> Vec<(String, Vec<(String, i64)>)> {
+    let Some(unit) = program.units.first() else {
+        return Vec::new();
+    };
+    let parsed = &unit.parsed;
+    let thrown: std::collections::BTreeSet<String> = entries
+        .iter()
+        .filter_map(|entry| program.contracts.functions.get(&entry.key()))
         .flat_map(|contract| contract.fails_with.iter().cloned())
         .collect();
     let mut next = 1;
@@ -253,17 +418,52 @@ pub fn export(program: &Program, prefix: &str, package: &str) -> Result<Option<E
          }})\n}}\n"
     ));
     let mut declarations = String::new();
+    let found = entries(program)?;
+    let Some(unit) = program.units.first() else {
+        return Ok(None);
+    };
+    let parsed = &unit.parsed;
     // **A `throws` function's variants are `1…`, per library in declaration
     // order** (D7): every variant of every error `enum` the entry file
     // declares and an entry point throws.
-    let codes = variant_codes(program);
-    let plains = program
-        .units
-        .first()
-        .map(|unit| plain_enums(&unit.parsed))
-        .unwrap_or_default();
-    // The ones an entry point's signature names, which the header declares.
+    let codes = variant_codes(program, &found);
+    let plains = plain_enums(parsed);
+    let handles = handled_structs(parsed);
+    // The enums and the handles an entry point names, which the header declares.
     let mut crossing = vec![false; plains.len()];
+    let mut held = vec![false; handles.len()];
+    for entry in &found {
+        if let Some(owner) = &entry.owner {
+            match handles.iter().position(|handle| handle.name == *owner) {
+                Some(at) => held[at] = true,
+                None => {
+                    return Err(not_yet(
+                        &entry.written(),
+                        "type, which is no `pub struct` of the entry file,",
+                    ));
+                }
+            }
+        }
+        for ty in entry.args.iter().map(|arg| &arg.ty).chain(entry.ret_type) {
+            if let Some(at) = handle_of(parsed, &handles, ty) {
+                held[at] = true;
+            }
+        }
+    }
+    // **A getter per `pub` field** of every handle (D5).
+    let mut all = found;
+    for (handle, _) in handles.iter().zip(&held).filter(|(_, held)| **held) {
+        for (field, ty) in &handle.fields {
+            all.push(Entry {
+                owner: Some(handle.name.clone()),
+                name: field.clone(),
+                receiver: Some(Hold::Shared),
+                args: &[],
+                ret_type: Some(ty),
+                getter: true,
+            });
+        }
+    }
     let mut constants = String::new();
     for (error, variants) in &codes {
         for (variant, code) in variants {
@@ -273,235 +473,298 @@ pub fn export(program: &Program, prefix: &str, package: &str) -> Result<Option<E
             ));
         }
     }
-    for (at, unit) in program.units.iter().enumerate() {
-        if unit.package.is_some() {
-            continue;
+    // **No symbol twice** (D13): a method, a getter and `_free` share a
+    // handle's names.
+    let mut symbols = std::collections::BTreeSet::new();
+    let mut claim = |symbol: &str, written: &str| -> Result<()> {
+        match symbols.insert(symbol.to_string()) {
+            true => Ok(()),
+            false => Err(anyhow::anyhow!(
+                "`{written}` would be exported as `{symbol}`, which another entry point, getter \
+                 or `_free` is already: rename one of them (ADR-284 D13)."
+            )),
         }
-        for item in &unit.parsed.program.items {
-            let Item::Fn {
-                name: Some(name),
-                args,
-                ret_type,
-                is_extern: true,
-                ..
-            } = &item.node
-            else {
-                continue;
+    };
+    for (handle, _) in handles.iter().zip(&held).filter(|(_, held)| **held) {
+        let ty = &handle.name;
+        let symbol = format!("{prefix}_{ty}_free");
+        claim(&symbol, ty)?;
+        rust.push_str(&format!(
+            "\n#[unsafe(no_mangle)]\npub extern \"C\" fn {symbol}(handle: *mut nikaia_std::c_boundary::Handle<{ty}>) -> std::ffi::c_int {{\n    \
+             if __NIKAIA_POISONED.load(std::sync::atomic::Ordering::SeqCst) {{\n        return -4;\n    }}\n    \
+             // SAFETY: the C caller hands a handle this library made, or NULL, and uses it no more (ADR-284 D6).\n    \
+             unsafe {{ nikaia_std::c_boundary::free(handle) }}\n}}\n"
+        ));
+        declarations.push_str(&format!("int {symbol}({prefix}_{ty} *handle);\n"));
+    }
+    for entry in &all {
+        let written = entry.written();
+        let contract = match entry.getter {
+            true => None,
+            false => program.contracts.functions.get(&entry.key()),
+        };
+        if contract.is_some_and(|c| !c.sync_claim.is_sync()) {
+            return Err(not_yet(&written, "pausing"));
+        }
+        // **What it throws is one `enum` of the entry file** (D7), whose
+        // variants are the codes; anything else is not exported yet.
+        let thrown: Option<&Vec<(String, i64)>> = match contract.map(|c| c.fails_with.as_slice()) {
+            None | Some([]) => None,
+            Some([one]) => match codes.iter().find(|(error, _)| error == one) {
+                Some((_, variants)) => Some(variants),
+                None => return Err(not_yet(&written, "failure")),
+            },
+            Some(_) => return Err(not_yet(&written, "failure")),
+        };
+        let symbol = match &entry.owner {
+            Some(owner) => format!("{prefix}_{owner}_{}", entry.name),
+            None => format!("{prefix}_{}", entry.name),
+        };
+        claim(&symbol, &written)?;
+        let mut rust_params = Vec::new();
+        let mut c_params = Vec::new();
+        let mut checks = String::new();
+        let mut call_args = Vec::new();
+        // **`self` is the handle, held for the call** (D11): shared where the
+        // method only reads it, alone where it changes it.
+        if let (Some(hold), Some(owner)) = (entry.receiver, &entry.owner) {
+            rust_params.push(format!(
+                "__nikaia_self: *const nikaia_std::c_boundary::Handle<{owner}>"
+            ));
+            let (constant, how, binding) = match hold {
+                Hold::Shared => ("const ", "shared", ""),
+                Hold::Exclusive => ("", "exclusive", "mut "),
             };
-            let parsed = &unit.parsed;
-            let written = parsed.text(*name).to_string();
-            let not_yet = |what: &str| -> anyhow::Error {
-                anyhow::anyhow!(
-                    "`{written}` is an entry point whose {what} this compiler does not export yet: \
-                     what is built is numbers, `bool`, `scalar` and an `enum` without payload in \
-                     and out, text and bytes in and out, and a run of numbers in, of a function \
-                     in `src/main.nika` that does not pause (ADR-284 D5)."
-                )
-            };
-            if at != 0 {
-                return Err(not_yet("file"));
-            }
-            let contract = program.contracts.functions.get(&written);
-            if contract.is_some_and(|c| !c.sync_claim.is_sync()) {
-                return Err(not_yet("pausing"));
-            }
-            // **What it throws is one `enum` of the entry file** (D7), whose
-            // variants are the codes; anything else is not exported yet.
-            let thrown: Option<&Vec<(String, i64)>> =
-                match contract.map(|c| c.fails_with.as_slice()) {
-                    None | Some([]) => None,
-                    Some([one]) => match codes.iter().find(|(error, _)| error == one) {
-                        Some((_, variants)) => Some(variants),
-                        None => return Err(not_yet("failure")),
-                    },
-                    Some(_) => return Err(not_yet("failure")),
-                };
-            let symbol = format!("{prefix}_{written}");
-            let mut rust_params = Vec::new();
-            let mut c_params = Vec::new();
-            let mut checks = String::new();
-            let mut call_args = Vec::new();
-            for (position, arg) in args.iter().enumerate() {
-                let param = parsed.text(arg.name).to_string();
-                let local = crate::emit::escaped(&param).into_owned();
-                match taken(parsed, &plains, &arg.ty) {
-                    Some(In::Value(shape)) => {
-                        rust_params.push(format!("{local}: {}", shape.rust));
-                        c_params.push(format!("{} {param}", shape.c));
-                        if shape.scalar {
-                            checks.push_str(&format!(
-                                "    let Some({local}) = char::from_u32({local}) else {{ return -1; }};\n"
-                            ));
-                        }
-                        call_args.push(local);
-                    }
-                    Some(In::Run {
-                        rust: element,
-                        c,
-                        as_text,
-                    }) => {
-                        rust_params.push(format!("{local}: *const {element}, {local}_len: usize"));
-                        c_params.push(format!("const {c} *{param}, size_t {param}_len"));
-                        let read = match as_text {
-                            true => "text",
-                            false => "run",
-                        };
-                        // A length with no address, or text that is not UTF-8,
-                        // is `E_ARGUMENT` (ADR-284 D5).
+            c_params.push(format!("{constant}{prefix}_{owner} *self"));
+            checks.push_str(&format!(
+                "    // SAFETY: the C caller hands a handle this library made and has not freed, or NULL (ADR-284 D5).\n    \
+                 let {binding}__nikaia_self = match unsafe {{ nikaia_std::c_boundary::{how}(__nikaia_self) }} {{ Ok(held) => held, Err(status) => return status }};\n"
+            ));
+        }
+        for (position, arg) in entry.args.iter().enumerate() {
+            let param = parsed.text(arg.name).to_string();
+            let local = crate::emit::escaped(&param).into_owned();
+            match taken(parsed, &plains, &handles, &arg.ty) {
+                Some(In::Value(shape)) => {
+                    rust_params.push(format!("{local}: {}", shape.rust));
+                    c_params.push(format!("{} {param}", shape.c));
+                    if shape.scalar {
                         checks.push_str(&format!(
-                            "    // SAFETY: the C caller keeps `{param}_len` values at `{param}` for the call (ADR-284 D5).\n    \
-                             let Some({local}) = (unsafe {{ nikaia_std::c_boundary::{read}({local}, {local}_len) }}) else {{ return -1; }};\n"
+                            "    let Some({local}) = char::from_u32({local}) else {{ return -1; }};\n"
                         ));
-                        call_args.push(local);
                     }
-                    Some(In::Bytes) => {
-                        rust_params.push(format!("{local}: *const u8, {local}_len: usize"));
-                        c_params.push(format!("const uint8_t *{param}, size_t {param}_len"));
-                        checks.push_str(&format!(
-                            "    // SAFETY: the C caller keeps `{param}_len` bytes at `{param}` for the call (ADR-284 D5).\n    \
-                             let Some({local}) = (unsafe {{ nikaia_std::c_boundary::run({local}, {local}_len) }}) else {{ return -1; }};\n    \
-                             let {local} = nikaia_std::bytes::Bytes::from({local});\n"
-                        ));
-                        // **Lent where the function only reads it**, as the
-                        // ledger says and the declaration was lowered.
-                        let lent =
-                            contract.is_some_and(|c| crate::contracts::keeps::lends(c, position));
-                        call_args.push(match lent {
-                            true => format!("&{local}"),
-                            false => local,
-                        });
-                    }
-                    Some(In::Choice(at)) => {
-                        let plain = &plains[at];
-                        crossing[at] = true;
-                        rust_params.push(format!("{local}: std::ffi::c_int"));
-                        c_params.push(format!("{prefix}_{} {param}", plain.name));
-                        // A number no variant has is `E_ARGUMENT` (ADR-284 D5).
-                        let arms: Vec<String> = plain
-                            .variants
-                            .iter()
-                            .enumerate()
-                            .map(|(number, variant)| {
-                                format!("{number} => {}::{variant},", plain.name)
-                            })
-                            .collect();
-                        checks.push_str(&format!(
-                            "    let {local} = match {local} {{ {} _ => return -1 }};\n",
-                            arms.join(" ")
-                        ));
-                        call_args.push(local);
-                    }
-                    None => return Err(not_yet(&format!("parameter `{param}`"))),
+                    call_args.push(local);
                 }
-            }
-            let result = match ret_type {
-                Some(ty) => match handed(parsed, &plains, ty) {
-                    Some(Out::Value(shape)) => {
-                        rust_params.push(format!("out: *mut {}", shape.rust));
-                        c_params.push(format!("{} *out", shape.c));
-                        Some(Out::Value(shape))
-                    }
-                    Some(Out::Buffer) => {
-                        rust_params
-                            .push("out: *mut u8, cap: usize, written: *mut usize".to_string());
-                        c_params.push("uint8_t *out, size_t cap, size_t *written".to_string());
-                        Some(Out::Buffer)
-                    }
-                    Some(Out::Choice(at)) => {
-                        crossing[at] = true;
-                        rust_params.push("out: *mut std::ffi::c_int".to_string());
-                        c_params.push(format!("{prefix}_{} *out", plains[at].name));
-                        Some(Out::Choice(at))
-                    }
-                    None => return Err(not_yet("result")),
-                },
-                None => None,
-            };
-            let call = format!(
-                "{}({})",
-                crate::emit::escaped(&written),
-                call_args.join(", ")
-            );
-            let handed_back = match &result {
-                Some(Out::Value(shape)) => {
-                    let value = match shape.scalar {
-                        true => "value as u32",
-                        false => "value",
+                Some(In::Run {
+                    rust: element,
+                    c,
+                    as_text,
+                }) => {
+                    rust_params.push(format!("{local}: *const {element}, {local}_len: usize"));
+                    c_params.push(format!("const {c} *{param}, size_t {param}_len"));
+                    let read = match as_text {
+                        true => "text",
+                        false => "run",
                     };
-                    format!(
-                        "Ok(value) => {{\n            \
-                         // SAFETY: the C caller hands a place for one value, or NULL (ADR-284 D7).\n            \
-                         unsafe {{ nikaia_std::c_boundary::put(out, {value}) }};\n            0\n        }}"
-                    )
+                    // A length with no address, or text that is not UTF-8,
+                    // is `E_ARGUMENT` (ADR-284 D5).
+                    checks.push_str(&format!(
+                        "    // SAFETY: the C caller keeps `{param}_len` values at `{param}` for the call (ADR-284 D5).\n    \
+                         let Some({local}) = (unsafe {{ nikaia_std::c_boundary::{read}({local}, {local}_len) }}) else {{ return -1; }};\n"
+                    ));
+                    call_args.push(local);
                 }
-                Some(Out::Buffer) => "Ok(value) => {\n            \
-                     // SAFETY: the C caller hands `cap` bytes at `out` and a place for the length, or NULL (ADR-284 D6).\n            \
-                     unsafe { nikaia_std::c_boundary::hand_back(AsRef::<[u8]>::as_ref(&value), out, cap, written) }\n        }"
-                    .to_string(),
-                Some(Out::Choice(at)) => {
-                    let plain = &plains[*at];
+                Some(In::Bytes) => {
+                    rust_params.push(format!("{local}: *const u8, {local}_len: usize"));
+                    c_params.push(format!("const uint8_t *{param}, size_t {param}_len"));
+                    checks.push_str(&format!(
+                        "    // SAFETY: the C caller keeps `{param}_len` bytes at `{param}` for the call (ADR-284 D5).\n    \
+                         let Some({local}) = (unsafe {{ nikaia_std::c_boundary::run({local}, {local}_len) }}) else {{ return -1; }};\n    \
+                         let {local} = nikaia_std::bytes::Bytes::from({local});\n"
+                    ));
+                    // **Lent where the function only reads it**, as the
+                    // ledger says and the declaration was lowered.
+                    let lent =
+                        contract.is_some_and(|c| crate::contracts::keeps::lends(c, position));
+                    call_args.push(match lent {
+                        true => format!("&{local}"),
+                        false => local,
+                    });
+                }
+                Some(In::Choice(at)) => {
+                    let plain = &plains[at];
+                    crossing[at] = true;
+                    rust_params.push(format!("{local}: std::ffi::c_int"));
+                    c_params.push(format!("{prefix}_{} {param}", plain.name));
+                    // A number no variant has is `E_ARGUMENT` (ADR-284 D5).
                     let arms: Vec<String> = plain
                         .variants
                         .iter()
                         .enumerate()
-                        .map(|(number, variant)| format!("{}::{variant} => {number},", plain.name))
+                        .map(|(number, variant)| format!("{number} => {}::{variant},", plain.name))
                         .collect();
-                    format!(
-                        "Ok(value) => {{\n            \
-                         let number: std::ffi::c_int = match value {{ {} }};\n            \
-                         // SAFETY: the C caller hands a place for one value, or NULL (ADR-284 D7).\n            \
-                         unsafe {{ nikaia_std::c_boundary::put(out, number) }};\n            0\n        }}",
+                    checks.push_str(&format!(
+                        "    let {local} = match {local} {{ {} _ => return -1 }};\n",
                         arms.join(" ")
-                    )
+                    ));
+                    call_args.push(local);
                 }
-                None => "Ok(()) => 0".to_string(),
-            };
-            // A failure is the variant's code, and its message, with its site,
-            // is what `<prefix>_last_error` hands back (D7).
-            let (handed_back, failed) = match thrown {
-                None => (handed_back, String::new()),
-                Some(variants) => {
-                    let error = contract
-                        .and_then(|c| c.fails_with.first())
-                        .cloned()
-                        .unwrap_or_default();
-                    let arms: Vec<String> = variants
-                        .iter()
-                        .map(|(variant, code)| format!("{error}::{variant} {{ .. }} => {code},"))
-                        .collect();
-                    (
-                        handed_back
-                            .replacen("Ok(", "Ok(Ok(", 1)
-                            .replacen(") =>", ")) =>", 1),
-                        format!(
-                            "\n        Ok(Err(thrown)) => {{\n            \
-                             __nikaia_failed(thrown.full());\n            \
-                             match thrown.split().0 {{ {} }}\n        }}",
-                            arms.join(" ")
-                        ),
-                    )
+                Some(In::Handle(at)) => {
+                    let ty = &handles[at].name;
+                    rust_params.push(format!(
+                        "{local}: *const nikaia_std::c_boundary::Handle<{ty}>"
+                    ));
+                    c_params.push(format!("const {prefix}_{ty} *{param}"));
+                    checks.push_str(&format!(
+                        "    // SAFETY: the C caller hands a handle this library made and has not freed, or NULL (ADR-284 D5).\n    \
+                         let {local} = match unsafe {{ nikaia_std::c_boundary::shared({local}) }} {{ Ok(held) => held, Err(status) => return status }};\n"
+                    ));
+                    call_args.push(format!("&*{local}"));
                 }
-            };
-            rust.push_str(&format!(
-                "\n#[unsafe(no_mangle)]\npub extern \"C\" fn {symbol}({}) -> std::ffi::c_int {{\n    \
-                 if __NIKAIA_POISONED.load(std::sync::atomic::Ordering::SeqCst) {{\n        return -4;\n    }}\n\
-                 {checks}    \
-                 match std::panic::catch_unwind(move || {call}) {{\n        {handed_back}{failed}\n        \
-                 Err(_) => {{\n            __NIKAIA_POISONED.store(true, std::sync::atomic::Ordering::SeqCst);\n            \
-                 __nikaia_failed(\"the library panicked; it answers E_PANICKED until it is started again\".to_string());\n            \
-                 -4\n        }}\n    }}\n}}\n",
-                rust_params.join(", "),
-            ));
-            let c_params = match c_params.is_empty() {
-                true => "void".to_string(),
-                false => c_params.join(", "),
-            };
-            declarations.push_str(&format!("int {symbol}({c_params});\n"));
+                None => return Err(not_yet(&written, &format!("parameter `{param}`"))),
+            }
         }
+        let result = match entry.ret_type {
+            Some(ty) => match handed(parsed, &plains, &handles, ty) {
+                Some(Out::Value(shape)) => {
+                    rust_params.push(format!("out: *mut {}", shape.rust));
+                    c_params.push(format!("{} *out", shape.c));
+                    Some(Out::Value(shape))
+                }
+                Some(Out::Buffer) => {
+                    rust_params.push("out: *mut u8, cap: usize, written: *mut usize".to_string());
+                    c_params.push("uint8_t *out, size_t cap, size_t *written".to_string());
+                    Some(Out::Buffer)
+                }
+                Some(Out::Choice(at)) => {
+                    crossing[at] = true;
+                    rust_params.push("out: *mut std::ffi::c_int".to_string());
+                    c_params.push(format!("{prefix}_{} *out", plains[at].name));
+                    Some(Out::Choice(at))
+                }
+                Some(Out::Handle(at)) => {
+                    let ty = &handles[at].name;
+                    rust_params.push(format!(
+                        "out: *mut *mut nikaia_std::c_boundary::Handle<{ty}>"
+                    ));
+                    c_params.push(format!("{prefix}_{ty} **out"));
+                    Some(Out::Handle(at))
+                }
+                None => {
+                    return Err(not_yet(
+                        &written,
+                        match entry.getter {
+                            true => "field's type",
+                            false => "result",
+                        },
+                    ));
+                }
+            },
+            None => None,
+        };
+        let name = crate::emit::escaped(&entry.name);
+        let call = match (&entry.owner, entry.receiver, entry.getter) {
+            (_, _, true) => format!("__nikaia_self.{name}.clone()"),
+            (_, Some(_), false) => format!("__nikaia_self.{name}({})", call_args.join(", ")),
+            (Some(owner), None, false) => format!("{owner}::{name}({})", call_args.join(", ")),
+            (None, None, false) => format!("{name}({})", call_args.join(", ")),
+        };
+        let handed_back = match &result {
+            Some(Out::Value(shape)) => {
+                let value = match shape.scalar {
+                    true => "value as u32",
+                    false => "value",
+                };
+                format!(
+                    "Ok(value) => {{\n            \
+                     // SAFETY: the C caller hands a place for one value, or NULL (ADR-284 D7).\n            \
+                     unsafe {{ nikaia_std::c_boundary::put(out, {value}) }};\n            0\n        }}"
+                )
+            }
+            Some(Out::Buffer) => "Ok(value) => {\n            \
+                 // SAFETY: the C caller hands `cap` bytes at `out` and a place for the length, or NULL (ADR-284 D6).\n            \
+                 unsafe { nikaia_std::c_boundary::hand_back(AsRef::<[u8]>::as_ref(&value), out, cap, written) }\n        }"
+                .to_string(),
+            Some(Out::Choice(at)) => {
+                let plain = &plains[*at];
+                let arms: Vec<String> = plain
+                    .variants
+                    .iter()
+                    .enumerate()
+                    .map(|(number, variant)| format!("{}::{variant} => {number},", plain.name))
+                    .collect();
+                format!(
+                    "Ok(value) => {{\n            \
+                     let number: std::ffi::c_int = match value {{ {} }};\n            \
+                     // SAFETY: the C caller hands a place for one value, or NULL (ADR-284 D7).\n            \
+                     unsafe {{ nikaia_std::c_boundary::put(out, number) }};\n            0\n        }}",
+                    arms.join(" ")
+                )
+            }
+            // A new handle, which the caller frees; none is made where `out`
+            // is NULL.
+            Some(Out::Handle(_)) => "Ok(value) => {\n            \
+                 if !out.is_null() {\n                \
+                 // SAFETY: the C caller hands a place for one handle (ADR-284 D7).\n                \
+                 unsafe { nikaia_std::c_boundary::put(out, nikaia_std::c_boundary::handle(value)) };\n            \
+                 }\n            0\n        }"
+                .to_string(),
+            None => "Ok(()) => 0".to_string(),
+        };
+        // A failure is the variant's code, and its message, with its site,
+        // is what `<prefix>_last_error` hands back (D7).
+        let (handed_back, failed) = match thrown {
+            None => (handed_back, String::new()),
+            Some(variants) => {
+                let error = contract
+                    .and_then(|c| c.fails_with.first())
+                    .cloned()
+                    .unwrap_or_default();
+                let arms: Vec<String> = variants
+                    .iter()
+                    .map(|(variant, code)| format!("{error}::{variant} {{ .. }} => {code},"))
+                    .collect();
+                (
+                    handed_back
+                        .replacen("Ok(", "Ok(Ok(", 1)
+                        .replacen(") =>", ")) =>", 1),
+                    format!(
+                        "\n        Ok(Err(thrown)) => {{\n            \
+                         __nikaia_failed(thrown.full());\n            \
+                         match thrown.split().0 {{ {} }}\n        }}",
+                        arms.join(" ")
+                    ),
+                )
+            }
+        };
+        // `AssertUnwindSafe`: after a panic the library is poisoned, and
+        // nothing it held is looked at again (D8).
+        rust.push_str(&format!(
+            "\n#[unsafe(no_mangle)]\npub extern \"C\" fn {symbol}({}) -> std::ffi::c_int {{\n    \
+             if __NIKAIA_POISONED.load(std::sync::atomic::Ordering::SeqCst) {{\n        return -4;\n    }}\n\
+             {checks}    \
+             match std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {call})) {{\n        {handed_back}{failed}\n        \
+             Err(_) => {{\n            __NIKAIA_POISONED.store(true, std::sync::atomic::Ordering::SeqCst);\n            \
+             __nikaia_failed(\"the library panicked; it answers E_PANICKED until it is started again\".to_string());\n            \
+             -4\n        }}\n    }}\n}}\n",
+            rust_params.join(", "),
+        ));
+        let c_params = match c_params.is_empty() {
+            true => "void".to_string(),
+            false => c_params.join(", "),
+        };
+        declarations.push_str(&format!("int {symbol}({c_params});\n"));
+    }
+    // **A handle is an opaque struct** C holds by its address (D5).
+    let mut types = String::new();
+    for (handle, _) in handles.iter().zip(&held).filter(|(_, held)| **held) {
+        types.push_str(&format!(
+            "typedef struct {prefix}_{0} {prefix}_{0};\n\n",
+            handle.name
+        ));
     }
     // **An `enum` without payload is a C `enum`**, numbered in declaration
     // order (D5), each value `<PREFIX>_<TYPE>_<VARIANT>` (D13).
-    let mut types = String::new();
     for (plain, _) in plains
         .iter()
         .zip(&crossing)

@@ -4,6 +4,20 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.669] — 2026-10-08
+
+**A library hands C a `pub struct` as a handle** (ADR-284 D5, D11, D13; #88).
+An opaque `<prefix>_<Type>` in the header: its `extern` anonymous constructor
+is `<prefix>_<Type>_new`, its `extern` methods `<prefix>_<Type>_<method>` with
+`self` first, a getter `<prefix>_<Type>_<field>` per `pub` field, and
+`<prefix>_<Type>_free`. An entry point takes one as `ref T` and hands a new one
+back. Every call holds the handle's lock - shared for `ref self` and `ref T`,
+alone for `ref mut self` - and a call on a handle the thread already holds is
+`E_REENTRANT`; NULL is `E_ARGUMENT`. Two symbols with one name are refused. The
+lock and the raw pointers live in `c-boundary`. A handle taken by value, a
+method taking `self` by value, and a field whose type does not cross are not
+exported yet.
+
 ## [0.0.668] — 2026-10-08
 
 **A library's entry points take and return an `enum` without payload** (ADR-284

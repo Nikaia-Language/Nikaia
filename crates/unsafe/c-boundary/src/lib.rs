@@ -1,12 +1,17 @@
 //! What C hands a library's entry point and what the entry point hands back
-//! (ADR-284 D5-D7). See `README.md` for every `unsafe` and its argument.
+//! (ADR-284 D5-D7, D11). See `README.md` for every `unsafe` and its argument.
 
-#![no_std]
+use std::cell::RefCell;
+use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 /// The status of a call that went as asked (ADR-284 D7).
 pub const OK: core::ffi::c_int = 0;
 /// The caller's buffer is too small; `written` says the size that would do.
 pub const E_TOO_SMALL: core::ffi::c_int = -2;
+/// No handle where one is needed.
+pub const E_ARGUMENT: core::ffi::c_int = -1;
+/// A call on a handle this thread already holds (ADR-284 D11).
+pub const E_REENTRANT: core::ffi::c_int = -5;
 
 /// **A run of values C keeps**, as the slice it is: `None` where a length
 /// comes with no address.
@@ -80,9 +85,149 @@ pub unsafe fn hand_back(
     OK
 }
 
+/// **A value C holds by an address** (ADR-284 D5, D11): its lock, shared for
+/// a call that only reads it and exclusive for one that changes it.
+pub struct Handle<T> {
+    value: RwLock<T>,
+}
+
+std::thread_local! {
+    /// The handles this thread holds a lock on, by address: a call on one of
+    /// them from the same thread is [`E_REENTRANT`] rather than a deadlock.
+    static HELD: RefCell<Vec<usize>> = const { RefCell::new(Vec::new()) };
+}
+
+/// **A new handle for `value`**, which C frees with [`free`].
+pub fn handle<T>(value: T) -> *mut Handle<T> {
+    Box::into_raw(Box::new(Handle {
+        value: RwLock::new(value),
+    }))
+}
+
+/// The mark that this thread holds a handle, taken off when the lock is let
+/// go - also when the call it was held for panics.
+struct Mark(usize);
+
+impl Mark {
+    fn take(at: usize) -> Result<Mark, core::ffi::c_int> {
+        HELD.with(|held| {
+            let mut held = held.borrow_mut();
+            if held.contains(&at) {
+                return Err(E_REENTRANT);
+            }
+            held.push(at);
+            Ok(Mark(at))
+        })
+    }
+}
+
+impl Drop for Mark {
+    fn drop(&mut self) {
+        HELD.with(|held| held.borrow_mut().retain(|at| *at != self.0));
+    }
+}
+
+/// A handle's value, read for a call. The lock is let go before the mark.
+pub struct Shared<'a, T> {
+    guard: RwLockReadGuard<'a, T>,
+    _mark: Mark,
+}
+
+impl<T> core::ops::Deref for Shared<'_, T> {
+    type Target = T;
+    fn deref(&self) -> &T {
+        &self.guard
+    }
+}
+
+/// A handle's value, changed by a call.
+pub struct Exclusive<'a, T> {
+    guard: RwLockWriteGuard<'a, T>,
+    _mark: Mark,
+}
+
+impl<T> core::ops::Deref for Exclusive<'_, T> {
+    type Target = T;
+    fn deref(&self) -> &T {
+        &self.guard
+    }
+}
+
+impl<T> core::ops::DerefMut for Exclusive<'_, T> {
+    fn deref_mut(&mut self) -> &mut T {
+        &mut self.guard
+    }
+}
+
+/// **The handle's value, to read**: [`E_ARGUMENT`] for null,
+/// [`E_REENTRANT`] where this thread holds it already. A lock a panic left
+/// poisoned is taken all the same: the library answers `E_PANICKED` after
+/// one, and never reaches here.
+///
+/// # Safety
+///
+/// `at` is null, or a handle [`handle`] made and [`free`] has not freed, alive
+/// for `'a`.
+pub unsafe fn shared<'a, T>(at: *const Handle<T>) -> Result<Shared<'a, T>, core::ffi::c_int> {
+    if at.is_null() {
+        return Err(E_ARGUMENT);
+    }
+    let mark = Mark::take(at as usize)?;
+    // SAFETY: the caller's contract, above.
+    let handle = unsafe { &*at };
+    let guard = handle
+        .value
+        .read()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    Ok(Shared { guard, _mark: mark })
+}
+
+/// **The handle's value, to change**: as [`shared`], and alone.
+///
+/// # Safety
+///
+/// [`shared`]'s.
+pub unsafe fn exclusive<'a, T>(at: *const Handle<T>) -> Result<Exclusive<'a, T>, core::ffi::c_int> {
+    if at.is_null() {
+        return Err(E_ARGUMENT);
+    }
+    let mark = Mark::take(at as usize)?;
+    // SAFETY: the caller's contract, above.
+    let handle = unsafe { &*at };
+    let guard = handle
+        .value
+        .write()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    Ok(Exclusive { guard, _mark: mark })
+}
+
+/// **The handle freed**, and its value dropped. Null frees nothing, as C's
+/// `free` does; a handle this thread holds is [`E_REENTRANT`] and stays.
+///
+/// # Safety
+///
+/// `at` is null, or a handle [`handle`] made and nothing has freed, which no
+/// other thread uses during the call or after it.
+pub unsafe fn free<T>(at: *mut Handle<T>) -> core::ffi::c_int {
+    if at.is_null() {
+        return OK;
+    }
+    if HELD.with(|held| held.borrow().contains(&(at as usize))) {
+        return E_REENTRANT;
+    }
+    // SAFETY: the caller's contract: `handle` made it with `Box::into_raw`,
+    // and nothing uses it any more.
+    drop(unsafe { Box::from_raw(at) });
+    OK
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn held<G>(got: Result<G, core::ffi::c_int>) -> G {
+        got.unwrap_or_else(|status| panic!("status {status}"))
+    }
 
     #[test]
     fn a_run_is_read_and_an_empty_one_needs_no_address() {
@@ -119,5 +264,52 @@ mod tests {
         let mut small = [0_u8; 2];
         let too_small = unsafe { hand_back(b"hey", small.as_mut_ptr(), small.len(), &mut written) };
         assert_eq!((too_small, written, small), (E_TOO_SMALL, 3, [0, 0]));
+    }
+
+    #[test]
+    fn a_handle_is_read_changed_and_freed() {
+        let counter = handle(1_i64);
+        {
+            let mut held = held(unsafe { exclusive(counter) });
+            *held += 41;
+        }
+        assert_eq!(*held(unsafe { shared(counter) }), 42);
+        assert_eq!(unsafe { free(counter) }, OK);
+        assert_eq!(unsafe { free::<i64>(core::ptr::null_mut()) }, OK);
+        assert!(matches!(
+            unsafe { shared::<i64>(core::ptr::null()) },
+            Err(E_ARGUMENT)
+        ));
+    }
+
+    #[test]
+    fn a_handle_this_thread_holds_is_reentrant_and_let_go_after() {
+        let counter = handle(String::from("x"));
+        {
+            let _read = held(unsafe { shared(counter) });
+            assert!(matches!(unsafe { shared(counter) }, Err(E_REENTRANT)));
+            assert!(matches!(unsafe { exclusive(counter) }, Err(E_REENTRANT)));
+            assert_eq!(unsafe { free(counter) }, E_REENTRANT);
+        }
+        assert!(unsafe { exclusive(counter) }.is_ok());
+        assert_eq!(unsafe { free(counter) }, OK);
+    }
+
+    #[test]
+    fn two_threads_read_one_handle_at_once() {
+        let counter = handle(7_i64) as usize;
+        let reads: Vec<i64> = std::thread::scope(|scope| {
+            let workers: Vec<_> = (0..2)
+                .map(|_| {
+                    scope.spawn(move || *held(unsafe { shared(counter as *const Handle<i64>) }))
+                })
+                .collect();
+            workers
+                .into_iter()
+                .map(|w| w.join().expect("joined"))
+                .collect()
+        });
+        assert_eq!(reads, [7, 7]);
+        assert_eq!(unsafe { free(counter as *mut Handle<i64>) }, OK);
     }
 }
