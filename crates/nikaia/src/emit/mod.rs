@@ -15045,7 +15045,12 @@ pub(crate) fn names_borrowing(ty: &Type, borrowing: &HashSet<Symbol>) -> bool {
 
 /// The `std` entries with a twin for `user_parallelism = yes`, named
 /// `<name>_on_pool`: each runs a kept function in a task of its own.
-const ON_THE_POOL: [&str; 3] = ["net::serve", "supervisor::child", "supervisor::run"];
+const ON_THE_POOL: [&str; 4] = [
+    "net::serve",
+    "supervisor::child",
+    "supervisor::run",
+    "task::scope",
+];
 
 /// A Rust string literal for text the template wrote itself.
 ///

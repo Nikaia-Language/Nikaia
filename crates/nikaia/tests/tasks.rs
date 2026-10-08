@@ -432,3 +432,55 @@ fn data_a_kept_child_took_and_the_program_used_again_is_refused() {
         taken[0]
     );
 }
+
+/// **A scope's tasks are judged as a `par_iter()` lambda is** (Part II 12.7,
+/// #95 step 2): one that pauses is `NK2102`, and one that changes a name the
+/// tasks share is `NK2107`, at both settings. Reading a borrowed value is
+/// fine.
+#[test]
+fn a_scoped_task_that_pauses_or_changes_a_shared_name_is_refused() {
+    let found = findings(
+        "use std::task\n\
+         use std::time\n\
+         fn main() throws {\n\
+         \x20   let data = [1, 2, 3]\n\
+         \x20   let mut total = 0\n\
+         \x20   task::scope fn(s) {\n\
+         \x20       s.spawn fn { println(f\"{data.len()}\") }\n\
+         \x20       s.spawn fn { total = total + 1 }\n\
+         \x20       s.spawn fn { time::sleep(5.millis()) }\n\
+         \x20   }\n\
+         \x20   println(f\"{total}\")\n\
+         }",
+    );
+    let codes: Vec<&str> = found.iter().map(|f| f.code).collect();
+    assert_eq!(
+        codes.iter().filter(|code| **code == "NK2107").count(),
+        1,
+        "{found:?}"
+    );
+    assert_eq!(
+        codes.iter().filter(|code| **code == "NK2102").count(),
+        1,
+        "{found:?}"
+    );
+    let paused = found.iter().find(|f| f.code == "NK2102").expect("NK2102");
+    assert!(paused.message.contains("task::scope"), "{paused:?}");
+}
+
+/// **One written scope, two lowerings** (Part II 12.7): the pool's twin at
+/// `yes`, where the tasks run on every core.
+#[test]
+fn the_switch_decides_where_a_scopes_tasks_run() {
+    let source = "use std::task\n\
+                  fn main() throws {\n\
+                  \x20   let data = [1, 2, 3]\n\
+                  \x20   task::scope fn(s) {\n\
+                  \x20       s.spawn fn { println(f\"{data.len()}\") }\n\
+                  \x20   }\n\
+                  }";
+    let sequential = lower_at(source, "no");
+    let parallel = lower_at(source, "yes");
+    assert!(sequential.contains("task::scope(|s|"), "{sequential}");
+    assert!(parallel.contains("task::scope_on_pool(|s|"), "{parallel}");
+}

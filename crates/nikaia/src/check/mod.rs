@@ -1459,6 +1459,7 @@ fn walked<'a>(
         handed_over: None,
         paused_args: Vec::new(),
         in_parallel: None,
+        scoped_task: false,
         opaque_handles: parsed
             .program
             .items
@@ -3460,6 +3461,9 @@ struct Checker<'a> {
     /// ([ADR-235](../../docs/specification/adr/adr-235.md) D2). `None`
     /// elsewhere.
     in_parallel: Option<usize>,
+    /// **The parallel context is a task of `task::scope`** (Part II 12.7)
+    /// rather than a `par_iter()` walk: the same rules, said of a task.
+    scoped_task: bool,
     /// **The names an `extern "C"` block declares**
     /// ([ADR-302](../../docs/specification/adr/adr-302.md) D3).
     ///
@@ -8301,6 +8305,19 @@ impl<'a> Checker<'a> {
         let Some(given) = given else {
             return false;
         };
+        // **A lambda written in place for a `std` entry is handed over, not
+        // lent**: the entry's counterpart takes an `impl FnOnce` by value, and
+        // the language below infers the closure's parameter types only from a
+        // closure passed as it is - `task::scope(&|s| …)` left `s` untyped.
+        if matches!(given, Expr::Closure { .. })
+            && self
+                .library
+                .functions
+                .get(written)
+                .is_some_and(|entry| std::ptr::eq(entry, contract))
+        {
+            return false;
+        }
         let wrote_a_reference = matches!(
             given,
             Expr::Unary {
@@ -8997,24 +9014,45 @@ impl<'a> Checker<'a> {
         if declared.is_none_or(|at| at >= depth) {
             return;
         }
+        // **A scope's task** is the same race, said of tasks (Part II 12.7).
+        let (message, note, help) = match self.scoped_task {
+            true => (
+                format!(
+                    "You're changing `{name}` in a task of `task::scope`, and the scope's \
+                     tasks all share `{name}`."
+                ),
+                format!(
+                    "A scope's tasks run at the same time, each on a core of its own, so \
+                     they would write `{name}` at once."
+                ),
+                format!(
+                    "Give each task a value of its own and combine them after the scope, or \
+                     keep `{name}` in a `SharedMut` and change it through `update`."
+                ),
+            ),
+            false => (
+                format!(
+                    "You're changing `{name}` in a lambda that runs on several cores at once, \
+                     and they all share `{name}`."
+                ),
+                format!(
+                    "`par_iter()` splits the elements across all cores and runs the lambda \
+                     on each part at the same time, so every core would write `{name}` at once."
+                ),
+                format!(
+                    "Return a value from the lambda and combine the results afterwards, with \
+                     `map` and then `collect` or `count`, or keep `{name}` in a `SharedMut` \
+                     and change it through `update`."
+                ),
+            ),
+        };
         self.checked.findings.push(Finding {
             severity: Severity::Error,
             span: *span,
             code: "NK2107",
-            message: format!(
-                "You're changing `{name}` in a lambda that runs on several cores at once, \
-                 and they all share `{name}`."
-            ),
-            notes: vec![
-                "`par_iter()` splits the elements across all cores and runs the lambda \
-                 on each part at the same time, so every core would write `{name}` at once."
-                    .replace("{name}", name),
-            ],
-            help: Some(format!(
-                "Return a value from the lambda and combine the results afterwards, with \
-                 `map` and then `collect` or `count`, or keep `{name}` in a `SharedMut` \
-                 and change it through `update`."
-            )),
+            message,
+            notes: vec![note],
+            help: Some(help),
             labels: Vec::new(),
         });
     }
@@ -9669,8 +9707,17 @@ impl<'a> Checker<'a> {
         // once** (Part II 12.6, ADR-235 D2): what it may do is asked while it
         // is walked, and a lambda inside it is inside it too.
         let outer_parallel = self.in_parallel;
+        let outer_scoped = self.scoped_task;
         if matches!(&on, Ty::Seq { parallel: true, .. }) {
             self.in_parallel = outer_parallel.or(Some(self.scope.len()));
+            self.scoped_task = false;
+        }
+        // **A task of `task::scope` runs beside the others** (Part II 12.7):
+        // asked as a walk's lambda is, at both settings, so the program means
+        // the same at each.
+        if key == "task::Scope::spawn" {
+            self.in_parallel = outer_parallel.or(Some(self.scope.len()));
+            self.scoped_task = true;
         }
         let found = self.arguments_given(
             args,
@@ -9680,6 +9727,7 @@ impl<'a> Checker<'a> {
             span,
         );
         self.in_parallel = outer_parallel;
+        self.scoped_task = outer_scoped;
         // **The element type an empty list's first `push` gives it** (#523):
         // `let mut rows = Vec()` then `rows.push((fragment, tally.n))` makes
         // `rows` a list of what was pushed, for every read after.
@@ -18134,7 +18182,31 @@ impl<'a> Checker<'a> {
         // **`NK2209` in a lambda that runs on several cores at once**
         // (Part II 12.6, ADR-235 D2): a core is not given up, so a pause there
         // holds one for as long as the wait takes.
-        if self.in_parallel.is_some() {
+        if self.in_parallel.is_some() && self.scoped_task {
+            self.checked.findings.push(Finding {
+                severity: Severity::Error,
+                span: *span,
+                code: "NK2102",
+                message: format!(
+                    "{} {pauses}, but a task in `task::scope` has to be `sync`.",
+                    sentence(&what)
+                ),
+                notes: std::iter::once(
+                    "A scope promises to wait for its tasks. With tasks running in parallel, \
+                     that promise only holds for work that finishes on its own (`sync` \
+                     functions), and a task that waits might not."
+                        .to_string(),
+                )
+                .chain(why.clone())
+                .collect(),
+                help: Some(
+                    "Do the waiting before the scope and keep only the computation in it, or \
+                     run it as a background task with `spawn` and `join` it."
+                        .to_string(),
+                ),
+                labels: Vec::new(),
+            });
+        } else if self.in_parallel.is_some() {
             self.checked.findings.push(Finding {
                 severity: Severity::Error,
                 span: *span,

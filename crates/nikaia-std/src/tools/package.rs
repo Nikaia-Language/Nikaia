@@ -16225,7 +16225,7 @@ fn sharing_method(call: &Expr, asked: &Asked<'_>, holes_of: &impl Fn(&Expr) -> V
         _ => return,
     };
     if method == "get" && args.is_empty() { a_copy_out_of_the_lock(receiver, asked, walk); }
-    if a_parallel_method(&method) || walks_in_parallel(receiver, asked.names, &walk.parallel) {
+    if a_parallel_method(&method) || method == "spawn" || walks_in_parallel(receiver, asked.names, &walk.parallel) {
         let why = format!("a lambda handed to `{}` uses it, and that lambda runs on a thread the program asked for", method);
         for arg in args.iter() { for named in names_used_by(arg, asked) { a_crossing_reaches(&named, &why, None, asked, walk); } }
     }

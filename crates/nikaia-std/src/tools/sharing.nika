@@ -1416,7 +1416,10 @@ fn sharing_method(call: ref Expr, asked: ref Asked, holes_of: fn(ref Expr) -> Ve
     if method == "get" && args.len() == 0 {
         a_copy_out_of_the_lock(receiver, asked, walk)
     }
-    if a_parallel_method(method) || walks_in_parallel(receiver, asked.names, walk.parallel) {
+    // **A scope's task** (`s.spawn fn { … }`, Part II 12.7) runs on a core of
+    // its own at `yes`. Asked of every method named `spawn`, whatever its
+    // receiver: one that is not a scope's costs an atomic count, never a race.
+    if a_parallel_method(method) || method == "spawn" || walks_in_parallel(receiver, asked.names, walk.parallel) {
         let why = f"a lambda handed to `{method}` uses it, and that lambda runs on a thread the program asked for"
         for arg in args {
             for named in names_used_by(arg, asked) {

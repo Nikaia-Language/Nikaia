@@ -3632,6 +3632,32 @@ crosses = true
 compares = true
 fields = ["pub message: String", "pub site: String"]
 
+# **A scope's tasks borrow** (Part II 12.7): the scope waits for every task
+# started in it, so a task reads the function's values without taking them.
+# What `task::scope` hands its function, to start tasks with.
+[type."task::Scope"]
+pub = true
+
+# **`body` runs during the call**, and so does every task it starts: the scope
+# ends when the last of them has. A task that panicked cancels the ones not yet
+# started, and the scope throws `task::Crashed` once `body` and the rest have
+# ended ([ADR-328](../../docs/specification/adr/adr-328.md) D8).
+# Run `body` with a scope, and wait for every task it starts.
+#
+# The tasks may read the function's values without taking them. A task that
+# panicked makes this throw `task::Crashed`.
+[fn."task::scope"]
+pub = true
+sync = "sync(body)"
+throws = ["task::Crashed"]
+signature = "[T](body: fn(ref task::Scope) -> T) -> T"
+
+# Start a task in the scope; the scope waits for it.
+[fn."task::Scope::spawn"]
+pub = true
+sync = "sync(body)"
+signature = "(self: ref task::Scope, body: fn())"
+
 # **One mechanism, said three ways rather than three things**
 # ([ADR-292](../../docs/specification/adr/adr-292.md) D14): a program's own
 # cancel, a `select`'s loser and ADR-284's C `cancel` do the same thing to a

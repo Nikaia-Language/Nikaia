@@ -1,0 +1,28 @@
+// `task::scope` (Part II 12.7): its tasks borrow what the function holds, and
+// the scope waits for every one of them. A task that panicked makes the scope
+// throw `task::Crashed` where it ends (ADR-328 D8). The same at both settings:
+// at `yes` the tasks run on the pool.
+
+use std::task
+
+test "a scope's tasks borrow and the scope waits for them" {
+    let data = [1, 2, 3]
+    let seen = SharedMut(0)
+    let made = task::scope fn(s) {
+        s.spawn fn { seen.update fn(mut v) { v += data.len() } }
+        s.spawn fn { seen.update fn(mut v) { v += data[0] } }
+        data.len()
+    } catch { 0 }
+    let total = seen.get()
+    assert(made == 3)
+    assert(total == 4)
+    assert(data.len() == 3)
+}
+
+test "a task that panicked is thrown where the scope ends" {
+    let said = task::scope fn(s) {
+        s.spawn fn { panic("boom") }
+        "finished".clone()
+    } catch { f"{error.message}" }
+    assert(said == "boom")
+}

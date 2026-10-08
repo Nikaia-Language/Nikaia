@@ -610,3 +610,152 @@ pub fn as_text(
         Err(error) => Err(crate::io::IoError::of(error, what)),
     }
 }
+
+/// **A scope's tasks** (Part II 12.7, ADR-328 D8): they borrow what the
+/// function around the scope holds, and the scope waits for every one of them.
+///
+/// At `user_parallelism = no` everything runs on one thread, so a task that
+/// never pauses runs where it is started, to its end. A task that panicked
+/// cancels the ones not yet started, and the scope throws [`Crashed`] where it
+/// ends. `'env` is what the tasks borrow, which outlives the scope, as
+/// `std::thread::scope` has it.
+pub struct Scope<'scope, 'env: 'scope> {
+    crashed: std::cell::RefCell<Option<Crashed>>,
+    scope: std::marker::PhantomData<&'scope mut &'scope ()>,
+    env: std::marker::PhantomData<&'env mut &'env ()>,
+}
+
+impl<'scope> Scope<'scope, '_> {
+    /// Start a task that never pauses: it runs now, unless a task before it
+    /// crashed, which cancelled it.
+    pub fn spawn(&self, body: impl FnOnce() + 'scope) {
+        if self.crashed.borrow().is_some() {
+            return;
+        }
+        if let Err(crash) = caught(body) {
+            *self.crashed.borrow_mut() = Some(crash);
+        }
+    }
+}
+
+/// **Run `body` with a scope, and wait for its tasks** (Part II 12.7): their
+/// first crash is what this throws, after `body` and every task have ended.
+pub fn scope<'env, T>(
+    body: impl for<'scope> FnOnce(&'scope Scope<'scope, 'env>) -> T,
+) -> Result<T, Crashed> {
+    let scope = Scope {
+        crashed: std::cell::RefCell::new(None),
+        scope: std::marker::PhantomData,
+        env: std::marker::PhantomData,
+    };
+    let value = body(&scope);
+    let crash = scope.crashed.borrow_mut().take();
+    match crash {
+        Some(crash) => Err(crash),
+        None => Ok(value),
+    }
+}
+
+/// **The same scope where tasks run on every core** (`user_parallelism = yes`):
+/// each task is the pool's, and the scope waits for all of them. A task here
+/// never pauses (Part II 12.7, `NK2102`), so one that started runs to its end;
+/// a crash cancels only the tasks not yet started.
+pub struct PoolScope<'pool, 'scope> {
+    pool: &'pool rayon::Scope<'scope>,
+    crashed: std::sync::Arc<std::sync::Mutex<Option<Crashed>>>,
+}
+
+impl<'scope> PoolScope<'_, 'scope> {
+    /// Start a task on the pool.
+    pub fn spawn(&self, body: impl FnOnce() + Send + 'scope) {
+        let crashed = self.crashed.clone();
+        self.pool.spawn(move |_| {
+            if crashed.lock().unwrap_or_else(|e| e.into_inner()).is_some() {
+                return;
+            }
+            if let Err(crash) = caught(body) {
+                crashed
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .get_or_insert(crash);
+            }
+        });
+    }
+}
+
+/// [`scope`] at `user_parallelism = yes`.
+pub fn scope_on_pool<'scope, T: Send>(
+    body: impl FnOnce(&PoolScope<'_, 'scope>) -> T + Send,
+) -> Result<T, Crashed> {
+    let crashed = std::sync::Arc::new(std::sync::Mutex::new(None));
+    let value = rayon::scope(|pool| {
+        body(&PoolScope {
+            pool,
+            crashed: crashed.clone(),
+        })
+    });
+    let crash = crashed.lock().unwrap_or_else(|e| e.into_inner()).take();
+    match crash {
+        Some(crash) => Err(crash),
+        None => Ok(value),
+    }
+}
+
+/// One task of a scope, its panic caught at its edge as a task's is (ADR-326 D4).
+fn caught(body: impl FnOnce()) -> Result<(), Crashed> {
+    let _inside = InATask::enter();
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(body)).map_err(|payload| Crashed {
+        message: panic_message(payload.as_ref()),
+        site: SITE.with(|held| std::mem::take(&mut *held.borrow_mut())),
+    })
+}
+
+#[cfg(test)]
+mod scoped {
+    use super::*;
+
+    #[test]
+    fn a_scope_lends_to_its_tasks_and_waits_for_them() {
+        let data = [1, 2, 3];
+        let sum = std::cell::Cell::new(0);
+        let made = scope(|s| {
+            s.spawn(|| sum.set(sum.get() + data.iter().sum::<i32>()));
+            s.spawn(|| sum.set(sum.get() + data.len() as i32));
+            7
+        });
+        assert_eq!((made, sum.get(), data.len()), (Ok(7), 9, 3));
+    }
+
+    #[test]
+    fn a_crash_cancels_the_tasks_after_it_and_is_thrown_at_the_end() {
+        let ran = std::cell::Cell::new(0);
+        let made = scope(|s| {
+            s.spawn(|| ran.set(ran.get() + 1));
+            s.spawn(|| panic!("boom"));
+            s.spawn(|| ran.set(ran.get() + 10));
+        });
+        assert_eq!(made.map_err(|crash| crash.message), Err("boom".to_string()));
+        assert_eq!(ran.get(), 1);
+    }
+
+    #[test]
+    fn a_pool_scope_runs_its_tasks_on_the_pool_and_waits() {
+        let data: Vec<i64> = (1..=100).collect();
+        let total = std::sync::atomic::AtomicI64::new(0);
+        let made = scope_on_pool(|s| {
+            for half in data.chunks(50) {
+                let total = &total;
+                s.spawn(move || {
+                    total.fetch_add(half.iter().sum(), std::sync::atomic::Ordering::SeqCst);
+                });
+            }
+        });
+        assert!(made.is_ok());
+        assert_eq!(total.into_inner(), 5050);
+        let crashed = scope_on_pool(|s| s.spawn(|| panic!("on the pool")));
+        assert_eq!(
+            crashed.map_err(|crash| crash.message),
+            Err("on the pool".to_string())
+        );
+    }
+}

@@ -8,6 +8,22 @@ or the specification. A change only to the guide, the notes, the README, the
 website, the tests, the examples or the tooling around them raises nothing and
 has no heading here; `CLAUDE.md` draws the line.
 
+## [0.0.699] — 2026-10-08
+
+**`task::scope`** (Part II 12.7, ADR-328 D8; #95). `task::scope fn(s) { … }`
+runs its function with a scope. `s.spawn fn { … }` starts a task that borrows
+what the function holds, and the scope returns once every task has ended.
+- A task that panicked cancels the tasks not yet started. The scope then
+  throws `task::Crashed` where it ends.
+- At `user_parallelism = yes` the tasks run on the pool (`scope_on_pool`). At
+  `no` they run on the one thread.
+- A task is judged as a `par_iter()` lambda is, at both settings: one that
+  pauses is `NK2102`, and one that changes a name the tasks share is `NK2107`.
+  A pausing task at `no`, which Part II 12.7 allows, is not built yet.
+- A value a task reads gets the atomic count at `yes`.
+- A lambda written in place for a `std` entry is handed over rather than lent,
+  so that the language below can type its parameters.
+
 ## [0.0.698] — 2026-10-08
 
 **The Node binding's `_async` form is a Promise** (ADR-284 D9, D19, D28; #88).
