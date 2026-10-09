@@ -1,7 +1,7 @@
 # Nikaia Language Specification
 **Part I: The Language Core**
-**Version:** 0.0.710 (Draft)
-**Date:** 2026-10-08
+**Version:** 0.0.711 (Draft)
+**Date:** 2026-10-09
 
 ---
 
@@ -2877,8 +2877,14 @@ with the caret on the one that arrived. A `fn`, a `struct`, an `enum`, a
 two types may each have a `len`; a **rule** belongs to its grammar and is
 reached as `Json::value`.
 
-`use std::fs` is the one `use` with a path in it, and it names the standard
-library rather than a package. **It brings no name in either**: it names a
+**A directory under `src/` that holds `.nika` files is a package of the
+project**, named by its path: `src/model/` is `model`, `src/model/rows/` is
+`model::rows`. It is reached with `use model` or `use model::rows` and needs no
+`[dependencies]` entry; its names are written with the last segment as their
+prefix, `rows::Row`. Packages of one project may use one another, in a cycle
+too. Part III 13.3's `[directories]` treats a directory otherwise.
+
+`use std::fs` names the standard library rather than a package. **It brings no name in either**: it names a
 module and the module's items are reached through it, as a package's prefix
 works. A `use` whose last segment is a **type** is refused with `NK1156`. What
 needs no `use` is the list in 1.3. `HashMap` is **not** on that list: it is

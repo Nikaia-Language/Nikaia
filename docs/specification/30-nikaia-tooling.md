@@ -1,7 +1,7 @@
 # Nikaia Language Specification
 **Part III: Tooling, Ecosystem & Interoperability**
-**Version:** 0.0.710 (Draft)
-**Date:** 2026-10-08
+**Version:** 0.0.711 (Draft)
+**Date:** 2026-10-09
 
 ---
 
@@ -135,6 +135,15 @@ http_server = "1.2"
 # A native Rust crate. The entry reaches Cargo with only `type` removed and a
 # relative `path` made absolute, and Cargo resolves, fetches and links it.
 regex = { type = "rust", version = "1.5" }
+
+[directories]
+# A directory under src/ that holds .nika files is a package of the project
+# and a module of its crate (Part I 9.1). This table treats one otherwise.
+"src/fixtures" = "ignore"     # not read, whatever it holds
+"src/assets"   = "resources"  # not code; published, and read by asset(…)
+"src/testkit"  = "tests"      # its packages are built only under `nikaia test`
+"src/ffi"      = "crate"      # a crate of its own: an `extern` symbol, or Rust
+                              # beside its Nikaia. It may not be in a cycle.
 
 # Code generation, per target. These keys decide output size and speed and
 # change nothing a program means. The table of the chosen target becomes the

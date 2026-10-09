@@ -8,6 +8,17 @@ or the specification. A change only to the guide, the notes, the README, the
 website, the tests, the examples or the tooling around them raises nothing and
 has no heading here; `CLAUDE.md` draws the line.
 
+## [0.0.711] — 2026-10-09
+
+**A directory of a project is a package, and a module of one crate**
+(ADR-286 D37-D40, #538).
+- Decided, not built: `src/model/rows/` is the package `model::rows`, reached
+  with `use model::rows` and no `[dependencies]` entry. The packages of a
+  project are `mod`s of its crate, may use one another in a cycle, and a
+  directory is a package by what it holds. `[directories]` marks `ignore`,
+  `resources`, `tests` or `crate`. D19 now covers dependencies only.
+  Part I 9.1, Part III 13.3.
+
 ## [0.0.710] — 2026-10-08
 
 **A handler's `error` where several error types arrive is an `Error`, one of
