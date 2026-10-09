@@ -8,6 +8,15 @@ or the specification. A change only to the guide, the notes, the README, the
 website, the tests, the examples or the tooling around them raises nothing and
 has no heading here; `CLAUDE.md` draws the line.
 
+## [0.0.719] — 2026-10-09
+
+**A `dsl` block names its entry, unless the grammar marks one `main`**
+(ADR-299 D21, #518).
+- Decided, not built: `dsl Json::value { … } eod` runs the entry `value`, as
+  the call `Json::value(text)` does. One entry, or one written `main entry
+  rule`, needs no name. Several and no `main` is `NK1242`; two `main` entries
+  are `NK1243`. ADR-296 D25 noted. Part II 10.2, 10.5; Part III C.3.
+
 ## [0.0.718] — 2026-10-09
 
 **No debug info unless a project asks for it** (ADR-002 D5, #555).

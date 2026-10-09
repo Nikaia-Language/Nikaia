@@ -182,7 +182,7 @@ implementation.
 | [307](adr-307.md) | A comment is `//` or a nesting `/* … */`, and a run of `///` before an item is its documentation, kept by the parser and not carried by the contract. | Accepted | partly: a field's and a variant's `///` |
 | [301](adr-301.md) | A condition is an ordinary expression: the head of an `if`, `while` or `for` parses the body's language minus the forms a `{` begins, which take parentheses. | Accepted | yes |
 | [298](adr-298.md) | A word the language uses is reserved and only for a construct, and a word the language below reserves is escaped where it is written. | Accepted | yes |
-| [299](adr-299.md) | A database statement is SQL a driver's grammar checks at build time against a schema, run on a connection typed by that schema; a block may name the struct its rows are (`-> T`), matched by name, strictly, a `NULL` only into a `T?`. A grammar from a package is named `package::Grammar`, always (D20). | Accepted | no |
+| [299](adr-299.md) | A database statement is SQL a driver's grammar checks at build time against a schema, run on a connection typed by that schema; a block may name the struct its rows are (`-> T`), matched by name, strictly, a `NULL` only into a `T?`. A grammar from a package is named `package::Grammar`, always (D20). A block names its entry where a grammar has several, `dsl Json::value { … }`, unless one is `main entry rule` (D21). | Accepted | no |
 | [292](adr-292.md) | Statement order is the written order; a program asks for concurrency with `overlap`, which keeps every result and failure, or `select`, which keeps the first. | Accepted | yes |
 | [285](adr-285.md) | An integer is one of five types and aborts where a value does not fit, and a number without an annotation is typed by its uses; one integer type takes another without `as` where no value can be lost (D32).  A narrowing `as` is written only where it is shown to fit, `NK1241` otherwise, with `checked_<T>()` and `truncating_<T>()` as the named ways (D12, D13). `f32` is a type beside `f64`: literals typed by use, no mixing without `as` (D33). A list written in number literals is one open number (D34). Text becomes a number by `text::parse_<T>`, a `T?` per type (D35). | Accepted | partly: `u8`'s arithmetic names; D32 not built (#439) |
 | [315](adr-315.md) | Arithmetic and a conversion that may not fit can be asked whether they do: `checked_add`, `_sub`, `_mul`, `_div`, `_rem`, `_neg`, `_abs` and `checked_i32()` … `checked_u64()` answer `T?`, `null` where there is no answer (a division by zero included); no `checked_shl`/`_shr`. | Accepted | yes |
@@ -254,6 +254,7 @@ either finds the other. Records replaced as a whole are not here: they are in
 
 | Changed | By | What holds now |
 | :--- | :--- | :--- |
+| [296](adr-296.md) D25 | [299](adr-299.md) D21 | the author may mark one entry `main`; the compiler still picks none |
 | [299](adr-299.md) D4, D8 | [338](adr-338.md) D2 | the database protocol is the official package `db` |
 | [017](adr-017.md), [289](adr-289.md) | [338](adr-338.md) D2 | `std::html`, `std::http1` and `std::db` are the official packages `html`, `http1` and `db` |
 | [329](adr-329.md) D1 | [330](adr-330.md) D5 | `.ty` is the field's type, not a `meta::Type` |

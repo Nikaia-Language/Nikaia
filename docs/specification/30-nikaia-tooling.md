@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part III: Tooling, Ecosystem & Interoperability**
-**Version:** 0.0.718 (Draft)
+**Version:** 0.0.719 (Draft)
 **Date:** 2026-10-09
 
 ---
@@ -1461,7 +1461,7 @@ Errors arising from external circumstances, such as a missing file or a network 
 ### A.2. Unrecoverable Errors (`panic`)
 Errors indicating an inconsistent program state: an index out of bounds on a **list** (a map read through the brackets is a `T?` and never panics); division by zero; **arithmetic overflow**; a handle a C declaration claimed and C did not hand back (15.1); and an explicit `panic()`.
 
-An overflow is in this list at **every** build. Where a program means to wrap or to stop at the limit, it says so by name (Part I, 2.2). A conversion is not in the list: one that can lose a value is written `as` only where it is shown to fit (`NK1241` otherwise), and `checked_i32` and `truncating_i32` are how a program asks for the rest (Part I, 2.2).
+An overflow is in this list at **every** build. Where a program means to wrap or to stop at the limit, it says so by name (Part I, 2.2). A conversion is not in the list: one that can lose a value is written `as` only where it is shown to fit (`NK1241` otherwise), and `checked_i32` and `truncating_i32` are how a program asks for the rest (Part I, 2.2) `NK1242` a `dsl` block over a grammar with several entries, none marked `main`, that names none: the help names the entries, `dsl G::entry { … }`, and `main entry rule`. `NK1243` a grammar with two `main` entries. .
 
 A constant that cannot fit the type it is given is refused with `NK1116`, and a division whose divisor is a constant zero is refused with `NK1118`. Neither takes a case out of the list: a divisor the compiler cannot evaluate is divided by at run time, and a zero there is unrecoverable. The compile-time refusal replaces the run-time message only where no program had to run to know it (C.1).
 

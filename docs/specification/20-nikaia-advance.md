@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part II: Advanced Features & Metaprogramming**
-**Version:** 0.0.718 (Draft)
+**Version:** 0.0.719 (Draft)
 **Date:** 2026-10-09
 
 ---
@@ -46,7 +46,8 @@ grammar Json {
 A grammar defined once runs at compile time and at runtime, **with the same
 syntax and the same meaning**. A grammar is entered by an **ordinary call**.
 Every `entry rule` in it is an entry named after the rule: `Json::value(x)`
-runs the rule `value` of the grammar `Json`. A rule without `entry` is the
+runs the rule `value` of the grammar `Json`. One of them may be written
+`main entry rule`: the one a `dsl` block runs where it names none (10.5). A rule without `entry` is the
 grammar's own, and a call to it is refused. Without `pub`, a grammar is
 entered only from the file that declares it; `pub grammar` offers all of its
 entries to other packages at once - a rule is never `pub` on its own (ADR-296
@@ -388,7 +389,7 @@ The `dsl` keyword embeds **foreign syntax** in a Nikaia file: SQL, HTML, regex, 
 
 `meta::column(name, type)` gives a grammar control over the statement's result type. The compiler builds the row type from the declared columns, one typed field per column, as it builds the parameter type from the holes. The `type` of `meta::column` and of `meta::parameter` is a `std::meta::Type` (10.3): `Text`, `Maybe(String)` for `String?`, `List(i64)` for `Vec[i64]`, any kind whose parts the grammar can name, and `Record(fields)` for a struct the compiler writes ([ADR-323](adr/adr-323.md), [ADR-330](adr/adr-330.md) D6-D7). A grammar names no type of the program; a block maps its rows onto one with `-> T`. A type crosses out of the grammar run as its full name. A message about a field of a type the compiler wrote names the block and the grammar that declared it, and `--comptime` prints the type of each block.
 
-**A grammar from a package is named with its package** ([ADR-299](adr/adr-299.md) D20): `dsl sqlite::Sql { … } eod`, as every name from a package is (Part I 9.2), with no short form. A grammar the program declares is named bare: `dsl Json { … } eod`. A block that names a package where a grammar stands is `NK1228`.
+**A grammar from a package is named with its package** ([ADR-299](adr/adr-299.md) D20): `dsl sqlite::Sql { … } eod`, as every name from a package is (Part I 9.2), with no short form. A grammar the program declares is named bare: `dsl Json { … } eod`. A block that names a package where a grammar stands is `NK1228`. **A block over a grammar with several entries names the one it runs**, as the call does: `dsl Json::value { … } eod`, `dsl json::Json::value { … } eod`. A grammar with one entry, or one marked `main entry rule`, needs no name; several entries and no `main` is `NK1242`, naming them, and two `main` entries is `NK1243`.
 
 **How a row's fields are named** ([ADR-299](adr/adr-299.md) D12-D14). The row has one field per table of the query, named by its alias or its table, holding that table's columns, and one flat field per column whose name is unique in the row: `u.a.id`, and `u.name` where only one column is called `name`. Where two columns share a name, or a column is named as a table or an alias is, neither is a flat field, and reading it is `NK1107`, whose help names the qualified paths and `AS`. A column named with `AS` is a flat field. A column whose name cannot be a field is refused at the query, asking for `AS`. A database driver's grammar reads the statement and the schema and declares one column per result column. The schema is a build-time argument of the block, `dsl sqlite::Sql(schema: APP) { … } eod`, resolved from a `comptime` value. A column the schema lacks is refused by the grammar at the query, while the program is built. The compiler does not understand SQL; the driver owns the grammar, and a vendor's database is a package.
 
