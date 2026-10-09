@@ -8,6 +8,19 @@ or the specification. A change only to the guide, the notes, the README, the
 website, the tests, the examples or the tooling around them raises nothing and
 has no heading here; `CLAUDE.md` draws the line.
 
+## [0.0.718] — 2026-10-09
+
+**No debug info unless a project asks for it** (ADR-002 D5, #555).
+- The generated profile never wrote `debug`, so every build inherited Cargo's
+  `dev` default, full debug info: a hello world was 57 315 976 bytes around
+  519 674 bytes of code. It now writes `debug = 0`, and the same program is
+  764 664 bytes. An abort still names its `.nika` line.
+- `[build.<target>]` takes `debug` (Cargo's values: `0`, `1`, `2`,
+  `"line-tables-only"`) for a build a debugger reads; a misspelt key is refused
+  naming the four there are.
+- Tests: `debug_info_is_off_unless_the_table_asks_for_it` (orchestrator), the
+  manifest's codegen test.
+
 ## [0.0.717] — 2026-10-09
 
 **`db` everywhere the specification named `std::db`** (ADR-338 D2): Part II

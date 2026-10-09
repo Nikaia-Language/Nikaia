@@ -56,12 +56,14 @@ pub struct Package {
 /// and speed (Part III 13.3); `panic` is not a choice at all - it follows from
 /// the machine, which is why it arrives here already decided. `incremental`
 /// is the third choice of the codegen table (ADR-002 D5): absent, Cargo's
-/// `dev` default holds and it is on.
+/// `dev` default holds and it is on. `debug` is the fourth, and its absence is
+/// **not** Cargo's default: that would be full debug info in every build.
 #[derive(Debug, Clone, Default)]
 pub struct Profile {
     pub opt_level: Option<toml::Value>,
     pub lto: Option<toml::Value>,
     pub incremental: Option<toml::Value>,
+    pub debug: Option<toml::Value>,
     pub panic: Option<String>,
 }
 
@@ -231,6 +233,15 @@ impl Workspace {
         // in all code inlined into the program - nothing a Nikaia program
         // means, and a fifth of 1BRC's instructions (516 -> 438 per row).
         out.push_str("debug-assertions = false\n");
+        // **No debug info unless the codegen table asks for it** (ADR-002 D5,
+        // #555). Left unwritten, `dev`'s default is `debug = true`, and every
+        // program carried full DWARF: a hello world was 57 MB around 0.5 MB of
+        // code. A failure still names its `.nika` line without it (Part III
+        // A.2's table is compiled in), so nothing a program says depends on it.
+        match &self.profile.debug {
+            Some(debug) => out.push_str(&format!("debug = {debug}\n")),
+            None => out.push_str("debug = 0\n"),
+        }
         if let Some(opt) = &self.profile.opt_level {
             out.push_str(&format!("opt-level = {opt}\n"));
         }
@@ -889,6 +900,7 @@ mod tests {
                 opt_level: Some(toml::Value::Integer(3)),
                 lto: Some(toml::Value::Boolean(true)),
                 incremental: Some(toml::Value::Boolean(false)),
+                debug: None,
                 panic: Some("unwind".into()),
             },
         }
@@ -946,6 +958,23 @@ mod tests {
         assert_eq!(
             parsed["profile"]["dev"]["incremental"].as_bool(),
             Some(false)
+        );
+    }
+
+    /// ADR-002 D5 (#555): `debug` is written always, `0` where the codegen
+    /// table is silent, so no build inherits `dev`'s full debug info; and the
+    /// table's own value where it says one.
+    #[test]
+    fn debug_info_is_off_unless_the_table_asks_for_it() {
+        let parsed: toml::Value = toml::from_str(&workspace().render()).expect("parses");
+        assert_eq!(parsed["profile"]["dev"]["debug"].as_integer(), Some(0));
+
+        let mut asked = workspace();
+        asked.profile.debug = Some(toml::Value::String("line-tables-only".into()));
+        let parsed: toml::Value = toml::from_str(&asked.render()).expect("parses");
+        assert_eq!(
+            parsed["profile"]["dev"]["debug"].as_str(),
+            Some("line-tables-only")
         );
     }
 

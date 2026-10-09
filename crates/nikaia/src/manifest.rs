@@ -399,7 +399,7 @@ mod tests {
     #[test]
     fn a_per_target_table_is_not_a_switch() {
         let manifest = Manifest::parse(
-            "[build]\nuser-parallelism = \"yes\"\n\n[build.x86_64-linux]\nopt-level = 3\nlto = true\nincremental = false\n",
+            "[build]\nuser-parallelism = \"yes\"\n\n[build.x86_64-linux]\nopt-level = 3\nlto = true\nincremental = false\ndebug = 2\n",
         )
         .expect("parses");
         assert_eq!(manifest.setting("user-parallelism", None, "no"), "yes");
@@ -408,6 +408,7 @@ mod tests {
         assert_eq!(codegen["opt-level"].as_integer(), Some(3));
         assert_eq!(codegen["lto"].as_bool(), Some(true));
         assert_eq!(codegen["incremental"].as_bool(), Some(false));
+        assert_eq!(codegen["debug"].as_integer(), Some(2));
         assert!(
             manifest.codegen_for("wasm32-unknown").is_empty(),
             "a machine the manifest says nothing about carries no codegen"

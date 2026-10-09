@@ -2599,6 +2599,7 @@ impl Project {
                 opt_level: codegen.get("opt-level").cloned(),
                 lto: codegen.get("lto").cloned(),
                 incremental: codegen.get("incremental").cloned(),
+                debug: codegen.get("debug").cloned(),
                 panic: Some(self.settings.panic_strategy().to_string()),
             },
         })

@@ -10640,7 +10640,7 @@ pub fn build_key(key: &str) -> Result<Switch, nikaia_std::error::Thrown<Refused>
 
 pub fn targets() -> Vec<String> { vec![String::from("x86_64-linux"), String::from("aarch64-linux"), String::from("wasm32-unknown")] }
 
-pub fn codegen_keys() -> Vec<String> { vec![String::from("opt-level"), String::from("lto"), String::from("incremental")] }
+pub fn codegen_keys() -> Vec<String> { vec![String::from("opt-level"), String::from("lto"), String::from("incremental"), String::from("debug")] }
 
 pub fn codegen_table(target: &str) -> Result<(), nikaia_std::error::Thrown<Refused>> {
     if !contains(&targets(), target) {

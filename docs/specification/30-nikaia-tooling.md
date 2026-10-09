@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part III: Tooling, Ecosystem & Interoperability**
-**Version:** 0.0.717 (Draft)
+**Version:** 0.0.718 (Draft)
 **Date:** 2026-10-09
 
 ---
@@ -157,6 +157,8 @@ opt-level = 3       # Maximize throughput
 lto = true          # Link Time Optimization
 incremental = false # Compile as one piece: slower rebuilds, faster program.
                     # Absent, it is on (ADR-002 D5).
+debug = 2           # Debug info for a debugger, as Cargo spells it (0, 1, 2,
+                    # "line-tables-only"). Absent, it is 0: none.
 ```
 
 ### 13.3b. Runtime Configuration (`nikaia-runtime.toml`)
