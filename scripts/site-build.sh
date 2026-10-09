@@ -21,6 +21,11 @@ tar -C "$ROOT" -cf - \
   --exclude=./.jekyll-cache --exclude=./.sass-cache \
   --exclude=./.wrangler . | tar -C "$WORK" -xf -
 
+# The page of open issues, read from GitHub at this build
+# (`scripts/site-issues.py`); before the fencing below, since an issue's text
+# may hold braces too.
+python3 "$ROOT/scripts/site-issues.py" "$WORK"
+
 # Literal braces, fenced off from Liquid. Nikaia writes a literal brace as
 # `{{`, so `{{` occurs in the specification, in decision records, the roadmap
 # notes and the changelog. Jekyll hands every Markdown file to Liquid first,
