@@ -126,7 +126,7 @@ implementation.
 | [171](adr-171.md) | A refusal from the lowering names its line, with a caret, as every `NK…` diagnostic does. | Accepted | yes |
 | [172](adr-172.md) | A `for` may iterate a sequence whose step pauses; `Seq[T] pauses` is a third state beside `sync` and nothing said, and the step is awaited. | Accepted | yes |
 | [177](adr-177.md) | A grammar that runs while the program is built is run by compiling the parser it generates, not by interpreting the grammar. | Accepted | yes |
-| [260](adr-260.md) | A file belongs to its project, and the single-file commands are the verbs `lower`, `interpret`, `explain` and `run f.nika`. | Accepted | yes |
+| [260](adr-260.md) | A file belongs to its project, and the single-file commands are the verbs `lower`, `interpret`, `explain` and `run f.nika`. Everything after `nikaia run f.nika` is the program's; a `#!` line opens an entry point; `nikaia new` writes a project that builds, runs and tests (D6-D8). | Accepted | yes |
 | [263](adr-263.md) | A file operation with nothing else in flight runs on the calling thread once a measurement shows it pays, and the normal path does no work it does not need. | Accepted | yes |
 | [188](adr-188.md) | The escape set is the language below's, written down once in Part I 2.5, and an escape outside it is refused with `NK1184`. | Accepted | yes |
 | [186](adr-186.md) | A parse keeps its input exactly when its declared result may hold a view into it. | Accepted | yes |

@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part III: Tooling, Ecosystem & Interoperability**
-**Version:** 0.0.711 (Draft)
+**Version:** 0.0.712 (Draft)
 **Date:** 2026-10-09
 
 ---
@@ -12,7 +12,7 @@ Nikaia provides one command-line interface, `nikaia`. It builds and runs a proje
 **Prerequisites.** A Nikaia installation requires a **stable** Rust toolchain and nothing else. The compiler emits stable Rust and hands it to `cargo`. It uses no unstable compiler feature and no `-Z` flag. A Nikaia installation, `std` and the emitted Rust require Rust **1.88 or newer**. The emitted Rust is Edition 2024 ([ADR-305](adr/adr-305.md)). The compiler writes that number as `rust-version` into every generated `Cargo.toml` and compares it with `rustc --version` before `cargo` runs. An older toolchain is refused before the backend runs.
 
 ### 13.1. Project Structure
-`nikaia new my_project` generates the following structure:
+`nikaia new my_project` writes a new directory, and refuses one that exists and is not empty: `nikaia.toml` with `name` and `version` only, `src/main.nika` printing `Hello, Nikaia!`, `tests/main.stdout` holding that line, and a `.gitignore` naming `target/`. A project holds:
 
 * `nikaia.toml`: the **manifest**. It describes the project, its authors and its dependencies.
 * `nikaia.lock`: the **lockfile**. It records everything that determines the build and is also the **cache key**.
@@ -29,7 +29,7 @@ Nikaia provides one command-line interface, `nikaia`. It builds and runs a proje
 
 ### 13.2. Core Commands
 * `nikaia build`: compiles the project.
-* `nikaia run`: compiles and executes. `nikaia run <file>.nika` compiles and executes one file. Inside a project the file has to be that project's entry point. Outside any project it is built as a project of its own, kept in the user's cache directory and keyed on the file's path, through the same Cargo workspace `nikaia build` makes. The interpreter is not what `run` uses.
+* `nikaia run`: compiles and executes. `nikaia run <file>.nika` compiles and executes one file, and everything after the file is the program's arguments: `nikaia run f.nika a -v b`. A switch of `nikaia run` stands before the file. A file whose first two bytes are `#!` has its first line skipped (the line still counts); only the file that holds `main` may carry one, so `#!/usr/bin/env -S nikaia run` makes the file a command. Inside a project the file has to be that project's entry point. Outside any project it is built as a project of its own, kept in the user's cache directory and keyed on the file's path, through the same Cargo workspace `nikaia build` makes. The interpreter is not what `run` uses.
 * `nikaia test`: runs the package's `test` blocks, each in a process of its own, and its output tests, `tests/NAME.stdout` (14.1). `--both-settings` runs each at `user_parallelism = no` and `yes`.
 * `nikaia bench`: runs performance benchmarks.
 * `nikaia fmt`: formats the package's `.nika` files in place, in one style that nothing configures: one tab per level and nothing aligned, `{` at the end of the line, a line broken at 100 columns (a tab counts four) with a trailing `,` where a list is broken, at most one blank line in a row. A file indented with spaces is read like any other and written back with tabs. Every comment stays where it was, a `dsl` block's body is kept as written, and what the file lowers to does not change. `--check` writes nothing and fails where a file would change.

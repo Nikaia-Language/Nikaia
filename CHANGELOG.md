@@ -8,6 +8,15 @@ or the specification. A change only to the guide, the notes, the README, the
 website, the tests, the examples or the tooling around them raises nothing and
 has no heading here; `CLAUDE.md` draws the line.
 
+## [0.0.712] — 2026-10-09
+
+**A file can be a command, and `nikaia new` writes a project** (ADR-260 D6-D8,
+#537).
+- Decided, not built: everything after `nikaia run f.nika` is the program's
+  arguments; a `#!` first line in the file that holds `main` is skipped; `nikaia
+  new` writes a manifest with `name` and `version`, a hello world, its output
+  test and a `.gitignore`. Part III 13.1, 13.2.
+
 ## [0.0.711] — 2026-10-09
 
 **A directory of a project is a package, and a module of one crate**
