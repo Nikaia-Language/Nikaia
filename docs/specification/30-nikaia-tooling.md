@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part III: Tooling, Ecosystem & Interoperability**
-**Version:** 0.0.712 (Draft)
+**Version:** 0.0.713 (Draft)
 **Date:** 2026-10-09
 
 ---
@@ -427,7 +427,9 @@ Each test runs under the `user_parallelism` the project names. `nikaia test --bo
 
 **An output test is a few files and no code** ([ADR-269](adr/adr-269.md) D13, [ADR-247](adr/adr-247.md)). In a package's `tests/` directory, `NAME.stdout` or `NAME.out/` makes `NAME` a test of the package's program. `nikaia test` builds the program as `nikaia build` does and runs it **in a fresh, empty directory of the test's own**, removed afterwards, so nothing it writes reaches the package. `NAME.in/`, where there is one, is copied into that directory first; the arguments are the lines of `NAME.args` and the input is `NAME.stdin`, each empty where the file is absent. The test passes where the program ends successfully, prints exactly `NAME.stdout` (where there is one) and leaves every file `NAME.out/` names with exactly its bytes; a file it writes that `NAME.out/` does not name is not compared. A failing one is reported as a line difference, `-` expected and `+` produced. Output tests run beside a package's `test` blocks, and at both settings under `--both-settings`.
 
-**`nikaia test --bless`** writes the expectations from what the program did: its standard output into `NAME.stdout` where the test has one, and each file it wrote into the `NAME.out/` entry of that name. Only a run that ended successfully is blessed, and at `--both-settings` only one whose two runs agree. A new output test starts as an empty `NAME.stdout`, or the empty `NAME.out/` entries it should compare, and is blessed; the change is reviewed in version control.
+**A test program is `tests/NAME.nika`** ([ADR-269](adr/adr-269.md) D22): a program of its own that may `use` the package. `NAME.stdout` is what it must print and `NAME.stderr` what it must write to standard error, or, where it must be refused, the compiler's whole message, its path written `tests/NAME.nika`. The test passes where what happened is what is written: a program refused where no `NAME.stderr` holds that refusal fails, and so does one that builds where `NAME.stderr` holds a refusal. The package's own output tests take a `NAME.stderr` the same way. A refused program is only checked, never compiled; the ones that build are compiled together.
+
+**`nikaia test --bless`** writes the expectations from what the program did: its standard output into `NAME.stdout` where the test has one, its standard error or its refusal into `NAME.stderr` where the test has one, and each file it wrote into the `NAME.out/` entry of that name. Only a run that ended successfully is blessed, and at `--both-settings` only one whose two runs agree. A new output test starts as an empty `NAME.stdout`, or the empty `NAME.out/` entries it should compare, and is blessed; the change is reviewed in version control.
 
 **A `test` block runs in the package's directory**, so it reads what the package holds, and writes under **`fs::scratch()`**: a fresh, empty directory handed back as an `fs::Root::Dir`, inside the test's own directory and removed with it.
 

@@ -8,6 +8,15 @@ or the specification. A change only to the guide, the notes, the README, the
 website, the tests, the examples or the tooling around them raises nothing and
 has no heading here; `CLAUDE.md` draws the line.
 
+## [0.0.713] — 2026-10-09
+
+**A refusal is tested as a file beside the program** (ADR-269 D22, #535).
+- Decided, not built: `tests/NAME.nika` is a test program that may `use` the
+  package; `NAME.stdout` and `NAME.stderr` say what it must produce, and a
+  refusal is the compiler's whole message in `NAME.stderr`. `--bless` writes
+  both. A refused program is only checked; the ones that build are compiled
+  together. Part III 14.1.
+
 ## [0.0.712] — 2026-10-09
 
 **A file can be a command, and `nikaia new` writes a project** (ADR-260 D6-D8,
