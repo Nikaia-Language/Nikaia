@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part III: Tooling, Ecosystem & Interoperability**
-**Version:** 0.0.715 (Draft)
+**Version:** 0.0.716 (Draft)
 **Date:** 2026-10-09
 
 ---
@@ -1410,7 +1410,7 @@ At `no` the runtime starts its I/O workers and nothing else, so no thread carrie
 
 > Interleaved is not concurrent.
 
-**`std::db` (the protocol, and nothing else)**
+**`db` (an official package, 17.3: the protocol, and nothing else)**
 `std::db` holds what two database drivers must agree on without depending on one another: the `Connection` and `Transaction` traits, the `Statement` protocol a `dsl` block's prepared statement speaks, and the values a row may carry: the language's numbers, `bool`, `String`, `Bytes`, and `T?` for `NULL`. **No SQL, no grammar, no dialect**: the compiler knows none. A dialect is a grammar in a **driver package** (`sqlite`, `postgres`, a vendor's own), which also brings the DDL grammar for the schema, the connection and the target adapter.
 
 * **The driver checks the query while the program is built.** `dsl sqlite::Sql(schema: APP) { SELECT name, email FROM users WHERE age >= :min_age } eod` hands the statement and a schema file (a `comptime` asset) to the driver's grammar. A missing table or column is a build error at the query, every `:hole` is a typed named parameter, and the grammar declares the result columns with `meta::column`, from which the compiler derives a **row type** with named, typed fields (Part II 10.5). No live database is opened while building; whether the one opened at runtime still matches the file is the driver's check at `open`.
@@ -1443,7 +1443,7 @@ fn query_data() {
 
 ### 17.3. Official Packages
 
-`json`, `toml`, `csv`, `html` and `http1` are **official packages**: maintained with the toolchain and shipped with it, each with a version of its own, and published as every package is (`nikaia_json`, 13.3). `std` lists them with the version this toolchain ships. A `use` of one that neither `[dependencies]` nor a directory of the project names takes it in at that version and records it in `nikaia.lock`; a `[dependencies]` entry names another version. `json`, `toml` and `csv` each read a text into values and write values into a text. A program carries only what it calls, whether it is in `std` or in a package.
+`json`, `toml`, `csv`, `html`, `http1` and `db` are **official packages**: maintained with the toolchain and shipped with it, each with a version of its own, and published as every package is (`nikaia_json`, 13.3). `std` lists them with the version this toolchain ships. A `use` of one that neither `[dependencies]` nor a directory of the project names takes it in at that version and records it in `nikaia.lock`; a `[dependencies]` entry names another version. `json`, `toml` and `csv` each read a text into values and write values into a text. A program carries only what it calls, whether it is in `std` or in a package.
 
 ---
 

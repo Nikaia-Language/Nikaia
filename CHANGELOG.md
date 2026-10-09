@@ -8,6 +8,12 @@ or the specification. A change only to the guide, the notes, the README, the
 website, the tests, the examples or the tooling around them raises nothing and
 has no heading here; `CLAUDE.md` draws the line.
 
+## [0.0.716] — 2026-10-09
+
+**The database protocol is an official package, `db`** (ADR-338 D2, #539).
+Decided, not built: the compiler gives it no place a format lacks. Part III
+17.2, 17.3.
+
 ## [0.0.715] — 2026-10-09
 
 **`json`, `toml` and `csv` read and write** (ADR-338 D5, #539). Decided, not

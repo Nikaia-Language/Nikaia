@@ -62,7 +62,7 @@ implementation.
 
 | ADR | Decides | Status | Built |
 | :--- | :--- | :--- | :--- |
-| [338](adr-338.md) | `std` is the core the language stands on; JSON, TOML, CSV, HTML and HTTP/1.1's text half are official packages (`nikaia_json` …), versioned on their own, shipped with the toolchain, listed in `std` and taken in by their first `use`. | Accepted | no |
+| [338](adr-338.md) | `std` is the core the language stands on; JSON, TOML, CSV, HTML, HTTP/1.1's text half and the database protocol are official packages (`nikaia_json` …), versioned on their own, shipped with the toolchain, listed in `std` and taken in by their first `use`. | Accepted | no |
 | [337](adr-337.md) | `nikaia fmt` writes one style with no options (a tab per level and nothing aligned, `{` at the line's end, width 100, trailing `,` where broken), keeps every comment where it was, leaves a `dsl` body as written, never changes what a file lowers to, and `--check` reports for CI. | Accepted | no |
 | [336](adr-336.md) | How the compiler is offered, by the specification's version: before 0.1 `cargo install --git` from the repository, with Cargo's checkout as the sysroot; from 0.1 crates.io, every crate the project publishes under ADR-286 D23's `nikaia_` prefix with no exception (`nikaia-std` is `nikaia_nikaia_std`); from 0.2 a GitHub release per version with the release-built binary, its sysroot and SHA-256, and one container image to compile or run a `.nika` file at once, on GitHub's registry and Docker Hub; the VS Code extension before the system packages; a `.deb` from 1.0. A release carries the specification's version. The sysroot lookup outside a checkout is found by trying it. | Accepted | no |
 | [314](adr-314.md) | **What a grammar matched and what a callee promises are facts of the walk**. 1BRC's `TENTHS` kept every overflow check: the walk did not enter grammar actions and read nothing across a call (`std` publishes no `ensures`). Others: none derives facts from a text grammar (EverParse, Vest check predicates the author writes); SPARK reads an expression function's body as its postcondition. Measured: 1BRC 4.8 instructions a row (1.0 %) on its old action; in the corpus these facts unblock few of 106 unproved sites, lengths (~25), lists of lists (~28) and fields (~12) many more. Decided, B: D1 actions walked with what each binding matched (length, class, and a `dec[T]` over `n` digits below `10^n`); D2 a `char`'s code is a number; D3 a callee's `ensures` is a fact, and a `sync` function that is one `return e` publishes `result == e`; D4 only at `aggressive` and certified; D5 the criterion. A short loop's turns left open | Accepted | **no** |
@@ -254,7 +254,7 @@ either finds the other. Records replaced as a whole are not here: they are in
 
 | Changed | By | What holds now |
 | :--- | :--- | :--- |
-| [017](adr-017.md), [289](adr-289.md) | [338](adr-338.md) D2 | `std::html` and `std::http1` are the official packages `html` and `http1` |
+| [017](adr-017.md), [289](adr-289.md) | [338](adr-338.md) D2 | `std::html`, `std::http1` and `std::db` are the official packages `html`, `http1` and `db` |
 | [329](adr-329.md) D1 | [330](adr-330.md) D5 | `.ty` is the field's type, not a `meta::Type` |
 | [323](adr-323.md) D1 | [330](adr-330.md) D3 | a `meta::Type`'s parts are types; it exists only at build time |
 | [323](adr-323.md) D1, D3 | [330](adr-330.md) D7 | there is no `Named`; a grammar names no type of the program |
