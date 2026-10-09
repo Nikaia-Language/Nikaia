@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part III: Tooling, Ecosystem & Interoperability**
-**Version:** 0.0.714 (Draft)
+**Version:** 0.0.715 (Draft)
 **Date:** 2026-10-09
 
 ---
@@ -1443,7 +1443,7 @@ fn query_data() {
 
 ### 17.3. Official Packages
 
-`json`, `toml`, `csv`, `html` and `http1` are **official packages**: maintained with the toolchain and shipped with it, each with a version of its own, and published as every package is (`nikaia_json`, 13.3). `std` lists them with the version this toolchain ships. A `use` of one that neither `[dependencies]` nor a directory of the project names takes it in at that version and records it in `nikaia.lock`; a `[dependencies]` entry names another version. A program carries only what it calls, whether it is in `std` or in a package.
+`json`, `toml`, `csv`, `html` and `http1` are **official packages**: maintained with the toolchain and shipped with it, each with a version of its own, and published as every package is (`nikaia_json`, 13.3). `std` lists them with the version this toolchain ships. A `use` of one that neither `[dependencies]` nor a directory of the project names takes it in at that version and records it in `nikaia.lock`; a `[dependencies]` entry names another version. `json`, `toml` and `csv` each read a text into values and write values into a text. A program carries only what it calls, whether it is in `std` or in a package.
 
 ---
 

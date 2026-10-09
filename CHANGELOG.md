@@ -8,6 +8,11 @@ or the specification. A change only to the guide, the notes, the README, the
 website, the tests, the examples or the tooling around them raises nothing and
 has no heading here; `CLAUDE.md` draws the line.
 
+## [0.0.715] — 2026-10-09
+
+**`json`, `toml` and `csv` read and write** (ADR-338 D5, #539). Decided, not
+built. Editing a text in place, comments kept, is left open. Part III 17.3.
+
 ## [0.0.714] — 2026-10-09
 
 **`std` is the core; formats and protocols are official packages** (ADR-338,
