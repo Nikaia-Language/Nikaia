@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part III: Tooling, Ecosystem & Interoperability**
-**Version:** 0.0.716 (Draft)
+**Version:** 0.0.717 (Draft)
 **Date:** 2026-10-09
 
 ---
@@ -1411,7 +1411,7 @@ At `no` the runtime starts its I/O workers and nothing else, so no thread carrie
 > Interleaved is not concurrent.
 
 **`db` (an official package, 17.3: the protocol, and nothing else)**
-`std::db` holds what two database drivers must agree on without depending on one another: the `Connection` and `Transaction` traits, the `Statement` protocol a `dsl` block's prepared statement speaks, and the values a row may carry: the language's numbers, `bool`, `String`, `Bytes`, and `T?` for `NULL`. **No SQL, no grammar, no dialect**: the compiler knows none. A dialect is a grammar in a **driver package** (`sqlite`, `postgres`, a vendor's own), which also brings the DDL grammar for the schema, the connection and the target adapter.
+`db` holds what two database drivers must agree on without depending on one another: the `Connection` and `Transaction` traits, the `Statement` protocol a `dsl` block's prepared statement speaks, and the values a row may carry: the language's numbers, `bool`, `String`, `Bytes`, and `T?` for `NULL`. **No SQL, no grammar, no dialect**: the compiler knows none. A dialect is a grammar in a **driver package** (`sqlite`, `postgres`, a vendor's own), which also brings the DDL grammar for the schema, the connection and the target adapter.
 
 * **The driver checks the query while the program is built.** `dsl sqlite::Sql(schema: APP) { SELECT name, email FROM users WHERE age >= :min_age } eod` hands the statement and a schema file (a `comptime` asset) to the driver's grammar. A missing table or column is a build error at the query, every `:hole` is a typed named parameter, and the grammar declares the result columns with `meta::column`, from which the compiler derives a **row type** with named, typed fields (Part II 10.5). No live database is opened while building; whether the one opened at runtime still matches the file is the driver's check at `open`.
 * **Zero-blocking guarantee:** database operations are implicitly asynchronous. They never block the event loop, nor the compute scheduler where there is one.

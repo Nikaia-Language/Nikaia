@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part II: Advanced Features & Metaprogramming**
-**Version:** 0.0.716 (Draft)
+**Version:** 0.0.717 (Draft)
 **Date:** 2026-10-09
 
 ---
@@ -423,7 +423,7 @@ fn query_users(min_age: i32) {
 `execute` hands back a `Seq` of the derived row, so `u.email` is checked; a
 statement handed a connection opened for another schema is refused at the call
 ([ADR-299](adr/adr-299.md) D7-D11). A database driver writes no `execute` of its
-own: it implements `std::db`'s `Connection` trait, and the compiler turns each
+own: it implements `db`'s `Connection` trait, and the compiler turns each
 row into the row type it derived (D8).
 
 Every other DSL a library drives accepts its parameters with the **typed

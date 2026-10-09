@@ -8,6 +8,11 @@ or the specification. A change only to the guide, the notes, the README, the
 website, the tests, the examples or the tooling around them raises nothing and
 has no heading here; `CLAUDE.md` draws the line.
 
+## [0.0.717] — 2026-10-09
+
+**`db` everywhere the specification named `std::db`** (ADR-338 D2): Part II
+11, Part III 17.2, and ADR-299 D4 and D8 noted.
+
 ## [0.0.716] — 2026-10-09
 
 **The database protocol is an official package, `db`** (ADR-338 D2, #539).
