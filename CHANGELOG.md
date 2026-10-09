@@ -8,6 +8,15 @@ or the specification. A change only to the guide, the notes, the README, the
 website, the tests, the examples or the tooling around them raises nothing and
 has no heading here; `CLAUDE.md` draws the line.
 
+## [0.0.714] — 2026-10-09
+
+**`std` is the core; formats and protocols are official packages** (ADR-338,
+#539).
+- Decided, not built: `json`, `toml`, `csv`, `html` and `http1` are official
+  packages, `nikaia_json` and the rest on crates.io, shipped with the
+  toolchain, listed in `std` and taken in by their first `use`. `std::html` and
+  `std::http1` move out. Part III 17 and 17.3.
+
 ## [0.0.713] — 2026-10-09
 
 **A refusal is tested as a file beside the program** (ADR-269 D22, #535).

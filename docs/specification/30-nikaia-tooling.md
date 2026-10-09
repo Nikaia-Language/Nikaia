@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part III: Tooling, Ecosystem & Interoperability**
-**Version:** 0.0.713 (Draft)
+**Version:** 0.0.714 (Draft)
 **Date:** 2026-10-09
 
 ---
@@ -845,9 +845,9 @@ a different vocabulary: `dsl wasm` has locals and a value stack, not registers.
 
 ---
 
-## Chapter 17: The Standard Library ("Batteries Included")
+## Chapter 17: The Standard Library and the Official Packages
 
-The standard library consists of universal modules, with the same API on every target, and target-specific capabilities.
+The standard library is the core the language stands on: input and output, files, text, collections, tasks, locks, processes, time, the command line and numbers. It consists of universal modules, with the same API on every target, and target-specific capabilities. A format or a protocol is an **official package** (17.3).
 
 ### 17.1. Universal Modules
 These modules rely on the unified types and behave identically at every value of every build option. Their implementation differs to match the runtime model.
@@ -1134,7 +1134,7 @@ Part I 3.5 rather than an empty string, and `method()` returns an enum rather th
 A handler does I/O, so it is not `sync`. It carries no `async` marker and no `await`; the build
 option chooses the executor and nothing else.
 
-**`std::html`**
+**`html`** (an official package, 17.3)
 
 HTML escaping, on which a template's contract rests.
 
@@ -1367,7 +1367,7 @@ An untrusted map is seeded randomly, so **its iteration order is not stable betw
   no `_`. `text::digit_value(c)` is one digit's
   value. A text whose shape has to be explained when it is wrong is a grammar's
   to read, with `dec[T](p)` (Part II 10.8).
-* **`std::json`**: serialization using compile-time code generation, with zero-allocation parsing where possible.
+* **`json`** (an official package, 17.3): serialization using compile-time code generation, with zero-allocation parsing where possible.
 * **`std::cli`**: parsers for command-line arguments, environment variables and ANSI terminal colours.
 * **`std::net`**: low-level TCP sockets for building custom protocols — `listen`,
   `connect`, `accept`, `read`, `write`. Everything that waits gives the thread up,
@@ -1382,7 +1382,7 @@ An untrusted map is seeded randomly, so **its iteration order is not stable betw
   A read can carry a deadline; `serve` sets no idle limit of its own, which is a
   protocol's to set.
 
-* **`std::http1`**: HTTP/1.1's **text half** — where a head ends, what its lines
+* **`http1`** (an official package, 17.3): HTTP/1.1's **text half** — where a head ends, what its lines
   say, which header the client sent, what the query string says, and where the
   body starts. It reaches no socket, so everything in it is `sync`: a program
   reads bytes with `net` and hands them over. It is not a `std` HTTP module;
@@ -1440,6 +1440,10 @@ fn query_data() {
     }
 }
 ```
+
+### 17.3. Official Packages
+
+`json`, `toml`, `csv`, `html` and `http1` are **official packages**: maintained with the toolchain and shipped with it, each with a version of its own, and published as every package is (`nikaia_json`, 13.3). `std` lists them with the version this toolchain ships. A `use` of one that neither `[dependencies]` nor a directory of the project names takes it in at that version and records it in `nikaia.lock`; a `[dependencies]` entry names another version. A program carries only what it calls, whether it is in `std` or in a package.
 
 ---
 
