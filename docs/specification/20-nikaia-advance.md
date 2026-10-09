@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part II: Advanced Features & Metaprogramming**
-**Version:** 0.0.719 (Draft)
+**Version:** 0.0.720 (Draft)
 **Date:** 2026-10-09
 
 ---
@@ -106,7 +106,8 @@ build time but `std`'s, and no C: a function of a Rust crate or an
 grammar's actions call under the same rule, its own package's functions and its
 Nikaia dependencies among them. Nothing lets foreign code run while the program
 is built. A callee that fails either condition is refused with
-`NK1152`. `NK1127` says *not yet*; `NK1152` says *not allowed*.
+`NK1152`. `NK1127` says *not yet*; `NK1152` says *not allowed*; `NK1244`
+says *it ran and stopped*.
 
 **`comptime` marks the name.** It is not an expression: `let x = comptime f()`
 does not parse, and a function is never marked. A parameter marked `comptime`,
@@ -131,7 +132,9 @@ item-level one.
 machine that builds, against the package's dependencies, and behaves exactly as
 the same code does when the program runs: an overflow stops the build where it
 would stop the program. An initialiser of literals alone is folded by the
-checker. A package's build-time code is compiled once per change and its
+checker. A run that stops is refused with `NK1244`, in the words the program
+would print and at the line where it stopped: an index past the end, an
+overflow, a `panic()`. A folded initialiser stops with the same words. A package's build-time code is compiled once per change and its
 results are kept; an unchanged `comptime` is not run again.
 
 **A build-time run has a step budget and a memory bound.** Each turn of a loop
@@ -142,7 +145,8 @@ build is refused with `NK1152`, naming the `comptime` and the call path. Both
 counts are the same on every machine of one architecture. A `comptime` that
 needs more raises the bound itself, at its declaration:
 `comptime(steps: 50G, ram: 16Gi) TABLE = …`. Either may be left out; a name
-other than `steps` or `ram` is refused (`NK1109`). The call depth is
+other than `steps` or `ram` is refused (`NK1109`), and so is a bound that is
+not a number the build knows, or not above 0 (`NK1102`). The call depth is
 bounded as well. A run that takes more than a few seconds is reported by name
 while it runs.
 

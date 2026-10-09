@@ -8,6 +8,19 @@ or the specification. A change only to the guide, the notes, the README, the
 website, the tests, the examples or the tooling around them raises nothing and
 has no heading here; `CLAUDE.md` draws the line.
 
+## [0.0.720] — 2026-10-09
+
+**A build-time run that stopped has a code of its own** (ADR-321 D16-D19,
+#525).
+- Decided, not built: an abort while a `comptime` runs is `NK1244`, in the run
+  time's words; `NK1152` keeps the rule and the bounds. `NK1165` is retired:
+  a folded index past the end stops as the run does (ADR-311 D4 changed). A
+  `steps`/`ram` bound the build does not know, or not above 0, is `NK1102`,
+  each with its own sentence. A check with no place to compile build-time code
+  refuses with `NK1127` instead of leaving the value open. Part II 10.2; Part
+  III C.3.
+- Fixed: `NK1242` and `NK1243` had been written into A.2 instead of C.3.
+
 ## [0.0.719] — 2026-10-09
 
 **A `dsl` block names its entry, unless the grammar marks one `main`**
