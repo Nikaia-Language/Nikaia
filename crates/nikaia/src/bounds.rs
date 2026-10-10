@@ -30,8 +30,7 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 
-use crate::ast::{Expr, Item, Spanned};
-use crate::check::value_node;
+use crate::ast::{Item, Spanned};
 use crate::parser::Parsed;
 use nikaia_std::tools::bounds_basic as nika;
 use nikaia_std::tools::bounds_shape::Around;
@@ -242,7 +241,6 @@ pub fn proven(
             _ => {}
         }
     }
-    let node_of = |e: &Expr| value_node(e) as i64;
     for item in bodies {
         let Item::Fn {
             name, args, body, ..
@@ -251,7 +249,7 @@ pub fn proven(
             continue;
         };
         out.indices.extend(
-            nika::basic_indices(body, &parsed.interner, &node_of)
+            nika::basic_indices(body, &parsed.interner)
                 .into_iter()
                 .map(|n| n as usize),
         );
@@ -269,7 +267,6 @@ pub fn proven(
                 &context,
                 &parsed.program,
                 &parsed.interner,
-                &node_of,
                 &|arena, facts, goal| {
                     crate::proofs::ask(arena, facts, goal) == crate::proofs::Asked::Proved
                 },
@@ -329,7 +326,6 @@ pub fn proven(
                             &context,
                             &parsed.program,
                             &parsed.interner,
-                            &node_of,
                             &|arena, facts, goal| {
                                 crate::proofs::ask(arena, facts, goal)
                                     == crate::proofs::Asked::Proved

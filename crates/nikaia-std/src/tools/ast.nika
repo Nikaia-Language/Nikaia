@@ -812,6 +812,12 @@ pub fn id_of(expr: ref Expr) -> u32 sync {
     }
 }
 
+/// [`id_of`] as the `i64` the proof walks and the tier pass keep their sets of
+/// nodes in.
+pub fn node_key(expr: ref Expr) -> i64 sync {
+    return id_of(expr) as i64
+}
+
 /// **An id no other node has**, for a node the compiler builds after parsing
 /// ([ADR-340](../../../docs/specification/adr/adr-340.md) D2): a rewrite, a
 /// wrapper. The parser gives its own, in the order it makes its nodes.

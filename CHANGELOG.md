@@ -8,6 +8,11 @@ or the specification. A change only to the guide, the notes, the README, the
 website, the tests, the examples or the tooling around them raises nothing and
 has no heading here; `CLAUDE.md` draws the line.
 
+## [0.0.780] — 2026-10-10
+
+**The host callbacks `node_of` are gone: the tier pass and the bounds walks name a node by its id (ADR-340, #558, step 5).**
+- `tools/text_tiers.nika`, `bounds_basic.nika` and `bounds_walk.nika` no longer take `node_of: fn(ref Expr) -> i64 sync`; they key their sets on `node_key` (`id_of` as an `i64`, `tools/ast.nika`), which the emitter reads again from the same tree or from a copy of it.
+
 ## [0.0.779] — 2026-10-10
 
 **The checker and the emitter key their tables about an expression on its id, not its address (ADR-340 D4, #558, step 4).**

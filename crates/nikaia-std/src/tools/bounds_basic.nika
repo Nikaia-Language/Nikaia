@@ -7,11 +7,9 @@
 // negative, and nothing in the loop's body can change `xs`'s length or bind
 // `k` again.
 //
-// What it finds is a set of index nodes, each the indexed `base`'s node as
-// the emitter finds it again - an address in the one tree both walk, which
-// the language below can say and this one cannot, so it is handed in as
-// `node_of`. The walk recurses over the tree it was given and never over a
-// copy, so every node it names is one the emitter reaches.
+// What it finds is a set of index nodes, each the indexed `base`'s id
+// (`id_of`, ADR-340) as the emitter finds it again: an id is the node's own,
+// so a copy of the tree names the same nodes.
 //
 // Also here, because the aggressive level (D4) asks them too: which methods
 // leave a list's length as it was, and whether a body binds a name again.
@@ -26,15 +24,15 @@ struct CountedLoop {
 
 /// **The index nodes of `body` whose check the basic level drops**: every
 /// `xs[k]` inside a loop over `xs`'s own length that `k` counts.
-pub fn basic_indices(body: ref Block, words: ref winnow_grammar::InternerContext, node_of: fn(ref Expr) -> i64 sync) -> collections::BTreeSet[i64] {
+pub fn basic_indices(body: ref Block, words: ref winnow_grammar::InternerContext) -> collections::BTreeSet[i64] {
     let mut out: collections::BTreeSet[i64] = collections::BTreeSet()
-    counted_block(body, [], words, node_of, out)
+    counted_block(body, [], words, out)
     return out
 }
 
-fn counted_block(block: ref Block, mut over: Vec[CountedLoop], words: ref winnow_grammar::InternerContext, node_of: fn(ref Expr) -> i64 sync, mut out: collections::BTreeSet[i64]) {
+fn counted_block(block: ref Block, mut over: Vec[CountedLoop], words: ref winnow_grammar::InternerContext, mut out: collections::BTreeSet[i64]) {
     for stmt in block.stmts {
-        counted_statement(stmt.node, over, words, node_of, out)
+        counted_statement(stmt.node, over, words, out)
     }
 }
 
@@ -58,10 +56,10 @@ fn copied(over: ref Vec[CountedLoop]) -> Vec[CountedLoop] {
     return kept
 }
 
-fn counted_statement(stmt: ref Stmt, mut over: Vec[CountedLoop], words: ref winnow_grammar::InternerContext, node_of: fn(ref Expr) -> i64 sync, mut out: collections::BTreeSet[i64]) {
+fn counted_statement(stmt: ref Stmt, mut over: Vec[CountedLoop], words: ref winnow_grammar::InternerContext, mut out: collections::BTreeSet[i64]) {
     match stmt {
         Stmt::For { bindings, iter, body } => {
-            counted_expr(iter, over, words, node_of, out)
+            counted_expr(iter, over, words, out)
             // A binding of this loop hides an outer loop's of the same name.
             let mut inner = copied(over)
             for b in bindings {
@@ -73,10 +71,10 @@ fn counted_statement(stmt: ref Stmt, mut over: Vec[CountedLoop], words: ref winn
                     inner.push(found ?? CountedLoop { binding: "", list: "" })
                 }
             }
-            counted_block(body, inner, words, node_of, out)
+            counted_block(body, inner, words, out)
         },
         Stmt::Let { names, value, .. } => {
-            counted_expr(value, over, words, node_of, out)
+            counted_expr(value, over, words, out)
             for name in names {
                 let kept = without(over, words.resolve(name))
                 over.clear()
@@ -84,23 +82,23 @@ fn counted_statement(stmt: ref Stmt, mut over: Vec[CountedLoop], words: ref winn
             }
         },
         Stmt::Comptime { name, value, .. } => {
-            counted_expr(value, over, words, node_of, out)
+            counted_expr(value, over, words, out)
             let kept = without(over, words.resolve(name))
             over.clear()
             over.extend(kept)
         },
         Stmt::Assign { target, value, .. } => {
-            counted_expr(target, over, words, node_of, out)
-            counted_expr(value, over, words, node_of, out)
+            counted_expr(target, over, words, out)
+            counted_expr(value, over, words, out)
         },
         Stmt::While { cond, body } => {
-            counted_expr(cond, over, words, node_of, out)
-            counted_block(body, copied(over), words, node_of, out)
+            counted_expr(cond, over, words, out)
+            counted_block(body, copied(over), words, out)
         },
         Stmt::Return(value) => {
-            counted_maybe(value, over, words, node_of, out)
+            counted_maybe(value, over, words, out)
         },
-        Stmt::Expr(value) => counted_expr(value, over, words, node_of, out),
+        Stmt::Expr(value) => counted_expr(value, over, words, out),
         Stmt::Break => {},
         Stmt::Continue => {},
     }
@@ -161,14 +159,14 @@ fn indexes_its_loop(over: ref Vec[CountedLoop], list: ref String, at: ref String
     return false
 }
 
-fn counted_expr(expr: ref Expr, over: ref Vec[CountedLoop], words: ref winnow_grammar::InternerContext, node_of: fn(ref Expr) -> i64 sync, mut out: collections::BTreeSet[i64]) {
+fn counted_expr(expr: ref Expr, over: ref Vec[CountedLoop], words: ref winnow_grammar::InternerContext, mut out: collections::BTreeSet[i64]) {
     match expr {
         Expr::Index { base, index, .. } => {
             match base {
                 Expr::Variable(list, _) => match index {
                     Expr::Variable(at, _) => {
                         if indexes_its_loop(over, words.resolve(list), words.resolve(at)) {
-                            out.insert(node_of(base))
+                            out.insert(node_key(base))
                         }
                     },
                     else => {},
@@ -183,108 +181,108 @@ fn counted_expr(expr: ref Expr, over: ref Vec[CountedLoop], words: ref winnow_gr
         Expr::Closure { .. } => {},
         Expr::Spawn { .. } => {},
         else => {
-            counted_children(expr, over, words, node_of, out)
-            counted_blocks(expr, over, words, node_of, out)
+            counted_children(expr, over, words, out)
+            counted_blocks(expr, over, words, out)
         },
     }
 }
 
-fn counted_all(exprs: ref Vec[Expr], over: ref Vec[CountedLoop], words: ref winnow_grammar::InternerContext, node_of: fn(ref Expr) -> i64 sync, mut out: collections::BTreeSet[i64]) {
+fn counted_all(exprs: ref Vec[Expr], over: ref Vec[CountedLoop], words: ref winnow_grammar::InternerContext, mut out: collections::BTreeSet[i64]) {
     for e in exprs {
-        counted_expr(e, over, words, node_of, out)
+        counted_expr(e, over, words, out)
     }
 }
 
-fn counted_maybe(expr: ref Expr?, over: ref Vec[CountedLoop], words: ref winnow_grammar::InternerContext, node_of: fn(ref Expr) -> i64 sync, mut out: collections::BTreeSet[i64]) {
-    counted_expr(expr ?? return, over, words, node_of, out)
+fn counted_maybe(expr: ref Expr?, over: ref Vec[CountedLoop], words: ref winnow_grammar::InternerContext, mut out: collections::BTreeSet[i64]) {
+    counted_expr(expr ?? return, over, words, out)
 }
 
-fn counted_maybe_block(block: ref Block?, over: ref Vec[CountedLoop], words: ref winnow_grammar::InternerContext, node_of: fn(ref Expr) -> i64 sync, mut out: collections::BTreeSet[i64]) {
-    counted_block(block ?? return, copied(over), words, node_of, out)
+fn counted_maybe_block(block: ref Block?, over: ref Vec[CountedLoop], words: ref winnow_grammar::InternerContext, mut out: collections::BTreeSet[i64]) {
+    counted_block(block ?? return, copied(over), words, out)
 }
 
 /// Each expression directly inside `expr`.
-fn counted_children(expr: ref Expr, over: ref Vec[CountedLoop], words: ref winnow_grammar::InternerContext, node_of: fn(ref Expr) -> i64 sync, mut out: collections::BTreeSet[i64]) {
+fn counted_children(expr: ref Expr, over: ref Vec[CountedLoop], words: ref winnow_grammar::InternerContext, mut out: collections::BTreeSet[i64]) {
     match expr {
         Expr::Match { value, arms, .. } => {
-            counted_expr(value, over, words, node_of, out)
+            counted_expr(value, over, words, out)
             for arm in arms {
-                counted_maybe(arm.guard, over, words, node_of, out)
-                counted_expr(arm.body, over, words, node_of, out)
+                counted_maybe(arm.guard, over, words, out)
+                counted_expr(arm.body, over, words, out)
             }
         },
         Expr::Range { start, end, .. } => {
-            counted_expr(start, over, words, node_of, out)
-            counted_expr(end, over, words, node_of, out)
+            counted_expr(start, over, words, out)
+            counted_expr(end, over, words, out)
         },
-        Expr::Tuple(items, _) => counted_all(items, over, words, node_of, out),
-        Expr::ListLit { items, .. } => counted_all(items, over, words, node_of, out),
+        Expr::Tuple(items, _) => counted_all(items, over, words, out),
+        Expr::ListLit { items, .. } => counted_all(items, over, words, out),
         Expr::LitInterpolated { parts, .. } => {
             for part in parts {
                 match part {
-                    FPart::Hole { expr, .. } => counted_expr(expr, over, words, node_of, out),
+                    FPart::Hole { expr, .. } => counted_expr(expr, over, words, out),
                     else => {},
                 }
             }
         },
-        Expr::If { cond, .. } => counted_expr(cond, over, words, node_of, out),
+        Expr::If { cond, .. } => counted_expr(cond, over, words, out),
         Expr::Call { func, args, config, .. } => {
-            counted_expr(func, over, words, node_of, out)
-            counted_all(args, over, words, node_of, out)
+            counted_expr(func, over, words, out)
+            counted_all(args, over, words, out)
             for c in config {
-                counted_expr(c.value, over, words, node_of, out)
+                counted_expr(c.value, over, words, out)
             }
         },
         Expr::MethodCall { receiver, args, config, .. } => {
-            counted_expr(receiver, over, words, node_of, out)
-            counted_all(args, over, words, node_of, out)
+            counted_expr(receiver, over, words, out)
+            counted_all(args, over, words, out)
             for c in config {
-                counted_expr(c.value, over, words, node_of, out)
+                counted_expr(c.value, over, words, out)
             }
         },
         Expr::SafeMethod { receiver, args, config, .. } => {
-            counted_expr(receiver, over, words, node_of, out)
-            counted_all(args, over, words, node_of, out)
+            counted_expr(receiver, over, words, out)
+            counted_all(args, over, words, out)
             for c in config {
-                counted_expr(c.value, over, words, node_of, out)
+                counted_expr(c.value, over, words, out)
             }
         },
-        Expr::Field { base, .. } => counted_expr(base, over, words, node_of, out),
-        Expr::SafeField { base, .. } => counted_expr(base, over, words, node_of, out),
+        Expr::Field { base, .. } => counted_expr(base, over, words, out),
+        Expr::SafeField { base, .. } => counted_expr(base, over, words, out),
         Expr::StructLit { fields, .. } => {
             for field in fields {
-                counted_maybe(field.value, over, words, node_of, out)
+                counted_maybe(field.value, over, words, out)
             }
         },
         Expr::With { base, fields, .. } => {
-            counted_expr(base, over, words, node_of, out)
+            counted_expr(base, over, words, out)
             for field in fields {
-                counted_maybe(field.value, over, words, node_of, out)
+                counted_maybe(field.value, over, words, out)
             }
         },
-        Expr::Unary { expr, .. } => counted_expr(expr, over, words, node_of, out),
-        Expr::Try(inner, _) => counted_expr(inner, over, words, node_of, out),
-        Expr::Throw(inner, _) => counted_expr(inner, over, words, node_of, out),
-        Expr::Cast { expr, .. } => counted_expr(expr, over, words, node_of, out),
-        Expr::TryCatch { expr, .. } => counted_expr(expr, over, words, node_of, out),
+        Expr::Unary { expr, .. } => counted_expr(expr, over, words, out),
+        Expr::Try(inner, _) => counted_expr(inner, over, words, out),
+        Expr::Throw(inner, _) => counted_expr(inner, over, words, out),
+        Expr::Cast { expr, .. } => counted_expr(expr, over, words, out),
+        Expr::TryCatch { expr, .. } => counted_expr(expr, over, words, out),
         Expr::Binary { lhs, rhs, .. } => {
-            counted_expr(lhs, over, words, node_of, out)
-            counted_expr(rhs, over, words, node_of, out)
+            counted_expr(lhs, over, words, out)
+            counted_expr(rhs, over, words, out)
         },
         Expr::Return(value, _) => {
-            counted_maybe(value, over, words, node_of, out)
+            counted_maybe(value, over, words, out)
         },
         Expr::Index { base, index, .. } => {
-            counted_expr(base, over, words, node_of, out)
-            counted_expr(index, over, words, node_of, out)
+            counted_expr(base, over, words, out)
+            counted_expr(index, over, words, out)
         },
         Expr::Coalesce { value, fallback, .. } => {
-            counted_expr(value, over, words, node_of, out)
-            counted_expr(fallback, over, words, node_of, out)
+            counted_expr(value, over, words, out)
+            counted_expr(fallback, over, words, out)
         },
         Expr::Select(arms, _) => {
             for arm in arms {
-                counted_expr(arm.value, over, words, node_of, out)
+                counted_expr(arm.value, over, words, out)
             }
         },
         else => {},
@@ -292,19 +290,19 @@ fn counted_children(expr: ref Expr, over: ref Vec[CountedLoop], words: ref winno
 }
 
 /// Each block directly inside `expr`, each with the loops in force here.
-fn counted_blocks(expr: ref Expr, over: ref Vec[CountedLoop], words: ref winnow_grammar::InternerContext, node_of: fn(ref Expr) -> i64 sync, mut out: collections::BTreeSet[i64]) {
+fn counted_blocks(expr: ref Expr, over: ref Vec[CountedLoop], words: ref winnow_grammar::InternerContext, mut out: collections::BTreeSet[i64]) {
     match expr {
-        Expr::Block(b, _) => counted_block(b, copied(over), words, node_of, out),
-        Expr::Overlap(b, _) => counted_block(b, copied(over), words, node_of, out),
-        Expr::Unsafe(b, _) => counted_block(b, copied(over), words, node_of, out),
+        Expr::Block(b, _) => counted_block(b, copied(over), words, out),
+        Expr::Overlap(b, _) => counted_block(b, copied(over), words, out),
+        Expr::Unsafe(b, _) => counted_block(b, copied(over), words, out),
         Expr::If { then_branch, else_branch, .. } => {
-            counted_block(then_branch, copied(over), words, node_of, out)
-            counted_maybe_block(else_branch, over, words, node_of, out)
+            counted_block(then_branch, copied(over), words, out)
+            counted_maybe_block(else_branch, over, words, out)
         },
-        Expr::TryCatch { handler, .. } => counted_block(handler, copied(over), words, node_of, out),
+        Expr::TryCatch { handler, .. } => counted_block(handler, copied(over), words, out),
         Expr::Select(arms, _) => {
             for arm in arms {
-                counted_block(arm.body, copied(over), words, node_of, out)
+                counted_block(arm.body, copied(over), words, out)
             }
         },
         else => {},

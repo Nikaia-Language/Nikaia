@@ -163,8 +163,8 @@ pub fn hand_number(hand: ref Hand) -> i64 {
 }
 
 /// What the tier pass is handed: the program's names and aliases, and
-/// `std`'s ledger. Where an expression stands is the one thing only the
-/// language below can say, and it is handed to the walk as `node_of`.
+/// `std`'s ledger. An expression is named by its id ([`id_of`],
+/// [ADR-340](../../docs/specification/adr/adr-340.md)).
 pub struct TierAsk {
     pub names: ref winnow_grammar::InternerContext,
     pub aliases: ref collections::BTreeMap[String, String],
@@ -499,7 +499,7 @@ fn flow_type(owner: ref TextOwner, ty: ref Type, mut path: Vec[i64], kinds: ref 
 /// A value going into one argument of a declared type, which is a position
 /// if it is `String`: recorded, and - where that position is mixed and
 /// `wrap` says the line is this pass's to wrap - marked to be handed over.
-fn flow_value(going: ref TierGoing, value: ref Expr?, kinds: ref Kinds, node_of: fn(ref Expr) -> i64 sync, ask: ref TierAsk, mut walk: TierWalk) {
+fn flow_value(going: ref TierGoing, value: ref Expr?, kinds: ref Kinds, ask: ref TierAsk, mut walk: TierWalk) {
     let owner = going.owner.clone()
     let ty = going.ty.clone()
     let path = going.path.clone()
@@ -529,14 +529,14 @@ fn flow_value(going: ref TierGoing, value: ref Expr?, kinds: ref Kinds, node_of:
     // `null` is no text of either kind, and goes in as it is.
     if plain && going.wrap && !a_null(given) && mixed_at(position_word(owner, path), walk) {
         if ty.is_nullable {
-            hand_value_over(given, Hand::Maybe, node_of, walk)
+            hand_value_over(given, Hand::Maybe, walk)
         } else {
-            hand_value_over(given, Hand::Either, node_of, walk)
+            hand_value_over(given, Hand::Either, walk)
         }
     }
     kept_literal(given, owner, path, ty, ask, walk)
     if a_container(ask.names, ty) {
-        flow_whole(going, given, node_of, ask, walk)
+        flow_whole(going, given, ask, walk)
     }
 }
 
@@ -593,7 +593,7 @@ fn comes_whole(value: ref Expr?, ask: ref TierAsk, walk: ref TierWalk) -> bool {
 /// **A container going in whole** (ADR-282 D16): a literal's items one by
 /// one, a `collect` item by item, and anything that already has a position
 /// linked to it, so that the two are one representation below.
-fn flow_whole(going: ref TierGoing, value: ref Expr, node_of: fn(ref Expr) -> i64 sync, ask: ref TierAsk, mut walk: TierWalk) {
+fn flow_whole(going: ref TierGoing, value: ref Expr, ask: ref TierAsk, mut walk: TierWalk) {
     let ty = going.ty.clone()
     let a_list = a_container(ask.names, ty) && !a_map(ask.names, ty) && ty.generics.len() > 0
     match value {
@@ -603,15 +603,15 @@ fn flow_whole(going: ref TierGoing, value: ref Expr, node_of: fn(ref Expr) -> i6
             }
             let element = ty.generics[0].clone()
             for item in items {
-                let kinds = tier_expr(item, node_of, ask, walk)
+                let kinds = tier_expr(item, ask, walk)
                 let mut at = going.path.clone()
                 at.push(0)
-                flow_value(going_into(going.owner, element, at, true), item, kinds, node_of, ask, walk)
+                flow_value(going_into(going.owner, element, at, true), item, kinds, ask, walk)
             }
         }
         Expr::MethodCall { receiver, method, args, .. } => {
             if ask.names.resolve(method) == "collect" && args.len() == 0 {
-                collected_into(going, receiver, node_of, ask, walk)
+                collected_into(going, receiver, ask, walk)
                 return
             }
             link_from(going, value, ask, walk)
@@ -628,17 +628,17 @@ fn link_from(going: ref TierGoing, value: ref Expr, ask: ref TierAsk, mut walk: 
 
 /// A `collect` into a container: a map is collected from pairs, its key and
 /// its value two positions, and a list item by item.
-fn collected_into(going: ref TierGoing, receiver: ref Expr, node_of: fn(ref Expr) -> i64 sync, ask: ref TierAsk, mut walk: TierWalk) {
+fn collected_into(going: ref TierGoing, receiver: ref Expr, ask: ref TierAsk, mut walk: TierWalk) {
     let ty = going.ty.clone()
     if a_map(ask.names, ty) {
         let keys = mixed_part(going, 0, ask, walk)
         let values = mixed_part(going, 1, ask, walk)
         if keys && values {
-            hand_value_over(receiver, Hand::Pairs, node_of, walk)
+            hand_value_over(receiver, Hand::Pairs, walk)
         } else if keys {
-            hand_value_over(receiver, Hand::Keys, node_of, walk)
+            hand_value_over(receiver, Hand::Keys, walk)
         } else if values {
-            hand_value_over(receiver, Hand::Values, node_of, walk)
+            hand_value_over(receiver, Hand::Values, walk)
         }
         return
     }
@@ -654,7 +654,7 @@ fn collected_into(going: ref TierGoing, receiver: ref Expr, node_of: fn(ref Expr
     if walk.in_hole && walk.hole_text < 0 {
         walk.flows.unwrappable.insert(word)
     } else if mixed_at(word, walk) {
-        hand_value_over(receiver, Hand::Items, node_of, walk)
+        hand_value_over(receiver, Hand::Items, walk)
     }
 }
 
@@ -739,7 +739,7 @@ fn link(from: ref Declaring, mut from_path: Vec[i64], to: ref Declaring, mut to_
 /// Mark a value to be handed over as `hand` says: by where it stands, or
 /// inside an `f"…"` hole by the hole's text and the value's shape (ADR-229
 /// D1).
-fn hand_value_over(value: ref Expr, hand: Hand, node_of: fn(ref Expr) -> i64 sync, mut walk: TierWalk) {
+fn hand_value_over(value: ref Expr, hand: Hand, mut walk: TierWalk) {
     if walk.in_hole && walk.hole_text >= 0 {
         let at = walk.hole_text
         let mut wraps: Vec[HoleWrap] = walk.flows.hole_wraps[at]?.clone() ?? []
@@ -747,7 +747,7 @@ fn hand_value_over(value: ref Expr, hand: Hand, node_of: fn(ref Expr) -> i64 syn
         walk.flows.hole_wraps.insert(at, wraps)
         return
     }
-    walk.flows.wraps.insert(node_of(value), hand)
+    walk.flows.wraps.insert(node_key(value), hand)
 }
 
 /// What reading a value of a declared type gives: the tier of each `String`
@@ -822,12 +822,12 @@ fn field_place(base: ref Expr, field: ref String, ask: ref TierAsk, walk: ref Ti
     return Declaring { owner: TextOwner::Field(owner.clone(), field.clone()), ty: found.ty.clone() }
 }
 
-fn tier_block(block: ref Block, node_of: fn(ref Expr) -> i64 sync, ask: ref TierAsk, mut walk: TierWalk) -> Kinds {
+fn tier_block(block: ref Block, ask: ref TierAsk, mut walk: TierWalk) -> Kinds {
     open_tier_scope(walk)
     let mut tail = no_kinds()
     let mut k = 0
     for stmt in block.stmts {
-        let kinds = tier_statement(stmt.node, stmt.span.start as i64, node_of, ask, walk)
+        let kinds = tier_statement(stmt.node, stmt.span.start as i64, ask, walk)
         if k + 1 == block.stmts.len() {
             tail = kinds
         }
@@ -838,36 +838,36 @@ fn tier_block(block: ref Block, node_of: fn(ref Expr) -> i64 sync, ask: ref Tier
 }
 
 /// Walk a statement; what it is worth as a block's last value.
-fn tier_statement(stmt: ref Stmt, at: i64, node_of: fn(ref Expr) -> i64 sync, ask: ref TierAsk, mut walk: TierWalk) -> Kinds {
+fn tier_statement(stmt: ref Stmt, at: i64, ask: ref TierAsk, mut walk: TierWalk) -> Kinds {
     match stmt {
-        Stmt::Let { names, value, ty, .. } => tier_let(names, value, ty, at, node_of, ask, walk),
-        Stmt::Assign { target, value, .. } => tier_assign(target, value, node_of, ask, walk),
+        Stmt::Let { names, value, ty, .. } => tier_let(names, value, ty, at, ask, walk),
+        Stmt::Assign { target, value, .. } => tier_assign(target, value, ask, walk),
         Stmt::For { bindings, iter, body } => {
-            let kinds = tier_expr(iter, node_of, ask, walk)
+            let kinds = tier_expr(iter, ask, walk)
             open_tier_scope(walk)
             for binding in bindings {
                 bind_tier_local(ask.names.resolve(binding).clone(), plain_local(kinds.clone()), walk)
             }
-            tier_block(body, node_of, ask, walk)
+            tier_block(body, ask, walk)
             close_tier_scope(walk)
         }
         Stmt::While { cond, body } => {
-            tier_expr(cond, node_of, ask, walk)
-            tier_block(body, node_of, ask, walk)
+            tier_expr(cond, ask, walk)
+            tier_block(body, ask, walk)
         }
         Stmt::Return(value) => {
             let given = value ?? return no_kinds()
-            let kinds = tier_expr(given, node_of, ask, walk)
-            flow_result(given, kinds, node_of, ask, walk)
+            let kinds = tier_expr(given, ask, walk)
+            flow_result(given, kinds, ask, walk)
         }
-        Stmt::Expr(expr) => return tier_expr(expr, node_of, ask, walk),
+        Stmt::Expr(expr) => return tier_expr(expr, ask, walk),
         else => {}
     }
     return no_kinds()
 }
 
-fn tier_let(names: ref Vec[winnow_grammar::Symbol], value: ref Expr, ty: ref Type?, at: i64, node_of: fn(ref Expr) -> i64 sync, ask: ref TierAsk, mut walk: TierWalk) {
-    let kinds = tier_expr(value, node_of, ask, walk)
+fn tier_let(names: ref Vec[winnow_grammar::Symbol], value: ref Expr, ty: ref Type?, at: i64, ask: ref TierAsk, mut walk: TierWalk) {
+    let kinds = tier_expr(value, ask, walk)
     let mut of = tier_struct_of(value, ask, walk)
     let mut literal = -1
     let mut declared: Declaring? = null
@@ -893,7 +893,7 @@ fn tier_let(names: ref Vec[winnow_grammar::Symbol], value: ref Expr, ty: ref Typ
         if !written {
             bound = kinds_of_declared(found, ask, walk)
         } else {
-            flow_value(going_into(found.owner, found.ty, [], true), value, kinds, node_of, ask, walk)
+            flow_value(going_into(found.owner, found.ty, [], true), value, kinds, ask, walk)
             bound = kinds_of_declared(found, ask, walk)
         }
     }
@@ -946,12 +946,12 @@ fn a_literal_tail(block: ref Block) -> bool {
     }
 }
 
-fn tier_assign(target: ref Expr, value: ref Expr, node_of: fn(ref Expr) -> i64 sync, ask: ref TierAsk, mut walk: TierWalk) {
-    let kinds = tier_expr(value, node_of, ask, walk)
+fn tier_assign(target: ref Expr, value: ref Expr, ask: ref TierAsk, mut walk: TierWalk) {
+    let kinds = tier_expr(value, ask, walk)
     match target {
         // `m[k] = v`: a map's key and value, a run's element.
         Expr::Index { base, index, .. } => {
-            let key = tier_expr(index, node_of, ask, walk)
+            let key = tier_expr(index, ask, walk)
             let place = place_of(base, ask, walk) ?? return
             let ty = place.ty.clone()
             if !a_container(ask.names, ty) {
@@ -959,20 +959,20 @@ fn tier_assign(target: ref Expr, value: ref Expr, node_of: fn(ref Expr) -> i64 s
             }
             if a_map(ask.names, ty) {
                 if ty.generics.len() == 2 {
-                    flow_value(going_into(place.owner, ty.generics[0], [0], true), index, key, node_of, ask, walk)
-                    flow_value(going_into(place.owner, ty.generics[1], [1], true), value, kinds, node_of, ask, walk)
+                    flow_value(going_into(place.owner, ty.generics[0], [0], true), index, key, ask, walk)
+                    flow_value(going_into(place.owner, ty.generics[1], [1], true), value, kinds, ask, walk)
                 }
                 return
             }
             if ty.generics.len() > 0 {
-                flow_value(going_into(place.owner, ty.generics[0], [0], true), value, kinds, node_of, ask, walk)
+                flow_value(going_into(place.owner, ty.generics[0], [0], true), value, kinds, ask, walk)
             }
         }
         else => {
             let place = place_of(target, ask, walk)
             if place != null {
                 let found = place ?? return
-                flow_value(going_into(found.owner, found.ty, [], true), value, kinds, node_of, ask, walk)
+                flow_value(going_into(found.owner, found.ty, [], true), value, kinds, ask, walk)
             }
             let name = match target {
                 Expr::Variable(name, _) => ask.names.resolve(name).clone(),
@@ -991,11 +991,11 @@ fn tier_assign(target: ref Expr, value: ref Expr, node_of: fn(ref Expr) -> i64 s
 
 /// What a function hands back: its result's position, wrapped by the emitter
 /// where it is mixed (ADR-282 D14), so not marked here.
-fn flow_result(value: ref Expr, kinds: ref Kinds, node_of: fn(ref Expr) -> i64 sync, ask: ref TierAsk, mut walk: TierWalk) {
+fn flow_result(value: ref Expr, kinds: ref Kinds, ask: ref TierAsk, mut walk: TierWalk) {
     let key = walk.result?.clone() ?? return
     let function = walk.declared.fns[key]?.clone() ?? return
     let result = function.result ?? return
-    flow_value(going_into(TextOwner::Returned(key.clone()), result, [], false), value, kinds, node_of, ask, walk)
+    flow_value(going_into(TextOwner::Returned(key.clone()), result, [], false), value, kinds, ask, walk)
 }
 
 /// A name bound to a literal, kept in a position: remembered with it, so that
@@ -1039,13 +1039,13 @@ fn struct_of_local(name: ref String, walk: ref TierWalk) -> String? {
 /// Arguments handed to a function of this program: each goes into its
 /// parameter's position. The emitter wraps an argument to a mixed parameter
 /// itself (`Emitter::either_param`), in a hole as anywhere else.
-fn flow_args(key: ref String, args: ref Vec[Expr], given: ref Vec[Kinds], node_of: fn(ref Expr) -> i64 sync, ask: ref TierAsk, mut walk: TierWalk) {
+fn flow_args(key: ref String, args: ref Vec[Expr], given: ref Vec[Kinds], ask: ref TierAsk, mut walk: TierWalk) {
     let function = walk.declared.fns[key]?.clone() ?? return
     let mut at = 0
     while at < args.len() && at < given.len() {
         if at < function.params.len() {
             let owner = TextOwner::Param(key.clone(), at)
-            flow_value(going_into(owner, function.params[at], [], false), args[at], given[at], node_of, ask, walk)
+            flow_value(going_into(owner, function.params[at], [], false), args[at], given[at], ask, walk)
         }
         at += 1
     }
@@ -1053,7 +1053,7 @@ fn flow_args(key: ref String, args: ref Vec[Expr], given: ref Vec[Kinds], node_o
 
 /// Walk an expression, recording what flows into the positions inside it;
 /// what kind of text its value is.
-fn tier_expr(expr: ref Expr, node_of: fn(ref Expr) -> i64 sync, ask: ref TierAsk, mut walk: TierWalk) -> Kinds {
+fn tier_expr(expr: ref Expr, ask: ref TierAsk, mut walk: TierWalk) -> Kinds {
     return match expr {
         Expr::LitStr { .. } => lasting_kinds(),
         // `null`, a number, a truth value and a character are no text.
@@ -1071,7 +1071,7 @@ fn tier_expr(expr: ref Expr, node_of: fn(ref Expr) -> i64 sync, ask: ref TierAsk
                     FPart::Hole { expr, at, .. } => {
                         let held = walk.hole_text
                         walk.hole_text = at as i64
-                        tier_expr(expr, node_of, ask, walk)
+                        tier_expr(expr, ask, walk)
                         walk.hole_text = held
                     }
                     else => {}
@@ -1081,14 +1081,14 @@ fn tier_expr(expr: ref Expr, node_of: fn(ref Expr) -> i64 sync, ask: ref TierAsk
             owned_kinds()
         }
         Expr::Variable(name, _) => kinds_of_local(ask.names.resolve(name), walk),
-        Expr::MethodCall { receiver, method, args, .. } => method_kinds(receiver, ask.names.resolve(method), args, node_of, ask, walk),
-        Expr::SafeMethod { receiver, method, args, .. } => method_kinds(receiver, ask.names.resolve(method), args, node_of, ask, walk),
-        Expr::Call { func, args, .. } => call_kinds(func, args, node_of, ask, walk),
-        Expr::Field { base, .. } => field_kinds(expr, base, node_of, ask, walk),
-        Expr::SafeField { base, .. } => field_kinds(expr, base, node_of, ask, walk),
+        Expr::MethodCall { receiver, method, args, .. } => method_kinds(receiver, ask.names.resolve(method), args, ask, walk),
+        Expr::SafeMethod { receiver, method, args, .. } => method_kinds(receiver, ask.names.resolve(method), args, ask, walk),
+        Expr::Call { func, args, .. } => call_kinds(func, args, ask, walk),
+        Expr::Field { base, .. } => field_kinds(expr, base, ask, walk),
+        Expr::SafeField { base, .. } => field_kinds(expr, base, ask, walk),
         Expr::Index { base, index, .. } => {
-            let received = tier_expr(base, node_of, ask, walk)
-            tier_expr(index, node_of, ask, walk)
+            let received = tier_expr(base, ask, walk)
+            tier_expr(index, ask, walk)
             if a_range(index) {
                 return viewed(received)
             }
@@ -1098,97 +1098,97 @@ fn tier_expr(expr: ref Expr, node_of: fn(ref Expr) -> i64 sync, ask: ref TierAsk
         Expr::StructLit { name, fields, .. } => {
             let owner = ask.names.resolve(name).clone()
             for field in fields {
-                tier_struct_field(owner, field, node_of, ask, walk)
+                tier_struct_field(owner, field, ask, walk)
             }
             owned_kinds()
         }
         Expr::With { base, fields, .. } => {
-            tier_expr(base, node_of, ask, walk)
+            tier_expr(base, ask, walk)
             let owner = tier_struct_of(base, ask, walk)
             for field in fields {
                 let value = field.value ?? continue
-                let kinds = tier_expr(value, node_of, ask, walk)
+                let kinds = tier_expr(value, ask, walk)
                 let of = owner?.clone() ?? continue
                 let key = (of.clone(), ask.names.resolve(field.name).clone())
                 let found = walk.declared.fields[key]?.clone() ?? continue
                 let into = TextOwner::Field(of.clone(), ask.names.resolve(field.name).clone())
-                flow_value(going_into(into, found.ty, [], false), value, kinds, node_of, ask, walk)
+                flow_value(going_into(into, found.ty, [], false), value, kinds, ask, walk)
             }
             owned_kinds()
         }
         Expr::If { cond, then_branch, else_branch, .. } => {
-            tier_expr(cond, node_of, ask, walk)
-            let mut out = tier_block(then_branch, node_of, ask, walk)
+            tier_expr(cond, ask, walk)
+            let mut out = tier_block(then_branch, ask, walk)
             if else_branch != null {
                 let otherwise = else_branch ?? return out
-                out = kinds_joined(out, tier_block(otherwise, node_of, ask, walk))
+                out = kinds_joined(out, tier_block(otherwise, ask, walk))
             }
             out
         }
         Expr::Match { value, arms, .. } => {
-            tier_expr(value, node_of, ask, walk)
+            tier_expr(value, ask, walk)
             let mut out = no_kinds()
             for arm in arms {
                 if arm.guard != null {
                     let guard = arm.guard ?? continue
-                    tier_expr(guard, node_of, ask, walk)
+                    tier_expr(guard, ask, walk)
                 }
-                out = kinds_joined(out, tier_expr(arm.body, node_of, ask, walk))
+                out = kinds_joined(out, tier_expr(arm.body, ask, walk))
             }
             out
         }
-        Expr::Block(block, _) => tier_block(block, node_of, ask, walk),
-        Expr::Unsafe(block, _) => tier_block(block, node_of, ask, walk),
-        Expr::Overlap(block, _) => tier_block(block, node_of, ask, walk),
+        Expr::Block(block, _) => tier_block(block, ask, walk),
+        Expr::Unsafe(block, _) => tier_block(block, ask, walk),
+        Expr::Overlap(block, _) => tier_block(block, ask, walk),
         // A lambda's `return` is the lambda's, not the function's.
         Expr::Closure { body, .. } => {
             let held = walk.result?.clone()
             walk.result = null
-            tier_block(body, node_of, ask, walk)
+            tier_block(body, ask, walk)
             walk.result = held
             owned_kinds()
         }
         Expr::Spawn { body, .. } => {
             let held = walk.result?.clone()
             walk.result = null
-            tier_expr(body, node_of, ask, walk)
+            tier_expr(body, ask, walk)
             walk.result = held
             owned_kinds()
         }
         Expr::Coalesce { value, fallback, .. } => {
-            let out = tier_expr(value, node_of, ask, walk)
-            kinds_joined(out, tier_expr(fallback, node_of, ask, walk))
+            let out = tier_expr(value, ask, walk)
+            kinds_joined(out, tier_expr(fallback, ask, walk))
         }
         Expr::TryCatch { expr, handler, .. } => {
-            let out = tier_expr(expr, node_of, ask, walk)
-            kinds_joined(out, tier_block(handler, node_of, ask, walk))
+            let out = tier_expr(expr, ask, walk)
+            kinds_joined(out, tier_block(handler, ask, walk))
         }
-        Expr::Try(inner, _) => tier_expr(inner, node_of, ask, walk),
-        Expr::Unary { expr, .. } => tier_expr(expr, node_of, ask, walk),
+        Expr::Try(inner, _) => tier_expr(inner, ask, walk),
+        Expr::Unary { expr, .. } => tier_expr(expr, ask, walk),
         Expr::Throw(inner, _) => {
-            tier_expr(inner, node_of, ask, walk)
+            tier_expr(inner, ask, walk)
             no_kinds()
         }
         Expr::Return(value, _) => {
             let given = value ?? return no_kinds()
-            let kinds = tier_expr(given, node_of, ask, walk)
-            flow_result(given, kinds, node_of, ask, walk)
+            let kinds = tier_expr(given, ask, walk)
+            flow_result(given, kinds, ask, walk)
             no_kinds()
         }
         Expr::Binary { lhs, rhs, .. } => {
-            tier_expr(lhs, node_of, ask, walk)
-            tier_expr(rhs, node_of, ask, walk)
+            tier_expr(lhs, ask, walk)
+            tier_expr(rhs, ask, walk)
             owned_kinds()
         }
         Expr::Cast { expr, .. } => {
-            tier_expr(expr, node_of, ask, walk)
+            tier_expr(expr, ask, walk)
             owned_kinds()
         }
-        Expr::Tuple(items, _) => items_kinds(items, node_of, ask, walk),
-        Expr::ListLit { items, .. } => items_kinds(items, node_of, ask, walk),
+        Expr::Tuple(items, _) => items_kinds(items, ask, walk),
+        Expr::ListLit { items, .. } => items_kinds(items, ask, walk),
         Expr::Range { start, end, .. } => {
-            tier_expr(start, node_of, ask, walk)
-            tier_expr(end, node_of, ask, walk)
+            tier_expr(start, ask, walk)
+            tier_expr(end, ask, walk)
             owned_kinds()
         }
         else => owned_kinds(),
@@ -1207,51 +1207,51 @@ fn kinds_of_local(name: ref String, walk: ref TierWalk) -> Kinds {
     return local.kinds.clone()
 }
 
-fn items_kinds(items: ref Vec[Expr], node_of: fn(ref Expr) -> i64 sync, ask: ref TierAsk, mut walk: TierWalk) -> Kinds {
+fn items_kinds(items: ref Vec[Expr], ask: ref TierAsk, mut walk: TierWalk) -> Kinds {
     let mut out = no_kinds()
     for item in items {
-        out = kinds_joined(out, tier_expr(item, node_of, ask, walk))
+        out = kinds_joined(out, tier_expr(item, ask, walk))
     }
     return out
 }
 
-fn field_kinds(expr: ref Expr, base: ref Expr, node_of: fn(ref Expr) -> i64 sync, ask: ref TierAsk, mut walk: TierWalk) -> Kinds {
-    tier_expr(base, node_of, ask, walk)
+fn field_kinds(expr: ref Expr, base: ref Expr, ask: ref TierAsk, mut walk: TierWalk) -> Kinds {
+    tier_expr(base, ask, walk)
     let place = place_of(expr, ask, walk) ?? return owned_kinds()
     return kinds_of_declared(place, ask, walk)
 }
 
 /// A field of a struct literal: what goes into it is a flow the emitter wraps
 /// itself where the field is mixed (ADR-282 D14).
-fn tier_struct_field(owner: ref String, field: ref FieldInit, node_of: fn(ref Expr) -> i64 sync, ask: ref TierAsk, mut walk: TierWalk) {
+fn tier_struct_field(owner: ref String, field: ref FieldInit, ask: ref TierAsk, mut walk: TierWalk) {
     let shorthand = Expr::Variable(field.name, fresh_id())
-    let kinds = field_value_kinds(field, shorthand, node_of, ask, walk)
+    let kinds = field_value_kinds(field, shorthand, ask, walk)
     let name = ask.names.resolve(field.name).clone()
     let key = (owner.clone(), name.clone())
     let found = walk.declared.fields[key]?.clone() ?? return
     let into = TextOwner::Field(owner.clone(), name)
-    flow_value(going_into(into, found.ty, [], false), field.value, kinds, node_of, ask, walk)
+    flow_value(going_into(into, found.ty, [], false), field.value, kinds, ask, walk)
     if field.value == null {
         kept_literal(shorthand, into, no_path(), found.ty, ask, walk)
     }
 }
 
-fn field_value_kinds(field: ref FieldInit, shorthand: ref Expr, node_of: fn(ref Expr) -> i64 sync, ask: ref TierAsk, mut walk: TierWalk) -> Kinds {
+fn field_value_kinds(field: ref FieldInit, shorthand: ref Expr, ask: ref TierAsk, mut walk: TierWalk) -> Kinds {
     if field.value != null {
         let value = field.value ?? return no_kinds()
-        return tier_expr(value, node_of, ask, walk)
+        return tier_expr(value, ask, walk)
     }
-    return tier_expr(shorthand, node_of, ask, walk)
+    return tier_expr(shorthand, ask, walk)
 }
 
-fn call_kinds(func: ref Expr, args: ref Vec[Expr], node_of: fn(ref Expr) -> i64 sync, ask: ref TierAsk, mut walk: TierWalk) -> Kinds {
+fn call_kinds(func: ref Expr, args: ref Vec[Expr], ask: ref TierAsk, mut walk: TierWalk) -> Kinds {
     let mut given: Vec[Kinds] = []
     for arg in args {
-        given.push(tier_expr(arg, node_of, ask, walk))
+        given.push(tier_expr(arg, ask, walk))
     }
     let callee = tier_callee(func, ask) ?? return owned_kinds()
     if walk.declared.fns.contains_key(callee) {
-        flow_args(callee, args, given, node_of, ask, walk)
+        flow_args(callee, args, given, ask, walk)
         return result_kinds(callee, ask, walk)
     }
     // `Vec()`, `HashMap()`: empty, so no text of any kind.
@@ -1261,18 +1261,18 @@ fn call_kinds(func: ref Expr, args: ref Vec[Expr], node_of: fn(ref Expr) -> i64 
     return std_result(callee, ask)
 }
 
-fn method_kinds(receiver: ref Expr, method: ref String, args: ref Vec[Expr], node_of: fn(ref Expr) -> i64 sync, ask: ref TierAsk, mut walk: TierWalk) -> Kinds {
-    let received = tier_expr(receiver, node_of, ask, walk)
+fn method_kinds(receiver: ref Expr, method: ref String, args: ref Vec[Expr], ask: ref TierAsk, mut walk: TierWalk) -> Kinds {
+    let received = tier_expr(receiver, ask, walk)
     let mut given: Vec[Kinds] = []
     for arg in args {
-        given.push(tier_expr(arg, node_of, ask, walk))
+        given.push(tier_expr(arg, ask, walk))
     }
     // **A method this program declares answers for itself**, before any name
     // in the lists below.
     if walk.declared.methods.contains_key(method) {
         let keys: Vec[String] = walk.declared.methods[method]?.clone() ?? []
         for key in keys {
-            flow_args(key, args, given, node_of, ask, walk)
+            flow_args(key, args, given, ask, walk)
         }
         let mut out = no_kinds()
         for key in keys {
@@ -1286,7 +1286,7 @@ fn method_kinds(receiver: ref Expr, method: ref String, args: ref Vec[Expr], nod
         let found = place ?? return owned_kinds()
         let ty = found.ty.clone()
         if puts_its_argument(method) && a_container(ask.names, ty) {
-            put_into_container(found, method, args, given, node_of, ask, walk)
+            put_into_container(found, method, args, given, ask, walk)
             return owned_kinds()
         }
         if hands_back_an_element(method) {
@@ -1297,7 +1297,7 @@ fn method_kinds(receiver: ref Expr, method: ref String, args: ref Vec[Expr], nod
     // parameter bound to what came in (ADR-293 D26).
     if method == "map" && args.len() == 1 {
         match args[0] {
-            Expr::Closure { params, body, .. } => return mapped(params, body, received, node_of, ask, walk),
+            Expr::Closure { params, body, .. } => return mapped(params, body, received, ask, walk),
             else => {}
         }
     }
@@ -1316,12 +1316,12 @@ fn method_kinds(receiver: ref Expr, method: ref String, args: ref Vec[Expr], nod
     return owned_kinds()
 }
 
-fn put_into_container(place: ref Declaring, method: ref String, args: ref Vec[Expr], given: ref Vec[Kinds], node_of: fn(ref Expr) -> i64 sync, ask: ref TierAsk, mut walk: TierWalk) {
+fn put_into_container(place: ref Declaring, method: ref String, args: ref Vec[Expr], given: ref Vec[Kinds], ask: ref TierAsk, mut walk: TierWalk) {
     let ty = place.ty.clone()
     if a_map(ask.names, ty) {
         if args.len() == 2 && given.len() == 2 && ty.generics.len() == 2 {
-            flow_value(going_into(place.owner, ty.generics[0], [0], true), args[0], given[0], node_of, ask, walk)
-            flow_value(going_into(place.owner, ty.generics[1], [1], true), args[1], given[1], node_of, ask, walk)
+            flow_value(going_into(place.owner, ty.generics[0], [0], true), args[0], given[0], ask, walk)
+            flow_value(going_into(place.owner, ty.generics[1], [1], true), args[1], given[1], ask, walk)
         }
         return
     }
@@ -1330,10 +1330,10 @@ fn put_into_container(place: ref Declaring, method: ref String, args: ref Vec[Ex
         return
     }
     let wrap = method != "extend" && method != "append"
-    flow_value(going_into(place.owner, ty.generics[0], [0], wrap), args[args.len() - 1], given[given.len() - 1], node_of, ask, walk)
+    flow_value(going_into(place.owner, ty.generics[0], [0], wrap), args[args.len() - 1], given[given.len() - 1], ask, walk)
 }
 
-fn mapped(params: ref Vec[winnow_grammar::Symbol], body: ref Block, received: ref Kinds, node_of: fn(ref Expr) -> i64 sync, ask: ref TierAsk, mut walk: TierWalk) -> Kinds {
+fn mapped(params: ref Vec[winnow_grammar::Symbol], body: ref Block, received: ref Kinds, ask: ref TierAsk, mut walk: TierWalk) -> Kinds {
     let held = walk.result?.clone()
     walk.result = null
     open_tier_scope(walk)
@@ -1343,7 +1343,7 @@ fn mapped(params: ref Vec[winnow_grammar::Symbol], body: ref Block, received: re
     for param in params {
         bind_tier_local(ask.names.resolve(param).clone(), plain_local(received.clone()), walk)
     }
-    let made = tier_block(body, node_of, ask, walk)
+    let made = tier_block(body, ask, walk)
     close_tier_scope(walk)
     walk.result = held
     return made
@@ -1377,14 +1377,14 @@ fn std_result(callee: ref String, ask: ref TierAsk) -> Kinds {
 }
 
 /// Walk every function of the program once against the tiers found so far.
-fn walk_program(program: ref Program, node_of: fn(ref Expr) -> i64 sync, ask: ref TierAsk, mut walk: TierWalk) {
+fn walk_program(program: ref Program, ask: ref TierAsk, mut walk: TierWalk) {
     for item in program.items {
         match item.node {
-            Item::Fn { .. } => walk_function(item.node, null, node_of, ask, walk),
+            Item::Fn { .. } => walk_function(item.node, null, ask, walk),
             Item::Impl { target, methods, .. } => {
                 let owner = ask.names.resolve(target.name).clone()
                 for method in methods {
-                    walk_function(method.node, owner.clone(), node_of, ask, walk)
+                    walk_function(method.node, owner.clone(), ask, walk)
                 }
             }
             else => {}
@@ -1392,7 +1392,7 @@ fn walk_program(program: ref Program, node_of: fn(ref Expr) -> i64 sync, ask: re
     }
 }
 
-fn walk_function(item: ref Item, target: String?, node_of: fn(ref Expr) -> i64 sync, ask: ref TierAsk, mut walk: TierWalk) {
+fn walk_function(item: ref Item, target: String?, ask: ref TierAsk, mut walk: TierWalk) {
     let (name, receiver, args, body) = match item {
         Item::Fn { name, receiver, args, body, .. } => (name, receiver, args, body),
         else => return,
@@ -1417,11 +1417,11 @@ fn walk_function(item: ref Item, target: String?, node_of: fn(ref Expr) -> i64 s
         let local = TierLocal { kinds: owned_kinds(), of: target?.clone(), literal: -1, declared: null }
         bind_tier_local("self", local, walk)
     }
-    let tail = tier_block(body, node_of, ask, walk)
+    let tail = tier_block(body, ask, walk)
     // The body's last value is what it hands back.
     if body.stmts.len() > 0 {
         match body.stmts[body.stmts.len() - 1].node {
-            Stmt::Expr(last) => flow_result(last, tail, node_of, ask, walk),
+            Stmt::Expr(last) => flow_result(last, tail, ask, walk),
             else => {}
         }
     }
@@ -1528,13 +1528,13 @@ fn tier_word(tier: ref Tier) -> String {
 
 /// **Decide the tiers of a program** - a fixpoint over walks of every
 /// function - and what the rewrite needs besides.
-pub fn text_tiers(program: ref Program, ask: ref TierAsk, node_of: fn(ref Expr) -> i64 sync) -> TextTiers {
+pub fn text_tiers(program: ref Program, ask: ref TierAsk) -> TextTiers {
     let declared = declared_of(program, ask.names)
     let text = string_type(declared, ask.names)
     let mut walk = TierWalk { declared: declared, tiers: collections::BTreeMap(), flows: no_flows(), locals: collections::BTreeMap(), frames: [], result: null, in_hole: false, hole_text: -1 }
     for _ in 0..<16 {
         walk.flows = no_flows()
-        walk_program(program, node_of, ask, walk)
+        walk_program(program, ask, walk)
         let next = decide_tiers(walk.flows, walk.declared)
         if same_tiers(next, walk.tiers) {
             break

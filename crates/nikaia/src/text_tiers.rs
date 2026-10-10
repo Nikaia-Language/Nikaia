@@ -135,9 +135,7 @@ pub fn refine(parsed: &mut Parsed) {
         aliases: &parsed.aliases,
         library,
     };
-    let decided = text_tiers(&parsed.program, &ask, &|expr: &Expr| {
-        crate::check::value_node(expr) as i64
-    });
+    let decided = text_tiers(&parsed.program, &ask);
     let tiers: Tiers = decided
         .tiers
         .into_iter()
