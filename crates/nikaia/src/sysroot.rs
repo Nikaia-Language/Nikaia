@@ -296,22 +296,35 @@ pub fn lower_std_module(path: &Path) -> Result<String> {
         .iter()
         .filter(|finding| matches!(finding.severity, crate::check::Severity::Error))
         .collect();
-    if let Some(first) = refusals.first() {
-        anyhow::bail!(
-            "{}: {} {}{}",
-            path.display(),
-            first.code,
-            first.message,
-            match refusals.len() {
-                1 => String::new(),
-                more => format!(" (and {} more)", more - 1),
-            }
-        );
+    if !refusals.is_empty() {
+        anyhow::bail!("{}", every_refusal(path, &source, &refusals));
     }
     let lowered =
         crate::emit::emit_std_against(&parsed, &beside, &own, &crate::contracts::Ledger::blank())
             .map_err(|e| anyhow::anyhow!("{}: {e}", path.display()))?;
     Ok(lowered.rust)
+}
+
+/// **Every refusal of a file, as `nikaia check` says them** (#575): in file
+/// order, each with its place, its notes and its help. A file with ten
+/// findings cost ten cycles when only the first was reported, and each cycle
+/// can be a rebuild.
+fn every_refusal(path: &Path, source: &str, refusals: &[&crate::check::Finding]) -> String {
+    let mut ordered: Vec<&&crate::check::Finding> = refusals.iter().collect();
+    ordered.sort_by_key(|finding| finding.span.at());
+    let shown: Vec<String> = ordered
+        .into_iter()
+        .map(|finding| {
+            crate::diagnostics::render_finding(finding, &path.display().to_string(), source)
+        })
+        .collect();
+    format!(
+        "{}\n{} refusal{} in {}",
+        shown.join("\n"),
+        refusals.len(),
+        if refusals.len() == 1 { "" } else { "s" },
+        path.display()
+    )
 }
 
 /// **The toolchain's Nikaia, lowered as the one package it is** (ADR-294).
@@ -393,17 +406,9 @@ pub fn lower_tools_at(dir: &Path, build: crate::emit::Build) -> Result<String> {
             .iter()
             .filter(|finding| matches!(finding.severity, crate::check::Severity::Error))
             .collect();
-        if let Some(first) = refusals.first() {
-            anyhow::bail!(
-                "{}: {} {}{}",
-                path.display(),
-                first.code,
-                first.message,
-                match refusals.len() {
-                    1 => String::new(),
-                    more => format!(" (and {} more)", more - 1),
-                }
-            );
+        if !refusals.is_empty() {
+            let source = std::fs::read_to_string(path).unwrap_or_default();
+            anyhow::bail!("{}", every_refusal(path, &source, &refusals));
         }
         let lowered =
             crate::emit::emit_std_items_against_at(unit, &beside, &own, &described, build)

@@ -8,6 +8,11 @@ or the specification. A change only to the guide, the notes, the README, the
 website, the tests, the examples or the tooling around them raises nothing and
 has no heading here; `CLAUDE.md` draws the line.
 
+## [0.0.772] — 2026-10-10
+
+**`lower-std` reports every refusal of a file (#575).**
+- A file under `tools/` or a module of `std` with ten findings cost ten cycles, because only the first was said. Every refusal is now reported, in file order, as `nikaia check` says them, followed by their count. Test: `sysroot.rs`.
+
 ## [0.0.771] — 2026-10-10
 
 **Four lowering defects the self-hosting sessions found (#125, #567, #570, #574).**

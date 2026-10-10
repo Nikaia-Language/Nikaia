@@ -393,3 +393,27 @@ fn a_constant_another_tool_declares_is_read() {
     assert!(lowered.contains("out.push_str(WORD)"), "{lowered}");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// **`lower-std` reports every refusal of a file, in file order** (#575): a
+/// file with ten findings cost ten cycles when only the first was said, and
+/// each of them could be a rebuild.
+#[test]
+fn a_tools_file_with_two_refusals_reports_both_in_file_order() {
+    let dir = std::env::temp_dir().join(format!("nikaia-tools-two-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("a directory to work in");
+    std::fs::write(
+        dir.join("two.nika"),
+        "fn first_one() -> i64 { return \"text\" }\n\nfn second_one() -> String { return 7 }\n",
+    )
+    .expect("write the file");
+    let refused = sysroot::lower_tools(&dir).expect_err("two refusals");
+    let said = format!("{refused:#}");
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(said.matches("NK1104").count(), 2, "{said}");
+    let (first, second) = (said.find("first_one"), said.find("second_one"));
+    assert!(
+        first.is_some() && second.is_some() && first < second,
+        "in file order: {said}"
+    );
+    assert!(said.contains("2 refusals"), "{said}");
+}

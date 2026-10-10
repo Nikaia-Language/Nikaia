@@ -190,7 +190,8 @@ Rules from the sessions that moved the most; they save tokens, not just time.
   shows only in `tools/*.nika` needs a throwaway probe function in a tools
   file and `nikaia lower-std`; look at `package.rs`, then restore both. A
   lowering change can change `package.rs`: run `lower-std` after building and
-  commit the diff.
+  commit the diff. `lower-std` reports every refusal of a file, in file order,
+  as `nikaia check` does: fix them all before the next cycle.
 * **A version collision on rebase is routine.** Take upstream's version files
   and re-run `python3 scripts/badges.py` with the next free number.
 * **A worktree-isolated agent cannot run compound shell** (heredocs, `$(...)`,
