@@ -1,0 +1,289 @@
+// crates/nikaia-std/src/tools/grammar_decode.nika
+//
+// **A grammar run at build time, the text on both sides of the sub-program**
+// (issue #178, ADR-311 D1): the fixed Rust the sub-program is made of - the
+// encoder's text helper, the `main` that parses and prints, and the manifest -
+// and the reading of what it printed. Moved from the compiler's `grammar_run`
+// (ADR-294, #125); the encoder's walk of the declarations is `dump.nika`, and
+// building and running the sub-project stays Rust.
+//
+// The form is s-expressions, one per shape a build-time value has: `(i 42)`,
+// `(f 1.5)`, `(b true)`, `(s "…")`, `(l …)`, `(t Name (field …) …)` and `(v Ty
+// Variant …)`. Text carries Rust's escapes, which is the set the rest of this
+// compiler reads.
+//
+// **A variant's tag is two words and not one**: `(v Shade Odd)` reads the type
+// and then the variant, and a separator between two words has to be skipped by
+// whoever reads the second one.
+
+use std::collections
+use std::text
+
+/// What reading a dump came to.
+pub enum GrDecoded {
+    Value(BuildValue),
+    /// The pair of generated encoder and hand-written decoder disagree.
+    Unreadable(String),
+}
+
+/// Where a reading stands, and why it stopped if it did.
+struct GrCursor {
+    chars: Vec[scalar],
+    at: i64,
+    detail: String,
+    failed: bool,
+}
+
+impl GrCursor {
+    fn peek_is(ref self, c: scalar) -> bool {
+        return self.at < self.chars.len() && self.chars[self.at] == c
+    }
+
+    fn fail(ref mut self, detail: String) {
+        if !self.failed {
+            self.failed = true
+            self.detail = detail
+        }
+    }
+
+    fn skip_blanks(ref mut self) {
+        while self.at < self.chars.len() && self.chars[self.at].is_whitespace() {
+            self.at += 1
+        }
+    }
+
+    fn expect(ref mut self, want: scalar) {
+        if self.failed {
+            return
+        }
+        if self.at >= self.chars.len() {
+            self.fail(f"expected `{want}` and the dump ended")
+            return
+        }
+        let found = self.chars[self.at]
+        self.at += 1
+        if found != want {
+            self.fail(f"expected `{want}` and found `{found}`")
+        }
+    }
+
+    /// A run of characters up to a blank, a bracket or the end.
+    fn word(ref mut self) -> String {
+        let mut out: String = ""
+        while self.at < self.chars.len() {
+            let c = self.chars[self.at]
+            if c.is_whitespace() || c == '(' || c == ')' {
+                break
+            }
+            out.push(c)
+            self.at += 1
+        }
+        return out
+    }
+
+    /// `"…"` with Rust's escapes, decoded by the one function that reads them.
+    fn quoted(ref mut self, char_of: fn(i64) -> scalar? sync) -> String {
+        self.expect('"')
+        let mut written: String = ""
+        if self.failed {
+            return written
+        }
+        while true {
+            if self.at >= self.chars.len() {
+                self.fail("the dump ended inside a string")
+                return written
+            }
+            let c = self.chars[self.at]
+            self.at += 1
+            if c == '"' {
+                break
+            }
+            written.push(c)
+            if c == '\\' {
+                if self.at >= self.chars.len() {
+                    self.fail("the dump ended inside an escape")
+                    return written
+                }
+                written.push(self.chars[self.at])
+                self.at += 1
+            }
+        }
+        let decoded = decoded(written, char_of)
+        if decoded == null {
+            self.fail(f"`{written}` contains an escape the compiler can't read")
+            return written
+        }
+        return decoded ?? written
+    }
+}
+
+/// What the sub-program printed, as a value.
+pub fn gr_decode(source: ref String, char_of: fn(i64) -> scalar? sync) -> GrDecoded {
+    let mut at = GrCursor { chars: source.chars().collect(), at: 0, detail: "", failed: false }
+    let value = gr_read(at, char_of)
+    if at.failed || value == null {
+        return GrDecoded::Unreadable(at.detail.clone())
+    }
+    return GrDecoded::Value(value ?? BuildValue::Bool(false))
+}
+
+/// The items of a list, a payload or the parts of a constructor, up to the `)`.
+fn gr_items(mut at: GrCursor, char_of: fn(i64) -> scalar? sync) -> Vec[BuildValue] {
+    let mut items: Vec[BuildValue] = []
+    while true {
+        at.skip_blanks()
+        if at.failed || at.at >= at.chars.len() || at.peek_is(')') {
+            break
+        }
+        let item = gr_read(at, char_of)
+        if item == null {
+            break
+        }
+        items.push(item ?? BuildValue::Bool(false))
+    }
+    return items
+}
+
+fn gr_read(mut at: GrCursor, char_of: fn(i64) -> scalar? sync) -> BuildValue? {
+    at.skip_blanks()
+    at.expect('(')
+    at.skip_blanks()
+    if at.failed {
+        return null
+    }
+    let tag = at.word()
+    at.skip_blanks()
+    let value = gr_shaped(tag, at, char_of) ?? return null
+    at.skip_blanks()
+    at.expect(')')
+    if at.failed {
+        return null
+    }
+    return value
+}
+
+/// What a shape's tag says is next, up to its closing bracket.
+fn gr_shaped(tag: ref String, mut at: GrCursor, char_of: fn(i64) -> scalar? sync) -> BuildValue? {
+    if tag == "i" {
+        let digits = at.word()
+        // A magnitude and a sign, as the build keeps every integer
+        // (`tools/integers.nika`).
+        let mut negative = false
+        let mut body = digits.clone()
+        if digits.starts_with("-") {
+            negative = true
+            body = digits[1..<digits.len()].clone()
+        }
+        let magnitude = text::parse_u64(body)
+        if magnitude == null {
+            at.fail(f"`{digits}` is not a whole number")
+            return null
+        }
+        return BuildValue::Int(integer(magnitude ?? 0, negative))
+    } else if tag == "f" {
+        let written = at.word()
+        let number = text::parse_f64(written)
+        if number == null {
+            at.fail(f"`{written}` is not a number")
+            return null
+        }
+        return BuildValue::Float(number ?? 0.0)
+    } else if tag == "b" {
+        return BuildValue::Bool(at.word() == "true")
+    } else if tag == "c" {
+        // **A `std` type as its constructor and the parts it takes** (ADR-318
+        // D5): `(c time::Duration::new (i 30) (i 0))`.
+        let constructor = at.word()
+        let parts = gr_items(at, char_of)
+        return BuildValue::Constant { constructor: constructor, parts: parts }
+    } else if tag == "v" {
+        let ty = at.word()
+        at.skip_blanks()
+        let variant = at.word()
+        let payload = gr_items(at, char_of)
+        return BuildValue::Variant { ty: ty, variant: variant, payload: payload }
+    } else if tag == "s" {
+        return BuildValue::Text(at.quoted(char_of))
+    } else if tag == "l" {
+        return BuildValue::List(gr_items(at, char_of))
+    } else if tag == "t" {
+        let name = at.word()
+        let mut fields: collections::BTreeMap[String, BuildValue] = collections::BTreeMap()
+        while true {
+            at.skip_blanks()
+            if !at.peek_is('(') {
+                break
+            }
+            at.at += 1
+            at.skip_blanks()
+            let field = at.word()
+            let held = gr_read(at, char_of)
+            if held == null {
+                return null
+            }
+            at.skip_blanks()
+            at.expect(')')
+            fields.insert(field, held ?? BuildValue::Bool(false))
+        }
+        return BuildValue::Struct { name: name, fields: fields }
+    } else {
+        at.fail(f"`{tag}` is not a shape this reads")
+        return null
+    }
+}
+
+/// The sub-project's manifest.
+///
+/// **Its own workspace**, because it lives under a `target/` that may be inside
+/// one: a member Cargo did not expect is an error about a file nobody wrote. The
+/// dependencies are the ones a generated program already gets, so the parser
+/// compiled here is the parser the program links.
+pub fn gr_manifest(key: ref String, dependencies: ref Vec[(String, String)]) -> String {
+    let mut out: String = "# GENERATED. A parser compiled so that a grammar can run while the program\n# is built (issue #178). Rewritten when the grammar changes.\n\n[workspace]\n\n[package]\n"
+    out.push_str(f"name = \"p{key}\"\n")
+    out.push_str("version = \"0.0.0\"\nedition = \"2024\"\n\n[[bin]]\n")
+    out.push_str(f"name = \"p{key}\"\npath = \"src/main.rs\"\n\n")
+    out.push_str("[dependencies]\n")
+    let mut traced = false
+    for (name, value) in dependencies {
+        if name == "\"winnow-grammar\"" {
+            traced = true
+        }
+        out.push_str(f"{name} = {value}\n")
+    }
+    // The same `trace` a program declares.
+    if traced {
+        out.push_str("\n[features]\ntrace = [\"winnow-grammar/trace\"]\n")
+    }
+    return out
+}
+
+/// The encoder's fixed half: text, which is the only shape with an escape.
+///
+/// **The same escape set the rest of this compiler reads**, which is Rust's - so
+/// what this writes is what `gr_decode` reads, and the pair is held together by a
+/// test that runs a program rather than by care.
+pub fn gr_dump_helpers() -> String {
+    return "
+fn __nikaia_text(out: &mut String, s: &str) {
+    out.push_str(\"(s \\\"\");
+    for c in s.chars() {
+        match c {
+            '\\\\' => out.push_str(\"\\\\\\\\\"),
+            '\"' => out.push_str(\"\\\\\\\"\"),
+            '\\n' => out.push_str(\"\\\\n\"),
+            '\\r' => out.push_str(\"\\\\r\"),
+            '\\t' => out.push_str(\"\\\\t\"),
+            _ => out.push(c),
+        }
+    }
+    out.push_str(\"\\\")\");
+}
+"
+}
+
+/// The sub-program's `main`: parse the input a path names with the rule, and
+/// print what `dump` encodes.
+pub fn gr_main(named: ref String, entry: ref String, dump: ref String) -> String {
+    return f"\nfn main() {{\n    let path = std::env::args().nth(1).expect(\"the input path\");\n    let text = std::fs::read_to_string(&path).expect(\"reading the input\");\n    let outcome = {{\n        use winnow::Parser;\n        let _source = &*text;\n        let mut stream = winnow_grammar::ParseInput::<()> {{\n            state: winnow_grammar::ParseContext::<()>::default(),\n            input: winnow::stream::LocatingSlice::new(_source),\n        }};\n        {named}::parse_{entry}().parse_next(&mut stream).map_err(|e| e.render(_source))\n    }};\n    match outcome {{\n        Ok(value) => {{\n            let mut out = String::new();\n{dump}            println!(\"{{out}}\");\n        }}\n        Err(message) => {{\n            eprint!(\"{{message}}\");\n            std::process::exit(2);\n        }}\n    }}\n}}\n"
+}

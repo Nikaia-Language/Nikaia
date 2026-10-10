@@ -106,6 +106,7 @@ COMPILER_NIKA = {
     "logic_normal.nika": "logic: a query in normal form, certificates and models as text (0.0.754)",
     "logic_smtlib.nika": "logic: a query as SMT-LIB 2, and a script read back (0.0.754)",
     "logic_alethe.nika": "logic: a proof as Alethe (0.0.754)",
+    "grammar_decode.nika": "grammar_run: what a grammar run at build time printed read back, and the text of the sub-program and its manifest (0.0.755)",
 }
 
 

@@ -277,28 +277,8 @@ fn shared_target() -> PathBuf {
 }
 
 fn manifest(key: &str, program: &str) -> String {
-    let mut out = String::from(
-        "# GENERATED. A parser compiled so that a grammar can run while the program\n\
-         # is built (issue #178). Rewritten when the grammar changes.\n\n\
-         [workspace]\n\n\
-         [package]\n",
-    );
-    out.push_str(&format!("name = \"p{key}\"\n"));
-    out.push_str("version = \"0.0.0\"\nedition = \"2024\"\n\n[[bin]]\n");
-    out.push_str(&format!("name = \"p{key}\"\npath = \"src/main.rs\"\n\n"));
-    out.push_str("[dependencies]\n");
     let dependencies = crate::project::runtime_dependencies_for(program);
-    let traced = dependencies
-        .iter()
-        .any(|(name, _)| name == "\"winnow-grammar\"");
-    for (name, value) in dependencies {
-        out.push_str(&format!("{name} = {value}\n"));
-    }
-    // The same `trace` a program declares (`project::runtime_features`).
-    if traced {
-        out.push_str("\n[features]\ntrace = [\"winnow-grammar/trace\"]\n");
-    }
-    out
+    nikaia_std::tools::grammar_decode::gr_manifest(key, &dependencies)
 }
 
 /// The whole sub-program: the file's items without its `fn main` and without
@@ -406,60 +386,15 @@ fn driver(parsed: &Parsed, ask: &Ask<'_>) -> Result<String, Wall> {
             detail: "lowering a dependency the grammar's actions call".to_string(),
         })?,
     );
-    out.push_str(DUMP_HELPERS);
+    out.push_str(&nikaia_std::tools::grammar_decode::gr_dump_helpers());
     let dump = dumper(parsed, ask.result)?;
-    out.push_str(&format!(
-        "\nfn main() {{\n\
-         \x20   let path = std::env::args().nth(1).expect(\"the input path\");\n\
-         \x20   let text = std::fs::read_to_string(&path).expect(\"reading the input\");\n\
-         \x20   let outcome = {{\n\
-         \x20       use winnow::Parser;\n\
-         \x20       let _source = &*text;\n\
-         \x20       let mut stream = winnow_grammar::ParseInput::<()> {{\n\
-         \x20           state: winnow_grammar::ParseContext::<()>::default(),\n\
-         \x20           input: winnow::stream::LocatingSlice::new(_source),\n\
-         \x20       }};\n\
-         \x20       {}::parse_{}().parse_next(&mut stream).map_err(|e| e.render(_source))\n\
-         \x20   }};\n\
-         \x20   match outcome {{\n\
-         \x20       Ok(value) => {{\n\
-         \x20           let mut out = String::new();\n\
-         {}\
-         \x20           println!(\"{{out}}\");\n\
-         \x20       }}\n\
-         \x20       Err(message) => {{\n\
-         \x20           eprint!(\"{{message}}\");\n\
-         \x20           std::process::exit(2);\n\
-         \x20       }}\n\
-         \x20   }}\n\
-         }}\n",
-        ask.grammar, ask.rule, dump
+    out.push_str(&nikaia_std::tools::grammar_decode::gr_main(
+        ask.grammar,
+        ask.rule,
+        &dump,
     ));
     Ok(out)
 }
-
-/// The encoder's fixed half: text, which is the only shape with an escape.
-///
-/// **The same escape set the rest of this compiler reads**
-/// ([`crate::build_time::decoded`](../build_time/fn.decoded.html)), which is
-/// Rust's — so what this writes is what that reads, and the pair is held
-/// together by a test that runs a program rather than by care.
-pub(crate) const DUMP_HELPERS: &str = r#"
-fn __nikaia_text(out: &mut String, s: &str) {
-    out.push_str("(s \"");
-    for c in s.chars() {
-        match c {
-            '\\' => out.push_str("\\\\"),
-            '"' => out.push_str("\\\""),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            _ => out.push(c),
-        }
-    }
-    out.push_str("\")");
-}
-"#;
 
 /// **The dump, written inline**, from the declaration and not from the value,
 /// so a shape a `const` cannot hold is refused *before* a parser is compiled.
@@ -564,174 +499,10 @@ fn shapes(parsed: &Parsed) -> Shapes {
 /// payload loop met an `O`. A separator between two words has to be skipped by
 /// whoever reads the second one.
 pub fn decode(text: &str) -> Result<crate::build_time::Value, Wall> {
-    let mut at = text.char_indices().peekable();
-    let value = read(text, &mut at)?;
-    Ok(value)
-}
-
-type Cursor<'a> = std::iter::Peekable<std::str::CharIndices<'a>>;
-
-fn read(text: &str, at: &mut Cursor<'_>) -> Result<crate::build_time::Value, Wall> {
-    skip_blanks(at);
-    expect(at, '(')?;
-    skip_blanks(at);
-    let tag = word(text, at);
-    skip_blanks(at);
-    let value = match tag.as_str() {
-        "i" => {
-            let digits = word(text, at);
-            // A magnitude and a sign, as the build keeps every integer
-            // (`tools/integers.nika`).
-            let (negative, magnitude) = match digits.strip_prefix('-') {
-                Some(rest) => (true, rest),
-                None => (false, digits.as_str()),
-            };
-            let magnitude: u64 = magnitude.parse().map_err(|_| Wall::Unreadable {
-                detail: format!("`{digits}` is not a whole number"),
-            })?;
-            crate::build_time::Value::Int(nikaia_std::tools::integers::integer(magnitude, negative))
-        }
-        "f" => {
-            let written = word(text, at);
-            crate::build_time::Value::Float(written.parse().map_err(|_| Wall::Unreadable {
-                detail: format!("`{written}` is not a number"),
-            })?)
-        }
-        "b" => crate::build_time::Value::Bool(word(text, at) == "true"),
-        // **A `std` type as its constructor and the parts it takes**
-        // (ADR-318 D5): `(c time::Duration::new (i 30) (i 0))`.
-        "c" => {
-            let constructor = word(text, at);
-            let mut parts = Vec::new();
-            loop {
-                skip_blanks(at);
-                match at.peek() {
-                    Some((_, ')')) | None => break,
-                    _ => parts.push(read(text, at)?),
-                }
-            }
-            crate::build_time::Value::Constant { constructor, parts }
-        }
-        "v" => {
-            let ty = word(text, at);
-            skip_blanks(at);
-            let variant = word(text, at);
-            let mut payload = Vec::new();
-            loop {
-                skip_blanks(at);
-                match at.peek() {
-                    Some((_, ')')) | None => break,
-                    _ => payload.push(read(text, at)?),
-                }
-            }
-            crate::build_time::Value::Variant {
-                ty,
-                variant,
-                payload,
-            }
-        }
-        "s" => crate::build_time::Value::Text(quoted(at)?),
-        "l" => {
-            let mut items = Vec::new();
-            loop {
-                skip_blanks(at);
-                match at.peek() {
-                    Some((_, ')')) | None => break,
-                    _ => items.push(read(text, at)?),
-                }
-            }
-            crate::build_time::Value::List(items)
-        }
-        "t" => {
-            let name = word(text, at);
-            let mut fields = std::collections::BTreeMap::new();
-            loop {
-                skip_blanks(at);
-                match at.peek() {
-                    Some((_, '(')) => {
-                        at.next();
-                        skip_blanks(at);
-                        let field = word(text, at);
-                        let held = read(text, at)?;
-                        skip_blanks(at);
-                        expect(at, ')')?;
-                        fields.insert(field, held);
-                    }
-                    _ => break,
-                }
-            }
-            crate::build_time::Value::Struct { name, fields }
-        }
-        other => {
-            return Err(Wall::Unreadable {
-                detail: format!("`{other}` is not a shape this reads"),
-            });
-        }
-    };
-    skip_blanks(at);
-    expect(at, ')')?;
-    Ok(value)
-}
-
-fn skip_blanks(at: &mut Cursor<'_>) {
-    while matches!(at.peek(), Some((_, c)) if c.is_whitespace()) {
-        at.next();
-    }
-}
-
-fn expect(at: &mut Cursor<'_>, want: char) -> Result<(), Wall> {
-    match at.next() {
-        Some((_, found)) if found == want => Ok(()),
-        Some((_, found)) => Err(Wall::Unreadable {
-            detail: format!("expected `{want}` and found `{found}`"),
-        }),
-        None => Err(Wall::Unreadable {
-            detail: format!("expected `{want}` and the dump ended"),
-        }),
-    }
-}
-
-/// A run of characters up to a blank, a bracket or the end.
-fn word(_text: &str, at: &mut Cursor<'_>) -> String {
-    let mut out = String::new();
-    while let Some((_, c)) = at.peek() {
-        if c.is_whitespace() || *c == '(' || *c == ')' {
-            break;
-        }
-        out.push(*c);
-        at.next();
-    }
-    out
-}
-
-/// `"…"` with Rust's escapes, decoded by the one function that reads them
-/// ([`crate::build_time::decoded`]).
-fn quoted(at: &mut Cursor<'_>) -> Result<String, Wall> {
-    expect(at, '"')?;
-    let mut written = String::new();
-    loop {
-        match at.next() {
-            Some((_, '"')) => break,
-            Some((_, '\\')) => {
-                written.push('\\');
-                match at.next() {
-                    Some((_, c)) => written.push(c),
-                    None => {
-                        return Err(Wall::Unreadable {
-                            detail: "the dump ended inside an escape".to_string(),
-                        });
-                    }
-                }
-            }
-            Some((_, c)) => written.push(c),
-            None => {
-                return Err(Wall::Unreadable {
-                    detail: "the dump ended inside a string".to_string(),
-                });
-            }
+    match nikaia_std::tools::grammar_decode::gr_decode(text, &crate::build_time::char_of) {
+        nikaia_std::tools::grammar_decode::GrDecoded::Value(value) => Ok(value),
+        nikaia_std::tools::grammar_decode::GrDecoded::Unreadable(detail) => {
+            Err(Wall::Unreadable { detail })
         }
     }
-    crate::build_time::decoded(&written).ok_or(Wall::Unreadable {
-        detail: format!("`{written}` contains an escape the compiler can't read"),
-    })
 }

@@ -8,6 +8,14 @@ or the specification. A change only to the guide, the notes, the README, the
 website, the tests, the examples or the tooling around them raises nothing and
 has no heading here; `CLAUDE.md` draws the line.
 
+## [0.0.755] — 2026-10-10
+
+**More of the toolchain is Nikaia** (ADR-294, #125).
+- `grammar_run`: what a grammar run at build time prints is read back by
+  `tools/grammar_decode.nika`, which also holds the text the sub-program is made
+  of - the encoder's helper, its `main` and its manifest. Compiling and running
+  the sub-project stay Rust.
+
 ## [0.0.754] — 2026-10-10
 
 **More of the toolchain is Nikaia** (ADR-294, #125).

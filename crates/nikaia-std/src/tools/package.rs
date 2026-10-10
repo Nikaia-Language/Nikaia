@@ -11031,6 +11031,207 @@ fn a_named_call(func: &Expr, args: &[Expr], span: &Span, names: &winnow_grammar:
 }
 
 
+// --- grammar_decode.nika ---
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum GrDecoded {
+    Value(BuildValue),
+    Unreadable(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct GrCursor {
+    chars: Vec<scalar>,
+    at: i64,
+    detail: String,
+    failed: bool,
+}
+
+impl GrCursor {
+    fn peek_is(&self, c: scalar) -> bool { self.at < self.chars.len() as i64 && *nikaia_std::index::get(&self.chars, nikaia_std::index::at(self.at)) == c }
+    fn fail(&mut self, detail: String) {
+        if !self.failed {
+            self.failed = true;
+            self.detail = detail;
+        }
+    }
+    fn skip_blanks(&mut self) { while self.at < self.chars.len() as i64 && (*nikaia_std::index::get(&self.chars, nikaia_std::index::at(self.at))).is_whitespace() { self.at += 1; } }
+    fn expect(&mut self, want: scalar) {
+        if self.failed { return; }
+        if self.at >= self.chars.len() as i64 {
+            self.fail(format!("expected `{}` and the dump ended", want));
+            return;
+        }
+        let found = *nikaia_std::index::get(&self.chars, nikaia_std::index::at(self.at));
+        self.at += 1;
+        if found != want { self.fail(format!("expected `{}` and found `{}`", want, found)); }
+    }
+    fn word(&mut self) -> String {
+        let mut out: String = String::from("");
+        while self.at < self.chars.len() as i64 {
+            let c = *nikaia_std::index::get(&self.chars, nikaia_std::index::at(self.at));
+            if c.is_whitespace() || c == '(' || c == ')' { break; }
+            out.push(c);
+            self.at += 1;
+        }
+        out
+    }
+    fn quoted(&mut self, char_of: impl Fn(i64) -> Option<scalar>) -> String {
+        self.expect('"');
+        let mut written: String = String::from("");
+        if self.failed { return written; }
+        loop {
+            if self.at >= self.chars.len() as i64 {
+                self.fail(String::from("the dump ended inside a string"));
+                return written;
+            }
+            let c = *nikaia_std::index::get(&self.chars, nikaia_std::index::at(self.at));
+            self.at += 1;
+            if c == '"' { break; }
+            written.push(c);
+            if c == '\\' {
+                if self.at >= self.chars.len() as i64 {
+                    self.fail(String::from("the dump ended inside an escape"));
+                    return written;
+                }
+                written.push(*nikaia_std::index::get(&self.chars, nikaia_std::index::at(self.at)));
+                self.at += 1;
+            }
+        }
+        let decoded = decoded(&written, &char_of);
+        if decoded.is_none() {
+            self.fail(format!("`{}` contains an escape the compiler can't read", written));
+            return written;
+        }
+        nikaia_std::index::or(decoded, || written.into())
+    }
+}
+
+pub fn gr_decode(source: &str, char_of: &impl Fn(i64) -> Option<scalar>) -> GrDecoded {
+    let mut at = GrCursor { chars: nikaia_std::list::chars(source.chars()), at: 0, detail: String::from(""), failed: false };
+    let value = gr_read(&mut at, char_of);
+    if at.failed || value.is_none() { return GrDecoded::Unreadable(at.detail.to_owned()); }
+    GrDecoded::Value(nikaia_std::index::or(value, || BuildValue::Bool(false)))
+}
+
+fn gr_items(at: &mut GrCursor, char_of: &impl Fn(i64) -> Option<scalar>) -> Vec<BuildValue> {
+    let mut items: Vec<BuildValue> = vec![];
+    loop {
+        at.skip_blanks();
+        if at.failed || at.at >= at.chars.len() as i64 || at.peek_is(')') { break; }
+        let item = gr_read(at, char_of);
+        if item.is_none() { break; }
+        items.push(nikaia_std::index::or(item, || BuildValue::Bool(false)));
+    }
+    items
+}
+
+fn gr_read(at: &mut GrCursor, char_of: &impl Fn(i64) -> Option<scalar>) -> Option<BuildValue> {
+    at.skip_blanks();
+    at.expect('(');
+    at.skip_blanks();
+    if at.failed { return None; }
+    let tag = at.word();
+    at.skip_blanks();
+    let value = match gr_shaped(&tag, at, char_of) { Some(__nikaia_value) => __nikaia_value, None => return None };
+    at.skip_blanks();
+    at.expect(')');
+    if at.failed { return None; }
+    Some(value)
+}
+
+fn gr_shaped(tag: &str, at: &mut GrCursor, char_of: &impl Fn(i64) -> Option<scalar>) -> Option<BuildValue> {
+    if tag == "i" {
+        let digits = at.word();
+        let mut negative = false;
+        let mut body = digits.to_owned();
+        if digits.starts_with("-") {
+            negative = true;
+            body = nikaia_std::index::get(&digits, 1..).to_owned();
+        }
+        let magnitude = text::parse_u64(&body);
+        if magnitude.is_none() {
+            at.fail(format!("`{}` is not a whole number", digits));
+            return None;
+        }
+        Some(BuildValue::Int(integer(nikaia_std::index::or(magnitude, || 0), negative)))
+    } else if tag == "f" {
+        let written = at.word();
+        let number = text::parse_f64(&written);
+        if number.is_none() {
+            at.fail(format!("`{}` is not a number", written));
+            return None;
+        }
+        Some(BuildValue::Float(nikaia_std::index::or(number, || 0.0)))
+    } else if tag == "b" { Some(BuildValue::Bool(at.word() == "true")) } else if tag == "c" {
+        let constructor = at.word();
+        let parts = gr_items(at, char_of);
+        Some(BuildValue::Constant { constructor, parts })
+    } else if tag == "v" {
+        let ty = at.word();
+        at.skip_blanks();
+        let variant = at.word();
+        let payload = gr_items(at, char_of);
+        Some(BuildValue::Variant { ty, variant, payload })
+    } else if tag == "s" { Some(BuildValue::Text(at.quoted(char_of))) } else if tag == "l" { Some(BuildValue::List(gr_items(at, char_of))) } else if tag == "t" {
+        let name = at.word();
+        let mut fields: collections::BTreeMap<String, BuildValue> = collections::BTreeMap::new();
+        loop {
+            at.skip_blanks();
+            if !at.peek_is('(') { break; }
+            at.at += 1;
+            at.skip_blanks();
+            let field = at.word();
+            let held = gr_read(at, char_of);
+            if held.is_none() { return None; }
+            at.skip_blanks();
+            at.expect(')');
+            fields.insert(field, nikaia_std::index::or(held, || BuildValue::Bool(false)));
+        }
+        Some(BuildValue::Struct { name, fields })
+    } else {
+        at.fail(format!("`{}` is not a shape this reads", tag));
+        None
+    }
+}
+
+pub fn gr_manifest(key: &str, dependencies: &[(String, String)]) -> String {
+    let mut out: String = String::from("# GENERATED. A parser compiled so that a grammar can run while the program\n# is built (issue #178). Rewritten when the grammar changes.\n\n[workspace]\n\n[package]\n");
+    out.push_str(&format!("name = \"p{}\"\n", key));
+    out.push_str("version = \"0.0.0\"\nedition = \"2024\"\n\n[[bin]]\n");
+    out.push_str(&format!("name = \"p{}\"\npath = \"src/main.rs\"\n\n", key));
+    out.push_str("[dependencies]\n");
+    let mut traced = false;
+    for (name, value) in dependencies.iter() {
+        if name == "\"winnow-grammar\"" { traced = true; }
+        out.push_str(&format!("{} = {}\n", name, value));
+    }
+    if traced { out.push_str("\n[features]\ntrace = [\"winnow-grammar/trace\"]\n"); }
+    out
+}
+
+pub fn gr_dump_helpers() -> String {
+    String::from("
+fn __nikaia_text(out: &mut String, s: &str) {
+    out.push_str(\"(s \\\"\");
+    for c in s.chars() {
+        match c {
+            '\\\\' => out.push_str(\"\\\\\\\\\"),
+            '\"' => out.push_str(\"\\\\\\\"\"),
+            '\\n' => out.push_str(\"\\\\n\"),
+            '\\r' => out.push_str(\"\\\\r\"),
+            '\\t' => out.push_str(\"\\\\t\"),
+            _ => out.push(c),
+        }
+    }
+    out.push_str(\"\\\")\");
+}
+")
+}
+
+pub fn gr_main(named: &str, entry: &str, dump: &str) -> String { format!("\nfn main() {{\n    let path = std::env::args().nth(1).expect(\"the input path\");\n    let text = std::fs::read_to_string(&path).expect(\"reading the input\");\n    let outcome = {{\n        use winnow::Parser;\n        let _source = &*text;\n        let mut stream = winnow_grammar::ParseInput::<()> {{\n            state: winnow_grammar::ParseContext::<()>::default(),\n            input: winnow::stream::LocatingSlice::new(_source),\n        }};\n        {}::parse_{}().parse_next(&mut stream).map_err(|e| e.render(_source))\n    }};\n    match outcome {{\n        Ok(value) => {{\n            let mut out = String::new();\n{}            println!(\"{{out}}\");\n        }}\n        Err(message) => {{\n            eprint!(\"{{message}}\");\n            std::process::exit(2);\n        }}\n    }}\n}}\n", named, entry, dump) }
+
+
 // --- http1.nika ---
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -30019,6 +30220,10 @@ pub mod fold {
 pub mod foreign {
     #[allow(unused_imports)]
     pub use super::{Seen, written_in, seen_in, seen_in_expression};
+}
+pub mod grammar_decode {
+    #[allow(unused_imports)]
+    pub use super::{GrDecoded, gr_decode, gr_manifest, gr_dump_helpers, gr_main};
 }
 pub mod http1 {
     #[allow(unused_imports)]

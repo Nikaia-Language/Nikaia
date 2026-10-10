@@ -934,7 +934,7 @@ pub(crate) fn with_driver(
         &rust[..start],
         &rest[..empty],
         &rest[after..],
-        crate::grammar_run::DUMP_HELPERS
+        nikaia_std::tools::grammar_decode::gr_dump_helpers()
     ))
 }
 

@@ -1355,7 +1355,7 @@ pub use nikaia_std::tools::escapes::NotAnEscape as Refused;
 pub const ESCAPES: &str = "\\n \\r \\t \\0 \\\\ \\' \\\" \\xNN \\u{…}";
 
 /// Which numbers name a character: Unicode's table, handed to the Nikaia walk.
-fn char_of(n: i64) -> Option<char> {
+pub(crate) fn char_of(n: i64) -> Option<char> {
     u32::try_from(n).ok().and_then(char::from_u32)
 }
 
