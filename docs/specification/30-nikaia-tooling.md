@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part III: Tooling, Ecosystem & Interoperability**
-**Version:** 0.0.723 (Draft)
+**Version:** 0.0.724 (Draft)
 **Date:** 2026-10-10
 
 ---
@@ -633,8 +633,24 @@ A `pub extern fn greet(name: ref String) -> String { … }` with a body is an **
 with `artifact = "c-library"` in `[build]` makes a shared and a static library of the package and
 generates `<package>.h` from the ledger. The caller owns the memory, and a call never surprises.
 
-* every entry point returns a status (`0` is `<PACKAGE>_OK`, the error variants are numbered per
-  library, seven negative codes are the boundary's own) and a value travels in an out-parameter;
+* every entry point returns a status (`0` is `<PACKAGE>_OK`, seven negative codes are the
+  boundary's own, `1` to `99 999` are `std`'s errors, and the library's own error variants are
+  numbered from `100 000` in declaration order) and a value travels in an out-parameter. A `std`
+  error that is an `errno` has the number of the target the library is built for; the others have
+  fixed numbers, appended and never moved:
+
+  | `std` error | code |
+  | :--- | :--- |
+  | `io::IoError::NotFound` | the target's `ENOENT` |
+  | `io::IoError::PermissionDenied` | the target's `EACCES` |
+  | `io::IoError::NotText` | the target's `EILSEQ` |
+  | `io::IoError::Outside` | `1000` |
+  | `io::IoError::Other` | `1001` |
+  | `task::Crashed` | `1100` |
+  | `supervisor::Escalated` | `1200` |
+  | `cleanup::Failure` | `1300` |
+  | `Overtaken` | `1400` |
+
   `<package>_last_error` renders the failure with its site and its `secondary` list, per thread;
 * a text or byte result is written into the **caller's buffer** (`out, cap, written`; `NULL` asks
   the size; too small is a status with the size that would do), and the caller may supply the

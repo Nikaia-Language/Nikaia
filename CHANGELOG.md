@@ -8,6 +8,17 @@ or the specification. A change only to the guide, the notes, the README, the
 website, the tests, the examples or the tooling around them raises nothing and
 has no heading here; `CLAUDE.md` draws the line.
 
+## [0.0.724] — 2026-10-10
+
+**A C library's error codes: `std`'s below 100 000, its own from 100 000**
+(ADR-284 D33, #88).
+- Decided, not built: a `std` error that is an `errno` has the number of the
+  target the library is built for (`NotFound` is `ENOENT`, `NotText` is
+  `EILSEQ`); `std`'s other errors have fixed numbers from `1000`, a block per
+  type; the library's own variants are numbered from `100 000`, no longer from
+  `1`. A function that throws several types has the codes of each. Part III
+  15.1 holds the table.
+
 ## [0.0.723] — 2026-10-10
 
 **An `enum` with payload at a C library's boundary** (ADR-284 D31-D32, #88).
