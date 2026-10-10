@@ -40,7 +40,7 @@ COMPILER_NIKA = {
     "manifest.nika": "manifest: what nikaia.toml may say (0.0.260)",
     "ast.nika": "ast: the syntax tree (ADR-294, 0.0.275)",
     "fold.nika": "fold: a constant's value (ADR-294 D11, 0.0.278), on integers.nika's arithmetic (0.0.420)",
-    "trust.nika": "contracts::trust: what --trust says (0.0.281)",
+    "trust.nika": "contracts::trust: what --trust says (0.0.281), and which maps keep the fast hash (0.0.743)",
     "ty.nika": "contracts::ty, the ledger's records and what the checker asks of a type (ADR-294, 0.0.285-295)",
     "sources.nika": "describe: the files a crate is read from (0.0.308)",
     "paths.nika": "describe: a crate's module paths and `pub use` (0.0.309)",

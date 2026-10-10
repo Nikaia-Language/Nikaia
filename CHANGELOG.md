@@ -8,6 +8,11 @@ or the specification. A change only to the guide, the notes, the README, the
 website, the tests, the examples or the tooling around them raises nothing and
 has no heading here; `CLAUDE.md` draws the line.
 
+## [0.0.743] — 2026-10-10
+
+**More of the toolchain is Nikaia** (ADR-294, #125).
+- `contracts::trust`: which maps are keyed by what the program wrote itself (ADR-010 D2) is `tools/trust.nika`. Reading the ledger's sources stays Rust.
+
 ## [0.0.742] — 2026-10-10
 
 **More of the toolchain is Nikaia** (ADR-294, #125).
