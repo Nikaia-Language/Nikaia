@@ -108,66 +108,24 @@ pub fn link_flags(package: &str, entries: &BTreeMap<String, String>) -> Result<V
     Ok(out)
 }
 
-/// **D4's list**, over what `pkg-config` printed: `-l…`, `-L…`, `-pthread`, and
-/// on macOS `-framework <name>` and `-F…`. Anything else is `NK1225`, because a
-/// linker flag can load a plugin or run a script, and the library's `.pc` file
-/// is not the program's to trust.
+/// **D4's list**, over what `pkg-config` printed, is `tools/libraries.nika`'s
+/// (ADR-294, #125); a word outside it is `NK1225`.
 pub fn filtered(package: &str, found_by: &str, said: &str) -> Result<Vec<String>> {
-    let mut out = Vec::new();
-    let mut words = said.split_whitespace();
-    while let Some(word) = words.next() {
-        let allowed = (word.starts_with("-l") && word.len() > 2)
-            || (word.starts_with("-L") && word.len() > 2)
-            || word == "-pthread"
-            || (cfg!(target_os = "macos") && word.starts_with("-F") && word.len() > 2);
-        if allowed {
-            out.push(word.to_string());
-            continue;
-        }
-        if cfg!(target_os = "macos")
-            && word == "-framework"
-            && let Some(name) = words.next()
-        {
-            out.push(format!("-framework {name}"));
-            continue;
-        }
-        crate::refuse!(
+    use nikaia_std::tools::libraries::Flags;
+    match nikaia_std::tools::libraries::filtered(said, cfg!(target_os = "macos")) {
+        Flags::Taken { flags } => Ok(flags),
+        Flags::Refused { word } => crate::refuse!(
             "error[NK1225]: `pkg-config --libs {found_by}` for package `{package}` says \
              `{word}`, which is not a flag the build hands the linker.\n  = note: Only `-l`, \
              `-L`, `-pthread`, and on macOS `-framework` and `-F`, are taken (Part III 13.4).\n  \
              = help: Check `{found_by}.pc`: a library's linker flags may not run anything."
-        );
+        ),
     }
-    Ok(out)
 }
 
-/// **The flags as `rustc` takes them**: `-L dir` becomes `-L native=dir`,
-/// and `-l name`, `-pthread` and a framework go to the linker as they are.
-///
-/// **`-l` as a linker argument**, because `rustc` writes those after every
-/// crate (#499): a library a dependency package names is called from that
-/// package's crate, and a linker that reads a static archive once, in order -
-/// GNU `ld`, the default on `aarch64` - found nothing calling it yet where
-/// `rustc` puts its own `-l`, before the crates.
+/// **The flags as `rustc` takes them**: `tools/libraries.nika` (ADR-294, #125).
 pub fn as_rustc_args(flags: &[String]) -> Vec<String> {
-    let mut out = Vec::new();
-    for flag in flags {
-        if flag.starts_with("-l") {
-            out.push(format!("-Clink-arg={flag}"));
-        } else if let Some(dir) = flag.strip_prefix("-L") {
-            out.push("-L".to_string());
-            out.push(format!("native={dir}"));
-        } else if let Some(dir) = flag.strip_prefix("-F") {
-            out.push("-L".to_string());
-            out.push(format!("framework={dir}"));
-        } else if let Some(name) = flag.strip_prefix("-framework ") {
-            out.push("-l".to_string());
-            out.push(format!("framework={name}"));
-        } else {
-            out.push(format!("-Clink-arg={flag}"));
-        }
-    }
-    out
+    nikaia_std::tools::libraries::as_rustc_args(&flags.to_vec())
 }
 
 #[cfg(test)]

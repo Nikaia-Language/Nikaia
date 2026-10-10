@@ -10370,6 +10370,48 @@ fn parameter_at(contract: &FnContract, at: i64) -> Option<String> {
 }
 
 
+// --- libraries.nika ---
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Flags {
+    Taken { flags: Vec<String> },
+    Refused { word: String },
+}
+
+pub fn filtered(said: &str, on_macos: bool) -> Flags {
+    let mut out: Vec<String> = vec![];
+    let mut framework = false;
+    for word in said.split_whitespace() {
+        if framework {
+            out.push(format!("-framework {}", word));
+            framework = false;
+        } else if on_macos && word == "-framework" { framework = true; } else if word.starts_with("-l") && word.len() > 2 || word.starts_with("-L") && word.len() > 2 || word == "-pthread" || on_macos && word.starts_with("-F") && word.len() > 2 { out.push(word.to_owned()); } else { return Flags::Refused { word: word.to_owned() }; }
+    }
+    if framework { return Flags::Refused { word: String::from("-framework") }; }
+    Flags::Taken { flags: out }
+}
+
+pub fn as_rustc_args(flags: &[String]) -> Vec<String> {
+    let mut out: Vec<String> = vec![];
+    for flag in flags.iter() {
+        if flag.starts_with("-l") { out.push(format!("-Clink-arg={}", flag)); } else if flag.starts_with("-L") {
+            let dir = nikaia_std::index::or(flag.strip_prefix("-L"), || "");
+            out.push(String::from("-L"));
+            out.push(format!("native={}", dir));
+        } else if flag.starts_with("-F") {
+            let dir = nikaia_std::index::or(flag.strip_prefix("-F"), || "");
+            out.push(String::from("-L"));
+            out.push(format!("framework={}", dir));
+        } else if flag.starts_with("-framework ") {
+            let name = nikaia_std::index::or(flag.strip_prefix("-framework "), || "");
+            out.push(String::from("-l"));
+            out.push(format!("framework={}", name));
+        } else { out.push(format!("-Clink-arg={}", flag)); }
+    }
+    out
+}
+
+
 // --- locks.nika ---
 
 const DOORS: [&str; 10] = ["Locked::get", "Locked::set", "Locked::set(after)", "Locked::access", "Locked::update", "SharedMut::get", "SharedMut::set", "SharedMut::set(after)", "SharedMut::access", "SharedMut::update"];
@@ -22884,6 +22926,10 @@ pub mod ledger_text {
 pub mod lends {
     #[allow(unused_imports)]
     pub use super::{lends_in, a_ledger_copies, moves, Passed, Uses, kept_by};
+}
+pub mod libraries {
+    #[allow(unused_imports)]
+    pub use super::{Flags, filtered, as_rustc_args};
 }
 pub mod locks {
     #[allow(unused_imports)]

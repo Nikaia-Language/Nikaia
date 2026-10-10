@@ -8,6 +8,13 @@ or the specification. A change only to the guide, the notes, the README, the
 website, the tests, the examples or the tooling around them raises nothing and
 has no heading here; `CLAUDE.md` draws the line.
 
+## [0.0.742] — 2026-10-10
+
+**More of the toolchain is Nikaia** (ADR-294, #125).
+- `libraries`: which of `pkg-config`'s words reach the linker, and the flags as
+  `rustc` takes them, are `tools/libraries.nika`. Running `pkg-config` and the
+  sentences of `NK1224`, `NK1225` and `NK1226` stay Rust.
+
 ## [0.0.741] — 2026-10-10
 
 **`develop` is green under failing closed** (ADR-286 D41, #497).

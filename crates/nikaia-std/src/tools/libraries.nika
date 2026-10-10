@@ -1,0 +1,72 @@
+// crates/nikaia-std/src/tools/libraries.nika
+//
+// The system libraries a package links (Part III 13.4, ADR-324) - what the
+// compiler's `libraries` decides about the words `pkg-config --libs` printed
+// and about the flags `rustc` is handed, without running anything, moved from
+// Rust (ADR-294, #125). Finding the `extern` blocks, running `pkg-config` and
+// the sentences of NK1224 and NK1226 stay Rust.
+
+/// What D4's list makes of the words `pkg-config` printed.
+pub enum Flags {
+    /// Every word was on the list: the flags, in order.
+    Taken { flags: Vec[String] },
+    /// The first word that was not: NK1225 names it.
+    Refused { word: String },
+}
+
+/// **D4's list**, over what `pkg-config` printed: `-l…`, `-L…`, `-pthread`,
+/// and on macOS `-framework <name>` and `-F…`. Anything else is refused,
+/// because a linker flag can load a plugin or run a script, and the library's
+/// `.pc` file is not the program's to trust.
+pub fn filtered(said: ref String, on_macos: bool) -> Flags {
+    let mut out: Vec[String] = []
+    let mut framework = false
+    for word in said.split_whitespace() {
+        if framework {
+            out.push(f"-framework {word}")
+            framework = false
+        } else if on_macos && word == "-framework" {
+            framework = true
+        } else if (word.starts_with("-l") && word.len() > 2) || (word.starts_with("-L") && word.len() > 2) || word == "-pthread" || (on_macos && word.starts_with("-F") && word.len() > 2) {
+            out.push(word.clone())
+        } else {
+            return Flags::Refused { word: word.clone() }
+        }
+    }
+    if framework {
+        return Flags::Refused { word: "-framework" }
+    }
+    return Flags::Taken { flags: out }
+}
+
+/// **The flags as `rustc` takes them**: `-L dir` becomes `-L native=dir`, and
+/// `-l name`, `-pthread` and a framework go to the linker as they are.
+///
+/// **`-l` as a linker argument**, because `rustc` writes those after every
+/// crate (#499): a library a dependency package names is called from that
+/// package's crate, and a linker that reads a static archive once, in order -
+/// GNU `ld`, the default on `aarch64` - found nothing calling it yet where
+/// `rustc` puts its own `-l`, before the crates.
+pub fn as_rustc_args(flags: ref Vec[String]) -> Vec[String] {
+    let mut out: Vec[String] = []
+    for flag in flags {
+        if flag.starts_with("-l") {
+            out.push(f"-Clink-arg={flag}")
+        } else if flag.starts_with("-L") {
+            let dir = flag.strip_prefix("-L") ?? ""
+            out.push("-L")
+            out.push(f"native={dir}")
+        } else if flag.starts_with("-F") {
+            let dir = flag.strip_prefix("-F") ?? ""
+            out.push("-L")
+            out.push(f"framework={dir}")
+        } else if flag.starts_with("-framework ") {
+            let name = flag.strip_prefix("-framework ") ?? ""
+            out.push("-l")
+            out.push(f"framework={name}")
+        } else {
+            out.push(f"-Clink-arg={flag}")
+        }
+    }
+    return out
+}
