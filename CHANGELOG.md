@@ -8,6 +8,13 @@ or the specification. A change only to the guide, the notes, the README, the
 website, the tests, the examples or the tooling around them raises nothing and
 has no heading here; `CLAUDE.md` draws the line.
 
+## [0.0.749] — 2026-10-10
+
+**More of the toolchain is Nikaia**
+- `parser`: the postfix steps, the folds of a head and its tails, a lambda's
+  parameters and a guarded jump - what the grammar's actions build the tree
+  with - are `tools/tree_build.nika` (ADR-294, #125).
+
 ## [0.0.748] — 2026-10-10
 
 **More of the toolchain is Nikaia** (ADR-294, #125).

@@ -9,6 +9,12 @@ use winnow_grammar::{InternerContext, ParseContext, ParseInput, StateOf, Symbol,
 /// **The words this language keeps for itself** (ADR-298): `tools/parse_errors.nika`'s.
 pub use nikaia_std::tools::parse_errors::RESERVED_WORDS;
 
+/// What the grammar's actions build the tree with - the postfix steps and the folds of
+/// a head and its tails - is `tools/tree_build.nika`'s (ADR-294, #125).
+pub use nikaia_std::tools::tree_build::{
+    Postfix, fold_binary, fold_postfix, grouped, guarded, params_of, split_mut,
+};
+
 /// What the whitespace skip has seen: where it ended, whether it held a line
 /// break, and the run of `///` lines in it.
 ///
@@ -170,18 +176,6 @@ where
         true => Err(ParseError::from_input(i)),
         false => Ok(()),
     }
-}
-
-/// `jump if cond` as the tree has always written it: `if cond { jump }`
-/// ([ADR-276](../../../docs/specification/adr/adr-276.md) D23).
-fn guarded(jump: ast::Stmt, cond: ast::Expr, span: ast::Span) -> ast::Stmt {
-    ast::Stmt::Expr(ast::Expr::If {
-        cond: Box::new(cond),
-        then_branch: ast::Block {
-            stmts: vec![ast::Spanned::new(jump, span)],
-        },
-        else_branch: None,
-    })
 }
 
 /// The characters in front of the caret that a number, a scale or an exponent
@@ -566,31 +560,6 @@ pub fn fits(length: usize) -> Result<()> {
     Ok(())
 }
 
-/// The note a parse error gets when what it tripped over is a reserved word.
-///
-/// **Read off the rendered message rather than off the error**, because what a
-/// reader needs is attached to what a reader sees, and the grammar backend's
-/// error carries the position but not the word. The shape it looks for is the
-/// backend's own *"found unexpected token `…`"*; where that is not there, or the
-/// token is an ordinary name, the note is simply absent. A note that
-/// disappears is the safe way for this to be wrong - it adds a sentence and
-/// corrects nothing.
-/// A lambda's parameter list, split into the names and the ones written `mut`
-/// ([ADR-281](../../../docs/specification/adr/adr-281.md) D12).
-///
-/// The grammar reads them together because that is how they are written; the
-/// AST holds them apart because almost no parameter is one, and a bare `Ident`
-/// is what every reader of `params` already has in hand — the same arrangement
-/// `contracts::Signature` uses for the same question.
-fn split_mut(params: Vec<(bool, Symbol)>) -> (Vec<Symbol>, Vec<Symbol>) {
-    let mutable = params
-        .iter()
-        .filter(|(mutable, _)| *mutable)
-        .map(|(_, name)| *name)
-        .collect();
-    (params.into_iter().map(|(_, name)| name).collect(), mutable)
-}
-
 /// The byte a character index of `source` stands at - what the text half in
 /// Nikaia answers in, turned into what a span counts.
 fn byte_of(source: &str, at: i64) -> Option<usize> {
@@ -779,136 +748,6 @@ fn refuse_parsing(finding: crate::check::Finding, source: &str) -> anyhow::Error
 // inside the action blocks below. They exist because a PEG has no precedence
 // table: the expression rules parse a head and a list of tails, and the shape
 // is rebuilt here.
-
-/// What may follow a primary expression: `.field`, `.method(..)`, `?`.
-#[derive(Debug, Clone)]
-pub enum Postfix {
-    Field(Symbol),
-    /// Part I 3.5: `?.name`, which reaches the field only if the receiver holds
-    /// something.
-    SafeField(Symbol),
-    /// Part I 3.5 again, onto a **method**: the call happens only if the
-    /// receiver holds something ([ADR-278](../../../docs/specification/adr/adr-278.md)).
-    SafeMethod(Symbol, Vec<ast::Expr>, Vec<ast::ConfigArg>),
-    Method(Symbol, Vec<ast::Expr>, Vec<ast::ConfigArg>),
-    Index(Box<ast::Expr>),
-    /// `[a..]`: from `a` to the end, and the word `len` the end is read with.
-    IndexFrom(Box<ast::Expr>, Symbol),
-    /// `with { x: 1 }` — [ADR-118](../../../docs/specification/adr/adr-118.md)
-    /// D1. The `usize` is the byte the `with` stands at, which is the key the
-    /// checker records the operand's type under.
-    With(Vec<ast::FieldInit>, u32),
-}
-
-/// A declaration's parameters, with the config zone split into its two shapes.
-pub fn params_of(
-    receiver: Option<ast::Receiver>,
-    args: Vec<ast::FnArg>,
-    zone: Option<ast::ConfigZone>,
-) -> ast::FnParams {
-    let (config, spread) = match zone {
-        Some(ast::ConfigZone::Options(options)) => (options, None),
-        Some(ast::ConfigZone::Spread(name)) => (Vec::new(), Some(name)),
-        None => (Vec::new(), None),
-    };
-    ast::FnParams {
-        receiver,
-        args,
-        config,
-        spread,
-    }
-}
-
-/// Left-associative: `a - b - c` is `(a - b) - c`.
-/// **Every binary node carries a span, and it is the operator's own.**
-///
-/// The span of the *tail* - the operator and what stands to its right - rather
-/// than of the whole expression, because that is what the grammar has in hand
-/// and because uniqueness is the only property a key needs: two `+`s in one
-/// statement have two spans, which is exactly what a statement-keyed channel
-/// could not give ([ADR-081](../../../docs/specification/adr/adr-081.md) D1).
-///
-/// `contracts/sync.rs` has said *"expression-level spans are open work"* in its
-/// own words since it was written. This is the first of them, and it is here
-/// rather than on every expression because one variant needed it and a field
-/// nobody reads is a field that goes stale.
-pub fn fold_binary(head: ast::Expr, tail: Vec<(ast::BinaryOp, ast::Expr, ast::Span)>) -> ast::Expr {
-    tail.into_iter()
-        .fold(head, |lhs, (op, rhs, span)| ast::Expr::Binary {
-            op,
-            lhs: Box::new(lhs),
-            rhs: Box::new(rhs),
-            span,
-            grouped: false,
-        })
-}
-
-/// A parenthesised expression, which is the expression - with a bit operation
-/// marked as written inside them ([ADR-285](../../../docs/specification/adr/adr-285.md)
-/// D4): that is the one place the tree has to remember a parenthesis.
-pub fn grouped(e: ast::Expr) -> ast::Expr {
-    match e {
-        ast::Expr::Binary {
-            op, lhs, rhs, span, ..
-        } => ast::Expr::Binary {
-            op,
-            lhs,
-            rhs,
-            span,
-            grouped: true,
-        },
-        other => other,
-    }
-}
-
-pub fn fold_postfix(base: ast::Expr, tail: Vec<Postfix>) -> ast::Expr {
-    tail.into_iter().fold(base, |recv, step| match step {
-        Postfix::Field(name) => ast::Expr::Field {
-            base: Box::new(recv),
-            name,
-        },
-        Postfix::SafeField(name) => ast::Expr::SafeField {
-            base: Box::new(recv),
-            name,
-        },
-        Postfix::SafeMethod(method, args, config) => ast::Expr::SafeMethod {
-            receiver: Box::new(recv),
-            method,
-            args,
-            config,
-        },
-        Postfix::Method(method, args, config) => ast::Expr::MethodCall {
-            receiver: Box::new(recv),
-            method,
-            args,
-            config,
-        },
-        Postfix::Index(index) => ast::Expr::Index {
-            base: Box::new(recv),
-            index,
-        },
-        // **`xs[a..]` is `xs[a..<xs.len()]`** (#527). The emitter writes the
-        // language below's `a..` for it, so the base is evaluated once.
-        Postfix::IndexFrom(start, len) => ast::Expr::Index {
-            index: Box::new(ast::Expr::Range {
-                start,
-                end: Box::new(ast::Expr::MethodCall {
-                    receiver: Box::new(recv.clone()),
-                    method: len,
-                    args: Vec::new(),
-                    config: Vec::new(),
-                }),
-                inclusive: false,
-            }),
-            base: Box::new(recv),
-        },
-        Postfix::With(fields, at) => ast::Expr::With {
-            base: Box::new(recv),
-            fields,
-            at,
-        },
-    })
-}
 
 // --- Grammar Definition ---
 
@@ -2602,7 +2441,7 @@ grammar! {
         rule closure_expr -> Expr =
             KW_FN "(" params:closure_params? ")" body:block
             -> {
-                let (params, mutable) = split_mut(params.unwrap_or_default());
+                let (params, mutable) = split_mut(&params.unwrap_or_default());
                 Expr::Closure { params, mutable, body }
             }
           // `fn { … }` takes **no arguments**, and used to take however many of
@@ -2860,24 +2699,24 @@ grammar! {
           // `[..b]` start at `0`, and `[a..]` runs to the end - which the
           // fold writes as `a..<base.len()`, the one form a range has.
           | same_line "[" "..<" end:or_expr "]" -> {
-                Postfix::Index(Box::new(Expr::Range {
+                Postfix::Index(Expr::Range {
                     start: Box::new(Expr::LitInt { value: 0, negative: false }),
                     end: Box::new(end),
                     inclusive: false,
-                }))
+                })
             }
           | same_line "[" ".." end:or_expr "]" -> {
-                Postfix::Index(Box::new(Expr::Range {
+                Postfix::Index(Expr::Range {
                     start: Box::new(Expr::LitInt { value: 0, negative: false }),
                     end: Box::new(end),
                     inclusive: true,
-                }))
+                })
             }
           | same_line "[" start:or_expr ".." "]" -> {
-                Postfix::IndexFrom(Box::new(start), _state.intern("len"))
+                Postfix::IndexFrom(start, _state.intern("len"))
             }
           | same_line "[" index:expr "]" -> {
-                Postfix::Index(Box::new(index))
+                Postfix::Index(index)
             }
           // `not("?")`: `??` is the null-coalescing operator (Kap 3.5), and a
           // `t.0` - a tuple's parts are numbered, and the number is a field
@@ -2927,7 +2766,7 @@ grammar! {
         // still wins at a `fn:`, because neither arm above it can match a colon.
         rule trailing_lambda -> Expr =
             KW_FN "(" params:closure_params? ")" body:block -> {
-                let (params, mutable) = split_mut(params.unwrap_or_default());
+                let (params, mutable) = split_mut(&params.unwrap_or_default());
                 Expr::Closure { params, mutable, body }
             }
           | KW_FN body:block -> {

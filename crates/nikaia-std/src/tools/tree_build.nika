@@ -1,0 +1,110 @@
+// crates/nikaia-std/src/tools/tree_build.nika
+//
+// **What the grammar's actions build the tree with** - the pieces a PEG has no
+// precedence table for: a head and a list of tails folded into the nesting
+// they mean, a postfix step put onto what it follows, a lambda's parameters
+// split into the names and the ones written `mut`, a declaration's parameters
+// with the config zone split into its two shapes, and `jump if cond`. Moved
+// from the compiler's `parser` (ADR-294, #125).
+
+/// What may follow a primary expression: `.field`, `.method(..)`, `?`.
+pub enum Postfix {
+    Field(winnow_grammar::Symbol),
+    /// Part I 3.5: `?.name`, which reaches the field only if the receiver
+    /// holds something.
+    SafeField(winnow_grammar::Symbol),
+    /// Part I 3.5 again, onto a **method**: the call happens only if the
+    /// receiver holds something (ADR-278).
+    SafeMethod(winnow_grammar::Symbol, Vec[Expr], Vec[ConfigArg]),
+    Method(winnow_grammar::Symbol, Vec[Expr], Vec[ConfigArg]),
+    Index(Expr),
+    /// `[a..]`: from `a` to the end, and the word `len` the end is read with.
+    IndexFrom(Expr, winnow_grammar::Symbol),
+    /// `with { x: 1 }` - ADR-118 D1. The number is the byte the `with` stands
+    /// at, which is the key the checker records the operand's type under.
+    With(Vec[FieldInit], u32),
+}
+
+/// A lambda's parameter list, split into the names and the ones written `mut`
+/// (ADR-281 D12). The grammar reads them together because that is how they
+/// are written; the tree holds them apart because almost no parameter is one.
+pub fn split_mut(params: ref Vec[(bool, winnow_grammar::Symbol)]) -> (Vec[winnow_grammar::Symbol], Vec[winnow_grammar::Symbol]) {
+    let mut names: Vec[winnow_grammar::Symbol] = []
+    let mut mutable: Vec[winnow_grammar::Symbol] = []
+    for param in params {
+        names.push(param.1)
+        if param.0 {
+            mutable.push(param.1)
+        }
+    }
+    return (names, mutable)
+}
+
+/// A declaration's parameters, with the config zone split into its two shapes.
+pub fn params_of(receiver: Receiver?, args: Vec[FnArg], zone: ConfigZone?) -> FnParams {
+    if zone == null {
+        return FnParams { receiver: receiver, args: args, config: [], spread: null }
+    }
+    match zone ?? ConfigZone::Options([]) {
+        ConfigZone::Options(options) => {
+            return FnParams { receiver: receiver, args: args, config: options, spread: null }
+        },
+        ConfigZone::Spread(name) => {
+            return FnParams { receiver: receiver, args: args, config: [], spread: name }
+        },
+    }
+}
+
+/// `jump if cond` as the tree has always written it: `if cond { jump }`
+/// (ADR-276 D23).
+pub fn guarded(jump: Stmt, cond: Expr, span: Span) -> Stmt {
+    return Stmt::Expr(Expr::If { cond: cond, then_branch: Block { stmts: [Spanned { node: jump, span: span, doc: null, attributes: [] }] }, else_branch: null })
+}
+
+/// Left-associative: `a - b - c` is `(a - b) - c`.
+///
+/// **Every binary node carries a span, and it is the operator's own.** The
+/// span of the *tail* - the operator and what stands to its right - rather
+/// than of the whole expression, because uniqueness is the only property a key
+/// needs: two `+`s in one statement have two spans, which is exactly what a
+/// statement-keyed channel could not give (ADR-081 D1).
+pub fn fold_binary(head: Expr, tail: Vec[(BinaryOp, Expr, Span)]) -> Expr {
+    let mut lhs = head
+    for step in tail.drain() {
+        lhs = Expr::Binary { op: step.0, lhs: lhs, rhs: step.1, span: step.2, grouped: false }
+    }
+    return lhs
+}
+
+/// A parenthesised expression, which is the expression - with a bit operation
+/// marked as written inside them (ADR-285 D4): that is the one place the tree
+/// has to remember a parenthesis.
+pub fn grouped(e: Expr) -> Expr {
+    match e {
+        Expr::Binary { op, lhs, rhs, span, .. } => {
+            return Expr::Binary { op: op, lhs: lhs, rhs: rhs, span: span, grouped: true }
+        },
+        other => {
+            return other
+        },
+    }
+}
+
+/// Every postfix step put onto what it follows, in the order written.
+pub fn fold_postfix(base: Expr, tail: Vec[Postfix]) -> Expr {
+    let mut recv = base
+    for step in tail.drain() {
+        recv = match step {
+            Postfix::Field(name) => Expr::Field { base: recv, name: name },
+            Postfix::SafeField(name) => Expr::SafeField { base: recv, name: name },
+            Postfix::SafeMethod(method, args, config) => Expr::SafeMethod { receiver: recv, method: method, args: args, config: config },
+            Postfix::Method(method, args, config) => Expr::MethodCall { receiver: recv, method: method, args: args, config: config },
+            Postfix::Index(index) => Expr::Index { base: recv, index: index },
+            // **`xs[a..]` is `xs[a..<xs.len()]`** (#527). The emitter writes
+            // the language below's `a..` for it, so the base is evaluated once.
+            Postfix::IndexFrom(start, len) => Expr::Index { base: recv.clone(), index: Expr::Range { start: start, end: Expr::MethodCall { receiver: recv, method: len, args: [], config: [] }, inclusive: false } },
+            Postfix::With(fields, at) => Expr::With { base: recv, fields: fields, at: at },
+        }
+    }
+    return recv
+}

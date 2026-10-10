@@ -24188,6 +24188,72 @@ fn incomplete(trait_name: &str, target: &str, missing: &[String], span: Span) ->
 }
 
 
+// --- tree_build.nika ---
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Postfix {
+    Field(winnow_grammar::Symbol),
+    SafeField(winnow_grammar::Symbol),
+    SafeMethod(winnow_grammar::Symbol, Vec<Expr>, Vec<ConfigArg>),
+    Method(winnow_grammar::Symbol, Vec<Expr>, Vec<ConfigArg>),
+    Index(Expr),
+    IndexFrom(Expr, winnow_grammar::Symbol),
+    With(Vec<FieldInit>, u32),
+}
+
+pub fn split_mut(params: &[(bool, winnow_grammar::Symbol)]) -> (Vec<winnow_grammar::Symbol>, Vec<winnow_grammar::Symbol>) {
+    let mut names: Vec<winnow_grammar::Symbol> = vec![];
+    let mut mutable: Vec<winnow_grammar::Symbol> = vec![];
+    for param in params.iter() {
+        names.push(param.1);
+        if param.0 { mutable.push(param.1); }
+    }
+    (names, mutable)
+}
+
+pub fn params_of(receiver: Option<Receiver>, args: Vec<FnArg>, zone: Option<ConfigZone>) -> FnParams {
+    if zone.is_none() { return FnParams { receiver, args, config: vec![], spread: None }; }
+    match nikaia_std::index::or(zone, || ConfigZone::Options(vec![])) {
+        ConfigZone::Options(options) => { return FnParams { receiver, args, config: options, spread: None }; },
+        ConfigZone::Spread(name) => { return FnParams { receiver, args, config: vec![], spread: Some(name) }; },
+    }
+}
+
+pub fn guarded(jump: Stmt, cond: Expr, span: Span) -> Stmt { Stmt::Expr(Expr::If { cond: Box::new(cond), then_branch: Block { stmts: vec![Spanned { node: jump, span, doc: None, attributes: vec![] }] }, else_branch: None }) }
+
+pub fn fold_binary(head: Expr, tail: Vec<(BinaryOp, Expr, Span)>) -> Expr {
+    let mut lhs = head;
+    for step in tail.into_iter() { lhs = Expr::Binary { op: step.0, lhs: Box::new(lhs), rhs: Box::new(step.1), span: step.2, grouped: false }; }
+    lhs
+}
+
+pub fn grouped(e: Expr) -> Expr {
+    match e {
+        Expr::Binary { op, lhs, rhs, span, .. } => {
+            let lhs = nikaia_std::boxed::open(lhs); let rhs = nikaia_std::boxed::open(rhs);
+            return Expr::Binary { op, lhs: Box::new(lhs), rhs: Box::new(rhs), span, grouped: true };
+        },
+        other => { return other; },
+    }
+}
+
+pub fn fold_postfix(base: Expr, tail: Vec<Postfix>) -> Expr {
+    let mut recv = base;
+    for step in tail.into_iter() {
+        recv = match step {
+            Postfix::Field(name) => Expr::Field { base: Box::new(recv), name },
+            Postfix::SafeField(name) => Expr::SafeField { base: Box::new(recv), name },
+            Postfix::SafeMethod(method, args, config) => Expr::SafeMethod { receiver: Box::new(recv), method, args, config },
+            Postfix::Method(method, args, config) => Expr::MethodCall { receiver: Box::new(recv), method, args, config },
+            Postfix::Index(index) => Expr::Index { base: Box::new(recv), index: Box::new(index) },
+            Postfix::IndexFrom(start, len) => Expr::Index { base: Box::new(recv.clone()), index: Box::new(Expr::Range { start: Box::new(start), end: Box::new(Expr::MethodCall { receiver: Box::new(recv), method: len, args: vec![], config: vec![] }), inclusive: false }) },
+            Postfix::With(fields, at) => Expr::With { base: Box::new(recv), fields, at },
+        };
+    }
+    recv
+}
+
+
 // --- trust.nika ---
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -27593,6 +27659,10 @@ pub mod touch {
 pub mod traits {
     #[allow(unused_imports)]
     pub use super::{check_impls};
+}
+pub mod tree_build {
+    #[allow(unused_imports)]
+    pub use super::{Postfix, split_mut, params_of, guarded, fold_binary, grouped, fold_postfix};
 }
 pub mod trust {
     #[allow(unused_imports)]
