@@ -89,6 +89,27 @@ fn a_constructor_call_of_a_struct_in_another_file_is_the_new_it_has() {
     );
 }
 
+/// #565: the lowered tools package allows the two rustc lints that valid
+/// Nikaia trips (`let mut s = init` then branches that always assign `s`, and
+/// a `while true { … return … }` then a `return`). Measured once by adding both
+/// shapes to a tools file and running `cargo check -p nikaia-std`: two
+/// warnings without the attribute, none with it.
+#[test]
+fn the_tools_package_allows_what_valid_nikaia_trips() {
+    let lib = include_str!("../../nikaia-std/src/lib.rs");
+    let before_the_module = lib
+        .split("pub mod tools {")
+        .next()
+        .expect("the tools module is declared");
+    let attribute = before_the_module
+        .rsplit("#[allow(")
+        .next()
+        .expect("an allow stands over it");
+    for lint in ["unused_assignments", "unreachable_code"] {
+        assert!(attribute.contains(lint), "{lint} is allowed over `tools`");
+    }
+}
+
 /// #564: `drain()` over a `mut` parameter takes the elements out of the
 /// caller's list as owned values.
 #[test]

@@ -156,7 +156,15 @@ pub mod text {
 /// is the same machine code as the shorter spelling. So is `&*value` where the
 /// grammar's input is already a view (`grammar::parse`, 0.0.297): the
 /// lowering writes one form for owned text, a mapping and a view alike.
+///
+/// **And two rustc lints about code the author wrote and the lowering kept**
+/// (#565): `let mut s = init` followed by branches that always assign `s`
+/// (`unused_assignments`), and a `while true { … return … }` followed by the
+/// `return` that ends the function (`unreachable_code`). Both are valid
+/// Nikaia, so a move should not have to write around them.
 #[allow(
+    unused_assignments,
+    unreachable_code,
     clippy::borrow_deref_ref,
     clippy::explicit_counter_loop,
     clippy::clone_on_copy,
