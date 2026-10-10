@@ -209,6 +209,16 @@ Rules from the sessions that moved the most; they save tokens, not just time.
   a `strip_prefix` view in a loop lowers as `EitherText`; `mut` parameter plus
   `.drain()`; `Spanned(x, span)` lowers to invalid Rust; "never read" and
   unreachable-code warnings in the generated package.
+* **The disk is shared and small.** It ran out twice mid-test and once for the
+  whole session (no command output at all). Delete `target/` of a worktree you
+  no longer use, `target/nikaia-project-tests` and `target/release/nikaia-scratch`
+  before and after a test run, and run `cargo test --no-fail-fast` (it stops at
+  the first failing binary otherwise).
+* **Moving a resolver or a map loop:** never compare a contract by address
+  (`std::ptr::eq`): a resolver that returns an owned value breaks it silently.
+  Destructure map loops (`for (name, value) in map`), not `entry.0`/`entry.1`,
+  which the checker cannot type; a named `_` (`for (name, _) in map`) avoids the
+  unused-variable clippy error in the lowering.
 * **Agents: few, one per large module, none on a file another one edits.**
   Splitting one file into slices costs more in conflicts and repeated context
   than it saves. Leaves first: a consumer moved before its dependencies finds
