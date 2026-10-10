@@ -10,6 +10,12 @@
   No pull requests, no waiting for CI, no full suite first: build,
   `cargo fmt`, and the tests the change touches are enough. Small commits,
   often.
+* **Before pushing, `cargo clippy --all-targets -- -D warnings` must pass**: CI
+  runs it as its first gate after the build, and a warning there turns every
+  later job off (it kept `develop` red from the first self-hosting move until
+  0.0.773, so `main` did not move). Lints about code the lowering writes are
+  allowed on the `tools` module in `crates/nikaia-std/src/lib.rs`, not fixed in
+  `package.rs`.
 * **Before pushing, rebase onto the latest `origin/develop`**
   (`git pull --rebase origin develop`). Other sessions push all the time.
   If the push is rejected, rebase again and push again.
