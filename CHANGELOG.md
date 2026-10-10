@@ -8,6 +8,20 @@ or the specification. A change only to the guide, the notes, the README, the
 website, the tests, the examples or the tooling around them raises nothing and
 has no heading here; `CLAUDE.md` draws the line.
 
+## [0.0.738] — 2026-10-10
+
+**An expression whose type is not known is refused: `NK1245`** (ADR-286 D41,
+#497).
+- The checker refuses an expression whose type it cannot tell, where it used
+  to say nothing and leave the program to the language below (Part III C.4's
+  *says nothing* is withdrawn).
+- Not asked of a number literal, a number nothing typed or an integer
+  `comptime` without a type (their uses type them), of an operator, branch,
+  block or jump, of a `panic`, of a reflected field's `of` in a generic body,
+  or again where a part inside was refused.
+- `develop` is red with this: the sites that are still unknown, and the tests
+  that expected silence, are listed on #497 with what to do for each.
+
 ## [0.0.737] — 2026-10-10
 
 **A lambda of a declared type, a field through `Shared`, `dec[f64]`, a choice

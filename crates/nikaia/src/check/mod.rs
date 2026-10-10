@@ -1520,6 +1520,7 @@ fn walked<'a>(
         open_numbers: BTreeMap::new(),
         open_elements: std::collections::HashMap::new(),
         lambda_expected: None,
+        unknown_said: 0,
         list_constants: std::collections::HashMap::new(),
         open_comptimes: BTreeMap::new(),
         overflowed: BTreeSet::new(),
@@ -3644,6 +3645,10 @@ struct Checker<'a> {
     /// `return` against a declared `fn(i64) -> i64`, a field of one, an
     /// annotated `let`. Set just before such a lambda is walked, taken by it.
     lambda_expected: Option<Ty>,
+    /// How many `NK1245`s this walk has said (or stood back for): an
+    /// expression that is unknown only because a part inside it was is not
+    /// refused again.
+    unknown_said: usize,
     /// **What such a list holds, where nothing can change it**: an immutable
     /// `let`'s elements, so `xs[0] + xs[1]` is measured as `a + b` is (D26).
     list_constants: std::collections::HashMap<usize, Vec<Constant>>,
@@ -12381,7 +12386,9 @@ impl<'a> Checker<'a> {
 
     fn expr(&mut self, expr: &Expr, span: &Span) -> Ty {
         self.reached = self.reaching.take();
+        let said_before = self.unknown_said;
         let ty = self.value_of(expr, span);
+        let said_inside = self.unknown_said > said_before;
         // **A call on a number written as its receiver is as open as the
         // number** (#417): `7.wrapping_add(1)` is whatever integer its use
         // asks for, as `7 + 1` is, so its type is not claimed here and the
@@ -12447,7 +12454,81 @@ impl<'a> Checker<'a> {
         ) {
             self.a_value_with_a_cleanup_made(&ty);
         }
+        if ty.is_unknown() && !said_inside {
+            self.a_value_of_no_known_type(expr, span);
+        }
         ty
+    }
+
+    /// **`NK1245`: an expression whose type the compiler does not know**
+    /// ([ADR-286](../../docs/specification/adr/adr-286.md) D41, #497). What is
+    /// not known is not checked, and a mistake there reached the language below
+    /// as an error about a file nobody wrote (Part III C.1). Not asked of what
+    /// is typed later by its uses (a number literal, an open number, an integer
+    /// `comptime` without a type), of an expression that is unknown only
+    /// because a part of it is (an operator, a branch, a block, a jump), of a
+    /// `panic`, of a reflected field's `of` in a generic body, and not again
+    /// where a part inside was already refused: one cause, one refusal.
+    fn a_value_of_no_known_type(&mut self, expr: &Expr, span: &Span) {
+        let open = matches!(expr, Expr::LitInt { .. } | Expr::LitFloat(_))
+            || matches!(expr, Expr::MethodCall { receiver, .. } if matches!(**receiver, Expr::LitInt { .. }))
+            || self.number_shaped(expr)
+            || matches!(expr, Expr::Variable(n) if self
+                .binding(self.parsed.text(*n))
+                .is_some_and(|l| self.open_comptimes.contains_key(&l.id)));
+        let structural = matches!(
+            expr,
+            Expr::Binary { .. }
+                | Expr::Unary { .. }
+                | Expr::If { .. }
+                | Expr::Block(_)
+                | Expr::Match { .. }
+                | Expr::Return(_)
+                | Expr::Throw(_)
+                | Expr::TryCatch { .. }
+                | Expr::Range { .. }
+                | Expr::Continue
+                | Expr::Break
+        ) || matches!(expr, Expr::Call { func, .. }
+            if matches!(&**func, Expr::Variable(n) if self.parsed.text(*n) == "panic"))
+            || matches!(expr, Expr::MethodCall { method, .. }
+                if self.parsed.text(*method) == "of" && self.unrolling.is_none());
+        if open || structural {
+            return;
+        }
+        // A finding already on this statement is the cause, said once.
+        if self
+            .checked
+            .findings
+            .iter()
+            .any(|f| f.span == *span && f.severity == Severity::Error)
+        {
+            self.unknown_said += 1;
+            return;
+        }
+        let written = written(self.parsed, expr);
+        let written: String = match written.chars().count() > 60 {
+            true => written.chars().take(57).collect::<String>() + "...",
+            false => written,
+        };
+        self.unknown_said += 1;
+        self.checked.findings.push(Finding {
+            severity: Severity::Error,
+            span: *span,
+            code: "NK1245",
+            message: format!("The compiler can't tell what type `{written}` is."),
+            notes: vec![
+                "What is not known is not checked, so a type nothing can tell is refused \
+                 rather than left to the language below."
+                    .to_string(),
+            ],
+            help: Some(
+                "Write the type down where the value is made, such as `let x: T = …`, or \
+                 pass it to a parameter that declares one."
+                    .to_string(),
+            ),
+            labels: Vec::new(),
+        });
     }
 
     fn value_of(&mut self, expr: &Expr, span: &Span) -> Ty {
