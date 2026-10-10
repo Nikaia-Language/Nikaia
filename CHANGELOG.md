@@ -8,6 +8,14 @@ or the specification. A change only to the guide, the notes, the README, the
 website, the tests, the examples or the tooling around them raises nothing and
 has no heading here; `CLAUDE.md` draws the line.
 
+## [0.0.764] — 2026-10-10
+
+**More of the toolchain is Nikaia** (ADR-294, #125).
+- `bounds`: what the bindings of a grammar's alternative matched, and what a
+  callee's ledger entry ensures, are `tools/bounds_matched.nika`.
+- `proofs`: `nikaia.proofs` as text - its lines read back and the file a book
+  renders - is `tools/proofs_book.nika`.
+
 ## [0.0.763] — 2026-10-10
 
 **The tools package no longer warns on valid shapes (#565).**

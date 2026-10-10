@@ -1517,6 +1517,163 @@ fn evaluate(form: &Form, known: &collections::BTreeMap<String, Range>) -> Range 
 }
 
 
+// --- bounds_matched.nika ---
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BmMatched {
+    pub given: collections::BTreeMap<String, Range>,
+    pub classes: collections::BTreeMap<String, Range>,
+    pub text_lengths: collections::BTreeMap<String, Range>,
+    pub text_classes: collections::BTreeMap<String, Range>,
+}
+
+pub fn bm_empty() -> BmMatched { BmMatched { given: collections::BTreeMap::new(), classes: collections::BTreeMap::new(), text_lengths: collections::BTreeMap::new(), text_classes: collections::BTreeMap::new() } }
+
+fn bm_range(lo: i64, hi: i64) -> Range { Range { lo: Some(lo), hi: Some(hi) } }
+
+fn bm_class(words: &winnow_grammar::InternerContext, rules: &collections::BTreeSet<String>, pattern: &Pattern) -> Option<Range> {
+    match pattern {
+        Pattern::Ref { name, generics, args } => {
+            let name = *name;
+            let word = words.resolve(name);
+            if !generics.is_empty() || !args.is_empty() || rules.contains(word) { return None; }
+            if word == "digit" { return Some(bm_range(48, 57)); }
+            if word == "hex_digit" { return Some(bm_range(48, 102)); }
+            None
+        },
+        Pattern::Literal(text) => {
+            let chars: Vec<scalar> = nikaia_std::list::chars(text.chars());
+            if chars.len() != 1 { return None; }
+            let code = *nikaia_std::index::get(&chars, 0) as i64;
+            Some(bm_range(code, code))
+        },
+        _ => None,
+    }
+}
+
+fn bm_is_digit(class: Option<&Range>) -> bool {
+    let held = match class { Some(__nikaia_value) => __nikaia_value, None => return false };
+    nikaia_std::index::or(held.lo, || -1) == 48 && nikaia_std::index::or(held.hi, || -1) == 57
+}
+
+pub fn bm_matched(words: &winnow_grammar::InternerContext, rules: &collections::BTreeSet<String>, pattern: &Pattern, found: &mut BmMatched) {
+    match pattern {
+        Pattern::Seq(parts) => { for part in parts.iter() { bm_matched(words, rules, &part.node, found); } },
+        Pattern::Group(inner) => { let inner = nikaia_std::boxed::open(inner); bm_matched(words, rules, &inner.node, found) },
+        Pattern::Bind { name, pat } => { let pat = nikaia_std::boxed::open(pat); let name = *name; bm_bound(words, rules, &words.resolve(name).to_owned(), &pat.node, found) },
+        _ => { },
+    }
+}
+
+fn bm_bound(words: &winnow_grammar::InternerContext, rules: &collections::BTreeSet<String>, bound_name: &str, what: &Pattern, found: &mut BmMatched) {
+    let class = bm_class(words, rules, what);
+    if class.is_some() {
+        found.classes.insert(bound_name.to_owned(), nikaia_std::index::or(class, || bm_range(0, 0).into()));
+        return;
+    }
+    match what {
+        Pattern::Repeat { pat, rep } => {
+            let pat = nikaia_std::boxed::open(pat);
+            let each = bm_class(words, rules, &pat.node);
+            if each.is_some() {
+                let counted = bm_counted(rep);
+                if counted.lo < 0 { return; }
+                found.text_lengths.insert(bound_name.to_owned(), Range { lo: Some(counted.lo), hi: counted.hi });
+                found.text_classes.insert(bound_name.to_owned(), nikaia_std::index::or(each, || bm_range(0, 0).into()));
+                return;
+            }
+        },
+        _ => { },
+    }
+    match what {
+        Pattern::Ref { name, generics, args } => {
+            let name = *name;
+            if words.resolve(name) != "dec" || rules.contains("dec") || generics.len() != 1 { return; }
+            if args.len() != 1 { return; }
+            let mut digits: i64 = 1;
+            match &nikaia_std::index::get(&args, 0).node {
+                Pattern::Repeat { pat, rep } => {
+                    let pat = nikaia_std::boxed::open(pat);
+                    if !bm_is_digit((bm_class(words, rules, &pat.node)).as_ref()) { return; }
+                    digits = nikaia_std::index::or(bm_most(rep), || 0);
+                    if bm_most(rep).is_none() { return; }
+                },
+                _ => { if !bm_is_digit((bm_class(words, rules, &nikaia_std::index::get(&args, 0).node)).as_ref()) { return; } },
+            }
+            if digits > 18 { return; }
+            let mut top: i64 = 1;
+            let mut times: i64 = 0;
+            while times < digits {
+                top = top * 10;
+                times += 1;
+            }
+            found.given.insert(bound_name.to_owned(), bm_range(0, top - 1));
+        },
+        _ => { },
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct BmCount {
+    lo: i64,
+    hi: Option<i64>,
+}
+
+fn bm_counted(rep: &Repeat) -> BmCount {
+    match rep {
+        Repeat::Plus => BmCount { lo: 1, hi: None },
+        Repeat::Star => BmCount { lo: 0, hi: None },
+        Repeat::Exactly(n) => { let n = *n; BmCount { lo: n as i64, hi: Some(n as i64) } },
+        Repeat::AtLeast(n) => { let n = *n; BmCount { lo: n as i64, hi: None } },
+        Repeat::Between(m, n) => { let m = *m; let n = *n; BmCount { lo: m as i64, hi: Some(n as i64) } },
+        Repeat::Optional => BmCount { lo: -1, hi: None },
+    }
+}
+
+fn bm_most(rep: &Repeat) -> Option<i64> {
+    match rep {
+        Repeat::Exactly(n) => { let n = *n; Some(n as i64) },
+        Repeat::Between(_, n) => { let n = *n; Some(n as i64) },
+        _ => None,
+    }
+}
+
+pub fn bm_ensured(ledgers: &[&Ledger], read: &impl Fn(&str, &collections::BTreeSet<String>) -> Vec<SolverTerm>) -> collections::BTreeMap<String, Ensured> {
+    let mut out: collections::BTreeMap<String, Ensured> = collections::BTreeMap::new();
+    for ledger in ledgers.iter() {
+        let ledger = *ledger;
+        for (key, contract) in ledger.functions.iter() {
+            if contract.ensures.is_empty() || out.contains_key(key) { continue; }
+            let signature = match contract.signature.as_ref() { Some(__nikaia_value) => __nikaia_value, None => continue };
+            let mut params: Vec<String> = vec![];
+            let mut chars: Vec<bool> = vec![];
+            for (name, ty) in signature.params.iter() {
+                params.push(name.to_owned());
+                chars.push(bm_char(ty));
+            }
+            let mut names: collections::BTreeSet<String> = collections::BTreeSet::new();
+            for name in params.iter() { names.insert(name.to_owned()); }
+            names.insert(String::from("result"));
+            let mut conditions: Vec<Vec<SolverTerm>> = vec![];
+            for text in contract.ensures.iter() {
+                let nodes = read(text, &names);
+                if !nodes.is_empty() { conditions.push(nodes); }
+            }
+            if conditions.is_empty() { continue; }
+            out.insert(key.to_owned(), Ensured { params, chars, conditions });
+        }
+    }
+    out
+}
+
+fn bm_char(ty: &Ty) -> bool {
+    match ty {
+        Ty::Named { name, .. } => name == "char" || name == "scalar",
+        _ => false,
+    }
+}
+
+
 // --- bounds_reasons.nika ---
 
 pub fn blocked_index(base: &Expr, index: &Expr) -> String {
@@ -19414,6 +19571,51 @@ fn stands_at(c: &[scalar], at: i64, w: &[scalar]) -> bool {
 }
 
 
+// --- proofs_book.nika ---
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PbLine {
+    pub key: String,
+    pub kind: String,
+    pub body: String,
+}
+
+pub fn pb_read(text: &str, long: &impl Fn(&str) -> Option<String>) -> Vec<PbLine> {
+    let mut out: Vec<PbLine> = vec![];
+    for line in text.lines() {
+        if line.starts_with("#") || line.trim().is_empty() { continue; }
+        let words: Vec<&str> = line.split(" ").collect::<Vec<_>>();
+        if words.len() != 3 { continue; }
+        let key = (*nikaia_std::index::get(&words, 0)).to_owned();
+        let kind = (*nikaia_std::index::get(&words, 1)).to_owned();
+        let body = (*nikaia_std::index::get(&words, 2)).to_owned();
+        if kind == "proved" && body == "@" {
+            let held = match long(&key) { Some(__nikaia_value) => __nikaia_value, None => continue };
+            out.push(PbLine { key, kind, body: held.trim().to_owned() });
+        } else if kind == "proved" || kind == "refuted" || kind == "unknown" { out.push(PbLine { key, kind, body }); }
+    }
+    out
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PbRendered {
+    pub text: String,
+    pub long: collections::BTreeMap<String, String>,
+}
+
+pub fn pb_render(entries: &[PbLine], limit: i64) -> PbRendered {
+    let mut out: String = String::from("# AUTO-GENERATED by `nikaia`. Commit this file like a lockfile.\n# The prover's answers, one per question it asks: the SHA-256 of the\n# question in normal form, and `proved` with its certificate,\n# `refuted` with its model, or `unknown` with the solver that gave up.\n# Every entry is checked when it is read; a wrong one is searched again.\n");
+    let mut long: collections::BTreeMap<String, String> = collections::BTreeMap::new();
+    for entry in entries.iter() {
+        if entry.kind == "proved" && (entry.body.len() as i64) > limit {
+            long.insert(entry.key.to_owned(), entry.body.to_owned());
+            out.push_str(&format!("{} proved @\n", entry.key));
+        } else { out.push_str(&format!("{} {} {}\n", entry.key, entry.kind, entry.body)); }
+    }
+    PbRendered { text: out, long }
+}
+
+
 // --- prove_terms.nika ---
 
 pub fn lin_term(expr: &Expr, words: &winnow_grammar::InternerContext, var: &impl Fn(&str) -> bool, out: &mut Vec<SolverTerm>) -> Option<i64> {
@@ -31061,6 +31263,10 @@ pub mod bounds_interval {
     #[allow(unused_imports)]
     pub use super::{Range, candidate};
 }
+pub mod bounds_matched {
+    #[allow(unused_imports)]
+    pub use super::{BmMatched, bm_empty, bm_matched, bm_ensured};
+}
 pub mod bounds_reasons {
     #[allow(unused_imports)]
     pub use super::{blocked_index, blocked_operation};
@@ -31293,6 +31499,10 @@ pub mod parsed_tree {
 pub mod paths {
     #[allow(unused_imports)]
     pub use super::{Export, Named, after, module_of, joined, exported, named, bases, split_top_level};
+}
+pub mod proofs_book {
+    #[allow(unused_imports)]
+    pub use super::{PbLine, pb_read, PbRendered, pb_render};
 }
 pub mod prove_terms {
     #[allow(unused_imports)]

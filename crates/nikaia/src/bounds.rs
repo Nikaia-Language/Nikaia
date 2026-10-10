@@ -111,163 +111,15 @@ pub struct Proven {
     pub negations: HashSet<usize>,
 }
 
-/// What [`matched`] found of an alternative's bindings, as the walk's context
-/// holds it.
-#[derive(Default)]
-struct Matched {
-    given: BTreeMap<String, nikaia_std::tools::bounds_interval::Range>,
-    classes: BTreeMap<String, nikaia_std::tools::bounds_interval::Range>,
-    text_lengths: BTreeMap<String, nikaia_std::tools::bounds_interval::Range>,
-    text_classes: BTreeMap<String, nikaia_std::tools::bounds_interval::Range>,
-}
-
-/// **What a pattern's bindings matched** (ADR-314 D1), through sequences and
-/// groups: `x:dec[T](digit{m,n})` (or one `digit`) is a whole number in
-/// `0..=10^n - 1`, `c:digit` a `char` whose code is `48..=57` (`hex_digit`
-/// `48..=102`, a one-character literal its own code). A name the grammar
-/// declares as a rule of its own is not a built-in, and says nothing.
-fn matched(
-    parsed: &Parsed,
-    rules: &BTreeSet<&str>,
-    pattern: &crate::ast::Pattern,
-    found: &mut Matched,
-) {
-    use crate::ast::{Pattern, Repeat};
-    use nikaia_std::tools::bounds_interval::Range;
-    let range = |lo: i64, hi: i64| Range {
-        lo: Some(lo),
-        hi: Some(hi),
-    };
-    let class = |pattern: &Pattern| -> Option<Range> {
-        match pattern {
-            Pattern::Ref {
-                name,
-                generics,
-                args,
-            } if generics.is_empty() && args.is_empty() && !rules.contains(parsed.text(*name)) => {
-                match parsed.text(*name) {
-                    "digit" => Some(range(48, 57)),
-                    "hex_digit" => Some(range(48, 102)),
-                    _ => None,
-                }
-            }
-            Pattern::Literal(text) if text.chars().count() == 1 => {
-                let code = text.chars().next()? as i64;
-                Some(range(code, code))
-            }
-            _ => None,
-        }
-    };
-    match pattern {
-        Pattern::Seq(parts) => {
-            for part in parts {
-                matched(parsed, rules, &part.node, found);
-            }
-        }
-        Pattern::Group(inner) => matched(parsed, rules, &inner.node, found),
-        Pattern::Bind { name, pat } => {
-            let name = parsed.text(*name).to_string();
-            if let Some(code) = class(&pat.node) {
-                found.classes.insert(name, code);
-                return;
-            }
-            // **A run of a class is text**: its length is what the run
-            // counts, and each of its characters is in the class.
-            if let Pattern::Repeat { pat: run, rep } = &pat.node
-                && let Some(code) = class(&run.node)
-            {
-                let (lo, hi) = match rep {
-                    Repeat::Plus => (1, None),
-                    Repeat::Star => (0, None),
-                    Repeat::Exactly(n) => (*n as i64, Some(*n as i64)),
-                    Repeat::AtLeast(n) => (*n as i64, None),
-                    Repeat::Between(m, n) => (*m as i64, Some(*n as i64)),
-                    Repeat::Optional => return,
-                };
-                found
-                    .text_lengths
-                    .insert(name.clone(), Range { lo: Some(lo), hi });
-                found.text_classes.insert(name, code);
-                return;
-            }
-            let Pattern::Ref {
-                name: called,
-                generics,
-                args,
-            } = &pat.node
-            else {
-                return;
-            };
-            if parsed.text(*called) != "dec" || rules.contains("dec") || generics.len() != 1 {
-                return;
-            }
-            let digits = match args.as_slice() {
-                [only] => match &only.node {
-                    Pattern::Repeat {
-                        pat,
-                        rep: Repeat::Exactly(n) | Repeat::Between(_, n),
-                    } if class(&pat.node).is_some_and(|c| c.lo == Some(48) && c.hi == Some(57)) => {
-                        *n
-                    }
-                    other if class(other).is_some_and(|c| c.lo == Some(48) && c.hi == Some(57)) => {
-                        1
-                    }
-                    _ => return,
-                },
-                _ => return,
-            };
-            if digits > 18 {
-                return;
-            }
-            found.given.insert(name, range(0, 10i64.pow(digits) - 1));
-        }
-        _ => {}
-    }
-}
-
 /// **What each callee the ledgers describe ensures**
 /// ([ADR-314](../../docs/specification/adr/adr-314.md) D3), read back over its
 /// parameters and `result`, by the name a call writes. The first ledger that
 /// has an entry answers; a condition that does not read back is left out,
 /// which only ever proves less.
 fn ensured(ledgers: &[&crate::contracts::Ledger]) -> BTreeMap<String, Ensured> {
-    let mut out = BTreeMap::new();
-    for ledger in ledgers {
-        for (key, contract) in &ledger.functions {
-            if contract.ensures.is_empty() || out.contains_key(key) {
-                continue;
-            }
-            let Some(signature) = &contract.signature else {
-                continue;
-            };
-            let params: Vec<String> = signature.params.iter().map(|(n, _)| n.clone()).collect();
-            let chars = signature
-                .params
-                .iter()
-                .map(|(_, ty)| matches!(ty, crate::contracts::ty::Ty::Named { name, .. } if name == "char" || name == "scalar"))
-                .collect();
-            let mut names: BTreeSet<String> = params.iter().cloned().collect();
-            names.insert("result".to_string());
-            let conditions: Vec<_> = contract
-                .ensures
-                .iter()
-                .map(|text| crate::prove::condition_nodes(text, &names))
-                .filter(|nodes| !nodes.is_empty())
-                .collect();
-            if conditions.is_empty() {
-                continue;
-            }
-            out.insert(
-                key.clone(),
-                Ensured {
-                    params,
-                    chars,
-                    conditions,
-                },
-            );
-        }
-    }
-    out
+    nikaia_std::tools::bounds_matched::bm_ensured(&ledgers.to_vec(), &|text, names| {
+        crate::prove::condition_nodes(text, names)
+    })
 }
 
 /// **Every index and every operation the walk proves**, whatever a build does
@@ -439,14 +291,23 @@ pub fn proven(
         let Item::Grammar(grammar) = &item.node else {
             continue;
         };
-        let rules: BTreeSet<&str> = grammar.rules.iter().map(|r| parsed.text(r.name)).collect();
+        let rules: BTreeSet<String> = grammar
+            .rules
+            .iter()
+            .map(|r| parsed.text(r.name).to_string())
+            .collect();
         for rule in &grammar.rules {
             for alt in &rule.alts {
                 let Some(action) = &alt.action else {
                     continue;
                 };
-                let mut found = Matched::default();
-                matched(parsed, &rules, &alt.pattern.node, &mut found);
+                let mut found = nikaia_std::tools::bounds_matched::bm_empty();
+                nikaia_std::tools::bounds_matched::bm_matched(
+                    &parsed.interner,
+                    &rules,
+                    &alt.pattern.node,
+                    &mut found,
+                );
                 let context = BoundsContext {
                     given: found.given,
                     classes: found.classes,

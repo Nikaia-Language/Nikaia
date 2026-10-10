@@ -1,0 +1,210 @@
+// crates/nikaia-std/src/tools/bounds_matched.nika
+//
+// **What a pattern's bindings matched** (ADR-314 D1), through sequences and
+// groups, for the bounds walk of a grammar's actions: `x:dec[T](digit{m,n})` (or
+// one `digit`) is a whole number in `0..=10^n - 1`, `c:digit` a `char` whose
+// code is `48..=57` (`hex_digit` `48..=102`, a one-character literal its own
+// code). A name the grammar declares as a rule of its own is not a built-in, and
+// says nothing. Moved from the compiler's `bounds` (ADR-294, #125).
+
+use std::collections
+
+/// What was found of an alternative's bindings, as the walk's context holds it.
+pub struct BmMatched {
+    pub given: collections::BTreeMap[String, Range],
+    pub classes: collections::BTreeMap[String, Range],
+    pub text_lengths: collections::BTreeMap[String, Range],
+    pub text_classes: collections::BTreeMap[String, Range],
+}
+
+pub fn bm_empty() -> BmMatched {
+    return BmMatched { given: collections::BTreeMap(), classes: collections::BTreeMap(), text_lengths: collections::BTreeMap(), text_classes: collections::BTreeMap() }
+}
+
+fn bm_range(lo: i64, hi: i64) -> Range {
+    return Range { lo: lo, hi: hi }
+}
+
+/// The class of characters a pattern is: a digit, a hex digit, or one character.
+fn bm_class(words: ref winnow_grammar::InternerContext, rules: ref collections::BTreeSet[String], pattern: ref Pattern) -> Range? {
+    return match pattern {
+        Pattern::Ref { name, generics, args } => {
+            let word = words.resolve(name)
+            if generics.len() > 0 || args.len() > 0 || rules.contains(word) {
+                return null
+            }
+            if word == "digit" {
+                return bm_range(48, 57)
+            }
+            if word == "hex_digit" {
+                return bm_range(48, 102)
+            }
+            null
+        },
+        Pattern::Literal(text) => {
+            let chars: Vec[scalar] = text.chars().collect()
+            if chars.len() != 1 {
+                return null
+            }
+            let code = chars[0] as i64
+            bm_range(code, code)
+        },
+        else => null,
+    }
+}
+
+fn bm_is_digit(class: ref Range?) -> bool {
+    let held = class ?? return false
+    return (held.lo ?? -1) == 48 && (held.hi ?? -1) == 57
+}
+
+/// What the bindings of `pattern` matched, added to `found`.
+pub fn bm_matched(words: ref winnow_grammar::InternerContext, rules: ref collections::BTreeSet[String], pattern: ref Pattern, mut found: BmMatched) {
+    match pattern {
+        Pattern::Seq(parts) => {
+            for part in parts {
+                bm_matched(words, rules, part.node, found)
+            }
+        },
+        Pattern::Group(inner) => bm_matched(words, rules, inner.node, found),
+        Pattern::Bind { name, pat } => bm_bound(words, rules, words.resolve(name).clone(), pat.node, found),
+        else => {},
+    }
+}
+
+fn bm_bound(words: ref winnow_grammar::InternerContext, rules: ref collections::BTreeSet[String], bound_name: ref String, what: ref Pattern, mut found: BmMatched) {
+    let class = bm_class(words, rules, what)
+    if class != null {
+        found.classes.insert(bound_name.clone(), class ?? bm_range(0, 0))
+        return
+    }
+    // **A run of a class is text**: its length is what the run counts, and each
+    // of its characters is in the class.
+    match what {
+        Pattern::Repeat { pat, rep } => {
+            let each = bm_class(words, rules, pat.node)
+            if each != null {
+                let counted = bm_counted(rep)
+                if counted.lo < 0 {
+                    return
+                }
+                found.text_lengths.insert(bound_name.clone(), Range { lo: counted.lo, hi: counted.hi })
+                found.text_classes.insert(bound_name.clone(), each ?? bm_range(0, 0))
+                return
+            }
+        },
+        else => {},
+    }
+    match what {
+        Pattern::Ref { name, generics, args } => {
+            if words.resolve(name) != "dec" || rules.contains("dec") || generics.len() != 1 {
+                return
+            }
+            if args.len() != 1 {
+                return
+            }
+            let mut digits: i64 = 1
+            match args[0].node {
+                Pattern::Repeat { pat, rep } => {
+                    if !bm_is_digit(bm_class(words, rules, pat.node)) {
+                        return
+                    }
+                    digits = bm_most(rep) ?? 0
+                    if bm_most(rep) == null {
+                        return
+                    }
+                },
+                else => {
+                    if !bm_is_digit(bm_class(words, rules, args[0].node)) {
+                        return
+                    }
+                },
+            }
+            if digits > 18 {
+                return
+            }
+            let mut top: i64 = 1
+            let mut times = 0
+            while times < digits {
+                top = top * 10
+                times += 1
+            }
+            found.given.insert(bound_name.clone(), bm_range(0, top - 1))
+        },
+        else => {},
+    }
+}
+
+/// How many characters a repeat takes: at least (`-1` for a repeat that says
+/// nothing about the length, `?`) and at most.
+struct BmCount {
+    lo: i64,
+    hi: i64?,
+}
+
+fn bm_counted(rep: ref Repeat) -> BmCount {
+    return match rep {
+        Repeat::Plus => BmCount { lo: 1, hi: null },
+        Repeat::Star => BmCount { lo: 0, hi: null },
+        Repeat::Exactly(n) => BmCount { lo: n as i64, hi: n as i64 },
+        Repeat::AtLeast(n) => BmCount { lo: n as i64, hi: null },
+        Repeat::Between(m, n) => BmCount { lo: m as i64, hi: n as i64 },
+        Repeat::Optional => BmCount { lo: -1, hi: null },
+    }
+}
+
+/// The most a repeat of exactly `n` or between `m` and `n` takes.
+fn bm_most(rep: ref Repeat) -> i64? {
+    return match rep {
+        Repeat::Exactly(n) => n as i64,
+        Repeat::Between(_, n) => n as i64,
+        else => null,
+    }
+}
+
+/// **What each callee the ledgers describe ensures** (ADR-314 D3), read back over
+/// its parameters and `result`, by the name a call writes. The first ledger that
+/// has an entry answers; a condition that does not read back is left out, which
+/// only ever proves less.
+pub fn bm_ensured(ledgers: ref Vec[ref Ledger], read: fn(ref String, ref collections::BTreeSet[String]) -> Vec[SolverTerm] sync) -> collections::BTreeMap[String, Ensured] {
+    let mut out: collections::BTreeMap[String, Ensured] = collections::BTreeMap()
+    for ledger in ledgers {
+        for (key, contract) in ledger.functions {
+            if contract.ensures.len() == 0 || out.contains_key(key) {
+                continue
+            }
+            let signature = contract.signature ?? continue
+            let mut params: Vec[String] = []
+            let mut chars: Vec[bool] = []
+            for (name, ty) in signature.params {
+                params.push(name.clone())
+                chars.push(bm_char(ty))
+            }
+            let mut names: collections::BTreeSet[String] = collections::BTreeSet()
+            for name in params {
+                names.insert(name.clone())
+            }
+            names.insert("result")
+            let mut conditions: Vec[Vec[SolverTerm]] = []
+            for text in contract.ensures {
+                let nodes = read(text, names)
+                if nodes.len() > 0 {
+                    conditions.push(nodes)
+                }
+            }
+            if conditions.len() == 0 {
+                continue
+            }
+            out.insert(key.clone(), Ensured { params: params, chars: chars, conditions: conditions })
+        }
+    }
+    return out
+}
+
+/// Whether a parameter's type is a `char`.
+fn bm_char(ty: ref Ty) -> bool {
+    return match ty {
+        Ty::Named { name, .. } => name == "char" || name == "scalar",
+        else => false,
+    }
+}
