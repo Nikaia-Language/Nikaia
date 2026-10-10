@@ -219,6 +219,12 @@ Rules from the sessions that moved the most; they save tokens, not just time.
   Destructure map loops (`for (name, value) in map`), not `entry.0`/`entry.1`,
   which the checker cannot type; a named `_` (`for (name, _) in map`) avoids the
   unused-variable clippy error in the lowering.
+* **After any `*.nika` or `described.contracts` change**, run `lower-std` with a
+  binary built from that tree, or the sysroot test fails on a stale
+  `package.rs`. A layout change breaks tests keyed on an address by allocator
+  luck. Never `str.replace('', ...)` in an edit script (an empty-slice replace
+  corrupted `emit/mod.rs` once). A full test run takes about 45 minutes: batch
+  the edits and run the touched tests in between.
 * **Agents: few, one per large module, none on a file another one edits.**
   Splitting one file into slices costs more in conflicts and repeated context
   than it saves. Leaves first: a consumer moved before its dependencies finds
