@@ -135,12 +135,16 @@ What the owner expects from such a round:
 
 Rules from the sessions that moved the most; they save tokens, not just time.
 
-* **Pick the slice by what is pure.** A stateful struct (`Checker`) cannot move
-  whole: what moves is message-building, small decisions and walks that need no
-  state. `grep 'Finding {'` and `format!(` first (about 15 Rust lines become 4
-  Nikaia). A walk that needs state takes a callback
-  (`fn(ref Expr) -> i64 sync`; see `bounds_basic.nika`). Code keyed on
-  expression addresses, or mutating the tree, does not move yet.
+* **Pick the slice by the call graph, leaves first.** The `Checker` and the
+  emitter's state become Nikaia structs (#558, owner's direction: C directly,
+  no described Rust type in between). Rust's struct holds the Nikaia state as
+  one field and a method moves into an `impl` in Nikaia once everything it
+  calls has moved; the large recursive core (`value_of`, `stmt`, `call`;
+  `expr_as_written`, `a_stmt`) moves in one step. `grep 'Finding {'` and
+  `format!(` find the cheap message-building first. A walk that cannot move yet
+  takes a callback (`fn(ref Expr) -> i64 sync`; see `bounds_basic.nika`). Code
+  keyed on expression addresses waits for the expression id (#558); changing a
+  `mut` parameter in a `match` is ADR-094 D7 / #576.
 * **Copy a pattern, do not invent one.** `libraries.nika` + `libraries.rs`
   (small), `assets.nika`, `parse_numbers.nika` (callbacks), `interpreter.nika`.
   The Rust module stays as the adapter that calls `nikaia_std::tools::<m>::f`.
