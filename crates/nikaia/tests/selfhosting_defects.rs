@@ -58,6 +58,37 @@ fn main() {
     assert_eq!(said.trim(), "[abc,d  ] 2 7");
 }
 
+/// #560: `Wrapped(x, at)` is the constructor of a struct another file of the
+/// package declares, as it is of one this file declares.
+#[test]
+fn a_constructor_call_of_a_struct_in_another_file_is_the_new_it_has() {
+    let dir = common::scratch_dir("selfhosting-constructor-beside");
+    std::fs::write(
+        dir.join("a.nika"),
+        "pub struct Wrapped[T] {\n    pub node: T,\n    pub at: i64,\n}\n\n\
+         impl Wrapped[T] {\n    pub fn new(node: T, at: i64) -> Wrapped[T] {\n        \
+         return Wrapped { node: node, at: at }\n    }\n}\n",
+    )
+    .expect("write a");
+    std::fs::write(
+        dir.join("b.nika"),
+        "pub fn wrap(name: String, at: i64) -> Wrapped[String] {\n    return Wrapped(name, at)\n}\n\n\
+         pub fn wrap_written(name: String, at: i64) -> Wrapped[String] {\n    \
+         return Wrapped { node: name, at: at }\n}\n",
+    )
+    .expect("write b");
+    let lowered = nikaia::sysroot::lower_tools(&dir).expect("the package lowers");
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(
+        lowered.contains("Wrapped::new(name, at)"),
+        "the call spelling reaches the `new`:\n{lowered}"
+    );
+    assert!(
+        lowered.contains("Wrapped { node: name, at }"),
+        "and the struct spelling stays a struct:\n{lowered}"
+    );
+}
+
 /// #564: `drain()` over a `mut` parameter takes the elements out of the
 /// caller's list as owned values.
 #[test]

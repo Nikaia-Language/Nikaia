@@ -8,6 +8,11 @@ or the specification. A change only to the guide, the notes, the README, the
 website, the tests, the examples or the tooling around them raises nothing and
 has no heading here; `CLAUDE.md` draws the line.
 
+## [0.0.762] — 2026-10-10
+
+**A constructor call of a struct another file of the package declares lowers (#560).**
+- `Spanned(x, span)` in a `tools/*.nika` file was lowered to `Spanned(x, span)`, which is no Rust: the emitter knew only the structs of the file it lowered. The structs of the files beside it count too (one namespace, Part I 9.1), so the call is `Spanned::new(x, span)`, as `NK1149` steers. Test: `selfhosting_defects.rs`.
+
 ## [0.0.761] — 2026-10-10
 
 **`drain()` over a `mut` parameter takes the elements (#564).**

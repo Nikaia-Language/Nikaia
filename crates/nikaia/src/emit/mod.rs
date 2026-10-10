@@ -1284,6 +1284,9 @@ struct Emitter<'p> {
     /// Declared struct names: `Stats(x)` is a call to a constructor, and only
     /// the declarations say which names are types.
     structs: HashSet<Symbol>,
+    /// The structs the other files of the package declare (Part I 9.1): one
+    /// namespace, so `Spanned(node, span)` is the constructor there too (#560).
+    structs_beside: HashSet<String>,
     /// The `for` statements whose step can fail, by the byte they start at
     /// (ADR-025 D1).
     fallible_loops: std::collections::BTreeSet<usize>,
@@ -2768,6 +2771,19 @@ impl<'p> Emitter<'p> {
             fold_callees: fold_callees(parsed, &grammars),
             grammars,
             structs,
+            structs_beside: beside
+                .iter()
+                .flat_map(|other| {
+                    other
+                        .program
+                        .items
+                        .iter()
+                        .filter_map(|item| match &item.node {
+                            Item::Struct { name, .. } => Some(other.text(*name).to_string()),
+                            _ => None,
+                        })
+                })
+                .collect(),
             methods,
             by_name,
             uses_std,
@@ -10635,7 +10651,7 @@ impl<'p> Emitter<'p> {
                 return Ok(());
             }
 
-            if self.structs.contains(name) {
+            if self.declares_a_struct(text) {
                 out.push(&format!("{text}::new("));
                 let takes = self.takes_a_handle(&format!("{text}::new"));
                 self.args(out, text, args, &takes, depth, flow)?;
@@ -12302,6 +12318,11 @@ impl<'p> Emitter<'p> {
         }
     }
 
+    /// Whether a struct of this name is declared in this file or beside it.
+    fn declares_a_struct(&self, name: &str) -> bool {
+        self.structs.iter().any(|s| self.text(*s) == name) || self.structs_beside.contains(name)
+    }
+
     /// Whether a bare name in **value** position is a type's anonymous
     /// constructor ([ADR-140](../../docs/specification/adr/adr-140.md) D2).
     ///
@@ -12309,7 +12330,7 @@ impl<'p> Emitter<'p> {
     /// entry — read off the ledger rather than from a list of three names, for
     /// the reason the call path gives.
     fn constructs_by_name(&self, name: &str) -> bool {
-        if self.structs.iter().any(|s| self.text(*s) == name) {
+        if self.declares_a_struct(name) {
             return self
                 .own_contracts
                 .functions
@@ -14538,7 +14559,7 @@ impl<'p> Emitter<'p> {
         // Part I 4.2's anonymous constructor is reached as `Type(…)` and recorded
         // as `Type::new`, which is the one place the call's spelling and the
         // ledger's key differ.
-        match self.structs.iter().any(|s| self.text(*s) == name) {
+        match self.declares_a_struct(&name) {
             true => self.takes_a_handle(&format!("{name}::new")),
             false => self.takes_a_handle(&name),
         }
