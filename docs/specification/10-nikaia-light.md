@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part I: The Language Core**
-**Version:** 0.0.766 (Draft)
+**Version:** 0.0.767 (Draft)
 **Date:** 2026-10-10
 
 ---
@@ -2183,6 +2183,16 @@ nothing, as `xs.push(1)` shows nothing. A parameter the body changes without
 parameter is passed straight on. `ref self` is written by the author, and that
 shape is `NK1131`, as is a `mut` parameter given away whole: it stays the
 caller's, so the way out is `.clone()` or taking it without `mut`.
+
+**A part taken out of a `mut` parameter is given back before the function is
+left.** A `match` arm that changes a part it binds takes it (3.4), and so does
+handing a field to something that keeps it; assigning the part, or the whole,
+gives it back. On every way out of the function - its end, a `return`, a
+`throw` - the parameter is whole again, and between the taking and the giving
+back stands no `throw` and no call that can fail. Both are refused with
+`NK2108`. In `match e { E::Add(a, b) => { … e = E::Add(l, r) } … }` the arm
+takes `a` and `b` out of `e`, and the assignment makes it whole again.
+`ref mut self` is such a parameter too.
 
 A `for` **lends** its list, so the list is still there after the loop;
 iteration that takes the elements away is written `for x in xs.drain()`. A

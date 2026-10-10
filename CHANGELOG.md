@@ -8,6 +8,11 @@ or the specification. A change only to the guide, the notes, the README, the
 website, the tests, the examples or the tooling around them raises nothing and
 has no heading here; `CLAUDE.md` draws the line.
 
+## [0.0.767] — 2026-10-10
+
+**A part taken out of a `mut` parameter is given back before the function is left ([ADR-094](docs/specification/adr/adr-094.md) D7, #576).**
+- Decided, not yet built: on every way out of the function the `mut` parameter (and `ref mut self`) is whole again, and no `throw` or failing call stands between taking a part and giving it back. Both are `NK2108` (Part I 6.5, Part III). The checker today still accepts a function that takes a part and keeps it; `rustc` refuses the result.
+
 ## [0.0.766] — 2026-10-10
 
 **A `mut` parameter is assigned and read through its reference (#576).**
