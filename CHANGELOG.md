@@ -8,6 +8,11 @@ or the specification. A change only to the guide, the notes, the README, the
 website, the tests, the examples or the tooling around them raises nothing and
 has no heading here; `CLAUDE.md` draws the line.
 
+## [0.0.759] — 2026-10-10
+
+**A `??` whose fallback is an index read lowers to a value (#561).**
+- `opt ?? list[0]` was lowered to `*get(..).into()`, whose `*` binds looser than the `.into()`, so `rustc` could not infer the target (E0283). The fallback is now cloned out of the place, for text and for numbers. Test: `selfhosting_defects.rs`.
+
 ## [0.0.758] — 2026-10-10
 
 **A view cut from a call's result no longer outlives it (#559).**

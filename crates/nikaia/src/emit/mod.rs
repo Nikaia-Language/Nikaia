@@ -6833,6 +6833,12 @@ impl<'p> Emitter<'p> {
         let Stmt::Let { value, .. } = stmt else {
             return Ok(());
         };
+        // A chain that ends in text of its own holds nothing of the receiver.
+        if let Expr::MethodCall { method, .. } = value
+            && nikaia_std::tools::tiers::owns_its_text(self.text(*method))
+        {
+            return Ok(());
+        }
         let mut viewed = false;
         let mut at = value;
         while let Expr::MethodCall {
@@ -6849,13 +6855,16 @@ impl<'p> Emitter<'p> {
         if !viewed || std::ptr::eq(at, value) || !matches!(base, Expr::Call { .. }) {
             return Ok(());
         }
+        // A statement written twice (a scratch pass, then the real one) holds
+        // the same receiver twice: the second time it is written out again, not
+        // read back from the first.
+        let key = at as *const Expr as usize;
+        self.held.borrow_mut().remove(&key);
         let name = format!("__nikaia_held_{}", self.held.borrow().len());
         out.push(&format!("let {name} = "));
         self.expr(out, at, depth, flow)?;
         out.push(&format!(";\n{}", "    ".repeat(depth)));
-        self.held
-            .borrow_mut()
-            .insert(at as *const Expr as usize, name);
+        self.held.borrow_mut().insert(key, name);
         Ok(())
     }
 
@@ -9780,6 +9789,19 @@ impl<'p> Emitter<'p> {
                     out.push("&");
                     self.expr(out, fallback, depth, flow)?;
                     out.push(")");
+                    return Ok(());
+                }
+                // **A fallback read at an index is cloned out of the place**
+                // (#561): the read is written `*get(…)`, a `*` that binds
+                // looser than the `.into()` after it, so the conversion was
+                // applied to the reference and its target was no longer
+                // inferable (E0283) - and a `*` over text moves out of the
+                // container. `get(…).clone().into()` is a value for a number
+                // and for text alike.
+                if !bare && matches!(&**fallback, Expr::Index { .. }) {
+                    out.push("&");
+                    self.expr(out, fallback, depth, flow)?;
+                    out.push(".clone().into())");
                     return Ok(());
                 }
                 self.expr(out, fallback, depth, flow)?;

@@ -57,3 +57,27 @@ fn main() {
     );
     assert_eq!(said.trim(), "[abc,d  ] 2 7");
 }
+
+/// #561: a `??` whose fallback is an index read names a value, not a reference.
+#[test]
+fn a_fallback_read_at_an_index_is_a_value() {
+    let said = printed(
+        "fallback-at-an-index",
+        r#"
+fn word(maybe: String?, list: ref Vec[String]) -> String {
+    let x = maybe ?? list[0]
+    return x
+}
+fn number(maybe: i64?, list: ref Vec[i64]) -> i64 {
+    let x = maybe ?? list[0]
+    return x
+}
+fn main() {
+    let words: Vec[String] = ["z"]
+    let numbers: Vec[i64] = [7]
+    println(f"{word(null, words)} {word("a", words)} {number(null, numbers)} {number(3, numbers)}")
+}
+"#,
+    );
+    assert_eq!(said.trim(), "z a 7 3");
+}
