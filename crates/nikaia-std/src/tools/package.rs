@@ -5144,6 +5144,3338 @@ fn names_a_variant(names: &winnow_grammar::InternerContext, name: &str, own: &Le
 }
 
 
+// --- cexport.nika ---
+
+pub const CX_LEDGER_DIGEST: &str = "@LEDGER@";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CxExported {
+    pub rust: String,
+    pub header: String,
+    pub python: String,
+    pub node: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct CxCtx {
+    pub plains: Vec<CxPlain>,
+    pub handles: Vec<CxHandled>,
+    pub records: Vec<CxRecord>,
+    pub codes: Vec<CxRaising>,
+    pub prefix: String,
+    pub upper: String,
+    pub user_code: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CxBuild {
+    pub rust: String,
+    pub declarations: String,
+    pub crossing: Vec<bool>,
+    pub symbols: collections::BTreeSet<String>,
+    pub any_pause: bool,
+    pub python: CxPython,
+    pub node: CxNode,
+}
+
+fn cx_sum_name(members: &[String]) -> String {
+    let mut parts: Vec<String> = vec![];
+    for member in members.iter() { parts.push(member.replace("::", "_")); }
+    format!("__NikaiaThrows_{}", parts.join("__"))
+}
+
+fn cx_replace_first(text: &str, from: &str, to: &str) -> String {
+    let pieces: Vec<&str> = text.split(from).collect::<Vec<_>>();
+    if pieces.len() < 2 { return text.to_owned(); }
+    let mut out = (*nikaia_std::index::get(&pieces, 0)).to_owned();
+    out.push_str(to);
+    let mut at: i64 = 1;
+    while ((at) as usize) < pieces.len() {
+        if at > 1 { out.push_str(from); }
+        out.push_str(*nikaia_std::index::get(&pieces, (at) as usize));
+        at += 1;
+    }
+    out
+}
+
+fn cx_pauses(contracts: &Ledger, key: &str) -> bool {
+    let contract = match *nikaia_std::index::get(&contracts.functions, key) { Some(__nikaia_value) => __nikaia_value, None => return false };
+    !contract.sync_claim.is_sync()
+}
+
+fn cx_lent(contracts: &Ledger, key: &str, position: i64) -> bool {
+    let contract = match *nikaia_std::index::get(&contracts.functions, key) { Some(__nikaia_value) => __nikaia_value, None => return false };
+    let copying: Vec<&Ledger> = vec![];
+    lends_in(contract, position, &copying)
+}
+
+fn cx_fails_with(contracts: &Ledger, key: &str) -> Vec<String> {
+    let contract = match *nikaia_std::index::get(&contracts.functions, key) { Some(__nikaia_value) => __nikaia_value, None => return vec![] };
+    contract.fails_with.to_owned()
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn cx_export(words: &winnow_grammar::InternerContext, items: &[Spanned<Item>], found: &[CxEntry], contracts: &Ledger, prefix: &str, package: &str, concurrent: bool, target: &str) -> Result<Option<CxExported>, nikaia_std::error::Thrown<CxRefused>> {
+    let mut user_code: String = String::from("Sequential");
+    if concurrent { user_code = String::from("Concurrent"); }
+    let upper = prefix.to_uppercase();
+    let mut rust = cx_preamble();
+    rust.push_str(&cx_library_functions(prefix, &user_code));
+    let codes = cx_variant_codes(words, items, &found, contracts, target);
+    let mut plains = cx_plain_enums(words, items);
+    let handles = cx_handled_structs(words, items);
+    let records = cx_records(words, items, &plains)?;
+    let mut kinds: Vec<Option<i64>> = vec![];
+    for handle in handles.iter() {
+        if handle.is_enum() {
+            let mut names: Vec<String> = vec![];
+            for variant in handle.variants.iter() { names.push(variant.name.to_owned()); }
+            plains.push(CxPlain { name: format!("{}_Kind", handle.name), variants: names, stem: handle.name.to_uppercase() });
+            kinds.push(Some(plains.len() as i64 - 1));
+        } else { kinds.push(None); }
+    }
+    let mut crossing: Vec<bool> = vec![];
+    for _ in plains.iter() { crossing.push(false); }
+    let mut held: Vec<bool> = vec![];
+    for _ in handles.iter() { held.push(false); }
+    for entry in found.iter() {
+        let owner = match entry.owner.as_ref() {
+            Some(__nikaia_it) => Some(__nikaia_it.clone()),
+            None => None,
+        };
+        if owner.is_some() {
+            let name = match owner { Some(__nikaia_value) => __nikaia_value, None => continue };
+            let at = cx_handle_named(&handles, &name);
+            if at.is_some() { { let __nikaia_stored = true; nikaia_std::index::set(&mut held, nikaia_std::index::at(nikaia_std::index::or(at, || 0)), __nikaia_stored); } } else if !cx_record_named(&records, &name) { return Err(nikaia_std::error::throwing(CxRefused::Because(cx_not_yet(&entry.written(), "type, which is no `pub struct` of the entry file,")), &"cx_export")); }
+        }
+        let mut types: Vec<Type> = entry.arg_types.to_owned();
+        let ret = match entry.ret_type.as_ref() {
+            Some(__nikaia_it) => Some(__nikaia_it.clone()),
+            None => None,
+        };
+        if ret.is_some() { types.push(match ret { Some(__nikaia_value) => __nikaia_value, None => continue }.clone()); }
+        for ty in types.iter() {
+            let at = cx_handle_of(words, &handles, ty);
+            if at.is_some() { { let __nikaia_stored = true; nikaia_std::index::set(&mut held, nikaia_std::index::at(nikaia_std::index::or(at, || 0)), __nikaia_stored); } }
+        }
+    }
+    let mut all: Vec<CxEntry> = found.to_owned();
+    let mut index: i64 = 0;
+    while ((index) as usize) < handles.len() {
+        if !*nikaia_std::index::get(&held, (index) as usize) {
+            index += 1;
+            continue;
+        }
+        let handle = nikaia_std::index::get(&handles, (index) as usize);
+        for (field, ty) in handle.fields.iter() { all.push(CxEntry { owner: Some(handle.name.to_owned()), name: field.to_owned(), receiver: Some(CxHold::Shared), exclusive: false, arg_names: vec![], arg_types: vec![], ret_type: Some(ty.clone()), getter: true, of_variant: None, kind_of: None }); }
+        let kind = *nikaia_std::index::get(&kinds, (index) as usize);
+        if kind.is_none() {
+            index += 1;
+            continue;
+        }
+        let ty = handle.name.to_owned();
+        let mut arms: Vec<String> = vec![];
+        let mut names: Vec<String> = vec![];
+        for variant in handle.variants.iter() {
+            arms.push(format!("{} => ({}_Kind::{}, \"{}\"),", variant.pattern, ty, cx_escaped(&variant.name), variant.name));
+            names.push(cx_escaped(&variant.name));
+        }
+        rust.push_str(&format!("\n/// The kinds of `{}`, as `{}_{}_kind` writes them (ADR-284 D31).\n#[allow(non_camel_case_types, dead_code)]\n#[derive(Clone, Copy)]\nenum {}_Kind {{ {} }}\n\n#[allow(non_snake_case, dead_code)]\nfn __nikaia_kind_{}(value: &{}) -> ({}_Kind, &'static str) {{\n    match value {{ {} }}\n}}\n", ty, prefix, ty, ty, names.join(", "), ty, ty, ty, arms.join(" ")));
+        all.push(CxEntry { owner: Some(ty.to_owned()), name: String::from("kind"), receiver: Some(CxHold::Shared), exclusive: false, arg_names: vec![], arg_types: vec![], ret_type: None, getter: true, of_variant: None, kind_of: kind });
+        for variant in handle.variants.iter() { for (getter, pattern, field) in variant.fields.iter() { all.push(CxEntry { owner: Some(ty.to_owned()), name: getter.to_owned(), receiver: Some(CxHold::Shared), exclusive: false, arg_names: vec![], arg_types: vec![], ret_type: Some(field.clone()), getter: true, of_variant: Some(CxVariantOf { variant: variant.name.to_owned(), pattern: pattern.to_owned() }), kind_of: None }); } }
+        index += 1;
+    }
+    for record in records.iter() {
+        for part in record.parts() {
+            match part {
+                CxPart::Choice(at) => { { let __nikaia_stored = true; nikaia_std::index::set(&mut crossing, nikaia_std::index::at(at), __nikaia_stored); } },
+                _ => { },
+            }
+        }
+        if record.is_enum() { rust.push_str(&cx_tagged_mirror(record, &records, &plains)); } else { rust.push_str(&cx_mirror(record, &records, &plains)); }
+    }
+    let mut constants: String = String::from("");
+    for raising in codes.iter() {
+        for code in raising.codes.iter() {
+            let mut what = raising.error.to_owned();
+            let variant = match code.variant.as_ref() {
+                Some(__nikaia_it) => Some(__nikaia_it.clone()),
+                None => None,
+            };
+            if variant.is_some() { what = format!("{}::{}", raising.error, nikaia_std::index::or(variant.as_deref(), || "")); }
+            let mut errno: String = String::from("");
+            let named = match code.errno.as_ref() {
+                Some(__nikaia_it) => Some(__nikaia_it.clone()),
+                None => None,
+            };
+            if named.is_some() { errno = format!(", {}", nikaia_std::index::or(named.as_deref(), || "")); }
+            constants.push_str(&format!("#define {}_E_{} {} /* {}{} */\n", upper, code.constant, code.number, what, errno));
+        }
+    }
+    let ctx = CxCtx { plains: plains.to_owned(), handles: handles.to_owned(), records: records.to_owned(), codes: codes.to_owned(), prefix: prefix.to_owned(), upper: upper.to_owned(), user_code: user_code.to_owned() };
+    let mut symbols: collections::BTreeSet<String> = collections::BTreeSet::new();
+    for own in ["last_error", "init", "shutdown", "set_allocator", "alloc_fn", "free_fn"] { symbols.insert(format!("{}_{}", prefix, own)); }
+    let mut build = CxBuild { rust, declarations: String::from(""), crossing, symbols, any_pause: false, python: CxPython::empty(), node: CxNode::empty() };
+    let mut at: i64 = 0;
+    while at < handles.len() as i64 {
+        if *nikaia_std::index::get(&held, nikaia_std::index::at(at)) {
+            let ty = nikaia_std::index::get(&handles, nikaia_std::index::at(at)).name.to_owned();
+            let symbol = format!("{}_{}_free", prefix, ty);
+            cx_claim(&mut build.symbols, &symbol, &ty)?;
+            build.rust.push_str(&format!("\n#[unsafe(no_mangle)]\npub extern \"C\" fn {}(handle: *mut nikaia_std::c_boundary::Handle<{}>) -> std::ffi::c_int {{\n    if let Err(status) = __nikaia_enter() {{\n        return status;\n    }}\n    // SAFETY: the C caller hands a handle this library made, or NULL, and uses it no more (ADR-284 D6).\n    unsafe {{ nikaia_std::c_boundary::free(handle) }}\n}}\n", symbol, ty));
+            build.declarations.push_str(&format!("int {}({}_{} *handle);\n", symbol, prefix, ty));
+        }
+        at += 1;
+    }
+    for entry in all.iter() { cx_wrapper(words, &ctx, contracts, entry, &mut build)?; }
+    if build.any_pause {
+        for own in ["cancel", "op_free"] { cx_claim(&mut build.symbols, &format!("{}_{}", prefix, own), own)?; }
+        build.rust.push_str(&cx_ticket(prefix));
+        build.declarations.push_str(&format!("\n/* An _async call's ticket: cancel it at its next pause point, free it after done (ADR-284 D19). */\nint {}_cancel({}_op *op);\nint {}_op_free({}_op *op);\n", prefix, prefix, prefix, prefix));
+    }
+    let mut types: String = String::from("");
+    if build.any_pause { types.push_str(&format!("typedef struct {}_op {}_op;\n\n", prefix, prefix)); }
+    at = 0;
+    while at < handles.len() as i64 {
+        if *nikaia_std::index::get(&held, nikaia_std::index::at(at)) {
+            let name = nikaia_std::index::get(&handles, nikaia_std::index::at(at)).name.to_owned();
+            types.push_str(&format!("typedef struct {}_{} {}_{};\n\n", prefix, name, prefix, name));
+        }
+        at += 1;
+    }
+    at = 0;
+    while at < plains.len() as i64 {
+        if *nikaia_std::index::get(&build.crossing, nikaia_std::index::at(at)) {
+            let plain = nikaia_std::index::get(&plains, nikaia_std::index::at(at));
+            let mut values: Vec<String> = vec![];
+            let mut number = 0;
+            for variant in plain.variants.iter() {
+                values.push(format!("    {}_{}_{} = {}", upper, plain.stem, variant.to_uppercase(), number));
+                number += 1;
+            }
+            types.push_str(&format!("typedef enum {{\n{}\n}} {}_{};\n\n", values.join(",\n"), prefix, plain.name));
+        }
+        at += 1;
+    }
+    for place in cx_records_in_order(&records) { types.push_str(&cx_record_type(nikaia_std::index::get(&records, nikaia_std::index::at(place)), &ctx)); }
+    let guard = format!("{}_H", upper);
+    let header = cx_header(package, prefix, &upper, &guard, &constants, &types, &build.declarations);
+    let python = build.python.module(package, prefix, &ctx, &held, build.any_pause);
+    let node = build.node.module(package, prefix, &ctx, &held);
+    if build.declarations.is_empty() { return Ok(None); }
+    Ok(Some(CxExported { rust: build.rust, header, python, node }))
+}
+
+fn cx_handle_named(handles: &[CxHandled], name: &str) -> Option<i64> {
+    let mut at: i64 = 0;
+    while ((at) as usize) < handles.len() {
+        if nikaia_std::index::get(&handles, (at) as usize).name == name { return at.into(); }
+        at += 1;
+    }
+    None
+}
+
+fn cx_record_named(records: &[CxRecord], name: &str) -> bool {
+    for record in records.iter() { if record.name == name { return true; } }
+    false
+}
+
+fn cx_claim(symbols: &mut collections::BTreeSet<String>, symbol: &str, written: &str) -> Result<(), nikaia_std::error::Thrown<CxRefused>> {
+    if symbols.contains(symbol) { return Err(nikaia_std::error::throwing(CxRefused::Because(format!("`{}` would be exported as `{}`, which another entry point, a getter, `_free` or the library's own `init`, `shutdown`, `set_allocator` or `last_error` is already: rename it (ADR-284 D13).", written, symbol)), &"cx_claim")); }
+    symbols.insert(symbol.to_owned());
+    Ok(())
+}
+
+fn cx_record_type(record: &CxRecord, ctx: &CxCtx) -> String {
+    let prefix = ctx.prefix.to_owned();
+    let upper = ctx.upper.to_owned();
+    if record.is_enum() {
+        let ty = record.name.to_owned();
+        let mut tags: Vec<String> = vec![];
+        let mut tag = 0;
+        for variant in record.variants.iter() {
+            tags.push(format!("    {}_{}_{} = {}", upper, ty.to_uppercase(), variant.name.to_uppercase(), tag));
+            tag += 1;
+        }
+        let mut members: Vec<String> = vec![];
+        for variant in record.variants.iter() {
+            if variant.fields.is_empty() { continue; }
+            let mut fields: Vec<String> = vec![];
+            for (field, part) in variant.fields.iter() { fields.push(cx_c_field(field, part, ctx)); }
+            members.push(format!("        struct {{ {} }} {};", fields.join(" "), variant.member));
+        }
+        let mut union: String = String::from("");
+        if !members.is_empty() { union = format!("    union {{\n{}\n    }};\n", members.join("\n")); }
+        return format!("typedef enum {{\n{}\n}} {}_{}_Tag;\n\ntypedef struct {{\n    {}_{}_Tag tag;\n{}}} {}_{};\n\n", tags.join(",\n"), prefix, ty, prefix, ty, union, prefix, ty);
+    }
+    let mut fields: Vec<String> = vec![];
+    for (field, part) in record.fields.iter() { fields.push(format!("    {}", cx_c_field(field, part, ctx))); }
+    format!("typedef struct {{\n{}\n}} {}_{};\n\n", fields.join("\n"), prefix, record.name)
+}
+
+fn cx_c_name(part: &CxPart, ctx: &CxCtx) -> String {
+    match part {
+        CxPart::Value(shape) => shape.c.to_owned(),
+        CxPart::Choice(at) => { let at = *at; format!("{}_{}", ctx.prefix, nikaia_std::index::get(&ctx.plains, nikaia_std::index::at(at)).name) },
+        CxPart::Record(at) => { let at = *at; format!("{}_{}", ctx.prefix, nikaia_std::index::get(&ctx.records, nikaia_std::index::at(at)).name) },
+        CxPart::Array(_, _) => String::from(""),
+    }
+}
+
+fn cx_c_field(field: &str, part: &CxPart, ctx: &CxCtx) -> String {
+    match part {
+        CxPart::Array(element, count) => { let element = nikaia_std::boxed::open(element); let count = *count; format!("{} {}[{}];", cx_c_name(element, ctx), field, count) },
+        _ => format!("{} {};", cx_c_name(part, ctx), field),
+    }
+}
+
+fn cx_header(package: &str, prefix: &str, upper: &str, guard: &str, constants: &str, types: &str, declarations: &str) -> String {
+    let digest = CX_LEDGER_DIGEST;
+    format!("/* {}.h - GENERATED by nikaia from {}'s ledger. Do not edit.\n * ledger: {}\n */\n#ifndef {}\n#define {}\n\n#include <stdbool.h>\n#include <stddef.h>\n#include <stdint.h>\n\n#ifdef __cplusplus\nextern \"C\" {{\n#endif\n\n/* Every entry point returns a status (ADR-284 D7). */\n#define {}_OK 0\n#define {}_E_ARGUMENT (-1)\n#define {}_E_TOO_SMALL (-2)\n#define {}_E_NOT_RUNNING (-3)\n#define {}_E_PANICKED (-4)\n#define {}_E_REENTRANT (-5)\n#define {}_E_CLEANUP (-6)\n#define {}_E_CANCELLED (-7)\n\n/* What the entry points throw: the library's own from 100000, std's below (ADR-284 D33). */\n{}\n{}/* What the library holds across calls comes from alloc and free, with ctx,\n   when this is called before init and before any other call; it is\n   {}_E_ARGUMENT after (ADR-284 D6). */\ntypedef void *(*{}_alloc_fn)(size_t size, size_t align, void *ctx);\ntypedef void (*{}_free_fn)(void *at, size_t size, size_t align, void *ctx);\nint {}_set_allocator({}_alloc_fn alloc, {}_free_fn free, void *ctx);\n\n/* Start the library, and start it again after shutdown (ADR-284 D10). */\nint {}_init(void);\n/* Stop it: every call after this is {}_E_NOT_RUNNING until init. */\nint {}_shutdown(void);\n\n/* This thread's last failure, with its site (ADR-284 D7). */\nint {}_last_error(uint8_t *out, size_t cap, size_t *written);\n\n{}\n#ifdef __cplusplus\n}}\n#endif\n\n#endif\n", package, package, digest, guard, guard, upper, upper, upper, upper, upper, upper, upper, upper, constants, types, upper, prefix, prefix, prefix, prefix, prefix, prefix, upper, prefix, prefix, declarations)
+}
+
+fn cx_preamble() -> String {
+    String::from("
+// --- The C boundary (ADR-284): one wrapper per entry point. ---
+
+/// Set by a panic at the boundary; every call after it is `E_PANICKED` (ADR-284 D8).
+static __NIKAIA_POISONED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Set by `shutdown`, cleared by `init`; every call between them is `E_NOT_RUNNING` (ADR-284 D10).
+static __NIKAIA_STOPPED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// What the library holds comes from the caller's allocator if it was set first,
+/// the platform heap otherwise (ADR-284 D6).
+#[global_allocator]
+static __NIKAIA_HEAP: nikaia_std::c_boundary::Heap = nikaia_std::c_boundary::Heap::new();
+
+/// Whether a call may go in: `E_NOT_RUNNING` after `shutdown`, `E_PANICKED` after a panic (ADR-284 D8, D10).
+fn __nikaia_enter() -> Result<(), std::ffi::c_int> {
+    if __NIKAIA_STOPPED.load(std::sync::atomic::Ordering::SeqCst) {
+        return Err(-3);
+    }
+    if __NIKAIA_POISONED.load(std::sync::atomic::Ordering::SeqCst) {
+        return Err(-4);
+    }
+    Ok(())
+}
+
+std::thread_local! {
+    /// This thread's last failure, as `<prefix>_last_error` renders it (ADR-284 D7).
+    static __NIKAIA_LAST_ERROR: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) };
+}
+
+fn __nikaia_failed(said: String) {
+    __NIKAIA_LAST_ERROR.with(|last| *last.borrow_mut() = said);
+}
+
+/// A handle the call could not hold, said for `<prefix>_last_error` (ADR-284 D7, D11).
+#[allow(dead_code)]
+fn __nikaia_refused(status: std::ffi::c_int) -> std::ffi::c_int {
+    __nikaia_failed(match status {
+        -5 => \"a call on a handle this thread holds already, from a callback of a call on it\",
+        _ => \"no handle where one is needed, or one that is closed\",
+    }.to_string());
+    status
+}
+")
+}
+
+fn cx_library_functions(prefix: &str, user_code: &str) -> String { format!("\n/// This thread's last failure, with its site, into the caller's buffer (ADR-284 D7).\n#[unsafe(no_mangle)]\npub extern \"C\" fn {}_last_error(out: *mut u8, cap: usize, written: *mut usize) -> std::ffi::c_int {{\n    __NIKAIA_LAST_ERROR.with(|last| {{\n        // SAFETY: the C caller hands `cap` bytes at `out` and a place for the length, or NULL (ADR-284 D6).\n        unsafe {{ nikaia_std::c_boundary::hand_back(last.borrow().as_bytes(), out, cap, written) }}\n    }})\n}}\n\n/// Hands what the library holds to the caller's allocator: before `init` and\n/// before any other call, or it is `E_ARGUMENT` (ADR-284 D6, D10).\n#[unsafe(no_mangle)]\npub extern \"C\" fn {}_set_allocator(alloc: Option<nikaia_std::c_boundary::Alloc>, free: Option<nikaia_std::c_boundary::Free>, ctx: *mut std::ffi::c_void) -> std::ffi::c_int {{\n    __NIKAIA_HEAP.set(alloc, free, ctx)\n}}\n\n/// Starts the library, and starts it again after `shutdown`, which is what\n/// clears a panic's poison (ADR-284 D8, D10). Idempotent, from any thread.\n#[unsafe(no_mangle)]\npub extern \"C\" fn {}_init() -> std::ffi::c_int {{\n    __NIKAIA_HEAP.settle();\n    let _ = nikaia_std::rt::start(nikaia_std::rt::UserCode::{});\n    if __NIKAIA_STOPPED.load(std::sync::atomic::Ordering::SeqCst) {{\n        __NIKAIA_POISONED.store(false, std::sync::atomic::Ordering::SeqCst);\n        __NIKAIA_STOPPED.store(false, std::sync::atomic::Ordering::SeqCst);\n    }}\n    0\n}}\n\n/// Stops the library: every call after it is `E_NOT_RUNNING` until `init`. What is\n/// still running is drained within `cleanup-deadline`, and what is left is `E_CLEANUP`\n/// - the process goes on (ADR-284 D10).\n#[unsafe(no_mangle)]\npub extern \"C\" fn {}_shutdown() -> std::ffi::c_int {{\n    __NIKAIA_STOPPED.store(true, std::sync::atomic::Ordering::SeqCst);\n    let left = nikaia_std::rt::start(nikaia_std::rt::UserCode::{}).drain();\n    if left > 0 {{\n        __nikaia_failed(format!(\"{{left}} cleanups did not finish within the cleanup deadline\"));\n        return -6;\n    }}\n    0\n}}\n", prefix, prefix, prefix, user_code, prefix, user_code) }
+
+fn cx_ticket(prefix: &str) -> String { format!("\n/// An `_async` call's ticket (ADR-284 D19).\n#[derive(Default)]\npub struct __NikaiaTicket {{\n    cancelled: std::sync::atomic::AtomicBool,\n    done: std::sync::atomic::AtomicBool,\n    waker: std::sync::Mutex<Option<std::task::Waker>>,\n}}\n\nimpl __NikaiaTicket {{\n    fn cancel(&self) {{\n        self.cancelled.store(true, std::sync::atomic::Ordering::SeqCst);\n        let waker = self.waker.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).take();\n        if let Some(waker) = waker {{\n            waker.wake();\n        }}\n    }}\n}}\n\nstd::thread_local! {{\n    /// The ticket of the `_async` call this library thread runs.\n    static __NIKAIA_TICKET: std::cell::RefCell<Option<std::sync::Arc<__NikaiaTicket>>> = const {{ std::cell::RefCell::new(None) }};\n}}\n\n/// `work`, or `None` once its ticket is cancelled: at the next pause point (ADR-284 D19).\nasync fn __nikaia_cancellable<T>(work: impl std::future::Future<Output = T>) -> Option<T> {{\n    let ticket = __NIKAIA_TICKET.with(|current| current.borrow().clone());\n    let mut work = std::pin::pin!(work);\n    std::future::poll_fn(|context| {{\n        if let Some(ticket) = &ticket {{\n            *ticket.waker.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(context.waker().clone());\n            if ticket.cancelled.load(std::sync::atomic::Ordering::SeqCst) {{\n                return std::task::Poll::Ready(None);\n            }}\n        }}\n        work.as_mut().poll(context).map(Some)\n    }})\n    .await\n}}\n\n/// Cancels an `_async` call at its next pause point; after `done`, or twice, it is `OK` (ADR-284 D19).\n#[unsafe(no_mangle)]\npub extern \"C\" fn {}_cancel(op: *const nikaia_std::c_boundary::Handle<std::sync::Arc<__NikaiaTicket>>) -> std::ffi::c_int {{\n    // SAFETY: the C caller hands a ticket this library made and has not freed, or NULL (ADR-284 D19).\n    match unsafe {{ nikaia_std::c_boundary::shared(op) }} {{\n        Ok(ticket) => {{\n            ticket.cancel();\n            0\n        }}\n        Err(status) => status,\n    }}\n}}\n\n/// Frees a ticket after `done`; before it, `E_ARGUMENT`, and the ticket is kept (ADR-284 D19).\n#[unsafe(no_mangle)]\npub extern \"C\" fn {}_op_free(op: *mut nikaia_std::c_boundary::Handle<std::sync::Arc<__NikaiaTicket>>) -> std::ffi::c_int {{\n    if op.is_null() {{\n        return 0;\n    }}\n    // SAFETY: as `cancel`'s.\n    let finished = match unsafe {{ nikaia_std::c_boundary::shared(op) }} {{\n        Ok(ticket) => ticket.done.load(std::sync::atomic::Ordering::SeqCst),\n        Err(status) => return status,\n    }};\n    if !finished {{\n        return -1;\n    }}\n    // SAFETY: the C caller uses the ticket no more (ADR-284 D19).\n    unsafe {{ nikaia_std::c_boundary::free(op) }}\n}}\n", prefix, prefix) }
+
+fn cx_arms(raising: &CxRaising) -> String {
+    let mut parts: Vec<String> = vec![];
+    for code in raising.codes.iter() { parts.push(format!("{} => {},", code.pattern(&raising.error), code.number)); }
+    parts.join(" ")
+}
+
+fn cx_choice_arms_in(plain: &CxPlain) -> String {
+    let mut arms: Vec<String> = vec![];
+    let mut number = 0;
+    for variant in plain.variants.iter() {
+        arms.push(format!("{} => {}::{},", number, plain.name, variant));
+        number += 1;
+    }
+    arms.join(" ")
+}
+
+fn cx_choice_arms_out(plain: &CxPlain) -> String {
+    let mut arms: Vec<String> = vec![];
+    let mut number = 0;
+    for variant in plain.variants.iter() {
+        arms.push(format!("{}::{} => {},", plain.name, variant, number));
+        number += 1;
+    }
+    arms.join(" ")
+}
+
+fn cx_value_of(shape: &CxByValue) -> String {
+    if shape.scalar { return String::from("value as u32"); }
+    String::from("value")
+}
+
+fn cx_handed_back(result: &CxResult, ctx: &CxCtx) -> String {
+    match result {
+        CxResult::Made(out) => cx_handed_back_out(out, ctx),
+        _ => String::from("Ok(()) => 0,"),
+    }
+}
+
+fn cx_handed_back_out(out: &CxOut, ctx: &CxCtx) -> String {
+    match out {
+        CxOut::Value(shape) => {
+            let value = cx_value_of(shape);
+            format!("Ok(value) => {{\n            // SAFETY: the C caller hands a place for one value, or NULL (ADR-284 D7).\n            unsafe {{ nikaia_std::c_boundary::put(out, {}) }};\n            0\n        }}", value)
+        },
+        CxOut::Buffer => String::from("Ok(value) => {\n            // SAFETY: the C caller hands `cap` bytes at `out` and a place for the length, or NULL (ADR-284 D6).\n            unsafe { nikaia_std::c_boundary::hand_back(AsRef::<[u8]>::as_ref(&value), out, cap, written) }\n        }"),
+        CxOut::Choice(at) => {
+            let at = *at;
+            let arms = cx_choice_arms_out(nikaia_std::index::get(&ctx.plains, nikaia_std::index::at(at)));
+            format!("Ok(value) => {{\n            let number: std::ffi::c_int = match value {{ {} }};\n            // SAFETY: the C caller hands a place for one value, or NULL (ADR-284 D7).\n            unsafe {{ nikaia_std::c_boundary::put(out, number) }};\n            0\n        }}", arms)
+        },
+        CxOut::Handle(_) => String::from("Ok(value) => {\n            if !out.is_null() {\n                // SAFETY: the C caller hands a place for one handle (ADR-284 D7).\n                unsafe { nikaia_std::c_boundary::put(out, nikaia_std::c_boundary::handle(value)) };\n            }\n            0\n        }"),
+        CxOut::Records(at) => {
+            let at = *at;
+            let name = nikaia_std::index::get(&ctx.records, nikaia_std::index::at(at)).name.to_owned();
+            format!("Ok(value) => {{\n            let values: Vec<__nikaia_c_{}> = value.into_iter().map(__nikaia_c_{}::from_nikaia).collect();\n            // SAFETY: the C caller hands room for `cap` structs at `out` and a place for the count, or NULL (ADR-284 D16).\n            unsafe {{ nikaia_std::c_boundary::hand_back_run(&values, out, cap, written) }}\n        }}", name, name)
+        },
+        CxOut::Record(at) => {
+            let at = *at;
+            let name = nikaia_std::index::get(&ctx.records, nikaia_std::index::at(at)).name.to_owned();
+            format!("Ok(value) => {{\n            // SAFETY: the C caller hands a place for one value, or NULL (ADR-284 D7).\n            unsafe {{ nikaia_std::c_boundary::put(out, __nikaia_c_{}::from_nikaia(value)) }};\n            0\n        }}", name)
+        },
+        CxOut::AbsentHandle(_) => String::from("Ok(value) => {\n            if !out.is_null() {\n                let made = value.map_or(std::ptr::null_mut(), nikaia_std::c_boundary::handle);\n                // SAFETY: the C caller hands a place for one handle (ADR-284 D7).\n                unsafe { nikaia_std::c_boundary::put(out, made) };\n            }\n            0\n        }"),
+        CxOut::AbsentValue(shape) => {
+            let value = cx_value_of(shape);
+            format!("Ok(value) => {{\n            let held = value.is_some();\n            if let Some(value) = value {{\n                // SAFETY: the C caller hands a place for one value, or NULL (ADR-284 D7).\n                unsafe {{ nikaia_std::c_boundary::put(out, {}) }};\n            }}\n            // SAFETY: the C caller hands a place for the flag, or NULL (ADR-284 D30).\n            unsafe {{ nikaia_std::c_boundary::put(present, held) }};\n            0\n        }}", value)
+        },
+        CxOut::AbsentRecord(at) => {
+            let at = *at;
+            let name = nikaia_std::index::get(&ctx.records, nikaia_std::index::at(at)).name.to_owned();
+            format!("Ok(value) => {{\n            let held = value.is_some();\n            if let Some(value) = value {{\n                // SAFETY: the C caller hands a place for one value, or NULL (ADR-284 D7).\n                unsafe {{ nikaia_std::c_boundary::put(out, __nikaia_c_{}::from_nikaia(value)) }};\n            }}\n            // SAFETY: the C caller hands a place for the flag, or NULL (ADR-284 D30).\n            unsafe {{ nikaia_std::c_boundary::put(present, held) }};\n            0\n        }}", name)
+        },
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CxParams {
+    rust_params: Vec<String>,
+    c_params: Vec<String>,
+    checks: String,
+    call_args: Vec<String>,
+}
+
+fn cx_wrapper(words: &winnow_grammar::InternerContext, ctx: &CxCtx, contracts: &Ledger, entry: &CxEntry, build: &mut CxBuild) -> Result<(), nikaia_std::error::Thrown<CxRefused>> {
+    let prefix = ctx.prefix.to_owned();
+    let written = entry.written();
+    let key = entry.key();
+    let mut pauses = false;
+    if !entry.getter { pauses = cx_pauses(contracts, &key); }
+    let mut thrown: Vec<CxRaising> = vec![];
+    if !entry.getter {
+        for one in cx_fails_with(contracts, &key) {
+            let mut found = false;
+            for raising in ctx.codes.iter() {
+                if raising.error == one {
+                    thrown.push(raising.clone());
+                    found = true;
+                    break;
+                }
+            }
+            if !found { return Err(nikaia_std::error::throwing(CxRefused::Because(cx_not_yet(&written, "failure")), &"cx_wrapper")); }
+        }
+    }
+    let mut symbol = format!("{}_{}", prefix, entry.name);
+    let owner_name = match entry.owner.as_ref() {
+        Some(__nikaia_it) => Some(__nikaia_it.clone()),
+        None => None,
+    };
+    let owner_text: String = nikaia_std::index::or(match entry.owner.as_ref() {
+        Some(__nikaia_it) => Some(__nikaia_it.clone()),
+        None => None,
+    }, || "".into());
+    if owner_name.is_some() { symbol = format!("{}_{}_{}", prefix, owner_text, entry.name); }
+    cx_claim(&mut build.symbols, &symbol, &written)?;
+    let mut rust_params: Vec<String> = vec![];
+    let mut c_params: Vec<String> = vec![];
+    let mut checks: String = String::from("");
+    let mut call_args: Vec<String> = vec![];
+    let by_value = entry.of_a_record(&ctx.records);
+    let mut exclusive = false;
+    let hold = entry.receiver;
+    if hold.is_some() && owner_name.is_some() {
+        let owner = owner_text.to_owned();
+        let held_exclusively = match nikaia_std::index::or(hold, || CxHold::Shared) {
+            CxHold::Exclusive => true,
+            CxHold::Shared => false,
+        };
+        exclusive = held_exclusively;
+        if by_value {
+            if held_exclusively && pauses { return Err(nikaia_std::error::throwing(CxRefused::Because(cx_not_yet(&written, "changing `self` across a pause")), &"cx_wrapper")); }
+            let mut constant: String = String::from("");
+            let mut pointer: String = String::from("*mut");
+            let mut binding: String = String::from("mut ");
+            if !held_exclusively {
+                constant = String::from("const ");
+                pointer = String::from("*const");
+                binding = String::from("");
+            }
+            rust_params.push(format!("__nikaia_at: {} __nikaia_c_{}", pointer, owner));
+            c_params.push(format!("{}{}_{} *self", constant, prefix, owner));
+            checks.push_str(&format!("    // SAFETY: the C caller hands its struct, or NULL, and leaves it alone for the call (ADR-284 D16).\n    let Some(__nikaia_self) = (unsafe {{ nikaia_std::c_boundary::read(__nikaia_at) }}) else {{ return -1; }};\n    let Some({}__nikaia_self) = __nikaia_self.into_nikaia() else {{ return -1; }};\n", binding));
+        } else {
+            rust_params.push(format!("__nikaia_self: *const nikaia_std::c_boundary::Handle<{}>", owner));
+            let mut constant: String = String::from("");
+            let mut how: String = String::from("exclusive");
+            let mut binding: String = String::from("mut ");
+            if !held_exclusively {
+                constant = String::from("const ");
+                how = String::from("shared");
+                binding = String::from("");
+            }
+            c_params.push(format!("{}{}_{} *self", constant, prefix, owner));
+            checks.push_str(&format!("    // SAFETY: the C caller hands a handle this library made and has not freed, or NULL (ADR-284 D5).\n    let {}__nikaia_self = match unsafe {{ nikaia_std::c_boundary::{}(__nikaia_self) }} {{ Ok(held) => held, Err(status) => return __nikaia_refused(status) }};\n", binding, how));
+        }
+    }
+    let mut params = CxParams { rust_params: rust_params.to_owned(), c_params: c_params.to_owned(), checks: checks.to_owned(), call_args: call_args.to_owned() };
+    let mut position: i64 = 0;
+    while position < entry.arg_names.len() as i64 {
+        let param = (*nikaia_std::index::get(&entry.arg_names, nikaia_std::index::at(position))).to_owned();
+        let local = cx_escaped(&param);
+        let ty = (*nikaia_std::index::get(&entry.arg_types, nikaia_std::index::at(position))).clone();
+        let taken = match cx_taken(words, &ctx.plains, &ctx.handles, &ctx.records, &ty) { Some(__nikaia_value) => __nikaia_value, None => return Err(nikaia_std::error::throwing(CxRefused::Because(cx_not_yet(&written, &format!("parameter `{}`", param))), &"cx_wrapper")) };
+        cx_parameter(ctx, contracts, &key, position, &param, &local, &taken, &mut params, &mut build.crossing);
+        position += 1;
+    }
+    rust_params = params.rust_params.to_owned();
+    c_params = params.c_params.to_owned();
+    checks = params.checks.to_owned();
+    call_args = params.call_args.to_owned();
+    let result = cx_result_of(entry, words, &ctx.plains, &ctx.handles, &ctx.records);
+    match result {
+        CxResult::Refused => {
+            let mut what: String = String::from("result");
+            if entry.getter { what = String::from("field's type"); }
+            return Err(nikaia_std::error::throwing(CxRefused::Because(cx_not_yet(&written, &what)), &"cx_wrapper"));
+        },
+        CxResult::Made(ref out) => cx_out_params(out, ctx, &mut rust_params, &mut c_params, &mut build.crossing),
+        CxResult::Nothing => { },
+    }
+    let name = cx_escaped(&entry.name);
+    let variant_of = entry.of_variant.is_some();
+    let variant: String = nikaia_std::index::or(match entry.of_variant.as_ref().map(|__nikaia_it| __nikaia_it.variant.as_str()) {
+        Some(__nikaia_it) => Some(__nikaia_it.to_owned()),
+        None => None,
+    }, || "".into());
+    let pattern: String = nikaia_std::index::or(match entry.of_variant.as_ref().map(|__nikaia_it| __nikaia_it.pattern.as_str()) {
+        Some(__nikaia_it) => Some(__nikaia_it.to_owned()),
+        None => None,
+    }, || "".into());
+    let variant_pattern = pattern.to_owned();
+    if variant_of && owner_name.is_some() {
+        let owner = owner_text.to_owned();
+        checks.push_str(&format!("    if !matches!(&*__nikaia_self, {}) {{\n        __nikaia_failed(format!(\"the {} holds `{{}}`, not `{}`\", __nikaia_kind_{}(&__nikaia_self).1));\n        return -1;\n    }}\n", pattern, owner, variant, owner));
+    }
+    let args_text = call_args.join(", ");
+    let mut call = cx_call_text(entry, &owner_text, &name, &args_text, variant_of, &variant_pattern);
+    if by_value && exclusive { call = format!("{{ let __nikaia_result = {}; // SAFETY: as the read above; the struct is written back as the method left it (ADR-284 D16).\nunsafe {{ nikaia_std::c_boundary::put(__nikaia_at, __nikaia_c_{}::from_nikaia(__nikaia_self)) }}; __nikaia_result }}", call, owner_text); }
+    if pauses { call = format!("{{ let _ = nikaia_std::rt::start(nikaia_std::rt::UserCode::{}); nikaia_std::rt::exec::block_on(__nikaia_cancellable({})) }}", ctx.user_code, call); }
+    let mut handed_back = cx_handed_back(&result, ctx);
+    let mut failed: String = String::from("");
+    if !thrown.is_empty() {
+        let matched = cx_matched(&thrown);
+        handed_back = cx_replace_first(&cx_replace_first(&handed_back, "Ok(", "Ok(Ok("), ") =>", ")) =>");
+        failed = format!("\n        Ok(Err(thrown)) => {{\n            __nikaia_failed(thrown.full());\n            {}\n        }}", matched);
+    }
+    let mut ran = format!("match std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {}))", call);
+    if pauses { ran = format!("let __nikaia_ran = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {}));\n    let __nikaia_ran = match __nikaia_ran {{\n        Ok(Some(value)) => Ok(value),\n        Ok(None) => {{\n            __nikaia_failed(\"the call was cancelled\".to_string());\n            return -7;\n        }}\n        Err(panic) => Err(panic),\n    }};\n    match __nikaia_ran", call); }
+    build.rust.push_str(&format!("\n#[unsafe(no_mangle)]\npub extern \"C\" fn {}({}) -> std::ffi::c_int {{\n    if let Err(status) = __nikaia_enter() {{\n        return status;\n    }}\n{}    {} {{\n        {}{}\n        Err(_) => {{\n            __NIKAIA_POISONED.store(true, std::sync::atomic::Ordering::SeqCst);\n            __nikaia_failed(\"the library panicked; it answers E_PANICKED until shutdown and init have run\".to_string());\n            -4\n        }}\n    }}\n}}\n", symbol, rust_params.join(", "), checks, ran, handed_back, failed));
+    let c_text = if c_params.is_empty() { String::from("void") } else { c_params.join(", ") };
+    build.declarations.push_str(&format!("int {}({});\n", symbol, c_text));
+    let mut text_out = false;
+    let returns = match entry.ret_type.as_ref() {
+        Some(__nikaia_it) => Some(__nikaia_it.clone()),
+        None => None,
+    };
+    if returns.is_some() {
+        let ty = match returns { Some(__nikaia_value) => __nikaia_value, None => return Ok(()) };
+        text_out = words.resolve(ty.name) == "String";
+    }
+    build.python.entry(words, ctx, entry, &symbol, text_out, pauses);
+    build.node.entry(words, ctx, entry, &symbol, text_out, pauses);
+    if pauses {
+        build.any_pause = true;
+        let names = cx_parameter_names(&rust_params);
+        let forwarded = names.join(", ");
+        let mut async_params = rust_params.to_owned();
+        async_params.push(String::from("__nikaia_done: Option<extern \"C\" fn(std::ffi::c_int, *mut std::ffi::c_void)>, __nikaia_done_ctx: *mut std::ffi::c_void, __nikaia_op: *mut *mut nikaia_std::c_boundary::Handle<std::sync::Arc<__NikaiaTicket>>"));
+        let async_symbol = format!("{}_async", symbol);
+        cx_claim(&mut build.symbols, &async_symbol, &written)?;
+        build.rust.push_str(&format!("\n#[unsafe(no_mangle)]\npub extern \"C\" fn {}({}) -> std::ffi::c_int {{\n    if let Err(status) = __nikaia_enter() {{\n        return status;\n    }}\n    let Some(__nikaia_done) = __nikaia_done else {{ return -1; }};\n    let ticket = std::sync::Arc::new(__NikaiaTicket::default());\n    if !__nikaia_op.is_null() {{\n        // SAFETY: the C caller hands a place for one ticket (ADR-284 D19).\n        unsafe {{ nikaia_std::c_boundary::put(__nikaia_op, nikaia_std::c_boundary::handle(ticket.clone())) }};\n    }}\n    // SAFETY: the C caller keeps what it handed this call, and `done`'s context, until `done` (ADR-284 D9).\n    let sent = unsafe {{ nikaia_std::c_boundary::sent(({}, __nikaia_done_ctx)) }};\n    // A library thread, kept for the next call (`rt::library`).\n    nikaia_std::rt::library::run(Box::new(move || {{\n        let ({}, __nikaia_done_ctx) = sent.into_inner();\n        __NIKAIA_TICKET.with(|current| *current.borrow_mut() = Some(ticket.clone()));\n        let status = {}({});\n        __NIKAIA_TICKET.with(|current| *current.borrow_mut() = None);\n        ticket.done.store(true, std::sync::atomic::Ordering::SeqCst);\n        __nikaia_done(status, __nikaia_done_ctx);\n    }}));\n    0\n}}\n", async_symbol, async_params.join(", "), forwarded, forwarded, symbol, forwarded));
+        let mut c_async: Vec<String> = vec![];
+        if c_text != "void" { c_async.push(c_text); }
+        c_async.push(format!("void (*done)(int status, void *ctx), void *ctx, {}_op **op", prefix));
+        build.declarations.push_str(&format!("int {}({});\n", async_symbol, c_async.join(", ")));
+    }
+    Ok(())
+}
+
+fn cx_out_params(out: &CxOut, ctx: &CxCtx, rust_params: &mut Vec<String>, c_params: &mut Vec<String>, crossing: &mut Vec<bool>) {
+    let prefix = ctx.prefix.to_owned();
+    match out {
+        CxOut::Value(shape) => {
+            rust_params.push(format!("out: *mut {}", shape.rust));
+            c_params.push(format!("{} *out", shape.c));
+        },
+        CxOut::Buffer => {
+            rust_params.push(String::from("out: *mut u8, cap: usize, written: *mut usize"));
+            c_params.push(String::from("uint8_t *out, size_t cap, size_t *written"));
+        },
+        CxOut::Choice(at) => {
+            let at = *at;
+            { let __nikaia_stored = true; nikaia_std::index::set(&mut *crossing, nikaia_std::index::at(at), __nikaia_stored); }
+            rust_params.push(String::from("out: *mut std::ffi::c_int"));
+            c_params.push(format!("{}_{} *out", prefix, nikaia_std::index::get(&ctx.plains, nikaia_std::index::at(at)).name));
+        },
+        CxOut::Handle(at) => {
+            let at = *at;
+            let ty = nikaia_std::index::get(&ctx.handles, nikaia_std::index::at(at)).name.to_owned();
+            rust_params.push(format!("out: *mut *mut nikaia_std::c_boundary::Handle<{}>", ty));
+            c_params.push(format!("{}_{} **out", prefix, ty));
+        },
+        CxOut::Records(at) => {
+            let at = *at;
+            let ty = nikaia_std::index::get(&ctx.records, nikaia_std::index::at(at)).name.to_owned();
+            rust_params.push(format!("out: *mut __nikaia_c_{}, cap: usize, written: *mut usize", ty));
+            c_params.push(format!("{}_{} *out, size_t cap, size_t *written", prefix, ty));
+        },
+        CxOut::Record(at) => {
+            let at = *at;
+            let ty = nikaia_std::index::get(&ctx.records, nikaia_std::index::at(at)).name.to_owned();
+            rust_params.push(format!("out: *mut __nikaia_c_{}", ty));
+            c_params.push(format!("{}_{} *out", prefix, ty));
+        },
+        CxOut::AbsentHandle(at) => {
+            let at = *at;
+            let ty = nikaia_std::index::get(&ctx.handles, nikaia_std::index::at(at)).name.to_owned();
+            rust_params.push(format!("out: *mut *mut nikaia_std::c_boundary::Handle<{}>", ty));
+            c_params.push(format!("{}_{} **out", prefix, ty));
+        },
+        CxOut::AbsentValue(shape) => {
+            rust_params.push(format!("out: *mut {}, present: *mut bool", shape.rust));
+            c_params.push(format!("{} *out, bool *present", shape.c));
+        },
+        CxOut::AbsentRecord(at) => {
+            let at = *at;
+            let ty = nikaia_std::index::get(&ctx.records, nikaia_std::index::at(at)).name.to_owned();
+            rust_params.push(format!("out: *mut __nikaia_c_{}, present: *mut bool", ty));
+            c_params.push(format!("{}_{} *out, bool *present", prefix, ty));
+        },
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn cx_parameter(ctx: &CxCtx, contracts: &Ledger, key: &str, position: i64, param: &str, local: &str, taken: &CxIn, params: &mut CxParams, crossing: &mut Vec<bool>) {
+    let prefix = ctx.prefix.to_owned();
+    match taken {
+        CxIn::Value(shape) => {
+            params.rust_params.push(format!("{}: {}", local, shape.rust));
+            params.c_params.push(format!("{} {}", shape.c, param));
+            if shape.scalar { params.checks.push_str(&format!("    let Some({}) = char::from_u32({}) else {{ return -1; }};\n", local, local)); }
+            params.call_args.push(local.to_owned());
+        },
+        CxIn::Run { rust, c, as_text } => {
+            let as_text = *as_text;
+            params.rust_params.push(format!("{}: *const {}, {}_len: usize", local, rust, local));
+            params.c_params.push(format!("const {} *{}, size_t {}_len", c, param, param));
+            let mut read: String = String::from("run");
+            if as_text { read = String::from("text"); }
+            params.checks.push_str(&format!("    // SAFETY: the C caller keeps `{}_len` values at `{}` for the call (ADR-284 D5).\n    let Some({}) = (unsafe {{ nikaia_std::c_boundary::{}({}, {}_len) }}) else {{ return -1; }};\n", param, param, local, read, local, local));
+            params.call_args.push(local.to_owned());
+        },
+        CxIn::Bytes => {
+            params.rust_params.push(format!("{}: *const u8, {}_len: usize", local, local));
+            params.c_params.push(format!("const uint8_t *{}, size_t {}_len", param, param));
+            params.checks.push_str(&format!("    // SAFETY: the C caller keeps `{}_len` bytes at `{}` for the call (ADR-284 D5).\n    let Some({}) = (unsafe {{ nikaia_std::c_boundary::run({}, {}_len) }}) else {{ return -1; }};\n    let {} = nikaia_std::bytes::Bytes::from({});\n", param, param, local, local, local, local, local));
+            if cx_lent(contracts, key, position) { params.call_args.push(format!("&{}", local)); } else { params.call_args.push(local.to_owned()); }
+        },
+        CxIn::Choice(at) => {
+            let at = *at;
+            let plain = nikaia_std::index::get(&ctx.plains, (at) as usize);
+            { let __nikaia_stored = true; nikaia_std::index::set(&mut *crossing, (at) as usize, __nikaia_stored); }
+            params.rust_params.push(format!("{}: std::ffi::c_int", local));
+            params.c_params.push(format!("{}_{} {}", prefix, plain.name, param));
+            let arms = cx_choice_arms_in(&plain);
+            params.checks.push_str(&format!("    let {} = match {} {{ {} _ => return -1 }};\n", local, local, arms));
+            params.call_args.push(local.to_owned());
+        },
+        CxIn::Callback { lent, result } => {
+            let mut rust_args: Vec<String> = vec![];
+            let mut c_args: Vec<String> = vec![];
+            let mut closure_params: Vec<String> = vec![];
+            let mut passed: Vec<String> = vec![];
+            let mut at = 0;
+            for part in lent.iter() {
+                let name = format!("__nikaia_{}", at);
+                match part {
+                    CxLent::Value(shape) => {
+                        rust_args.push(shape.rust.to_owned());
+                        c_args.push(shape.c.to_owned());
+                        if shape.scalar {
+                            closure_params.push(format!("{}: char", name));
+                            passed.push(format!("{} as u32", name));
+                        } else {
+                            closure_params.push(format!("{}: {}", name, shape.rust));
+                            passed.push(name.to_owned());
+                        }
+                    },
+                    CxLent::Choice(which) => {
+                        let which = *which;
+                        let plain = nikaia_std::index::get(&ctx.plains, nikaia_std::index::at(which));
+                        { let __nikaia_stored = true; nikaia_std::index::set(&mut *crossing, nikaia_std::index::at(which), __nikaia_stored); }
+                        rust_args.push(String::from("std::ffi::c_int"));
+                        c_args.push(format!("{}_{}", prefix, plain.name));
+                        closure_params.push(format!("{}: {}", name, plain.name));
+                        passed.push(format!("match {} {{ {} }}", name, cx_choice_arms_out(&plain)));
+                    },
+                    CxLent::Text => {
+                        rust_args.push(String::from("*const u8, usize"));
+                        c_args.push(String::from("const uint8_t *, size_t"));
+                        closure_params.push(format!("{}: &str", name));
+                        passed.push(format!("{}.as_ptr(), {}.len()", name, name));
+                    },
+                }
+                at += 1;
+            }
+            rust_args.push(String::from("*mut std::ffi::c_void"));
+            c_args.push(String::from("void *ctx"));
+            let mut rust_result: String = String::from("");
+            let mut c_result: String = String::from("void");
+            if result.is_some() {
+                let shape = match result { Some(__nikaia_value) => __nikaia_value, None => return };
+                rust_result = format!(" -> {}", shape.rust);
+                c_result = shape.c.to_owned();
+            }
+            params.rust_params.push(format!("{}: Option<extern \"C\" fn({}){}>, {}_ctx: *mut std::ffi::c_void", local, rust_args.join(", "), rust_result, local));
+            params.c_params.push(format!("{} (*{})({}), void *{}_ctx", c_result, param, c_args.join(", "), param));
+            passed.push(format!("{}_ctx", local));
+            params.checks.push_str(&format!("    let Some({}) = {} else {{ return -1; }};\n    let {} = move |{}|{} {{ {}({}) }};\n", local, local, local, closure_params.join(", "), rust_result, local, passed.join(", ")));
+            params.call_args.push(format!("&{}", local));
+        },
+        CxIn::Records { record, whole } => {
+            let record = *record; let whole = *whole;
+            let ty = nikaia_std::index::get(&ctx.records, nikaia_std::index::at(record)).name.to_owned();
+            params.rust_params.push(format!("{}: *const __nikaia_c_{}, {}_len: usize", local, ty, local));
+            params.c_params.push(format!("const {}_{} *{}, size_t {}_len", prefix, ty, param, param));
+            params.checks.push_str(&format!("    // SAFETY: the C caller keeps `{}_len` structs at `{}` for the call (ADR-284 D16).\n    let Some({}) = (unsafe {{ nikaia_std::c_boundary::run({}, {}_len) }}) else {{ return -1; }};\n    let Some({}) = {}.iter().map(|one| one.into_nikaia()).collect::<Option<Vec<{}>>>() else {{ return -1; }};\n", param, param, local, local, local, local, local, ty));
+            if !whole || cx_lent(contracts, key, position) { params.call_args.push(format!("&{}", local)); } else { params.call_args.push(local.to_owned()); }
+        },
+        CxIn::Record(at) => {
+            let at = *at;
+            let ty = nikaia_std::index::get(&ctx.records, (at) as usize).name.to_owned();
+            params.rust_params.push(format!("{}: __nikaia_c_{}", local, ty));
+            params.c_params.push(format!("{}_{} {}", prefix, ty, param));
+            params.checks.push_str(&format!("    let Some({}) = {}.into_nikaia() else {{ return -1; }};\n", local, local));
+            if cx_lent(contracts, key, position) { params.call_args.push(format!("&{}", local)); } else { params.call_args.push(local.to_owned()); }
+        },
+        CxIn::AbsentText => {
+            params.rust_params.push(format!("{}: *const u8, {}_len: usize", local, local));
+            params.c_params.push(format!("const uint8_t *{}, size_t {}_len", param, param));
+            params.checks.push_str(&format!("    let {} = match {}.is_null() {{\n        true => None,\n        // SAFETY: the C caller keeps `{}_len` bytes at `{}` for the call (ADR-284 D5).\n        false => match unsafe {{ nikaia_std::c_boundary::text({}, {}_len) }} {{ Some(text) => Some(text), None => return -1 }},\n    }};\n", local, local, param, param, local, local));
+            params.call_args.push(local.to_owned());
+        },
+        CxIn::AbsentHandle(at) => {
+            let at = *at;
+            let ty = nikaia_std::index::get(&ctx.handles, (at) as usize).name.to_owned();
+            params.rust_params.push(format!("{}: *const nikaia_std::c_boundary::Handle<{}>", local, ty));
+            params.c_params.push(format!("const {}_{} *{}", prefix, ty, param));
+            params.checks.push_str(&format!("    let {} = match {}.is_null() {{\n        true => None,\n        // SAFETY: the C caller hands a handle this library made and has not freed (ADR-284 D5).\n        false => match unsafe {{ nikaia_std::c_boundary::shared({}) }} {{ Ok(held) => Some(held), Err(status) => return __nikaia_refused(status) }},\n    }};\n", local, local, local));
+            params.call_args.push(format!("{}.as_deref()", local));
+        },
+        CxIn::Handle(at) => {
+            let at = *at;
+            let ty = nikaia_std::index::get(&ctx.handles, (at) as usize).name.to_owned();
+            params.rust_params.push(format!("{}: *const nikaia_std::c_boundary::Handle<{}>", local, ty));
+            params.c_params.push(format!("const {}_{} *{}", prefix, ty, param));
+            params.checks.push_str(&format!("    // SAFETY: the C caller hands a handle this library made and has not freed, or NULL (ADR-284 D5).\n    let {} = match unsafe {{ nikaia_std::c_boundary::shared({}) }} {{ Ok(held) => held, Err(status) => return __nikaia_refused(status) }};\n", local, local));
+            params.call_args.push(format!("&*{}", local));
+        },
+    }
+}
+
+fn cx_call_text(entry: &CxEntry, owner: &str, name: &str, args_text: &str, variant_of: bool, variant_pattern: &str) -> String {
+    if entry.getter && entry.kind_of.is_some() { return format!("__nikaia_kind_{}(&__nikaia_self).0", owner); }
+    if entry.getter && variant_of { return format!("match &*__nikaia_self {{ {} => __nikaia_v.clone(), _ => unreachable!(\"checked above\") }}", variant_pattern); }
+    if entry.getter { return format!("__nikaia_self.{}.clone()", name); }
+    if entry.receiver.is_some() { return format!("__nikaia_self.{}({})", name, args_text); }
+    if entry.owner.is_some() { return format!("{}::{}({})", owner, name, args_text); }
+    format!("{}({})", name, args_text)
+}
+
+fn cx_matched(thrown: &[CxRaising]) -> String {
+    if thrown.len() == 1 { return format!("match thrown.split().0 {{ {} }}", cx_arms(nikaia_std::index::get(&thrown, 0))); }
+    let mut members: Vec<String> = vec![];
+    for raising in thrown.iter() { members.push(raising.error.to_owned()); }
+    let sum = cx_sum_name(&members);
+    let mut each: Vec<String> = vec![];
+    for raising in thrown.iter() { each.push(format!("crate::{}::{}(thrown) => match thrown.split().0 {{ {} }},", sum, raising.error.replace("::", "_"), cx_arms(raising))); }
+    format!("match thrown {{ {} }}", each.join(" "))
+}
+
+
+// --- cexport_mirror.nika ---
+
+pub fn cx_converted(part: &CxPart, records: &[CxRecord], plains: &[CxPlain], of: &str) -> (String, String, String) {
+    match part {
+        CxPart::Value(shape) => cx_converted_value(shape, of),
+        CxPart::Choice(at) => { let at = *at; cx_converted_choice(nikaia_std::index::get(&plains, nikaia_std::index::at(at)), of) },
+        CxPart::Record(at) => {
+            let at = *at;
+            let inner = nikaia_std::index::get(&records, nikaia_std::index::at(at)).name.to_owned();
+            (format!("__nikaia_c_{}", inner), format!("{}.into_nikaia()", of), format!("__nikaia_c_{}::from_nikaia({})", inner, of))
+        },
+        CxPart::Array(_, _) => ("".to_string(), "".to_string(), "".to_string()),
+    }
+}
+
+fn cx_converted_value(shape: &CxByValue, of: &str) -> (String, String, String) {
+    if shape.scalar { return ("u32".to_string(), format!("char::from_u32({})", of), format!("{} as u32", of)); }
+    (shape.rust.to_owned(), format!("Some({})", of), of.to_owned())
+}
+
+fn cx_converted_choice(plain: &CxPlain, of: &str) -> (String, String, String) {
+    let mut inward: Vec<String> = vec![];
+    let mut outward: Vec<String> = vec![];
+    let mut number = 0;
+    for variant in plain.variants.iter() {
+        inward.push(format!("{} => Some({}::{}),", number, plain.name, variant));
+        outward.push(format!("{}::{} => {},", plain.name, variant, number));
+        number += 1;
+    }
+    ("std::ffi::c_int".to_string(), format!("match {} {{ {} _ => None }}", of, inward.join(" ")), format!("match {} {{ {} }}", of, outward.join(" ")))
+}
+
+fn cx_field_mirror(part: &CxPart, records: &[CxRecord], plains: &[CxPlain], read: &str, made_from: &str) -> (String, String, String) {
+    match part {
+        CxPart::Array(element, count) => {
+            let element = nikaia_std::boxed::open(element); let count = *count;
+            let (lowered, inward, outward) = cx_converted(element, records, plains, "e");
+            (format!("[{}; {}]", lowered, count), format!("{}.iter().map(|&e| {}).collect::<Option<Vec<_>>>()?.try_into().ok()?", read, inward), format!("{}.map(|e| {})", made_from, outward))
+        },
+        _ => {
+            let (lowered, inward, _) = cx_converted(part, records, plains, read);
+            let (_, _, outward) = cx_converted(part, records, plains, made_from);
+            (lowered, format!("({})?", inward), outward)
+        },
+    }
+}
+
+pub fn cx_mirror(record: &CxRecord, records: &[CxRecord], plains: &[CxPlain]) -> String {
+    let ty = record.name.to_owned();
+    let mut fields: String = String::from("");
+    let mut into: Vec<String> = vec![];
+    let mut from: Vec<String> = vec![];
+    for (field, part) in record.fields.iter() {
+        let local = cx_escaped(field);
+        let (lowered, inward, outward) = cx_field_mirror(part, records, plains, &format!("self.{}", local), &format!("value.{}", local));
+        fields.push_str(&format!("    {}: {},\n", local, lowered));
+        into.push(format!("{}: {}", local, inward));
+        from.push(format!("{}: {}", local, outward));
+    }
+    format!("\n/// `{}` as C lays it out and hands it over (ADR-284 D14).\n#[repr(C)]\n#[derive(Clone, Copy)]\n#[allow(non_camel_case_types)]\npub struct __nikaia_c_{} {{\n{}}}\n\n#[allow(dead_code)]\nimpl __nikaia_c_{} {{\n    fn into_nikaia(self) -> Option<{}> {{\n        Some({} {{ {} }})\n    }}\n    fn from_nikaia(value: {}) -> Self {{\n        Self {{ {} }}\n    }}\n}}\n", ty, ty, fields, ty, ty, ty, into.join(", "), ty, from.join(", "))
+}
+
+pub fn cx_tagged_mirror(record: &CxRecord, records: &[CxRecord], plains: &[CxPlain]) -> String {
+    let ty = record.name.to_owned();
+    let mut out: String = String::from("");
+    let mut members: Vec<String> = vec![];
+    let mut into: Vec<String> = vec![];
+    let mut from: Vec<String> = vec![];
+    let mut tag = 0;
+    for variant in record.variants.iter() {
+        let path = format!("{}::{}", ty, cx_escaped(&variant.name));
+        if variant.fields.is_empty() {
+            into.push(format!("{} => Some({}),", tag, path));
+            from.push(format!("{} => Self {{ tag: {}, ..Self::zeroed() }},", path, tag));
+            tag += 1;
+            continue;
+        }
+        let shape = format!("__nikaia_cv_{}_{}", ty, variant.name);
+        let member = cx_escaped(&variant.member);
+        members.push(format!("{}: {}", member, shape));
+        let mut fields: String = String::from("");
+        let mut taken: Vec<String> = vec![];
+        let mut made: Vec<String> = vec![];
+        let mut bound: Vec<String> = vec![];
+        for (field, part) in variant.fields.iter() {
+            let local = cx_escaped(field);
+            let mut named = local.to_owned();
+            if variant.positional { named = format!("__nikaia{}", local); }
+            let (lowered, inward, outward) = cx_field_mirror(part, records, plains, &format!("v.{}", local), &named);
+            fields.push_str(&format!("    {}: {},\n", local, lowered));
+            if variant.positional { taken.push(inward); } else { taken.push(format!("{}: {}", local, inward)); }
+            made.push(format!("{}: {}", local, outward));
+            bound.push(named);
+        }
+        out.push_str(&format!("\n#[repr(C)]\n#[derive(Clone, Copy)]\n#[allow(non_camel_case_types)]\npub struct {} {{\n{}}}\n", shape, fields));
+        let mut built = format!("{} {{ {} }}", path, taken.join(", "));
+        let mut pattern = format!("{} {{ {} }}", path, bound.join(", "));
+        if variant.positional {
+            built = format!("{}({})", path, taken.join(", "));
+            pattern = format!("{}({})", path, bound.join(", "));
+        }
+        into.push(format!("{} => {{\n            // SAFETY: the tag names this variant, so C wrote this member (ADR-284 D32).\n            let v = unsafe {{ self.u.{} }};\n            Some({})\n        }}", tag, member, built));
+        from.push(format!("{} => {{\n            let mut made = Self {{ tag: {}, ..Self::zeroed() }};\n            made.u.{} = {} {{ {} }};\n            made\n        }}", pattern, tag, member, shape, made.join(", ")));
+        tag += 1;
+    }
+    let mut union: String = String::from("");
+    let mut held: String = String::from("");
+    if !members.is_empty() {
+        union = format!("\n#[repr(C)]\n#[derive(Clone, Copy)]\n#[allow(non_camel_case_types)]\npub union __nikaia_cu_{} {{ {} }}\n", ty, members.join(", "));
+        held = format!("    u: __nikaia_cu_{},\n", ty);
+    }
+    let into_text = into.join("\n        ");
+    let from_text = from.join("\n        ");
+    format!("{}{}\n/// `{}` as C lays it out and hands it over: a tag and a union (ADR-284 D32).\n#[repr(C)]\n#[derive(Clone, Copy)]\n#[allow(non_camel_case_types)]\npub struct __nikaia_c_{} {{\n    tag: std::ffi::c_int,\n{}}}\n\n#[allow(dead_code, unreachable_patterns)]\nimpl __nikaia_c_{} {{\n    /// All zero: every member of the union is numbers, for which zero is a value.\n    fn zeroed() -> Self {{\n        // SAFETY: a C int and a union of `#[repr(C)]` structs of numbers and `bool`; all-zero bytes are a value of each.\n        unsafe {{ std::mem::zeroed() }}\n    }}\n    fn into_nikaia(self) -> Option<{}> {{\n        match self.tag {{\n        {}\n        _ => None,\n        }}\n    }}\n    fn from_nikaia(value: {}) -> Self {{\n        match value {{\n        {}\n        }}\n    }}\n}}\n", out, union, ty, ty, held, ty, ty, into_text, ty, from_text)
+}
+
+
+// --- cexport_model.nika ---
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CxRefused {
+    Because(String),
+}
+
+impl CxRefused {
+    fn message(&self) -> String {
+        match self {
+            CxRefused::Because(why) => why.to_owned(),
+        }
+    }
+}
+impl std::fmt::Display for CxRefused {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message())
+    }
+}
+impl std::error::Error for CxRefused {}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CxByValue {
+    pub rust: String,
+    pub c: String,
+    pub scalar: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CxIn {
+    Value(CxByValue),
+    Run { rust: String, c: String, as_text: bool },
+    Bytes,
+    Choice(i64),
+    Handle(i64),
+    AbsentText,
+    AbsentHandle(i64),
+    Record(i64),
+    Records { record: i64, whole: bool },
+    Callback { lent: Vec<CxLent>, result: Option<CxByValue> },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CxLent {
+    Value(CxByValue),
+    Choice(i64),
+    Text,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CxOut {
+    Value(CxByValue),
+    Buffer,
+    Choice(i64),
+    Handle(i64),
+    AbsentHandle(i64),
+    Record(i64),
+    Records(i64),
+    AbsentValue(CxByValue),
+    AbsentRecord(i64),
+}
+
+pub fn cx_out_index(out: &CxOut) -> i64 {
+    match out {
+        CxOut::Choice(at) => { let at = *at; at },
+        CxOut::Handle(at) => { let at = *at; at },
+        CxOut::AbsentHandle(at) => { let at = *at; at },
+        CxOut::Record(at) => { let at = *at; at },
+        CxOut::Records(at) => { let at = *at; at },
+        CxOut::AbsentRecord(at) => { let at = *at; at },
+        _ => 0,
+    }
+}
+
+impl CxOut {
+    pub fn flagged(&self) -> bool { matches!(self, CxOut::AbsentValue(_) | CxOut::AbsentRecord(_)) }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CxRecord {
+    pub name: String,
+    pub fields: Vec<(String, CxPart)>,
+    pub variants: Vec<CxAlternative>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CxAlternative {
+    pub name: String,
+    pub member: String,
+    pub positional: bool,
+    pub fields: Vec<(String, CxPart)>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CxPart {
+    Value(CxByValue),
+    Choice(i64),
+    Record(i64),
+    Array(Box<CxPart>, i64),
+}
+
+impl CxRecord {
+    pub fn is_enum(&self) -> bool { !self.variants.is_empty() }
+    pub fn parts(&self) -> Vec<CxPart> {
+        let mut out: Vec<CxPart> = vec![];
+        for (_, part) in self.fields.iter() { out.push(cx_element(part)); }
+        for variant in self.variants.iter() { for (_, part) in variant.fields.iter() { out.push(cx_element(part)); } }
+        out
+    }
+}
+
+pub fn cx_element(part: &CxPart) -> CxPart {
+    match part {
+        CxPart::Array(element, _) => { let element = nikaia_std::boxed::open(element); element.clone() },
+        _ => part.clone(),
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CxPlain {
+    pub name: String,
+    pub variants: Vec<String>,
+    pub stem: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CxHold {
+    Shared,
+    Exclusive,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CxVariantOf {
+    pub variant: String,
+    pub pattern: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct CxEntry {
+    pub owner: Option<String>,
+    pub name: String,
+    pub receiver: Option<CxHold>,
+    pub arg_names: Vec<String>,
+    pub arg_types: Vec<Type>,
+    pub ret_type: Option<Type>,
+    pub getter: bool,
+    pub exclusive: bool,
+    pub of_variant: Option<CxVariantOf>,
+    pub kind_of: Option<i64>,
+}
+
+impl CxEntry {
+    pub fn key(&self) -> String {
+        let owner = match self.owner.as_deref() { Some(__nikaia_value) => __nikaia_value, None => return self.name.to_owned() };
+        format!("{}::{}", owner, self.name)
+    }
+    pub fn written(&self) -> String {
+        let owner = match self.owner.as_deref() { Some(__nikaia_value) => __nikaia_value, None => return self.name.to_owned() };
+        format!("{}.{}", owner, self.name)
+    }
+    pub fn of_a_record(&self, records: &[CxRecord]) -> bool {
+        let owner = match self.owner.as_deref() { Some(__nikaia_value) => __nikaia_value, None => return false };
+        for record in records.iter() { if record.name == owner { return true; } }
+        false
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct CxHandled {
+    pub name: String,
+    pub fields: Vec<(String, Type)>,
+    pub variants: Vec<CxShown>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct CxShown {
+    pub name: String,
+    pub pattern: String,
+    pub fields: Vec<(String, String, Type)>,
+}
+
+impl CxHandled {
+    pub fn is_enum(&self) -> bool { !self.variants.is_empty() }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CxRaising {
+    pub error: String,
+    pub codes: Vec<CxCode>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CxCode {
+    pub variant: Option<String>,
+    pub number: i64,
+    pub constant: String,
+    pub errno: Option<String>,
+}
+
+impl CxCode {
+    pub fn pattern(&self, error: &str) -> String {
+        let variant = match self.variant.as_deref() { Some(__nikaia_value) => __nikaia_value, None => return String::from("_") };
+        format!("{}::{} {{ .. }}", error, variant)
+    }
+}
+
+pub fn cx_escaped(name: &str) -> String {
+    let reserved: [&str; 28] = ["abstract", "async", "await", "become", "box", "const", "do", "dyn", "extern", "final", "gen", "loop", "macro", "mod", "move", "override", "priv", "ref", "static", "trait", "try", "type", "typeof", "unsafe", "unsized", "virtual", "where", "yield"];
+    for word in reserved.iter() {
+        let word = *word;
+        if word == name { return format!("r#{}", name); }
+    }
+    name.to_owned()
+}
+
+pub fn cx_not_yet(written: &str, what: &str) -> String { format!("`{}` is an entry point whose {} this compiler does not export yet: what is built is numbers, `bool`, `scalar` and an `enum` without payload in and out, text and bytes in and out, a run of numbers in, and a `pub struct` as a handle, of a function in `src/main.nika` (ADR-284 D5).", written, what) }
+
+pub fn cx_nothing_exported() -> String { String::from("`artifact = \"c-library\"`, and the package exports nothing: write `pub extern fn` before a function C may call (ADR-284 D4).") }
+
+pub fn cx_by_value(words: &winnow_grammar::InternerContext, ty: &Type) -> Option<CxByValue> {
+    if ty.is_view || ty.is_nullable || ty.is_tuple || !ty.generics.is_empty() || (*ty.code).is_some() { return None; }
+    let name = words.resolve(ty.name);
+    if name == "i32" { return Some(CxByValue { rust: String::from("i32"), c: String::from("int32_t"), scalar: false }); }
+    if name == "i64" { return Some(CxByValue { rust: String::from("i64"), c: String::from("int64_t"), scalar: false }); }
+    if name == "u8" { return Some(CxByValue { rust: String::from("u8"), c: String::from("uint8_t"), scalar: false }); }
+    if name == "f64" { return Some(CxByValue { rust: String::from("f64"), c: String::from("double"), scalar: false }); }
+    if name == "bool" { return Some(CxByValue { rust: String::from("bool"), c: String::from("bool"), scalar: false }); }
+    if name == "scalar" || name == "char" { return Some(CxByValue { rust: String::from("u32"), c: String::from("uint32_t"), scalar: true }); }
+    None
+}
+
+fn cx_callback(words: &winnow_grammar::InternerContext, plains: &[CxPlain], ty: &Type) -> Option<CxIn> {
+    let code = match (*ty.code).as_ref() { Some(__nikaia_value) => __nikaia_value, None => return None };
+    if !code.is_sync || code.can_throw || ty.is_nullable { return None; }
+    let mut args: Vec<CxLent> = vec![];
+    for arg in ty.generics.iter() {
+        let shape = cx_by_value(words, arg);
+        if shape.is_some() {
+            args.push(CxLent::Value(match shape { Some(__nikaia_value) => __nikaia_value, None => return None }));
+            continue;
+        }
+        let at = cx_choice(words, plains, arg);
+        if at.is_some() {
+            args.push(CxLent::Choice(match at { Some(__nikaia_value) => __nikaia_value, None => return None }));
+            continue;
+        }
+        let name = words.resolve(arg.name);
+        if arg.is_view && arg.generics.is_empty() && (name == "String" || name == "str") {
+            args.push(CxLent::Text);
+            continue;
+        }
+        return None;
+    }
+    let mut result: Option<CxByValue> = None;
+    let written = match (*code.result).as_ref() {
+        Some(__nikaia_it) => Some(__nikaia_it.clone()),
+        None => None,
+    };
+    if written.is_some() {
+        let shape = match cx_by_value(words, &match written { Some(__nikaia_value) => __nikaia_value, None => return None }) { Some(__nikaia_value) => __nikaia_value, None => return None };
+        if shape.scalar { return None; }
+        result = Some(shape);
+    }
+    Some(CxIn::Callback { lent: args, result })
+}
+
+fn cx_one_part(words: &winnow_grammar::InternerContext, plains: &[CxPlain], declared: &[String], ty: &Type) -> Option<CxPart> {
+    let shape = cx_by_value(words, ty);
+    if shape.is_some() { return Some(CxPart::Value(match shape { Some(__nikaia_value) => __nikaia_value, None => return None })); }
+    let at = cx_choice(words, plains, ty);
+    if at.is_some() { return Some(CxPart::Choice(match at { Some(__nikaia_value) => __nikaia_value, None => return None })); }
+    if !ty.generics.is_empty() || ty.is_nullable { return None; }
+    let name = words.resolve(ty.name);
+    let mut index: i64 = 0;
+    while index < declared.len() as i64 {
+        if *nikaia_std::index::get(&declared, nikaia_std::index::at(index)) == name { return Some(CxPart::Record(index)); }
+        index += 1;
+    }
+    None
+}
+
+fn cx_part(words: &winnow_grammar::InternerContext, plains: &[CxPlain], declared: &[String], ty: &Type, written: &str) -> Result<CxPart, nikaia_std::error::Thrown<CxRefused>> {
+    let mut found: Option<CxPart> = None;
+    if words.resolve(ty.name) == "Array" && ty.generics.len() == 2 {
+        let element = cx_one_part(words, plains, declared, nikaia_std::index::get(&ty.generics, 0));
+        let count = nikaia_std::index::get(&ty.generics, 1).count;
+        if element.is_some() && count.is_some() { found = Some(CxPart::Array(Box::new(nikaia_std::index::or(element, || CxPart::Choice(0))), nikaia_std::index::or(count, || 0))); }
+    } else { found = cx_one_part(words, plains, declared, ty); }
+    Ok(match found { Some(__nikaia_value) => __nikaia_value, None => return Err(nikaia_std::error::throwing(CxRefused::Because(cx_not_yet(written, "field of an `extern` struct or enum")), &"cx_part")) })
+}
+
+pub fn cx_records(words: &winnow_grammar::InternerContext, items: &[Spanned<Item>], plains: &[CxPlain]) -> Result<Vec<CxRecord>, nikaia_std::error::Thrown<CxRefused>> {
+    let mut declared: Vec<String> = vec![];
+    for item in items.iter() {
+        match &item.node {
+            Item::Struct { name, is_extern, .. } => {
+                let is_extern = *is_extern; let name = *name;
+                if is_extern { declared.push(words.resolve(name).to_owned()); }
+            },
+            Item::Enum { name, is_extern, .. } => {
+                let is_extern = *is_extern; let name = *name;
+                if is_extern { declared.push(words.resolve(name).to_owned()); }
+            },
+            _ => { },
+        }
+    }
+    let mut out: Vec<CxRecord> = vec![];
+    for item in items.iter() {
+        match &item.node {
+            Item::Struct { name, fields, is_extern, .. } => {
+                let is_extern = *is_extern; let name = *name;
+                if !is_extern { continue; }
+                let ty = words.resolve(name).to_owned();
+                let mut made: Vec<(String, CxPart)> = vec![];
+                for field in fields.iter() {
+                    let field_name = words.resolve(field.name).to_owned();
+                    let at = cx_part(words, plains, &declared, &field.ty, &format!("{}.{}", ty, field_name))?;
+                    made.push((field_name, at));
+                }
+                out.push(CxRecord { name: ty, fields: made, variants: vec![] });
+            },
+            Item::Enum { name, variants, is_extern, .. } => {
+                let is_extern = *is_extern; let name = *name;
+                if !is_extern { continue; }
+                let ty = words.resolve(name).to_owned();
+                let mut alternatives: Vec<CxAlternative> = vec![];
+                for variant in variants.iter() {
+                    let variant_name = words.resolve(variant.name).to_owned();
+                    let mut positional = false;
+                    let mut fields: Vec<(String, CxPart)> = vec![];
+                    match &variant.fields {
+                        VariantFields::Unit => { },
+                        VariantFields::Tuple(types) => {
+                            positional = true;
+                            let mut at = 0;
+                            for field_ty in types.iter() {
+                                let part = cx_part(words, plains, &declared, field_ty, &format!("{}::{}.{}", ty, variant_name, at))?;
+                                fields.push((format!("_{}", at), part));
+                                at += 1;
+                            }
+                        },
+                        VariantFields::Named(named) => {
+                            for field in named.iter() {
+                                let field_name = words.resolve(field.name).to_owned();
+                                let part = cx_part(words, plains, &declared, &field.ty, &format!("{}::{}.{}", ty, variant_name, field_name))?;
+                                fields.push((field_name, part));
+                            }
+                        },
+                    }
+                    alternatives.push(CxAlternative { member: variant_name.to_lowercase(), name: variant_name, positional, fields });
+                }
+                out.push(CxRecord { name: ty, fields: vec![], variants: alternatives });
+            },
+            _ => { },
+        }
+    }
+    Ok(out)
+}
+
+pub fn cx_record_of(words: &winnow_grammar::InternerContext, records: &[CxRecord], ty: &Type) -> Option<i64> {
+    if ty.is_view || ty.is_nullable || ty.is_tuple || !ty.generics.is_empty() || (*ty.code).is_some() { return None; }
+    let name = words.resolve(ty.name);
+    let mut at: i64 = 0;
+    while ((at) as usize) < records.len() {
+        if nikaia_std::index::get(&records, (at) as usize).name == name { return at.into(); }
+        at += 1;
+    }
+    None
+}
+
+pub fn cx_records_in_order(records: &[CxRecord]) -> Vec<i64> {
+    let mut order: Vec<i64> = vec![];
+    let mut at: i64 = 0;
+    while at < records.len() as i64 {
+        let mut walking: Vec<i64> = vec![];
+        cx_ordered(at, records, &mut order, &mut walking);
+        at += 1;
+    }
+    order
+}
+
+fn cx_ordered(at: i64, records: &[CxRecord], seen: &mut Vec<i64>, walking: &mut Vec<i64>) {
+    if seen.contains(&at) || walking.contains(&at) { return; }
+    walking.push(at);
+    for part in (*nikaia_std::index::get(&records, nikaia_std::index::at(at))).parts() {
+        match part {
+            CxPart::Record(inner) => { cx_ordered(inner, records, seen, walking); },
+            _ => { },
+        }
+    }
+    seen.push(at);
+}
+
+pub fn cx_plain_enums(words: &winnow_grammar::InternerContext, items: &[Spanned<Item>]) -> Vec<CxPlain> {
+    let mut out: Vec<CxPlain> = vec![];
+    for item in items.iter() {
+        match &item.node {
+            Item::Enum { name, variants, is_extern, .. } => {
+                let is_extern = *is_extern; let name = *name;
+                if is_extern { continue; }
+                let mut plain = true;
+                let mut names: Vec<String> = vec![];
+                for variant in variants.iter() {
+                    match &variant.fields {
+                        VariantFields::Unit => { },
+                        _ => { plain = false; },
+                    }
+                    names.push(words.resolve(variant.name).to_owned());
+                }
+                if plain {
+                    let ty = words.resolve(name);
+                    out.push(CxPlain { name: ty.to_owned(), variants: names, stem: ty.to_uppercase() });
+                }
+            },
+            _ => { },
+        }
+    }
+    out
+}
+
+pub fn cx_choice(words: &winnow_grammar::InternerContext, plains: &[CxPlain], ty: &Type) -> Option<i64> {
+    if ty.is_view || ty.is_nullable || ty.is_tuple || !ty.generics.is_empty() || (*ty.code).is_some() { return None; }
+    let name = words.resolve(ty.name);
+    let mut at: i64 = 0;
+    while ((at) as usize) < plains.len() {
+        if nikaia_std::index::get(&plains, (at) as usize).name == name { return at.into(); }
+        at += 1;
+    }
+    None
+}
+
+pub fn cx_handle_of(words: &winnow_grammar::InternerContext, handles: &[CxHandled], ty: &Type) -> Option<i64> {
+    if ty.is_tuple || !ty.generics.is_empty() || (*ty.code).is_some() { return None; }
+    let name = words.resolve(ty.name);
+    let mut at: i64 = 0;
+    while ((at) as usize) < handles.len() {
+        if nikaia_std::index::get(&handles, (at) as usize).name == name { return at.into(); }
+        at += 1;
+    }
+    None
+}
+
+pub fn cx_taken(words: &winnow_grammar::InternerContext, plains: &[CxPlain], handles: &[CxHandled], records: &[CxRecord], ty: &Type) -> Option<CxIn> {
+    let record = cx_record_of(words, records, ty);
+    if record.is_some() { return Some(CxIn::Record(match record { Some(__nikaia_value) => __nikaia_value, None => return None })); }
+    let name = words.resolve(ty.name);
+    if (name == "Array" || name == "Vec") && ty.generics.len() == 1 && !ty.is_nullable {
+        let element = cx_record_of(words, records, nikaia_std::index::get(&ty.generics, 0));
+        if element.is_some() {
+            let at = match element { Some(__nikaia_value) => __nikaia_value, None => return None };
+            if name == "Array" && ty.is_view { return Some(CxIn::Records { record: at, whole: false }); }
+            if name == "Vec" && !ty.is_view { return Some(CxIn::Records { record: at, whole: true }); }
+            return None;
+        }
+    }
+    if (*ty.code).is_some() { return cx_callback(words, plains, ty); }
+    if ty.is_nullable {
+        let mut present = ty.clone();
+        present.is_nullable = false;
+        let inner = match cx_taken(words, plains, handles, records, &present) { Some(__nikaia_value) => __nikaia_value, None => return None };
+        return match inner {
+            CxIn::Run { as_text, .. } => if as_text { Some(CxIn::AbsentText) } else { None },
+            CxIn::Handle(at) => Some(CxIn::AbsentHandle(at)),
+            _ => None,
+        };
+    }
+    let handle = cx_handle_of(words, handles, ty);
+    if handle.is_some() {
+        if ty.is_view { return Some(CxIn::Handle(match handle { Some(__nikaia_value) => __nikaia_value, None => return None })); }
+        return None;
+    }
+    let shape = cx_by_value(words, ty);
+    if shape.is_some() { return Some(CxIn::Value(match shape { Some(__nikaia_value) => __nikaia_value, None => return None })); }
+    let choice = cx_choice(words, plains, ty);
+    if choice.is_some() { return Some(CxIn::Choice(match choice { Some(__nikaia_value) => __nikaia_value, None => return None })); }
+    if ty.is_nullable || (*ty.code).is_some() { return None; }
+    if (name == "String" || name == "str") && ty.is_view && ty.generics.is_empty() { return Some(CxIn::Run { rust: String::from("u8"), c: String::from("uint8_t"), as_text: true }); }
+    if name == "Array" && ty.is_view && ty.generics.len() == 1 {
+        let shape = match cx_by_value(words, nikaia_std::index::get(&ty.generics, 0)) { Some(__nikaia_value) => __nikaia_value, None => return None };
+        if shape.scalar { return None; }
+        return Some(CxIn::Run { rust: shape.rust, c: shape.c, as_text: false });
+    }
+    if name == "Bytes" && ty.generics.is_empty() { return Some(CxIn::Bytes); }
+    None
+}
+
+pub fn cx_handed(words: &winnow_grammar::InternerContext, plains: &[CxPlain], handles: &[CxHandled], records: &[CxRecord], ty: &Type) -> Option<CxOut> {
+    let record = cx_record_of(words, records, ty);
+    if record.is_some() { return Some(CxOut::Record(match record { Some(__nikaia_value) => __nikaia_value, None => return None })); }
+    let name = words.resolve(ty.name);
+    if name == "Vec" && ty.generics.len() == 1 && !ty.is_view && !ty.is_nullable {
+        let element = cx_record_of(words, records, nikaia_std::index::get(&ty.generics, 0));
+        if element.is_some() { return Some(CxOut::Records(match element { Some(__nikaia_value) => __nikaia_value, None => return None })); }
+    }
+    if ty.is_nullable && !ty.is_view {
+        let mut present = ty.clone();
+        present.is_nullable = false;
+        let held = cx_record_of(words, records, &present);
+        if held.is_some() { return Some(CxOut::AbsentRecord(match held { Some(__nikaia_value) => __nikaia_value, None => return None })); }
+        let shape = cx_by_value(words, &present);
+        if shape.is_some() { return Some(CxOut::AbsentValue(match shape { Some(__nikaia_value) => __nikaia_value, None => return None })); }
+        let handle = match cx_handle_of(words, handles, &present) { Some(__nikaia_value) => __nikaia_value, None => return None };
+        return Some(CxOut::AbsentHandle(handle));
+    }
+    let handle = cx_handle_of(words, handles, ty);
+    if handle.is_some() {
+        if !ty.is_view { return Some(CxOut::Handle(match handle { Some(__nikaia_value) => __nikaia_value, None => return None })); }
+        return None;
+    }
+    let shape = cx_by_value(words, ty);
+    if shape.is_some() { return Some(CxOut::Value(match shape { Some(__nikaia_value) => __nikaia_value, None => return None })); }
+    let choice = cx_choice(words, plains, ty);
+    if choice.is_some() { return Some(CxOut::Choice(match choice { Some(__nikaia_value) => __nikaia_value, None => return None })); }
+    if ty.is_nullable || ty.is_view || (*ty.code).is_some() { return None; }
+    if (name == "String" || name == "Bytes") && ty.generics.is_empty() { return Some(CxOut::Buffer); }
+    if name == "Vec" && ty.generics.len() == 1 && words.resolve(nikaia_std::index::get(&ty.generics, 0).name) == "u8" { return Some(CxOut::Buffer); }
+    None
+}
+
+pub fn cx_parameter_names(params: &[String]) -> Vec<String> {
+    let mut names: Vec<String> = vec![];
+    for list in params.iter() {
+        let mut depth = 0;
+        let mut current: String = String::from("");
+        let mut previous = ' ';
+        for c in list.chars() {
+            if c == '<' || c == '(' || c == '[' { depth += 1; } else if c == '>' && previous == '-' { depth += 0; } else if c == '>' || c == ')' || c == ']' { depth -= 1; }
+            if c == ',' && depth == 0 {
+                names.push(current.trim().to_owned());
+                current = "".to_string();
+            } else { current.push(c); }
+            previous = c;
+        }
+        names.push(current.trim().to_owned());
+    }
+    let mut out: Vec<String> = vec![];
+    for param in names.iter() {
+        let pieces: Vec<&str> = param.split(":").collect::<Vec<_>>();
+        out.push((*nikaia_std::index::get(&pieces, 0)).trim().to_owned());
+    }
+    out
+}
+
+pub fn cx_handled_structs(words: &winnow_grammar::InternerContext, items: &[Spanned<Item>]) -> Vec<CxHandled> {
+    let mut out: Vec<CxHandled> = vec![];
+    for item in items.iter() {
+        match &item.node {
+            Item::Struct { name, generics, fields, is_public, is_extern } => {
+                let is_extern = *is_extern; let is_public = *is_public; let name = *name;
+                if is_public && !is_extern && generics.is_empty() {
+                    let mut shown: Vec<(String, Type)> = vec![];
+                    for field in fields.iter() { if field.is_public { shown.push((words.resolve(field.name).to_owned(), field.ty.clone())); } }
+                    out.push(CxHandled { name: words.resolve(name).to_owned(), fields: shown, variants: vec![] });
+                }
+            },
+            Item::Enum { name, variants, is_public, is_extern } => {
+                let is_extern = *is_extern; let is_public = *is_public; let name = *name;
+                if !is_public || is_extern { continue; }
+                let mut payload = false;
+                for variant in variants.iter() {
+                    match &variant.fields {
+                        VariantFields::Unit => { },
+                        _ => { payload = true; },
+                    }
+                }
+                if !payload { continue; }
+                let ty = words.resolve(name).to_owned();
+                let mut made: Vec<CxShown> = vec![];
+                for variant in variants.iter() {
+                    let variant_name = words.resolve(variant.name).to_owned();
+                    let path = format!("{}::{}", ty, cx_escaped(&variant_name));
+                    let mut pattern = path.to_owned();
+                    let mut fields: Vec<(String, String, Type)> = vec![];
+                    match &variant.fields {
+                        VariantFields::Unit => { },
+                        VariantFields::Tuple(types) => {
+                            pattern = format!("{}(..)", path);
+                            let mut at: i64 = 0;
+                            for field in types.iter() {
+                                let mut places: Vec<String> = vec![];
+                                let mut other: i64 = 0;
+                                while ((other) as usize) < types.len() {
+                                    if other == at { places.push(String::from("__nikaia_v")); } else { places.push(String::from("_")); }
+                                    other += 1;
+                                }
+                                fields.push((format!("{}_{}", variant_name, at), format!("{}({})", path, places.join(", ")), field.clone()));
+                                at += 1;
+                            }
+                        },
+                        VariantFields::Named(named) => {
+                            pattern = format!("{} {{ .. }}", path);
+                            for field in named.iter() {
+                                let label = words.resolve(field.name).to_owned();
+                                fields.push((format!("{}_{}", variant_name, label), format!("{} {{ {}: __nikaia_v, .. }}", path, cx_escaped(&label)), field.ty.clone()));
+                            }
+                        },
+                    }
+                    made.push(CxShown { name: variant_name, pattern, fields });
+                }
+                out.push(CxHandled { name: ty, fields: vec![], variants: made });
+            },
+            _ => { },
+        }
+    }
+    out
+}
+
+pub fn cx_result_of(entry: &CxEntry, words: &winnow_grammar::InternerContext, plains: &[CxPlain], handles: &[CxHandled], records: &[CxRecord]) -> CxResult {
+    let kind = entry.kind_of;
+    if kind.is_some() { return CxResult::Made(CxOut::Choice(nikaia_std::index::or(kind, || 0))); }
+    let ty = match entry.ret_type.as_ref() {
+        Some(__nikaia_it) => Some(__nikaia_it.clone()),
+        None => None,
+    };
+    if ty.is_none() { return CxResult::Nothing; }
+    let handed = cx_handed(words, plains, handles, records, &match ty { Some(__nikaia_value) => __nikaia_value, None => return CxResult::Nothing });
+    if handed.is_none() { return CxResult::Refused; }
+    CxResult::Made(match handed { Some(__nikaia_value) => __nikaia_value, None => return CxResult::Refused })
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CxResult {
+    Nothing,
+    Refused,
+    Made(CxOut),
+}
+
+pub fn cx_entries_in(words: &winnow_grammar::InternerContext, items: &[Spanned<Item>], first: bool, out: &mut Vec<CxEntry>) -> Result<(), nikaia_std::error::Thrown<CxRefused>> {
+    for item in items.iter() {
+        match &item.node {
+            Item::Impl { trait_name, target, methods } => {
+                let trait_name = *trait_name;
+                if trait_name.is_none() { for method in methods.iter() { cx_take(words, Some(words.resolve(target.name).to_owned()), &method.node, first, out)?; } }
+            },
+            _ => cx_take(words, None, &item.node, first, out)?,
+        }
+    }
+    Ok(())
+}
+
+fn cx_take(words: &winnow_grammar::InternerContext, owner: Option<String>, item: &Item, first: bool, out: &mut Vec<CxEntry>) -> Result<(), nikaia_std::error::Thrown<CxRefused>> {
+    match item {
+        Item::Fn { name, receiver, args, ret_type, is_extern, .. } => {
+            let is_extern = *is_extern; let name = *name;
+            if !is_extern { return Ok(()); }
+            let mut written: String = String::from("new");
+            if name.is_some() { written = words.resolve(match name { Some(__nikaia_value) => __nikaia_value, None => return Ok(()) }).to_owned(); }
+            if !first { return Err(nikaia_std::error::throwing(CxRefused::Because(cx_not_yet(&written, "file")), &"cx_take")); }
+            let mut hold: Option<CxHold> = None;
+            let mut exclusive = false;
+            if receiver.is_some() {
+                let r = match receiver { Some(__nikaia_value) => __nikaia_value, None => return Ok(()) };
+                if r.is_ref && r.is_mut {
+                    exclusive = true;
+                    hold = Some(CxHold::Exclusive);
+                } else if r.is_ref { hold = Some(CxHold::Shared); } else { return Err(nikaia_std::error::throwing(CxRefused::Because(cx_not_yet(&written, "`self` taken by value")), &"cx_take")); }
+            }
+            let mut arg_names: Vec<String> = vec![];
+            let mut arg_types: Vec<Type> = vec![];
+            for arg in args.iter() {
+                arg_names.push(words.resolve(arg.name).to_owned());
+                arg_types.push(arg.ty.clone());
+            }
+            out.push(CxEntry { owner, name: written, receiver: hold, exclusive, arg_names, arg_types, ret_type: match ret_type {
+                Some(__nikaia_it) => Some(__nikaia_it.to_owned()),
+                None => None,
+            }, getter: false, of_variant: None, kind_of: None });
+        },
+        _ => { },
+    }
+    Ok(())
+}
+
+pub fn cx_variant_codes(words: &winnow_grammar::InternerContext, items: &[Spanned<Item>], entries: &[CxEntry], contracts: &Ledger, target: &str) -> Vec<CxRaising> {
+    let mut thrown: collections::BTreeSet<String> = collections::BTreeSet::new();
+    for entry in entries.iter() {
+        let contract = match *nikaia_std::index::get(&contracts.functions, &(entry.key())) { Some(__nikaia_value) => __nikaia_value, None => continue };
+        for error in contract.fails_with.iter() { thrown.insert(error.to_owned()); }
+    }
+    let mut next: i64 = 100000;
+    let mut out: Vec<CxRaising> = vec![];
+    for item in items.iter() {
+        match &item.node {
+            Item::Enum { name, variants, .. } => {
+                let name = *name;
+                let error = words.resolve(name).to_owned();
+                if !thrown.contains(&error) { continue; }
+                let mut codes: Vec<CxCode> = vec![];
+                for variant in variants.iter() {
+                    let variant_name = words.resolve(variant.name).to_owned();
+                    next += 1;
+                    codes.push(CxCode { constant: variant_name.to_uppercase(), variant: Some(variant_name), number: next - 1, errno: None });
+                }
+                out.push(CxRaising { error, codes });
+            },
+            _ => { },
+        }
+    }
+    for error in thrown.iter() {
+        let codes = cx_std_codes(error, target);
+        if !codes.is_empty() { out.push(CxRaising { error: error.to_owned(), codes }); }
+    }
+    out
+}
+
+fn cx_one_code(variant: Option<String>, number: i64, constant: &str, errno: Option<String>) -> CxCode { CxCode { variant, number, constant: constant.to_owned(), errno } }
+
+fn cx_numbered(target: &str, variant: &str, constant: &str, errno: &str) -> CxCode { CxCode { variant: Some(variant.to_owned()), number: cx_errno(target, errno), constant: constant.to_owned(), errno: Some(errno.to_owned()) } }
+
+pub fn cx_std_codes(error: &str, target: &str) -> Vec<CxCode> {
+    if error == "io::IoError" { return vec![cx_numbered(target, "NotFound", "IO_NOT_FOUND", "ENOENT"), cx_numbered(target, "PermissionDenied", "IO_PERMISSION_DENIED", "EACCES"), cx_numbered(target, "NotText", "IO_NOT_TEXT", "EILSEQ"), cx_one_code(Some(String::from("Outside")), 1000, "IO_OUTSIDE", None), cx_one_code(Some(String::from("Other")), 1001, "IO_OTHER", None)]; }
+    if error == "task::Crashed" { return vec![cx_one_code(None, 1100, "TASK_CRASHED", None)]; }
+    if error == "supervisor::Escalated" { return vec![cx_one_code(None, 1200, "SUPERVISOR_ESCALATED", None)]; }
+    if error == "cleanup::Failure" { return vec![cx_one_code(None, 1300, "CLEANUP_FAILURE", None)]; }
+    if error == "Overtaken" { return vec![cx_one_code(None, 1400, "OVERTAKEN", None)]; }
+    vec![]
+}
+
+pub fn cx_errno(target: &str, name: &str) -> i64 {
+    let wasi = target.starts_with("wasm32");
+    if name == "ENOENT" { return if wasi { 44 } else { 2 }; }
+    if name == "EACCES" { return if wasi { 2 } else { 13 }; }
+    if wasi { 25 } else { 84 }
+}
+
+
+// --- cexport_node.nika ---
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CxNode {
+    pub functions: Vec<String>,
+    pub trampolines: Vec<String>,
+    pub exported: Vec<(String, String)>,
+    pub members: collections::BTreeMap<String, Vec<String>>,
+    pub constructors: collections::BTreeMap<String, String>,
+    pub methods: collections::BTreeMap<String, Vec<(String, String)>>,
+    pub any_async: bool,
+}
+
+fn cx_node_scalar(shape: &CxByValue) -> String {
+    if shape.scalar { return String::from("scalar"); }
+    if shape.rust == "i32" || shape.rust == "i64" || shape.rust == "u8" || shape.rust == "f64" { return shape.rust.to_owned(); }
+    String::from("bool")
+}
+
+fn cx_node_function(symbol: &str) -> String { format!("nk_{}", symbol) }
+
+fn cx_node_run(value: &str, name: &str, at: i64, element: &str) -> String { format!("if (!nk_length(env, {}, \"{}\", &p{}_len)) goto done;\n    p{} = nk_keep(env, &kept, sizeof *p{} * p{}_len);\n    if (!p{}) goto done;\n    for (uint32_t i = 0; i < p{}_len; i++) {{\n        napi_value one;\n        napi_get_element(env, {}, i, &one);\n        {}\n    }}", value, name, at, at, at, at, at, at, value, element) }
+
+impl CxNode {
+    fn add_member(&mut self, owner: &str, text: String) {
+        let mut list: Vec<String> = vec![];
+        let before = *nikaia_std::index::get(&self.members, owner);
+        if before.is_some() {
+            let held = match before { Some(__nikaia_value) => __nikaia_value, None => return };
+            for one in held.iter() { list.push(one.to_owned()); }
+        }
+        list.push(text);
+        self.members.insert(owner.to_owned(), list);
+    }
+    fn add_method(&mut self, owner: &str, name: String, function: String) {
+        let mut list: Vec<(String, String)> = vec![];
+        let before = *nikaia_std::index::get(&self.methods, owner);
+        if before.is_some() {
+            let held = match before { Some(__nikaia_value) => __nikaia_value, None => return };
+            for (a, b) in held.iter() { list.push((a.to_owned(), b.to_owned())); }
+        }
+        list.push((name, function));
+        self.methods.insert(owner.to_owned(), list);
+    }
+    pub fn empty() -> CxNode { CxNode { functions: vec![], trampolines: vec![], exported: vec![], members: collections::BTreeMap::new(), constructors: collections::BTreeMap::new(), methods: collections::BTreeMap::new(), any_async: false } }
+    pub fn entry(&mut self, words: &winnow_grammar::InternerContext, ctx: &CxCtx, entry: &CxEntry, symbol: &str, text_out: bool, pauses: bool) {
+        let prefix = ctx.prefix.to_owned();
+        let by_value = entry.of_a_record(&ctx.records);
+        let owner_name = match entry.owner.as_ref() {
+            Some(__nikaia_it) => Some(__nikaia_it.clone()),
+            None => None,
+        };
+        let owner_text: String = nikaia_std::index::or(match entry.owner.as_ref() {
+            Some(__nikaia_it) => Some(__nikaia_it.clone()),
+            None => None,
+        }, || "".into());
+        let constructor = owner_name.is_some() && !by_value && entry.receiver.is_none() && !entry.getter && entry.name == "new";
+        let mut locals: Vec<String> = vec![];
+        let mut steps: Vec<String> = vec![];
+        let mut args: Vec<String> = vec![];
+        let mut calls: Vec<String> = vec![];
+        let mut position: i64 = 0;
+        let written = entry.written();
+        if entry.receiver.is_some() && owner_name.is_some() {
+            let owner = owner_text.to_owned();
+            if by_value {
+                locals.push(format!("{}_{} self_value;", prefix, owner));
+                steps.push(format!("if (!nk_in_{}(env, argv[0], \"self\", &self_value)) goto done;", owner));
+                args.push(String::from("&self_value"));
+                position = 1;
+            } else {
+                locals.push(format!("{}_{} *self_ptr = NULL;", prefix, owner));
+                steps.push(format!("if (!nk_held_{}(env, self, \"this\", &self_ptr)) goto done;", owner));
+                args.push(String::from("self_ptr"));
+            }
+        }
+        let mut place: i64 = 0;
+        while ((place) as usize) < entry.arg_names.len() {
+            let name = (*nikaia_std::index::get(&entry.arg_names, (place) as usize)).to_owned();
+            let ty = (*nikaia_std::index::get(&entry.arg_types, (place) as usize)).clone();
+            place += 1;
+            let at: i64 = position;
+            position += 1;
+            let value = format!("argv[{}]", at);
+            let taken = cx_taken(words, &ctx.plains, &ctx.handles, &ctx.records, &ty);
+            if taken.is_none() { continue; }
+            let kind_taken = match taken { Some(__nikaia_value) => __nikaia_value, None => continue };
+            match kind_taken {
+                CxIn::Value(ref shape) => {
+                    let kind = cx_node_scalar(shape);
+                    locals.push(format!("{} p{} = 0;", shape.c, at));
+                    steps.push(format!("if (!nk_{}(env, {}, \"{}\", &p{})) goto done;", kind, value, name, at));
+                    args.push(format!("p{}", at));
+                },
+                CxIn::Run { ref rust, ref c, as_text } => {
+                    if as_text {
+                        locals.push(format!("const uint8_t *p{} = NULL;", at));
+                        locals.push(format!("size_t p{}_len = 0;", at));
+                        steps.push(format!("if (!nk_text(env, {}, \"{}\", &kept, &p{}, &p{}_len)) goto done;", value, name, at, at));
+                    } else {
+                        let kind = cx_node_scalar(&CxByValue { rust: rust.to_owned(), c: c.to_owned(), scalar: false });
+                        locals.push(format!("{} *p{} = NULL;", c, at));
+                        locals.push(format!("uint32_t p{}_len = 0;", at));
+                        steps.push(cx_node_run(&value, &name, at, &format!("if (!nk_{}(env, one, \"{}\", &p{}[i])) goto done;", kind, name, at)));
+                    }
+                    args.push(format!("p{}", at));
+                    args.push(format!("p{}_len", at));
+                },
+                CxIn::Bytes => {
+                    locals.push(format!("const uint8_t *p{} = NULL;", at));
+                    locals.push(format!("size_t p{}_len = 0;", at));
+                    steps.push(format!("if (!nk_bytes(env, {}, \"{}\", &kept, &p{}, &p{}_len)) goto done;", value, name, at, at));
+                    args.push(format!("p{}", at));
+                    args.push(format!("p{}_len", at));
+                },
+                CxIn::Choice(which) => {
+                    locals.push(format!("int32_t p{} = 0;", at));
+                    steps.push(format!("if (!nk_i32(env, {}, \"{}\", &p{})) goto done;", value, name, at));
+                    args.push(format!("({}_{})p{}", prefix, nikaia_std::index::get(&ctx.plains, nikaia_std::index::at(which)).name, at));
+                },
+                CxIn::Handle(which) => {
+                    let ty = nikaia_std::index::get(&ctx.handles, nikaia_std::index::at(which)).name.to_owned();
+                    locals.push(format!("{}_{} *p{} = NULL;", prefix, ty, at));
+                    steps.push(format!("if (!nk_held_{}(env, {}, \"{}\", &p{})) goto done;", ty, value, name, at));
+                    args.push(format!("p{}", at));
+                },
+                CxIn::AbsentHandle(which) => {
+                    let ty = nikaia_std::index::get(&ctx.handles, nikaia_std::index::at(which)).name.to_owned();
+                    locals.push(format!("{}_{} *p{} = NULL;", prefix, ty, at));
+                    steps.push(format!("if (!nk_absent(env, {}) && !nk_held_{}(env, {}, \"{}\", &p{})) goto done;", value, ty, value, name, at));
+                    args.push(format!("p{}", at));
+                },
+                CxIn::AbsentText => {
+                    locals.push(format!("const uint8_t *p{} = NULL;", at));
+                    locals.push(format!("size_t p{}_len = 0;", at));
+                    steps.push(format!("if (!nk_absent(env, {}) && !nk_text(env, {}, \"{}\", &kept, &p{}, &p{}_len)) goto done;", value, value, name, at, at));
+                    args.push(format!("p{}", at));
+                    args.push(format!("p{}_len", at));
+                },
+                CxIn::Record(which) => {
+                    let ty = nikaia_std::index::get(&ctx.records, nikaia_std::index::at(which)).name.to_owned();
+                    locals.push(format!("{}_{} p{};", prefix, ty, at));
+                    steps.push(format!("if (!nk_in_{}(env, {}, \"{}\", &p{})) goto done;", ty, value, name, at));
+                    args.push(format!("p{}", at));
+                },
+                CxIn::Records { record, .. } => {
+                    let ty = nikaia_std::index::get(&ctx.records, nikaia_std::index::at(record)).name.to_owned();
+                    locals.push(format!("{}_{} *p{} = NULL;", prefix, ty, at));
+                    locals.push(format!("uint32_t p{}_len = 0;", at));
+                    steps.push(cx_node_run(&value, &name, at, &format!("if (!nk_in_{}(env, one, \"{}\", &p{}[i])) goto done;", ty, name, at)));
+                    args.push(format!("p{}", at));
+                    args.push(format!("p{}_len", at));
+                },
+                CxIn::Callback { ref lent, result } => {
+                    let trampoline = format!("nk_back_{}_{}", symbol, at);
+                    let mut c_params: Vec<String> = vec![];
+                    let mut handed: Vec<String> = vec![];
+                    let mut number = 0;
+                    for part in lent.iter() {
+                        match part {
+                            CxLent::Value(shape) => {
+                                c_params.push(format!("{} a{}", shape.c, number));
+                                handed.push(format!("handed[{}] = nk_from_{}(call->env, a{});", number, cx_node_scalar(shape), number));
+                            },
+                            CxLent::Choice(which) => {
+                                let which = *which;
+                                c_params.push(format!("{}_{} a{}", prefix, nikaia_std::index::get(&ctx.plains, nikaia_std::index::at(which)).name, number));
+                                handed.push(format!("handed[{}] = nk_from_i32(call->env, (int32_t)a{});", number, number));
+                            },
+                            CxLent::Text => {
+                                c_params.push(format!("const uint8_t *a{}, size_t a{}_len", number, number));
+                                handed.push(format!("napi_create_string_utf8(call->env, (const char *)a{}, a{}_len, &handed[{}]);", number, number, number));
+                            },
+                        }
+                        number += 1;
+                    }
+                    c_params.push(String::from("void *ctx"));
+                    let mut count = lent.len() as i64;
+                    if count < 1 { count = 1; }
+                    let mut c_result: String = String::from("void");
+                    let mut back: String = String::from("");
+                    let mut early: String = String::from("return;");
+                    if result.is_some() {
+                        let shape = match result { Some(__nikaia_value) => __nikaia_value, None => continue };
+                        c_result = shape.c.to_owned();
+                        back = format!("{} back = 0;\n    if (!nk_{}(call->env, result, \"the callback's result\", &back)) {{\n        call->failed = true;\n        return 0;\n    }}\n    return back;\n", shape.c, cx_node_scalar(&shape));
+                        early = String::from("return 0;");
+                    }
+                    let handed_text = handed.join("\n    ");
+                    self.trampolines.push(format!("static {} {}({}) {{\n    nk_call *call = ctx;\n    napi_value handed[{}];\n    napi_value undefined;\n    napi_value result;\n    if (call->failed) {}\n    {}\n    napi_get_undefined(call->env, &undefined);\n    if (napi_call_function(call->env, undefined, call->fn, {}, handed, &result) != napi_ok) {{\n        call->failed = true;\n        {}\n    }}\n    (void)result;\n    {}}}\n", c_result, trampoline, c_params.join(", "), count, early, handed_text, lent.len() as i64, early, back));
+                    locals.push(format!("nk_call p{} = {{ env, NULL, false }};", at));
+                    steps.push(format!("if (!nk_function(env, {}, \"{}\")) goto done;\n    p{}.fn = {};", value, name, at, value));
+                    args.push(trampoline);
+                    args.push(format!("&p{}", at));
+                    calls.push(format!("p{}", at));
+                },
+            }
+        }
+        let takes: i64 = position;
+        let found = cx_result_of(entry, words, &ctx.plains, &ctx.handles, &ctx.records);
+        let mut body: Vec<String> = vec![];
+        let mut has_finish = false;
+        let mut finish_c: Option<String> = None;
+        let mut finish_back: String = String::from("");
+        let mut finish_flagged = false;
+        let mut failed: String = String::from("");
+        if !calls.is_empty() {
+            let mut each: Vec<String> = vec![];
+            for one in calls.iter() { each.push(format!("{}.failed", one)); }
+            failed = format!("if ({}) goto done;\n    ", each.join(" || "));
+        }
+        let check = format!("{}if (status != 0) {{\n        nk_fail(env, status);\n        goto done;\n    }}", failed);
+        let call_text = format!("{}({})", symbol, args.join(", "));
+        match found {
+            CxResult::Made(ref out) => {
+                match out {
+                    CxOut::Buffer => {
+                        locals.push(String::from("uint8_t small[256];"));
+                        locals.push(String::from("uint8_t *room = small;"));
+                        locals.push(String::from("size_t written = 0;"));
+                        let mut asked = args.to_owned();
+                        asked.push(String::from("room"));
+                        asked.push(String::from("sizeof small"));
+                        asked.push(String::from("&written"));
+                        let mut again = args.to_owned();
+                        again.push(String::from("room"));
+                        again.push(String::from("written"));
+                        again.push(String::from("&written"));
+                        body.push(format!("status = {}({});", symbol, asked.join(", ")));
+                        body.push(format!("if (status == -2) {{\n        room = nk_keep(env, &kept, written);\n        if (!room) goto done;\n        status = {}({});\n    }}", symbol, again.join(", ")));
+                        body.push(check.to_owned());
+                        if text_out { body.push(String::from("napi_create_string_utf8(env, (const char *)room, written, &result);")); } else { body.push(String::from("napi_create_buffer_copy(env, written, room, NULL, &result);")); }
+                    },
+                    CxOut::Records(_) => {
+                        let ty = nikaia_std::index::get(&ctx.records, nikaia_std::index::at(cx_out_index(out))).name.to_owned();
+                        locals.push(format!("{}_{} small[16];", prefix, ty));
+                        locals.push(format!("{}_{} *room = small;", prefix, ty));
+                        locals.push(String::from("size_t written = 0;"));
+                        let mut asked = args.to_owned();
+                        asked.push(String::from("room"));
+                        asked.push(String::from("16"));
+                        asked.push(String::from("&written"));
+                        let mut again = args.to_owned();
+                        again.push(String::from("room"));
+                        again.push(String::from("written"));
+                        again.push(String::from("&written"));
+                        body.push(format!("status = {}({});", symbol, asked.join(", ")));
+                        body.push(format!("if (status == -2) {{\n        room = nk_keep(env, &kept, sizeof *room * written);\n        if (!room) goto done;\n        status = {}({});\n    }}", symbol, again.join(", ")));
+                        body.push(check.to_owned());
+                        body.push(format!("napi_create_array_with_length(env, written, &result);\n    for (size_t i = 0; i < written; i++) {{\n        napi_set_element(env, result, (uint32_t)i, nk_out_{}(env, &room[i]));\n    }}", ty));
+                    },
+                    _ => {
+                        let (c, back) = cx_node_back(out, ctx, constructor, &owner_text);
+                        let mut zero: String = String::from("0");
+                        match out {
+                            CxOut::Record(_) => { zero = String::from("{0}"); },
+                            CxOut::AbsentRecord(_) => { zero = String::from("{0}"); },
+                            _ => { },
+                        }
+                        locals.push(format!("{} out = {};", c, zero));
+                        let mut asked = args.to_owned();
+                        asked.push(String::from("&out"));
+                        if out.flagged() {
+                            locals.push(String::from("bool present = false;"));
+                            asked.push(String::from("&present"));
+                        }
+                        body.push(format!("status = {}({});", symbol, asked.join(", ")));
+                        body.push(check.to_owned());
+                        if !constructor {
+                            has_finish = true;
+                            finish_c = Some(c.to_owned());
+                            finish_back = back.to_owned();
+                            finish_flagged = out.flagged();
+                        }
+                        body.push(back);
+                    },
+                }
+            },
+            _ => {
+                body.push(format!("status = {};", call_text));
+                body.push(check.to_owned());
+                body.push(String::from("napi_get_undefined(env, &result);"));
+                has_finish = true;
+                finish_back = String::from("napi_get_undefined(env, &result);");
+            },
+        }
+        if by_value && entry.exclusive && owner_name.is_some() { body.push(format!("nk_assign_{}(env, argv[0], &self_value);", owner_text)); }
+        let mut argc: i64 = takes;
+        if argc < 1 { argc = 1; }
+        let function = cx_node_function(symbol);
+        let mut text = format!("/* `{}` */\nstatic napi_value {}(napi_env env, napi_callback_info info) {{\n    size_t argc = {};\n    napi_value argv[{}];\n    napi_value self = NULL;\n    napi_value result = NULL;\n    nk_kept *kept = NULL;\n    int status = 0;\n", written, function, argc, argc);
+        for local in locals.iter() { text.push_str(&format!("    {}\n", local)); }
+        text.push_str("    if (napi_get_cb_info(env, info, &argc, argv, &self, NULL) != napi_ok) goto done;\n");
+        if takes > 0 { text.push_str(&format!("    if (argc < {}) {{\n        napi_throw_type_error(env, NULL, \"`{}` takes {} arguments\");\n        goto done;\n    }}\n", takes, written, takes)); }
+        for step in steps.iter() { text.push_str(&format!("    {}\n", step)); }
+        for step in body.iter() { text.push_str(&format!("    {}\n", step)); }
+        text.push_str("done:\n    nk_release(kept);\n    (void)self;\n    (void)status;\n    return result;\n}\n");
+        self.functions.push(text);
+        let mut promised: String = String::from("");
+        if has_finish && pauses && calls.is_empty() && !by_value {
+            self.any_async = true;
+            let finisher = format!("nk_finish_{}", symbol);
+            let mut taken_out: String = String::from("");
+            let mut read_out: String = String::from("(void)at;");
+            let mut out_arg: Vec<String> = vec![];
+            let has_out = finish_c.is_some();
+            if has_out {
+                let c: String = nikaia_std::index::or(match finish_c.as_ref() {
+                    Some(__nikaia_it) => Some(__nikaia_it.clone()),
+                    None => None,
+                }, || "".into());
+                if finish_flagged {
+                    taken_out = format!("struct {{ {} value; bool present; }} *out = NULL;", c);
+                    read_out = format!("struct {{ {} value; bool present; }} *held = at;\n    {} out = held->value;\n    bool present = held->present;", c, c);
+                    out_arg.push(String::from("&out->value"));
+                    out_arg.push(String::from("&out->present"));
+                } else {
+                    taken_out = format!("{} *out = NULL;", c);
+                    read_out = format!("{} out = *({} *)at;", c, c);
+                    out_arg.push(String::from("out"));
+                }
+            }
+            let mut async_text = format!("static napi_value {}(napi_env env, void *at) {{\n    napi_value result = NULL;\n    {}\n    {}\n    return result;\n}}\n\n/* `{}`, as a Promise */\nstatic napi_value {}_async(napi_env env, napi_callback_info info) {{\n    size_t argc = {};\n    napi_value argv[{}];\n    napi_value self = NULL;\n    napi_value result = NULL;\n    nk_kept *kept = NULL;\n    nk_async *job = NULL;\n    int status = 0;\n    {}\n", finisher, read_out, finish_back, written, function, argc, argc, taken_out);
+            for local in locals.iter() { if !local.contains(" out = ") && !local.contains(" present = ") { async_text.push_str(&format!("    {}\n", local)); } }
+            async_text.push_str("    if (napi_get_cb_info(env, info, &argc, argv, &self, NULL) != napi_ok) goto done;\n");
+            if takes > 0 { async_text.push_str(&format!("    if (argc < {}) {{\n        napi_throw_type_error(env, NULL, \"`{}` takes {} arguments\");\n        goto done;\n    }}\n", takes, written, takes)); }
+            for step in steps.iter() { async_text.push_str(&format!("    {}\n", step)); }
+            if !out_arg.is_empty() { async_text.push_str("    out = nk_keep(env, &kept, sizeof *out);\n    if (!out) goto done;\n    memset(out, 0, sizeof *out);\n"); }
+            let mut handed_args = args.to_owned();
+            handed_args.extend(out_arg);
+            handed_args.push(String::from("nk_landed"));
+            handed_args.push(String::from("job"));
+            handed_args.push(String::from("&job->ticket->op"));
+            let mut started: String = String::from("NULL");
+            if has_out { started = String::from("out"); }
+            async_text.push_str(&format!("    job = nk_start(env, &kept, {}, {}, &result);\n    if (!job) goto done;\n    status = {}_async({});\n    if (status != 0) nk_abandon(env, job, status);\ndone:\n    nk_release(kept);\n    (void)self;\n    return result;\n}}\n", started, finisher, symbol, handed_args.join(", ")));
+            self.functions.push(async_text);
+            promised = format!("{}_async", function);
+        }
+        let name = entry.name.to_owned();
+        if !promised.is_empty() {
+            let property = format!("{}_async", name);
+            if owner_name.is_none() { self.exported.push((property, promised)); } else if entry.receiver.is_some() { self.add_member(&owner_text, format!("{{ \"{}\", NULL, {}, NULL, NULL, NULL, napi_default_method, NULL }}", property, promised)); } else { self.add_member(&owner_text, format!("{{ \"{}\", NULL, {}, NULL, NULL, NULL, napi_static, NULL }}", property, promised)); }
+        }
+        if owner_name.is_none() { self.exported.push((name, function)); } else {
+            let owner = owner_text.to_owned();
+            if by_value { self.add_method(&owner, name, function); } else if entry.getter { self.add_member(&owner, format!("{{ \"{}\", NULL, NULL, {}, NULL, NULL, napi_enumerable, NULL }}", name, function)); } else if entry.receiver.is_some() { self.add_member(&owner, format!("{{ \"{}\", NULL, {}, NULL, NULL, NULL, napi_default_method, NULL }}", name, function)); } else if constructor { self.constructors.insert(owner, function); } else { self.add_member(&owner, format!("{{ \"{}\", NULL, {}, NULL, NULL, NULL, napi_static, NULL }}", name, function)); }
+        }
+    }
+    pub fn module(&self, package: &str, prefix: &str, ctx: &CxCtx, held: &[bool]) -> String {
+        let upper = prefix.to_uppercase();
+        let status_names: [&str; 7] = ["ARGUMENT", "TOO_SMALL", "NOT_RUNNING", "PANICKED", "REENTRANT", "CLEANUP", "CANCELLED"];
+        let mut statuses: Vec<(i64, String)> = vec![];
+        let mut number = 0;
+        for name in status_names.iter() {
+            let name = *name;
+            number -= 1;
+            statuses.push((number, format!("{}_E_{}", upper, name)));
+        }
+        let mut errnos: String = String::from("");
+        for raising in ctx.codes.iter() {
+            for code in raising.codes.iter() {
+                let errno = match code.errno.as_ref() {
+                    Some(__nikaia_it) => Some(__nikaia_it.clone()),
+                    None => None,
+                };
+                if errno.is_some() {
+                    errnos.push_str(&format!("    case {}: return true;\n", code.number));
+                    statuses.push((code.number, nikaia_std::index::or(errno, || "".into())));
+                } else { statuses.push((code.number, format!("{}_E_{}", upper, code.constant))); }
+            }
+        }
+        let mut cases: String = String::from("");
+        for (code, name) in statuses.iter() {
+            let code = nikaia_std::num::value(code);
+            cases.push_str(&format!("    case {}: return \"{}\";\n", code, name));
+        }
+        let mut exported: Vec<i64> = vec![];
+        let mut at: i64 = 0;
+        while at < ctx.handles.len() as i64 {
+            if *nikaia_std::index::get(&held, nikaia_std::index::at(at)) { exported.push(at); }
+            at += 1;
+        }
+        let mut state_fields: String = String::from("    int none;\n");
+        if !exported.is_empty() {
+            state_fields = String::from("");
+            for place in exported.iter() {
+                let place = nikaia_std::num::value(place);
+                state_fields.push_str(&format!("    napi_ref {};\n", nikaia_std::index::get(&ctx.handles, nikaia_std::index::at(place)).name));
+            }
+        }
+        let digest = CX_LEDGER_DIGEST;
+        let mut out = cx_node_head(package, digest, &state_fields, &errnos, &cases, &upper, prefix);
+        for place in cx_records_in_order(&ctx.records) { out.push_str(&cx_node_record_text(nikaia_std::index::get(&ctx.records, nikaia_std::index::at(place)), ctx)); }
+        for place in exported.iter() {
+            let place = nikaia_std::num::value(place);
+            out.push_str(&cx_node_handle(&nikaia_std::index::get(&ctx.handles, nikaia_std::index::at(place)).name, place, prefix, &upper));
+        }
+        if self.any_async { out.push_str(&cx_node_async(prefix)); }
+        for trampoline in self.trampolines.iter() {
+            out.push_str(trampoline);
+            out.push_str("\n");
+        }
+        for function in self.functions.iter() {
+            out.push_str(function);
+            out.push_str("\n");
+        }
+        for place in exported.iter() {
+            let place = nikaia_std::num::value(place);
+            let ty = nikaia_std::index::get(&ctx.handles, nikaia_std::index::at(place)).name.to_owned();
+            let made_by = *nikaia_std::index::get(&self.constructors, &ty);
+            let mut made = format!("napi_throw_type_error(env, NULL, \"{} has no constructor: the library makes it\");\n    return NULL;", ty);
+            if made_by.is_some() {
+                let function = nikaia_std::index::or(made_by, || "");
+                made = format!("return {}(env, info);", function);
+            }
+            out.push_str(&cx_node_class(&ty, &made));
+        }
+        out.push_str(&cx_node_init(prefix));
+        let mut functions: Vec<String> = vec![String::from("{ \"init\", NULL, nk_init, NULL, NULL, NULL, napi_enumerable, NULL }"), String::from("{ \"shutdown\", NULL, nk_shutdown, NULL, NULL, NULL, napi_enumerable, NULL }")];
+        for (name, function) in self.exported.iter() { functions.push(format!("{{ \"{}\", NULL, {}, NULL, NULL, NULL, napi_enumerable, NULL }}", name, function)); }
+        out.push_str(&format!("    {{\n        napi_property_descriptor functions[] = {{\n            {}\n        }};\n        napi_define_properties(env, exports, sizeof functions / sizeof *functions, functions);\n    }}\n", functions.join(",\n            ")));
+        for place in exported.iter() {
+            let place = nikaia_std::num::value(place);
+            let ty = nikaia_std::index::get(&ctx.handles, nikaia_std::index::at(place)).name.to_owned();
+            let mut members: Vec<String> = vec![format!("{{ \"close\", NULL, nk_close_{}, NULL, NULL, NULL, napi_default_method, NULL }}", ty)];
+            let own = *nikaia_std::index::get(&self.members, &ty);
+            if own.is_some() {
+                let held = match own { Some(__nikaia_value) => __nikaia_value, None => return String::from("") };
+                for one in held.iter() { members.push(one.to_owned()); }
+            }
+            out.push_str(&format!("    {{\n        napi_property_descriptor members[] = {{\n            {}\n        }};\n        napi_value class;\n        napi_define_class(env, \"{}\", NAPI_AUTO_LENGTH, nk_class_{}, NULL, sizeof members / sizeof *members, members, &class);\n        napi_create_reference(env, class, 1, &state->{});\n        napi_set_named_property(env, exports, \"{}\", class);\n    }}\n", members.join(",\n            "), ty, ty, ty, ty));
+        }
+        for plain in ctx.plains.iter() {
+            let mut values: String = String::from("");
+            let mut at_value = 0;
+            for variant in plain.variants.iter() {
+                values.push_str(&format!("        napi_set_named_property(env, choices, \"{}\", nk_from_i32(env, {}));\n", variant, at_value));
+                at_value += 1;
+            }
+            out.push_str(&format!("    {{\n        napi_value choices;\n        napi_create_object(env, &choices);\n{}        napi_object_freeze(env, choices);\n        napi_set_named_property(env, exports, \"{}\", choices);\n    }}\n", values, plain.name));
+        }
+        for (owner, methods) in self.methods.iter() {
+            let mut listed: Vec<String> = vec![];
+            for (name, function) in methods.iter() { listed.push(format!("{{ \"{}\", NULL, {}, NULL, NULL, NULL, napi_enumerable, NULL }}", name, function)); }
+            out.push_str(&format!("    {{\n        napi_value methods;\n        napi_property_descriptor listed[] = {{\n            {}\n        }};\n        napi_create_object(env, &methods);\n        napi_define_properties(env, methods, sizeof listed / sizeof *listed, listed);\n        napi_object_freeze(env, methods);\n        napi_set_named_property(env, exports, \"{}\", methods);\n    }}\n", listed.join(",\n            "), owner));
+        }
+        out.push_str("    return exports;\n}\n");
+        out
+    }
+}
+
+fn cx_node_back(out: &CxOut, ctx: &CxCtx, constructor: bool, owner: &str) -> (String, String) {
+    let prefix = ctx.prefix.to_owned();
+    match out {
+        CxOut::Value(shape) => (shape.c.to_owned(), format!("result = nk_from_{}(env, out);", cx_node_scalar(shape))),
+        CxOut::AbsentValue(shape) => (shape.c.to_owned(), cx_node_absent(&format!("result = nk_from_{}(env, out);", cx_node_scalar(shape)))),
+        CxOut::AbsentRecord(which) => {
+            let which = *which;
+            let ty = nikaia_std::index::get(&ctx.records, nikaia_std::index::at(which)).name.to_owned();
+            (format!("{}_{}", prefix, ty), cx_node_absent(&format!("result = nk_out_{}(env, &out);", ty)))
+        },
+        CxOut::Choice(which) => { let which = *which; (format!("{}_{}", prefix, nikaia_std::index::get(&ctx.plains, nikaia_std::index::at(which)).name), "result = nk_from_i32(env, (int32_t)out);".to_string()) },
+        CxOut::Record(which) => {
+            let which = *which;
+            let ty = nikaia_std::index::get(&ctx.records, nikaia_std::index::at(which)).name.to_owned();
+            (format!("{}_{}", prefix, ty), format!("result = nk_out_{}(env, &out);", ty))
+        },
+        CxOut::Handle(which) => {
+            let which = *which;
+            let ty = nikaia_std::index::get(&ctx.handles, nikaia_std::index::at(which)).name.to_owned();
+            let mut back = format!("result = nk_made_{}(env, out);", ty);
+            if constructor && owner == ty { back = format!("result = nk_adopt_{}(env, self, out);", ty); }
+            (format!("{}_{} *", prefix, ty), back)
+        },
+        CxOut::AbsentHandle(which) => {
+            let which = *which;
+            let ty = nikaia_std::index::get(&ctx.handles, nikaia_std::index::at(which)).name.to_owned();
+            (format!("{}_{} *", prefix, ty), format!("if (out) {{\n        result = nk_made_{}(env, out);\n    }} else {{\n        napi_get_null(env, &result);\n    }}", ty))
+        },
+        _ => ("".to_string(), "".to_string()),
+    }
+}
+
+fn cx_node_absent(back: &str) -> String { format!("if (present) {{\n        {}\n    }} else {{\n        napi_get_null(env, &result);\n    }}", back) }
+
+fn cx_node_pair(part: &CxPart, ctx: &CxCtx, what: &str, place: &str) -> (String, String) {
+    match part {
+        CxPart::Value(shape) => (format!("if (!nk_{}(env, one, \"{}\", &{})) return false;", cx_node_scalar(shape), what, place), format!("nk_from_{}(env, {})", cx_node_scalar(shape), place)),
+        CxPart::Choice(_) => (format!("{{ int c = 0; if (!nk_choice(env, one, \"{}\", &c)) return false; {} = c; }}", what, place), format!("nk_from_i32(env, (int32_t){})", place)),
+        CxPart::Record(which) => { let which = *which; (format!("if (!nk_in_{}(env, one, \"{}\", &{})) return false;", nikaia_std::index::get(&ctx.records, nikaia_std::index::at(which)).name, what, place), format!("nk_out_{}(env, &{})", nikaia_std::index::get(&ctx.records, nikaia_std::index::at(which)).name, place)) },
+        CxPart::Array(_, _) => ("".to_string(), "".to_string()),
+    }
+}
+
+fn cx_node_field_code(field: &str, part: &CxPart, owner: &str, at: &str, ctx: &CxCtx, reads: &mut String, writes: &mut String) {
+    let what = format!("{}{}", owner, field);
+    match part {
+        CxPart::Array(element, count) => {
+            let element = nikaia_std::boxed::open(element); let count = *count;
+            let (read, write) = cx_node_pair(element, ctx, &what, &format!("out->{}{}[i]", at, field));
+            reads.push_str(&format!("    napi_get_named_property(env, value, \"{}\", &field);\n    if (!nk_length(env, field, \"{}\", &n)) return false;\n    if (n != {}) return nk_wrong(env, \"{}\", \"an array of {}\");\n    for (uint32_t i = 0; i < {}; i++) {{\n        napi_value one;\n        napi_get_element(env, field, i, &one);\n        {}\n    }}\n", field, what, count, what, count, count, read));
+            let moved = write.replace("out->", "value->");
+            writes.push_str(&format!("    napi_create_array_with_length(env, {}, &field);\n    for (uint32_t i = 0; i < {}; i++) {{\n        napi_set_element(env, field, i, {});\n    }}\n    napi_set_named_property(env, target, \"{}\", field);\n", count, count, moved, field));
+        },
+        _ => {
+            let (read, write) = cx_node_pair(part, ctx, &what, &format!("out->{}{}", at, field));
+            reads.push_str(&format!("    {{\n        napi_value one;\n        napi_get_named_property(env, value, \"{}\", &one);\n        {}\n    }}\n", field, read));
+            let moved = write.replace("out->", "value->");
+            writes.push_str(&format!("    napi_set_named_property(env, target, \"{}\", {});\n", field, moved));
+        },
+    }
+}
+
+fn cx_node_record_text(record: &CxRecord, ctx: &CxCtx) -> String {
+    let ty = record.name.to_owned();
+    let mut reads: String = String::from("");
+    let mut writes: String = String::from("");
+    if record.is_enum() {
+        let mut chosen: Vec<String> = vec![];
+        let mut cases: Vec<String> = vec![];
+        let mut names: Vec<String> = vec![];
+        let mut tag = 0;
+        for variant in record.variants.iter() {
+            let mut variant_reads: String = String::from("");
+            let mut variant_writes: String = String::from("");
+            for (field, part) in variant.fields.iter() { cx_node_field_code(field, part, &format!("{}::{}.", ty, variant.name), &format!("{}.", variant.member), ctx, &mut variant_reads, &mut variant_writes); }
+            chosen.push(format!("if (strcmp(kind, \"{}\") == 0) {{\n    out->tag = {};\n{}    }}", variant.name, tag, variant_reads));
+            cases.push(format!("    case {}:\n    napi_create_string_utf8(env, \"{}\", NAPI_AUTO_LENGTH, &field);\n    napi_set_named_property(env, target, \"kind\", field);\n{}    break;\n", tag, variant.name, variant_writes));
+            names.push(variant.name.to_owned());
+            tag += 1;
+        }
+        reads.push_str(&format!("    char kind[64];\n    size_t kind_len = 0;\n    napi_get_named_property(env, value, \"kind\", &field);\n    if (napi_get_value_string_utf8(env, field, kind, sizeof kind, &kind_len) != napi_ok)\n        return nk_wrong(env, name, \"a {} with a kind\");\n    {} else {{\n        return nk_wrong(env, name, \"a {}: {}\");\n    }}\n", ty, chosen.join(" else "), ty, names.join(", ")));
+        writes.push_str(&format!("    switch (value->tag) {{\n{}    default:\n        break;\n    }}\n", cases.join("")));
+    } else { for (field, part) in record.fields.iter() { cx_node_field_code(field, part, &format!("{}.", ty), "", ctx, &mut reads, &mut writes); } }
+    cx_node_record(&ty, &ctx.prefix, &reads, &writes)
+}
+
+pub fn cx_node_gyp(package: &str) -> String { format!("# GENERATED by `nikaia bind node`. Do not edit.\n{{\n  \"targets\": [\n    {{\n      \"target_name\": \"{}\",\n      \"sources\": [\"{}.c\"],\n      \"include_dirs\": [\"..\"],\n      \"libraries\": [\"-L<(module_root_dir)/..\", \"-l{}\", \"-Wl,-rpath,<(module_root_dir)/..\"]\n    }}\n  ]\n}}\n", package, package, package) }
+
+
+// --- cexport_node_text.nika ---
+
+fn cx_node_head(package: &str, digest: &str, state_fields: &str, errnos: &str, cases: &str, upper: &str, prefix: &str) -> String {
+    format!("/* {} - GENERATED by `nikaia bind node` from {}'s ledger. Do not edit.
+\x20  ledger: {}
+\x20  An N-API module over lib{}: build it with the host's toolchain,
+\x20  `node-gyp rebuild` with the binding.gyp beside it (ADR-284 D28). */
+
+#define NAPI_VERSION 8
+#include <node_api.h>
+#include <stdbool.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include \"{}.h\"
+
+#if defined(__GNUC__)
+#define NK_HELPER static __attribute__((unused))
+#else
+#define NK_HELPER static
+#endif
+
+/* The constructors of this module's classes, per environment. */
+typedef struct {{
+{}}} nk_state;
+
+static void nk_state_free(napi_env env, void *data, void *hint) {{
+    (void)env;
+    (void)hint;
+    free(data);
+}}
+
+/* What a call allocated, freed when it returns. */
+typedef struct nk_kept {{
+    void *at;
+    struct nk_kept *next;
+}} nk_kept;
+
+NK_HELPER void *nk_keep(napi_env env, nk_kept **kept, size_t size) {{
+    nk_kept *one = malloc(sizeof *one);
+    void *at = malloc(size ? size : 1);
+    if (!one || !at) {{
+        free(one);
+        free(at);
+        napi_throw_error(env, NULL, \"out of memory\");
+        return NULL;
+    }}
+    one->at = at;
+    one->next = *kept;
+    *kept = one;
+    return at;
+}}
+
+NK_HELPER void nk_release(nk_kept *kept) {{
+    while (kept) {{
+        nk_kept *next = kept->next;
+        free(kept->at);
+        free(kept);
+        kept = next;
+    }}
+}}
+
+/* Whether a status is an `errno` (ADR-284 D33). */
+static bool nk_errno(int status) {{
+    switch (status) {{
+{}    default: return false;
+    }}
+}}
+
+/* The header's name for a status (ADR-284 D7). */
+static const char *nk_code(int status) {{
+    switch (status) {{
+{}    default: return \"{}_E_UNKNOWN\";
+    }}
+}}
+
+/* The status as an Error: `code` its name, `status` its number, the message
+\x20  what {}_last_error said, or the name where it said nothing. */
+NK_HELPER napi_value nk_error(napi_env env, int status, const char *said, size_t len) {{
+    napi_value message, code, error, number;
+    if (said) {{
+        napi_create_string_utf8(env, said, len, &message);
+    }} else {{
+        napi_create_string_utf8(env, nk_code(status), NAPI_AUTO_LENGTH, &message);
+    }}
+    napi_create_string_utf8(env, nk_code(status), NAPI_AUTO_LENGTH, &code);
+    napi_create_error(env, code, message, &error);
+    napi_create_int32(env, status, &number);
+    napi_set_named_property(env, error, \"status\", number);
+    if (nk_errno(status)) napi_set_named_property(env, error, \"errno\", number);
+    return error;
+}}
+
+/* What {}_last_error says on this thread, or NULL. */
+NK_HELPER char *nk_said(size_t *len) {{
+    size_t written = 0;
+    char *said = NULL;
+    {}_last_error(NULL, 0, &written);
+    said = malloc(written + 1);
+    if (said && {}_last_error((uint8_t *)said, written, &written) == 0) {{
+        *len = written;
+        return said;
+    }}
+    free(said);
+    return NULL;
+}}
+
+/* Throws the status, with what this thread's last failure said. */
+NK_HELPER void nk_fail(napi_env env, int status) {{
+    size_t len = 0;
+    char *said = nk_said(&len);
+    napi_throw(env, nk_error(env, status, said, len));
+    free(said);
+}}
+
+NK_HELPER bool nk_wrong(napi_env env, const char *name, const char *wanted) {{
+    char said[256];
+    snprintf(said, sizeof said, \"`%s` must be %s\", name, wanted);
+    napi_throw_type_error(env, NULL, said);
+    return false;
+}}
+
+NK_HELPER bool nk_absent(napi_env env, napi_value value) {{
+    napi_valuetype type;
+    napi_typeof(env, value, &type);
+    return type == napi_null || type == napi_undefined;
+}}
+
+NK_HELPER bool nk_function(napi_env env, napi_value value, const char *name) {{
+    napi_valuetype type;
+    napi_typeof(env, value, &type);
+    return type == napi_function || nk_wrong(env, name, \"a function\");
+}}
+
+/* An integer between low and high: a number that is a safe integer, or a bigint. */
+NK_HELPER bool nk_integer(napi_env env, napi_value value, const char *name, int64_t low, int64_t high, int64_t *out) {{
+    napi_valuetype type;
+    napi_typeof(env, value, &type);
+    if (type == napi_bigint) {{
+        bool lossless = false;
+        int64_t n = 0;
+        napi_get_value_bigint_int64(env, value, &n, &lossless);
+        if (!lossless || n < low || n > high) {{
+            char said[256];
+            snprintf(said, sizeof said, \"`%s` is out of range\", name);
+            napi_throw_range_error(env, NULL, said);
+            return false;
+        }}
+        *out = n;
+        return true;
+    }}
+    if (type != napi_number) return nk_wrong(env, name, \"an integer\");
+    double d = 0;
+    napi_get_value_double(env, value, &d);
+    if (!(d >= -9007199254740991.0 && d <= 9007199254740991.0) || (double)(int64_t)d != d) {{
+        return nk_wrong(env, name, \"a safe integer or a bigint\");
+    }}
+    if ((int64_t)d < low || (int64_t)d > high) {{
+        char said[256];
+        snprintf(said, sizeof said, \"`%s` is out of range\", name);
+        napi_throw_range_error(env, NULL, said);
+        return false;
+    }}
+    *out = (int64_t)d;
+    return true;
+}}
+
+NK_HELPER bool nk_i32(napi_env env, napi_value value, const char *name, int32_t *out) {{
+    int64_t n = 0;
+    if (!nk_integer(env, value, name, INT32_MIN, INT32_MAX, &n)) return false;
+    *out = (int32_t)n;
+    return true;
+}}
+
+NK_HELPER bool nk_i64(napi_env env, napi_value value, const char *name, int64_t *out) {{
+    return nk_integer(env, value, name, INT64_MIN, INT64_MAX, out);
+}}
+
+NK_HELPER bool nk_u8(napi_env env, napi_value value, const char *name, uint8_t *out) {{
+    int64_t n = 0;
+    if (!nk_integer(env, value, name, 0, 255, &n)) return false;
+    *out = (uint8_t)n;
+    return true;
+}}
+
+NK_HELPER bool nk_f64(napi_env env, napi_value value, const char *name, double *out) {{
+    napi_valuetype type;
+    napi_typeof(env, value, &type);
+    if (type != napi_number) return nk_wrong(env, name, \"a number\");
+    napi_get_value_double(env, value, out);
+    return true;
+}}
+
+NK_HELPER bool nk_bool(napi_env env, napi_value value, const char *name, bool *out) {{
+    napi_valuetype type;
+    napi_typeof(env, value, &type);
+    if (type != napi_boolean) return nk_wrong(env, name, \"a boolean\");
+    napi_get_value_bool(env, value, out);
+    return true;
+}}
+
+/* A string of one character, which is its Unicode scalar value. */
+NK_HELPER bool nk_scalar(napi_env env, napi_value value, const char *name, uint32_t *out) {{
+    napi_valuetype type;
+    char16_t units[3];
+    size_t length = 0;
+    napi_typeof(env, value, &type);
+    if (type != napi_string) return nk_wrong(env, name, \"a string of one character\");
+    napi_get_value_string_utf16(env, value, units, 3, &length);
+    if (length == 1 && (units[0] < 0xD800 || units[0] > 0xDFFF)) {{
+        *out = units[0];
+        return true;
+    }}
+    if (length == 2 && units[0] >= 0xD800 && units[0] <= 0xDBFF && units[1] >= 0xDC00 && units[1] <= 0xDFFF) {{
+        *out = 0x10000 + ((uint32_t)(units[0] - 0xD800) << 10) + (uint32_t)(units[1] - 0xDC00);
+        return true;
+    }}
+    return nk_wrong(env, name, \"a string of one character\");
+}}
+
+/* Text, as UTF-8 the call keeps until it returns. */
+NK_HELPER bool nk_text(napi_env env, napi_value value, const char *name, nk_kept **kept, const uint8_t **at, size_t *len) {{
+    napi_valuetype type;
+    size_t length = 0;
+    char *room = NULL;
+    napi_typeof(env, value, &type);
+    if (type != napi_string) return nk_wrong(env, name, \"a string\");
+    napi_get_value_string_utf8(env, value, NULL, 0, &length);
+    room = nk_keep(env, kept, length + 1);
+    if (!room) return false;
+    napi_get_value_string_utf8(env, value, room, length + 1, &length);
+    *at = (const uint8_t *)room;
+    *len = length;
+    return true;
+}}
+
+/* Bytes: a Buffer or another Uint8Array, or an ArrayBuffer. */
+NK_HELPER bool nk_lent(napi_env env, napi_value value, const char *name, const uint8_t **at, size_t *len) {{
+    bool is = false;
+    void *data = NULL;
+    napi_is_typedarray(env, value, &is);
+    if (is) {{
+        napi_typedarray_type type;
+        napi_value buffer;
+        size_t offset = 0;
+        napi_get_typedarray_info(env, value, &type, len, &data, &buffer, &offset);
+        if (type != napi_uint8_array && type != napi_uint8_clamped_array) return nk_wrong(env, name, \"a Uint8Array\");
+        *at = data;
+        return true;
+    }}
+    napi_is_arraybuffer(env, value, &is);
+    if (is) {{
+        napi_get_arraybuffer_info(env, value, &data, len);
+        *at = data;
+        return true;
+    }}
+    return nk_wrong(env, name, \"a Buffer, a Uint8Array or an ArrayBuffer\");
+}}
+
+/* Bytes, copied: an `_async` call keeps them past the call that started it. */
+NK_HELPER bool nk_bytes(napi_env env, napi_value value, const char *name, nk_kept **kept, const uint8_t **at, size_t *len) {{
+    const uint8_t *lent = NULL;
+    uint8_t *room = NULL;
+    if (!nk_lent(env, value, name, &lent, len)) return false;
+    room = nk_keep(env, kept, *len);
+    if (!room) return false;
+    if (*len) memcpy(room, lent, *len);
+    *at = room;
+    return true;
+}}
+
+/* The length of an array, or of a typed array. */
+NK_HELPER bool nk_length(napi_env env, napi_value value, const char *name, uint32_t *n) {{
+    bool array = false;
+    bool typed = false;
+    napi_value length;
+    napi_is_array(env, value, &array);
+    napi_is_typedarray(env, value, &typed);
+    if (!array && !typed) return nk_wrong(env, name, \"an array\");
+    napi_get_named_property(env, value, \"length\", &length);
+    napi_get_value_uint32(env, length, n);
+    return true;
+}}
+
+NK_HELPER napi_value nk_from_i32(napi_env env, int32_t n) {{
+    napi_value made;
+    napi_create_int32(env, n, &made);
+    return made;
+}}
+
+/* A number where it is a safe integer, a bigint beyond. */
+NK_HELPER napi_value nk_from_i64(napi_env env, int64_t n) {{
+    napi_value made;
+    if (n >= -9007199254740991LL && n <= 9007199254740991LL) {{
+        napi_create_int64(env, n, &made);
+    }} else {{
+        napi_create_bigint_int64(env, n, &made);
+    }}
+    return made;
+}}
+
+NK_HELPER napi_value nk_from_u8(napi_env env, uint8_t n) {{
+    napi_value made;
+    napi_create_uint32(env, n, &made);
+    return made;
+}}
+
+NK_HELPER napi_value nk_from_f64(napi_env env, double n) {{
+    napi_value made;
+    napi_create_double(env, n, &made);
+    return made;
+}}
+
+NK_HELPER napi_value nk_from_bool(napi_env env, bool b) {{
+    napi_value made;
+    napi_get_boolean(env, b, &made);
+    return made;
+}}
+
+NK_HELPER napi_value nk_from_scalar(napi_env env, uint32_t c) {{
+    char16_t units[2];
+    size_t length = 1;
+    napi_value made;
+    if (c >= 0x10000) {{
+        units[0] = (char16_t)(0xD800 + ((c - 0x10000) >> 10));
+        units[1] = (char16_t)(0xDC00 + ((c - 0x10000) & 0x3FF));
+        length = 2;
+    }} else {{
+        units[0] = (char16_t)c;
+    }}
+    napi_create_string_utf16(env, units, length, &made);
+    return made;
+}}
+
+/* An enum's number, which the library checks (ADR-284 D5). */
+NK_HELPER bool nk_choice(napi_env env, napi_value value, const char *name, int *out) {{
+    int32_t n = 0;
+    if (!nk_i32(env, value, name, &n)) return false;
+    *out = n;
+    return true;
+}}
+
+/* A callback's state: the function, and whether it threw. */
+typedef struct {{
+    napi_env env;
+    napi_value fn;
+    bool failed;
+}} nk_call;
+
+", package, package, digest, package, package, state_fields, errnos, cases, upper, prefix, prefix, prefix, prefix)
+}
+
+fn cx_node_record(ty: &str, prefix: &str, reads: &str, writes: &str) -> String {
+    format!("/* `{}`, read from an object: every field is there and of its type. */
+NK_HELPER bool nk_in_{}(napi_env env, napi_value value, const char *name, {}_{} *out) {{
+    napi_valuetype type;
+    napi_value field;
+    uint32_t n = 0;
+    (void)field;
+    (void)n;
+    napi_typeof(env, value, &type);
+    if (type != napi_object) return nk_wrong(env, name, \"a {}\");
+{}    return true;
+}}
+
+/* `{}`'s fields, written onto an object. */
+NK_HELPER void nk_assign_{}(napi_env env, napi_value target, const {}_{} *value) {{
+    napi_value field;
+    (void)field;
+{}}}
+
+NK_HELPER napi_value nk_out_{}(napi_env env, const {}_{} *value) {{
+    napi_value made;
+    napi_create_object(env, &made);
+    nk_assign_{}(env, made, value);
+    return made;
+}}
+
+", ty, ty, prefix, ty, ty, reads, ty, ty, prefix, ty, writes, ty, prefix, ty, ty)
+}
+
+fn cx_node_handle(ty: &str, at: i64, prefix: &str, upper: &str) -> String {
+    format!("static const napi_type_tag nk_tag_{} = {{ 0x6e696b616961ULL, {}ULL }};
+
+typedef struct {{
+    {}_{} *ptr;
+}} nk_{};
+
+static void nk_finalize_{}(napi_env env, void *data, void *hint) {{
+    nk_{} *held = data;
+    (void)env;
+    (void)hint;
+    if (held->ptr) {}_{}_free(held->ptr);
+    free(held);
+}}
+
+/* `this` takes the handle `ptr`. */
+NK_HELPER napi_value nk_adopt_{}(napi_env env, napi_value self, {}_{} *ptr) {{
+    nk_{} *held = malloc(sizeof *held);
+    if (!held) {{
+        {}_{}_free(ptr);
+        napi_throw_error(env, NULL, \"out of memory\");
+        return NULL;
+    }}
+    held->ptr = ptr;
+    if (napi_wrap(env, self, held, nk_finalize_{}, NULL, NULL) != napi_ok) {{
+        nk_finalize_{}(env, held, NULL);
+        return NULL;
+    }}
+    napi_type_tag_object(env, self, &nk_tag_{});
+    return self;
+}}
+
+/* A new object of the class around `ptr`. */
+NK_HELPER napi_value nk_made_{}(napi_env env, {}_{} *ptr) {{
+    nk_state *state = NULL;
+    napi_value class, external, made = NULL;
+    napi_get_instance_data(env, (void **)&state);
+    napi_get_reference_value(env, state->{}, &class);
+    napi_create_external(env, ptr, NULL, NULL, &external);
+    if (napi_new_instance(env, class, 1, &external, &made) != napi_ok) return NULL;
+    return made;
+}}
+
+/* The handle `value` holds: one of this class, not closed. */
+NK_HELPER bool nk_held_{}(napi_env env, napi_value value, const char *name, {}_{} **out) {{
+    napi_valuetype type;
+    bool tagged = false;
+    nk_{} *held = NULL;
+    napi_typeof(env, value, &type);
+    if (type == napi_object) napi_check_object_type_tag(env, value, &nk_tag_{}, &tagged);
+    if (!tagged) return nk_wrong(env, name, \"a {}\");
+    napi_unwrap(env, value, (void **)&held);
+    if (!held || !held->ptr) {{
+        napi_throw_error(env, \"{}_E_ARGUMENT\", \"the handle is closed\");
+        return false;
+    }}
+    *out = held->ptr;
+    return true;
+}}
+
+/* `close()`: frees the handle now; a closed one stays closed. */
+static napi_value nk_close_{}(napi_env env, napi_callback_info info) {{
+    napi_value self;
+    bool tagged = false;
+    nk_{} *held = NULL;
+    if (napi_get_cb_info(env, info, NULL, NULL, &self, NULL) != napi_ok) return NULL;
+    napi_check_object_type_tag(env, self, &nk_tag_{}, &tagged);
+    if (!tagged) {{
+        nk_wrong(env, \"this\", \"a {}\");
+        return NULL;
+    }}
+    napi_unwrap(env, self, (void **)&held);
+    if (held && held->ptr) {{
+        int status = {}_{}_free(held->ptr);
+        if (status != 0) {{
+            nk_fail(env, status);
+            return NULL;
+        }}
+        held->ptr = NULL;
+    }}
+    return NULL;
+}}
+
+", ty, at, prefix, ty, ty, ty, ty, prefix, ty, ty, prefix, ty, ty, prefix, ty, ty, ty, ty, ty, prefix, ty, ty, ty, prefix, ty, ty, ty, ty, upper, ty, ty, ty, ty, prefix, ty)
+}
+
+fn cx_node_async(prefix: &str) -> String {
+    format!("/* An `_async` call's ticket (ADR-284 D19): freed once the call has settled
+\x20  and its `cancel` function has been collected. */
+typedef struct {{
+    {}_op *op;
+    int refs;
+    bool settled;
+}} nk_ticket;
+
+static void nk_ticket_drop(nk_ticket *ticket) {{
+    if (--ticket->refs == 0) {{
+        {}_op_free(ticket->op);
+        free(ticket);
+    }}
+}}
+
+static void nk_ticket_collected(napi_env env, void *data, void *hint) {{
+    (void)env;
+    (void)hint;
+    nk_ticket_drop(data);
+}}
+
+/* `cancel()`: at the call's next pause point; after it settled, nothing. */
+static napi_value nk_cancel(napi_env env, napi_callback_info info) {{
+    void *data = NULL;
+    nk_ticket *ticket = NULL;
+    if (napi_get_cb_info(env, info, NULL, NULL, NULL, &data) != napi_ok) return NULL;
+    ticket = data;
+    if (!ticket->settled && ticket->op) {{
+        int status = {}_cancel(ticket->op);
+        if (status != 0) nk_fail(env, status);
+    }}
+    return NULL;
+}}
+
+/* An `_async` call in flight: what it keeps, and the Promise it settles. */
+typedef struct {{
+    napi_deferred deferred;
+    napi_threadsafe_function tsfn;
+    nk_kept *kept;
+    void *out;
+    napi_value (*finish)(napi_env, void *);
+    nk_ticket *ticket;
+    int status;
+    char *said;
+    size_t said_len;
+}} nk_async;
+
+/* On the main thread: the Promise settled, and what the call kept freed. */
+static void nk_settle(napi_env env, napi_value js, void *context, void *data) {{
+    nk_async *job = data;
+    (void)js;
+    (void)context;
+    if (env) {{
+        if (job->status == 0) {{
+            napi_value value = job->finish(env, job->out);
+            if (!value) napi_get_undefined(env, &value);
+            napi_resolve_deferred(env, job->deferred, value);
+        }} else {{
+            napi_reject_deferred(env, job->deferred, nk_error(env, job->status, job->said, job->said_len));
+        }}
+    }}
+    job->ticket->settled = true;
+    nk_ticket_drop(job->ticket);
+    nk_release(job->kept);
+    free(job->said);
+    free(job);
+}}
+
+/* `done`, on a library thread: what last_error says is read here, where it was said. */
+static void nk_landed(int status, void *ctx) {{
+    nk_async *job = ctx;
+    job->status = status;
+    if (status != 0) job->said = nk_said(&job->said_len);
+    napi_call_threadsafe_function(job->tsfn, job, napi_tsfn_blocking);
+    napi_release_threadsafe_function(job->tsfn, napi_tsfn_release);
+}}
+
+/* A Promise with its `cancel()`, and the call that settles it, which takes what the
+\x20  arguments kept. */
+static nk_async *nk_start(napi_env env, nk_kept **kept, void *out, napi_value (*finish)(napi_env, void *), napi_value *promise) {{
+    nk_async *job = calloc(1, sizeof *job);
+    nk_ticket *ticket = calloc(1, sizeof *ticket);
+    napi_value name, cancel;
+    if (!job || !ticket) {{
+        free(job);
+        free(ticket);
+        napi_throw_error(env, NULL, \"out of memory\");
+        return NULL;
+    }}
+    napi_create_string_utf8(env, \"{}\", NAPI_AUTO_LENGTH, &name);
+    if (napi_create_threadsafe_function(env, NULL, NULL, name, 0, 1, NULL, NULL, NULL, nk_settle, &job->tsfn) != napi_ok) {{
+        free(job);
+        free(ticket);
+        return NULL;
+    }}
+    napi_create_promise(env, &job->deferred, promise);
+    ticket->refs = 1;
+    if (napi_create_function(env, \"cancel\", NAPI_AUTO_LENGTH, nk_cancel, ticket, &cancel) == napi_ok
+        && napi_add_finalizer(env, cancel, ticket, nk_ticket_collected, NULL, NULL) == napi_ok) {{
+        ticket->refs = 2;
+        napi_set_named_property(env, *promise, \"cancel\", cancel);
+    }}
+    job->ticket = ticket;
+    job->out = out;
+    job->finish = finish;
+    job->kept = *kept;
+    *kept = NULL;
+    return job;
+}}
+
+/* The call did not start, and `done` will not run: the Promise is rejected now. */
+static void nk_abandon(napi_env env, nk_async *job, int status) {{
+    job->status = status;
+    job->said = nk_said(&job->said_len);
+    napi_release_threadsafe_function(job->tsfn, napi_tsfn_abort);
+    nk_settle(env, NULL, NULL, job);
+}}
+
+", prefix, prefix, prefix, prefix)
+}
+
+fn cx_node_class(ty: &str, made: &str) -> String {
+    format!("static napi_value nk_class_{}(napi_env env, napi_callback_info info) {{
+    size_t argc = 1;
+    napi_value argv[1];
+    napi_value self;
+    napi_valuetype type = napi_undefined;
+    if (napi_get_cb_info(env, info, &argc, argv, &self, NULL) != napi_ok) return NULL;
+    if (argc >= 1) napi_typeof(env, argv[0], &type);
+    if (type == napi_external) {{
+        void *ptr = NULL;
+        napi_get_value_external(env, argv[0], &ptr);
+        return nk_adopt_{}(env, self, ptr);
+    }}
+    {}
+}}
+
+", ty, ty, made)
+}
+
+fn cx_node_init(prefix: &str) -> String {
+    format!("static napi_value nk_init(napi_env env, napi_callback_info info) {{
+    int status = {}_init();
+    (void)info;
+    if (status != 0) nk_fail(env, status);
+    return NULL;
+}}
+
+static napi_value nk_shutdown(napi_env env, napi_callback_info info) {{
+    int status = {}_shutdown();
+    (void)info;
+    if (status != 0) nk_fail(env, status);
+    return NULL;
+}}
+
+NAPI_MODULE_INIT() {{
+    nk_state *state = calloc(1, sizeof *state);
+    if (!state || napi_set_instance_data(env, state, nk_state_free, NULL) != napi_ok) return NULL;
+", prefix, prefix)
+}
+
+
+// --- cexport_python.nika ---
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CxPython {
+    pub functions: Vec<String>,
+    pub classes: collections::BTreeMap<String, Vec<String>>,
+    pub signatures: Vec<String>,
+    pub any_async: bool,
+    pub any_stream: bool,
+}
+
+fn cx_python_name(name: &str) -> String {
+    let words: [&str; 36] = ["False", "None", "True", "and", "as", "assert", "async", "await", "break", "class", "continue", "def", "del", "elif", "else", "except", "finally", "for", "from", "global", "if", "import", "in", "is", "lambda", "nonlocal", "not", "or", "pass", "raise", "return", "try", "while", "with", "yield", "self"];
+    for word in words.iter() {
+        let word = *word;
+        if word == name { return format!("{}_", name); }
+    }
+    name.to_owned()
+}
+
+fn cx_python_scalar(shape: &CxByValue) -> String {
+    if shape.rust == "i32" { return String::from("ctypes.c_int32"); }
+    if shape.rust == "i64" { return String::from("ctypes.c_int64"); }
+    if shape.rust == "u8" { return String::from("ctypes.c_uint8"); }
+    if shape.rust == "f64" { return String::from("ctypes.c_double"); }
+    if shape.rust == "bool" { return String::from("ctypes.c_bool"); }
+    String::from("ctypes.c_uint32")
+}
+
+fn cx_indent(lines: &[String], by: &str) -> String {
+    let mut out: String = String::from("");
+    for line in lines.iter() { out.push_str(&format!("{}{}\n", by, line)); }
+    out
+}
+
+fn cx_call(symbol: &str, args: &[String]) -> String { format!("_lib.{}({})", symbol, args.join(", ")) }
+
+impl CxPython {
+    fn add_class(&mut self, owner: &str, text: String) {
+        let mut list: Vec<String> = vec![];
+        let before = *nikaia_std::index::get(&self.classes, owner);
+        if before.is_some() {
+            let held = match before { Some(__nikaia_value) => __nikaia_value, None => return };
+            for one in held.iter() { list.push(one.to_owned()); }
+        }
+        list.push(text);
+        self.classes.insert(owner.to_owned(), list);
+    }
+    pub fn empty() -> CxPython { CxPython { functions: vec![], classes: collections::BTreeMap::new(), signatures: vec![], any_async: false, any_stream: false } }
+    pub fn entry(&mut self, words: &winnow_grammar::InternerContext, ctx: &CxCtx, entry: &CxEntry, symbol: &str, text_out: bool, pauses: bool) {
+        let mut def_params: Vec<String> = vec![];
+        let mut argtypes: Vec<String> = vec![];
+        let mut before: Vec<String> = vec![];
+        let mut args: Vec<String> = vec![];
+        let mut keep: Vec<String> = vec![];
+        let mut raising: Vec<String> = vec![];
+        let by_value = entry.of_a_record(&ctx.records);
+        let owner_name = match entry.owner.as_ref() {
+            Some(__nikaia_it) => Some(__nikaia_it.clone()),
+            None => None,
+        };
+        let owner_text: String = nikaia_std::index::or(match entry.owner.as_ref() {
+            Some(__nikaia_it) => Some(__nikaia_it.clone()),
+            None => None,
+        }, || "".into());
+        if entry.receiver.is_some() {
+            if by_value && owner_name.is_some() {
+                argtypes.push(format!("ctypes.POINTER({})", owner_text));
+                args.push(String::from("ctypes.byref(self)"));
+            } else {
+                argtypes.push(String::from("ctypes.c_void_p"));
+                args.push(String::from("self._live()"));
+            }
+        }
+        let mut position: i64 = 0;
+        while position < entry.arg_names.len() as i64 {
+            let name = cx_python_name(nikaia_std::index::get(&entry.arg_names, nikaia_std::index::at(position)));
+            let ty = (*nikaia_std::index::get(&entry.arg_types, nikaia_std::index::at(position))).clone();
+            position += 1;
+            def_params.push(name.to_owned());
+            let taken = cx_taken(words, &ctx.plains, &ctx.handles, &ctx.records, &ty);
+            if taken.is_none() { continue; }
+            let kind_taken = match taken { Some(__nikaia_value) => __nikaia_value, None => continue };
+            match kind_taken {
+                CxIn::Value(ref shape) => {
+                    argtypes.push(cx_python_scalar(shape));
+                    if shape.scalar { args.push(format!("ord({})", name)); } else { args.push(name.to_owned()); }
+                },
+                CxIn::Run { ref rust, as_text, .. } => {
+                    let mut element: String = String::from("ctypes.c_bool");
+                    if as_text { element = String::from("ctypes.c_uint8"); } else if rust == "i32" { element = String::from("ctypes.c_int32"); } else if rust == "i64" { element = String::from("ctypes.c_int64"); } else if rust == "u8" { element = String::from("ctypes.c_uint8"); } else if rust == "f64" { element = String::from("ctypes.c_double"); }
+                    argtypes.push(format!("ctypes.POINTER({})", element));
+                    argtypes.push(String::from("ctypes.c_size_t"));
+                    if as_text { before.push(format!("{}_at, {}_len = _text({})", name, name, name)); } else { before.push(format!("{}_at, {}_len = _run({}, {})", name, name, element, name)); }
+                    args.push(format!("{}_at", name));
+                    args.push(format!("{}_len", name));
+                },
+                CxIn::Bytes => {
+                    argtypes.push(String::from("ctypes.POINTER(ctypes.c_uint8)"));
+                    argtypes.push(String::from("ctypes.c_size_t"));
+                    before.push(format!("{}_at, {}_len = _bytes({})", name, name, name));
+                    args.push(format!("{}_at", name));
+                    args.push(format!("{}_len", name));
+                },
+                CxIn::Choice(at) => {
+                    argtypes.push(String::from("ctypes.c_int"));
+                    args.push(format!("int({}({}))", nikaia_std::index::get(&ctx.plains, (at) as usize).name, name));
+                },
+                CxIn::Record(at) => {
+                    argtypes.push(nikaia_std::index::get(&ctx.records, (at) as usize).name.to_owned());
+                    args.push(name.to_owned());
+                },
+                CxIn::Records { record, .. } => {
+                    let record_name = nikaia_std::index::get(&ctx.records, nikaia_std::index::at(record)).name.to_owned();
+                    argtypes.push(format!("ctypes.POINTER({})", record_name));
+                    argtypes.push(String::from("ctypes.c_size_t"));
+                    before.push(format!("{}_at, {}_len = _run({}, {})", name, name, record_name, name));
+                    args.push(format!("{}_at", name));
+                    args.push(format!("{}_len", name));
+                },
+                CxIn::Handle(_) => {
+                    argtypes.push(String::from("ctypes.c_void_p"));
+                    args.push(format!("{}._live()", name));
+                },
+                CxIn::AbsentHandle(_) => {
+                    argtypes.push(String::from("ctypes.c_void_p"));
+                    args.push(format!("None if {} is None else {}._live()", name, name));
+                },
+                CxIn::AbsentText => {
+                    argtypes.push(String::from("ctypes.POINTER(ctypes.c_uint8)"));
+                    argtypes.push(String::from("ctypes.c_size_t"));
+                    before.push(format!("{}_at, {}_len = (None, 0) if {} is None else _text({})", name, name, name, name));
+                    args.push(format!("{}_at", name));
+                    args.push(format!("{}_len", name));
+                },
+                CxIn::Callback { ref lent, result } => {
+                    let mut c_args: Vec<String> = vec![];
+                    let mut params: Vec<String> = vec![];
+                    let mut handed: Vec<String> = vec![];
+                    let mut at = 0;
+                    for part in lent.iter() {
+                        match part {
+                            CxLent::Value(shape) => {
+                                c_args.push(cx_python_scalar(shape));
+                                params.push(format!("a{}", at));
+                                if shape.scalar { handed.push(format!("chr(a{})", at)); } else { handed.push(format!("a{}", at)); }
+                            },
+                            CxLent::Choice(which) => {
+                                let which = *which;
+                                c_args.push(String::from("ctypes.c_int"));
+                                params.push(format!("a{}", at));
+                                handed.push(format!("{}(a{})", nikaia_std::index::get(&ctx.plains, nikaia_std::index::at(which)).name, at));
+                            },
+                            CxLent::Text => {
+                                c_args.push(String::from("ctypes.POINTER(ctypes.c_uint8)"));
+                                c_args.push(String::from("ctypes.c_size_t"));
+                                params.push(format!("a{}, a{}_len", at, at));
+                                handed.push(format!("ctypes.string_at(a{}, a{}_len).decode(\"utf-8\")", at, at));
+                            },
+                        }
+                        at += 1;
+                    }
+                    c_args.push(String::from("ctypes.c_void_p"));
+                    params.push(String::from("ctx"));
+                    let mut restype: String = String::from("None");
+                    let mut default: String = String::from("None");
+                    if result.is_some() {
+                        restype = cx_python_scalar(&match result { Some(__nikaia_value) => __nikaia_value, None => continue });
+                        default = String::from("0");
+                    }
+                    let kind = format!("ctypes.CFUNCTYPE({}, {})", restype, c_args.join(", "));
+                    argtypes.push(kind.to_owned());
+                    argtypes.push(String::from("ctypes.c_void_p"));
+                    before.push(format!("{}_raised = []", name));
+                    before.push(format!("{}_c = {}(lambda {}: _calling({}_raised, {}, {}, {}))", name, kind, params.join(", "), name, default, name, handed.join(", ")));
+                    raising.push(format!("{}_raised", name));
+                    keep.push(format!("{}_c", name));
+                    args.push(format!("{}_c", name));
+                    args.push(String::from("None"));
+                },
+            }
+        }
+        let mut after: Vec<String> = vec![];
+        let found = cx_result_of(entry, words, &ctx.plains, &ctx.handles, &ctx.records);
+        let mut body_call: String = format!("_check({})", cx_call(symbol, &args));
+        let mut has_result = false;
+        let mut buffered = false;
+        let mut flagged = false;
+        match found {
+            CxResult::Made(ref out) => {
+                has_result = true;
+                match out {
+                    CxOut::Buffer => {
+                        buffered = true;
+                        argtypes.push(String::from("ctypes.POINTER(ctypes.c_uint8)"));
+                        argtypes.push(String::from("ctypes.c_size_t"));
+                        argtypes.push(String::from("ctypes.POINTER(ctypes.c_size_t)"));
+                        let mut asked = args.to_owned();
+                        asked.push(String::from("out"));
+                        asked.push(String::from("cap"));
+                        asked.push(String::from("written"));
+                        body_call = format!("got = _buffer(lambda out, cap, written: {})", cx_call(symbol, &asked));
+                        if text_out { after.push(String::from("return got.decode(\"utf-8\")")); } else { after.push(String::from("return got")); }
+                    },
+                    CxOut::Records(_) => {
+                        buffered = true;
+                        let record = nikaia_std::index::get(&ctx.records, nikaia_std::index::at(cx_out_index(out))).name.to_owned();
+                        argtypes.push(format!("ctypes.POINTER({})", record));
+                        argtypes.push(String::from("ctypes.c_size_t"));
+                        argtypes.push(String::from("ctypes.POINTER(ctypes.c_size_t)"));
+                        let mut asked = args.to_owned();
+                        asked.push(String::from("out"));
+                        asked.push(String::from("cap"));
+                        asked.push(String::from("written"));
+                        body_call = format!("got = _structs({}, lambda out, cap, written: {})", record, cx_call(symbol, &asked));
+                        after.push(String::from("return got"));
+                    },
+                    _ => {
+                        flagged = out.flagged();
+                        let (ctype, back) = cx_python_back(out, ctx);
+                        argtypes.push(format!("ctypes.POINTER({})", ctype));
+                        before.push(format!("out = {}()", ctype));
+                        let mut asked = args.to_owned();
+                        asked.push(String::from("ctypes.byref(out)"));
+                        if flagged {
+                            argtypes.push(String::from("ctypes.POINTER(ctypes.c_bool)"));
+                            before.push(String::from("present = ctypes.c_bool()"));
+                            asked.push(String::from("ctypes.byref(present)"));
+                        }
+                        body_call = format!("_check({})", cx_call(symbol, &asked));
+                        after.push(format!("return {}", back));
+                    },
+                }
+            },
+            _ => { },
+        }
+        self.signatures.push(format!("_lib.{}.argtypes = [{}]\n_lib.{}.restype = ctypes.c_int", symbol, argtypes.join(", "), symbol));
+        let asyncable = pauses && raising.is_empty() && !buffered;
+        let mut async_lines: Vec<String> = vec![];
+        if asyncable {
+            self.any_async = true;
+            let mut async_types = argtypes.to_owned();
+            async_types.push(String::from("_DONE"));
+            async_types.push(String::from("ctypes.c_void_p"));
+            async_types.push(String::from("ctypes.POINTER(ctypes.c_void_p)"));
+            self.signatures.push(format!("_lib.{}_async.argtypes = [{}]\n_lib.{}_async.restype = ctypes.c_int", symbol, async_types.join(", "), symbol));
+            async_lines = before.to_owned();
+            let mut handed_args = args.to_owned();
+            if has_result { handed_args.push(String::from("ctypes.byref(out)")); }
+            if flagged { handed_args.push(String::from("ctypes.byref(present)")); }
+            async_lines.push(String::from("def finish(status):"));
+            async_lines.push(String::from("    if status != 0:"));
+            async_lines.push(String::from("        return _ERRORS.get(status, Error)(_said())"));
+            if !after.is_empty() { async_lines.push(format!("    {}", *nikaia_std::index::get(&after, 0))); } else { async_lines.push(String::from("    return None")); }
+            async_lines.push(format!("return _start(_lib.{}_async, [{}], finish, done)", symbol, handed_args.join(", ")));
+        }
+        let mut lines: Vec<String> = before.to_owned();
+        if raising.is_empty() { lines.push(body_call.to_owned()); } else {
+            lines.push(String::from("try:"));
+            lines.push(format!("    {}", body_call));
+            lines.push(String::from("finally:"));
+            for held in raising.iter() {
+                lines.push(format!("    if {}:", held));
+                lines.push(format!("        raise {}[0]", held));
+            }
+        }
+        for kept in keep.iter() { lines.push(format!("del {}", kept)); }
+        lines.extend(after);
+        let mut streams: Vec<i64> = vec![];
+        position = 0;
+        while position < entry.arg_names.len() as i64 {
+            let taken = cx_taken(words, &ctx.plains, &ctx.handles, &ctx.records, nikaia_std::index::get(&entry.arg_types, nikaia_std::index::at(position)));
+            if taken.is_some() {
+                let kind_taken = match taken { Some(__nikaia_value) => __nikaia_value, None => continue };
+                match kind_taken {
+                    CxIn::Callback { result, .. } => {
+                        if result.is_some() {
+                            let shape = match result { Some(__nikaia_value) => __nikaia_value, None => continue };
+                            if shape.rust == "bool" { streams.push(position); }
+                        }
+                    },
+                    _ => { },
+                }
+            }
+            position += 1;
+        }
+        if streams.len() == 1 && owner_name.is_none() {
+            self.any_stream = true;
+            let mut others: Vec<String> = vec![];
+            let mut forwarded: Vec<String> = vec![];
+            let mut place: i64 = 0;
+            while ((place) as usize) < def_params.len() {
+                if place != *nikaia_std::index::get(&streams, 0) {
+                    others.push((*nikaia_std::index::get(&def_params, (place) as usize)).to_owned());
+                    forwarded.push((*nikaia_std::index::get(&def_params, (place) as usize)).to_owned());
+                } else { forwarded.push(String::from("each")); }
+                place += 1;
+            }
+            self.functions.push(format!("def {}_iter({}):\n    return _stream(lambda each: {}({}))\n", entry.name, others.join(", "), cx_python_name(&entry.name), forwarded.join(", ")));
+        }
+        if !async_lines.is_empty() {
+            let mut params = def_params.to_owned();
+            params.push(String::from("done=None"));
+            if owner_name.is_none() { self.functions.push(format!("def {}_async({}):\n{}", entry.name, params.join(", "), cx_indent(&async_lines, "    "))); } else if entry.receiver.is_some() {
+                params.insert(0, String::from("self"));
+                self.add_class(&owner_text, format!("    def {}_async({}):\n{}", entry.name, params.join(", "), cx_indent(&async_lines, "        ")));
+            }
+        }
+        let python = cx_python_name(&entry.name);
+        if owner_name.is_none() { self.functions.push(format!("def {}({}):\n{}", python, def_params.join(", "), cx_indent(&lines, "    "))); } else {
+            let owner = owner_text.to_owned();
+            if entry.getter { self.add_class(&owner, format!("    @property\n    def {}(self):\n{}", python, cx_indent(&lines, "        "))); } else if entry.receiver.is_some() {
+                let mut params: Vec<String> = vec![String::from("self")];
+                params.extend(def_params);
+                self.add_class(&owner, format!("    def {}({}):\n{}", python, params.join(", "), cx_indent(&lines, "        ")));
+            } else if entry.name == "new" {
+                let mut params: Vec<String> = vec![String::from("self")];
+                params.extend(def_params);
+                let mut made = lines.to_owned();
+                if !made.is_empty() {
+                    let last = made.len() as i64 - 1;
+                    { let __nikaia_stored = String::from("self._ptr = out.value"); nikaia_std::index::set(&mut made, nikaia_std::index::at(last), __nikaia_stored); }
+                }
+                self.add_class(&owner, format!("    def __init__({}):\n{}", params.join(", "), cx_indent(&made, "        ")));
+            } else { self.add_class(&owner, format!("    @staticmethod\n    def {}({}):\n{}", python, def_params.join(", "), cx_indent(&lines, "        "))); }
+        }
+    }
+    pub fn module(&self, package: &str, prefix: &str, ctx: &CxCtx, held: &[bool], any_pause: bool) -> String {
+        let library = package.replace("-", "_");
+        let digest = CX_LEDGER_DIGEST;
+        let mut out = format!("\"\"\"{} - GENERATED by `nikaia bind python` from {}'s ledger. Do not edit.\n\nledger: {}\n\"\"\"\n\nimport ctypes\nimport enum\nimport os\nimport sys\n\n_here = os.path.dirname(os.path.abspath(__file__))\nif sys.platform == \"darwin\":\n    _file = \"lib{}.dylib\"\nelif sys.platform == \"win32\":\n    _file = \"{}.dll\"\nelse:\n    _file = \"lib{}.so\"\n_lib = ctypes.CDLL(os.path.join(_here, \"..\", _file))\n\n\nclass Error(Exception):\n    \"\"\"A status other than OK, with what `{}_last_error` said.\"\"\"\n    code = None\n\n\nclass BoundaryError(Error):\n    \"\"\"One of the seven statuses the boundary owns.\"\"\"\n\n\n", package, package, digest, library, library, library, prefix);
+        let boundary_names: [&str; 7] = ["ArgumentError", "TooSmallError", "NotRunningError", "PanickedError", "ReentrantError", "CleanupError", "CancelledError"];
+        let mut errors: Vec<(String, i64)> = vec![];
+        let mut taken: collections::BTreeSet<String> = collections::BTreeSet::new();
+        let mut number = 0;
+        for name in boundary_names.iter() {
+            let name = *name;
+            number -= 1;
+            out.push_str(&format!("class {}(BoundaryError):\n    code = {}\n\n\n", name, number));
+            errors.push((name.to_owned(), number));
+            taken.insert(name.to_owned());
+        }
+        for raising in ctx.codes.iter() {
+            let error = raising.error.to_owned();
+            let spelled = error.replace("::", "");
+            for code in raising.codes.iter() {
+                let word: String = nikaia_std::index::or(match code.variant.as_ref() {
+                    Some(__nikaia_it) => Some(__nikaia_it.clone()),
+                    None => None,
+                }, || "".into());
+                let mut what = error.to_owned();
+                let mut name: String = format!("{}{}", spelled, word);
+                if code.variant.is_some() {
+                    what = format!("{}::{}", error, word);
+                    if !taken.contains(&word) {
+                        taken.insert(word.to_owned());
+                        name = word.to_owned();
+                    }
+                } else {
+                    let first = nikaia_std::index::get(&spelled, 0..1).to_uppercase();
+                    name = format!("{}{}", first, nikaia_std::index::get(&spelled, 1..));
+                    taken.insert(name.to_owned());
+                }
+                let code_number = code.number;
+                let errno = match code.errno.as_ref() {
+                    Some(__nikaia_it) => Some(__nikaia_it.clone()),
+                    None => None,
+                };
+                if errno.is_some() {
+                    let named = nikaia_std::index::or(errno, || "".into());
+                    let mut os: String = String::from("OSError");
+                    if named == "ENOENT" { os = String::from("FileNotFoundError"); } else if named == "EACCES" { os = String::from("PermissionError"); }
+                    out.push_str(&format!("class {}(Error, {}):\n    \"\"\"`{}`, `{}`.\"\"\"\n    code = {}\n\n    def __init__(self, said):\n        {}.__init__(self, {}, said)\n\n\n", name, os, what, named, code_number, os, code_number));
+                } else { out.push_str(&format!("class {}(Error):\n    \"\"\"`{}`.\"\"\"\n    code = {}\n\n\n", name, what, code_number)); }
+                errors.push((name, code_number));
+            }
+        }
+        let mut table: Vec<String> = vec![];
+        for (name, code) in errors.iter() {
+            let code = nikaia_std::num::value(code);
+            table.push(format!("{}: {}", code, name));
+        }
+        out.push_str(&cx_python_helpers(prefix, &table.join(", ")));
+        if self.any_stream { out.push_str(&cx_python_stream()); }
+        if any_pause && self.any_async { out.push_str(&cx_python_ticket(prefix)); }
+        for plain in ctx.plains.iter() {
+            let mut values: String = String::from("");
+            let mut at = 0;
+            for variant in plain.variants.iter() {
+                values.push_str(&format!("    {} = {}\n", variant, at));
+                at += 1;
+            }
+            out.push_str(&format!("class {}(enum.IntEnum):\n{}\n\n", plain.name, values));
+        }
+        for place in cx_records_in_order(&ctx.records) {
+            let record = nikaia_std::index::get(&ctx.records, nikaia_std::index::at(place));
+            if record.is_enum() {
+                let ty = record.name.to_owned();
+                let mut members: Vec<String> = vec![];
+                for variant in record.variants.iter() {
+                    if variant.fields.is_empty() { continue; }
+                    out.push_str(&format!("class _{}_{}(ctypes.Structure):\n    _fields_ = [{}]\n\n\n", ty, variant.name, cx_python_laid_out(&variant.fields, ctx)));
+                    members.push(format!("(\"{}\", _{}_{})", variant.member, ty, variant.name));
+                }
+                let mut tags: String = String::from("");
+                let mut tag = 0;
+                for variant in record.variants.iter() {
+                    tags.push_str(&format!("    {} = {}\n", variant.name, tag));
+                    tag += 1;
+                }
+                if members.is_empty() { out.push_str(&format!("class {}(ctypes.Structure):\n    _fields_ = [(\"tag\", ctypes.c_int)]\n{}\n", ty, tags)); } else { out.push_str(&format!("class _{}_Union(ctypes.Union):\n    _fields_ = [{}]\n\n\nclass {}(ctypes.Structure):\n    _anonymous_ = (\"_u\",)\n    _fields_ = [(\"tag\", ctypes.c_int), (\"_u\", _{}_Union)]\n{}\n", ty, members.join(", "), ty, ty, tags)); }
+            } else { out.push_str(&format!("class {}(ctypes.Structure):\n    _fields_ = [{}]\n\n", record.name, cx_python_laid_out(&record.fields, ctx))); }
+            let own = *nikaia_std::index::get(&self.classes, &record.name);
+            if own.is_some() {
+                let held = match own { Some(__nikaia_value) => __nikaia_value, None => return out };
+                for member in held.iter() {
+                    out.push_str(member);
+                    out.push_str("\n");
+                }
+            }
+            out.push_str("\n");
+        }
+        let mut at: i64 = 0;
+        while at < ctx.handles.len() as i64 {
+            if *nikaia_std::index::get(&held, nikaia_std::index::at(at)) {
+                let ty = nikaia_std::index::get(&ctx.handles, nikaia_std::index::at(at)).name.to_owned();
+                out.push_str(&format!("_lib.{}_{}_free.argtypes = [ctypes.c_void_p]\n_lib.{}_{}_free.restype = ctypes.c_int\n\n\nclass {}:\n    \"\"\"A handle (ADR-284 D5): `close()` frees it, as leaving a `with` does.\"\"\"\n\n    _ptr = None\n\n    @classmethod\n    def _from(cls, ptr):\n        made = cls.__new__(cls)\n        made._ptr = ptr\n        return made\n\n    def _live(self):\n        if not self._ptr:\n            raise ArgumentError(\"the handle is closed\")\n        return self._ptr\n\n    def close(self):\n        if self._ptr:\n            ptr, self._ptr = self._ptr, None\n            _check(_lib.{}_{}_free(ptr))\n\n    def __enter__(self):\n        return self\n\n    def __exit__(self, *_):\n        self.close()\n\n    def __del__(self):\n        try:\n            self.close()\n        except Exception:\n            pass\n\n", prefix, ty, prefix, ty, ty, prefix, ty));
+                let own = *nikaia_std::index::get(&self.classes, &ty);
+                if own.is_some() {
+                    let held_members = match own { Some(__nikaia_value) => __nikaia_value, None => return out };
+                    for member in held_members.iter() {
+                        out.push_str(member);
+                        out.push_str("\n");
+                    }
+                }
+                out.push_str("\n");
+            }
+            at += 1;
+        }
+        for signature in self.signatures.iter() {
+            out.push_str(signature);
+            out.push_str("\n");
+        }
+        out.push_str("\n\n");
+        for function in self.functions.iter() {
+            out.push_str(function);
+            out.push_str("\n\n");
+        }
+        out
+    }
+}
+
+fn cx_python_field_type(part: &CxPart, ctx: &CxCtx) -> String {
+    match part {
+        CxPart::Value(shape) => cx_python_scalar(shape),
+        CxPart::Choice(_) => String::from("ctypes.c_int"),
+        CxPart::Record(at) => { let at = *at; nikaia_std::index::get(&ctx.records, nikaia_std::index::at(at)).name.to_owned() },
+        CxPart::Array(element, count) => { let element = nikaia_std::boxed::open(element); let count = *count; format!("{} * {}", cx_python_field_type(element, ctx), count) },
+    }
+}
+
+fn cx_python_laid_out(fields: &[(String, CxPart)], ctx: &CxCtx) -> String {
+    let mut parts: Vec<String> = vec![];
+    for (field, part) in fields.iter() { parts.push(format!("(\"{}\", {})", field, cx_python_field_type(part, ctx))); }
+    parts.join(", ")
+}
+
+fn cx_python_back(out: &CxOut, ctx: &CxCtx) -> (String, String) {
+    match out {
+        CxOut::Value(shape) => (cx_python_scalar(shape), cx_python_value(shape)),
+        CxOut::AbsentValue(shape) => (cx_python_scalar(shape), format!("{} if present.value else None", cx_python_value(shape))),
+        CxOut::AbsentRecord(at) => { let at = *at; (nikaia_std::index::get(&ctx.records, nikaia_std::index::at(at)).name.to_owned(), "out if present.value else None".to_string()) },
+        CxOut::Choice(at) => { let at = *at; ("ctypes.c_int".to_string(), format!("{}(out.value)", nikaia_std::index::get(&ctx.plains, nikaia_std::index::at(at)).name)) },
+        CxOut::Record(at) => { let at = *at; (nikaia_std::index::get(&ctx.records, nikaia_std::index::at(at)).name.to_owned(), "out".to_string()) },
+        CxOut::Handle(at) => { let at = *at; ("ctypes.c_void_p".to_string(), format!("{}._from(out.value)", nikaia_std::index::get(&ctx.handles, nikaia_std::index::at(at)).name)) },
+        CxOut::AbsentHandle(at) => { let at = *at; ("ctypes.c_void_p".to_string(), format!("None if not out.value else {}._from(out.value)", nikaia_std::index::get(&ctx.handles, nikaia_std::index::at(at)).name)) },
+        _ => ("".to_string(), "".to_string()),
+    }
+}
+
+fn cx_python_value(shape: &CxByValue) -> String {
+    if shape.scalar { return String::from("chr(out.value)"); }
+    if shape.rust == "bool" { return String::from("bool(out.value)"); }
+    String::from("out.value")
+}
+
+fn cx_python_helpers(prefix: &str, table: &str) -> String { format!("_ERRORS = {{{}}}\n\n_lib.{}_last_error.argtypes = [ctypes.POINTER(ctypes.c_uint8), ctypes.c_size_t, ctypes.POINTER(ctypes.c_size_t)]\n_lib.{}_last_error.restype = ctypes.c_int\n\n\ndef _buffer(call):\n    \"\"\"Asks the size, then hands a buffer of it (ADR-284 D6).\"\"\"\n    written = ctypes.c_size_t(0)\n    _check(call(None, 0, ctypes.byref(written)))\n    room = (ctypes.c_uint8 * max(written.value, 1))()\n    _check(call(room, written.value, ctypes.byref(written)))\n    return bytes(room[: written.value])\n\n\ndef _structs(kind, call):\n    \"\"\"Asks the count, then hands room for it, counted in structs (ADR-284 D16).\"\"\"\n    written = ctypes.c_size_t(0)\n    _check(call(None, 0, ctypes.byref(written)))\n    room = (kind * max(written.value, 1))()\n    _check(call(room, written.value, ctypes.byref(written)))\n    return list(room[: written.value])\n\n\ndef _said():\n    written = ctypes.c_size_t(0)\n    _lib.{}_last_error(None, 0, ctypes.byref(written))\n    room = (ctypes.c_uint8 * max(written.value, 1))()\n    _lib.{}_last_error(room, written.value, ctypes.byref(written))\n    return bytes(room[: written.value]).decode(\"utf-8\", \"replace\")\n\n\ndef _check(status):\n    if status != 0:\n        raise _ERRORS.get(status, Error)(_said())\n\n\ndef _calling(raised, default, call, *args):\n    try:\n        return call(*args)\n    except BaseException as error:\n        raised.append(error)\n        return default\n\n\ndef _bytes(data):\n    data = bytes(data)\n    return (ctypes.c_uint8 * len(data)).from_buffer_copy(data), len(data)\n\n\ndef _text(text):\n    return _bytes(text.encode(\"utf-8\"))\n\n\ndef _run(kind, values):\n    values = list(values)\n    return (kind * len(values))(*values), len(values)\n\n\n_lib.{}_init.restype = ctypes.c_int\n_lib.{}_shutdown.restype = ctypes.c_int\n\n\ndef init():\n    \"\"\"Starts the library, and starts it again after `shutdown` (ADR-284 D10).\"\"\"\n    _check(_lib.{}_init())\n\n\ndef shutdown():\n    \"\"\"Stops the library; every call after it raises `NotRunningError` until `init`.\"\"\"\n    _check(_lib.{}_shutdown())\n\n\n", table, prefix, prefix, prefix, prefix, prefix, prefix, prefix, prefix) }
+
+fn cx_python_stream() -> String {
+    String::from("def _stream(call):
+    \"\"\"The items a callback is handed, yielded one at a time: the next is made
+    after this one was asked for, and closing the generator is the stop (ADR-284 D21).\"\"\"
+    import queue
+    import threading
+
+    items = queue.Queue(maxsize=1)
+    go = queue.Queue(maxsize=1)
+    end = object()
+    outcome = []
+
+    def each(*item):
+        items.put(item[0] if len(item) == 1 else item)
+        return go.get()
+
+    def run():
+        try:
+            outcome.append(call(each))
+        except BaseException as error:
+            outcome.append(error)
+        items.put(end)
+
+    threading.Thread(target=run, daemon=True).start()
+    ended = False
+    try:
+        while True:
+            item = items.get()
+            if item is end:
+                ended = True
+                break
+            yield item
+            go.put(True)
+    finally:
+        if not ended:
+            go.put(False)
+            while items.get() is not end:
+                go.put(False)
+    if outcome and isinstance(outcome[0], BaseException):
+        raise outcome[0]
+
+
+")
+}
+
+fn cx_python_ticket(prefix: &str) -> String { format!("_DONE = ctypes.CFUNCTYPE(None, ctypes.c_int, ctypes.c_void_p)\n_lib.{}_cancel.argtypes = [ctypes.c_void_p]\n_lib.{}_cancel.restype = ctypes.c_int\n_lib.{}_op_free.argtypes = [ctypes.c_void_p]\n_lib.{}_op_free.restype = ctypes.c_int\n# Every call in flight, with what it must keep alive until `done`.\n_HELD = {{}}\n\n\nclass Ticket:\n    \"\"\"An `_async` call: `cancel()` cancels it at its next pause point (ADR-284 D19).\"\"\"\n\n    def __init__(self):\n        self._op = ctypes.c_void_p()\n\n    def cancel(self):\n        if self._op:\n            _check(_lib.{}_cancel(self._op))\n\n    def __del__(self):\n        # Only once `done` has run: until then `_HELD` holds this.\n        if self._op:\n            _lib.{}_op_free(self._op)\n\n\ndef _settle(future, value):\n    if future.done():\n        return\n    if isinstance(value, BaseException):\n        future.set_exception(value)\n    else:\n        future.set_result(value)\n\n\ndef _start(function, args, finish, done):\n    loop = None\n    if done is None:\n        import asyncio\n\n        loop = asyncio.get_running_loop()\n        future = loop.create_future()\n    ticket = Ticket()\n    held = []\n\n    def landed(status, ctx):\n        value = finish(status)\n        _HELD.pop(id(held), None)\n        if loop is None:\n            done(value)\n        else:\n            try:\n                loop.call_soon_threadsafe(_settle, future, value)\n            except RuntimeError:\n                pass  # the loop has closed: nobody waits for it\n\n    callback = _DONE(landed)\n    held.extend([callback, args, ticket])\n    _HELD[id(held)] = held\n    _check(function(*args, callback, None, ctypes.byref(ticket._op)))\n    if loop is None:\n        return ticket\n    future.add_done_callback(lambda f: f.cancelled() and ticket.cancel())\n    return future\n\n\n", prefix, prefix, prefix, prefix, prefix, prefix) }
+
+
 // --- check_calls.nika ---
 
 pub fn call_arguments(signature: &Signature) -> Vec<(String, Ty)> {
@@ -23655,6 +26987,27 @@ pub mod build_values {
 pub mod calls {
     #[allow(unused_imports)]
     pub use super::{Callee, callee_of, callee_named};
+}
+pub mod cexport {
+    #[allow(unused_imports)]
+    pub use super::{CX_LEDGER_DIGEST, CxExported, CxCtx, CxBuild, cx_export};
+}
+pub mod cexport_mirror {
+    #[allow(unused_imports)]
+    pub use super::{cx_converted, cx_mirror, cx_tagged_mirror};
+}
+pub mod cexport_model {
+    #[allow(unused_imports)]
+    pub use super::{CxRefused, CxByValue, CxIn, CxLent, CxOut, cx_out_index, CxRecord, CxAlternative, CxPart, cx_element, CxPlain, CxHold, CxVariantOf, CxEntry, CxHandled, CxShown, CxRaising, CxCode, cx_escaped, cx_not_yet, cx_nothing_exported, cx_by_value, cx_records, cx_record_of, cx_records_in_order, cx_plain_enums, cx_choice, cx_handle_of, cx_taken, cx_handed, cx_parameter_names, cx_handled_structs, cx_result_of, CxResult, cx_entries_in, cx_variant_codes, cx_std_codes, cx_errno};
+}
+pub mod cexport_node {
+    #[allow(unused_imports)]
+    pub use super::{CxNode, cx_node_gyp};
+}
+pub mod cexport_node_text {}
+pub mod cexport_python {
+    #[allow(unused_imports)]
+    pub use super::{CxPython};
 }
 pub mod check_calls {
     #[allow(unused_imports)]

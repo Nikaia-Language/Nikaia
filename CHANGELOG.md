@@ -8,6 +8,15 @@ or the specification. A change only to the guide, the notes, the README, the
 website, the tests, the examples or the tooling around them raises nothing and
 has no heading here; `CLAUDE.md` draws the line.
 
+## [0.0.746] — 2026-10-10
+
+**More of the toolchain is Nikaia** (ADR-294, #125).
+- `cexport`: a package as a library C calls is `tools/cexport*.nika` - the
+  entry points read off the declarations, the wrappers and the header, the
+  `ctypes` module of `nikaia bind python` and the N-API module of
+  `nikaia bind node`. Reading the program's files and handing them over stay
+  Rust.
+
 ## [0.0.745] — 2026-10-10
 
 **More of the toolchain is Nikaia** (ADR-294, #125).

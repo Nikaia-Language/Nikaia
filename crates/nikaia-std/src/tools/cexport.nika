@@ -1,0 +1,955 @@
+// crates/nikaia-std/src/tools/cexport.nika
+//
+// **A package as a library C calls** (ADR-284): the wrapper the language below
+// needs around each entry point, and the header a C program includes, both from
+// one reading of the package - moved from the compiler's `cexport` (ADR-294,
+// #125). What is read of the declarations is `cexport_model.nika`; the Python
+// and the Node bindings are `cexport_python.nika` and `cexport_node.nika`.
+//
+// An entry point is a `pub extern fn` with a body (D4, ADR-324 D6). What this
+// file writes for one:
+//
+// * a function with the C calling convention and the prefixed name (D13),
+//   returning an `int` status and handing its value back through an
+//   out-parameter (D7);
+// * the panic caught at the boundary, which poisons the library: every later
+//   call is `E_PANICKED` until `<prefix>_shutdown` and `<prefix>_init` have run
+//   (D8, D10), and every call after `shutdown` is `E_NOT_RUNNING`;
+// * its line in `<package>.h`, which also carries the seven status codes the
+//   boundary owns and the hash of the ledger the header was derived from (D12).
+
+use std::collections
+
+/// Where the header names the ledger's digest, filled in once the lowering has
+/// written the ledger.
+pub comptime CX_LEDGER_DIGEST: ref String = "@LEDGER@"
+
+/// The two halves of a library's boundary.
+pub struct CxExported {
+    /// Appended to the entry file's lowering.
+    pub rust: String,
+    /// `<package>.h`.
+    pub header: String,
+    /// `<package>/__init__.py`, what `nikaia bind python` writes (D26).
+    pub python: String,
+    /// `node/<package>.c`, what `nikaia bind node` writes (D28).
+    pub node: String,
+}
+
+/// What every entry point is written against.
+pub struct CxCtx {
+    pub plains: Vec[CxPlain],
+    pub handles: Vec[CxHandled],
+    pub records: Vec[CxRecord],
+    pub codes: Vec[CxRaising],
+    pub prefix: String,
+    pub upper: String,
+    pub user_code: String,
+}
+
+/// What is gathered while the entry points are written.
+pub struct CxBuild {
+    pub rust: String,
+    pub declarations: String,
+    /// The enums an entry point names, which the header declares.
+    pub crossing: Vec[bool],
+    pub symbols: collections::BTreeSet[String],
+    pub any_pause: bool,
+    pub python: CxPython,
+    pub node: CxNode,
+}
+
+/// The generated sum of a set of error types (ADR-280 D15), named from its
+/// members in the ledger's order.
+fn cx_sum_name(members: ref Vec[String]) -> String {
+    let mut parts: Vec[String] = []
+    for member in members {
+        parts.push(member.replace("::", "_"))
+    }
+    return f"__NikaiaThrows_{parts.join("__")}"
+}
+
+/// The first `from` in `text`, made `to`.
+fn cx_replace_first(text: ref String, from: ref String, to: ref String) -> String {
+    let pieces: Vec[ref String] = text.split(from).collect()
+    if pieces.len() < 2 {
+        return text.clone()
+    }
+    let mut out = pieces[0].clone()
+    out.push_str(to)
+    let mut at = 1
+    while at < pieces.len() {
+        if at > 1 {
+            out.push_str(from)
+        }
+        out.push_str(pieces[at])
+        at += 1
+    }
+    return out
+}
+
+/// Whether the function the ledger knows by `key` pauses.
+fn cx_pauses(contracts: ref Ledger, key: ref String) -> bool {
+    let contract = contracts.functions[key] ?? return false
+    return !contract.sync_claim.is_sync()
+}
+
+/// Whether the function the ledger knows by `key` only reads its argument at `position`.
+fn cx_lent(contracts: ref Ledger, key: ref String, position: i64) -> bool {
+    let contract = contracts.functions[key] ?? return false
+    let copying: Vec[ref Ledger] = []
+    return lends_in(contract, position, copying)
+}
+
+/// The names of the errors an entry point throws.
+fn cx_fails_with(contracts: ref Ledger, key: ref String) -> Vec[String] {
+    let contract = contracts.functions[key] ?? return []
+    return contract.fails_with.clone()
+}
+
+/// The wrappers and the header for every entry point the program's own files
+/// declare. `concurrent` is `user_parallelism = yes`: the runtime the library
+/// starts has a pool for user code. Nothing for a package that declares no entry
+/// point: a package the library depends on exports nothing of its own.
+pub fn cx_export(words: ref winnow_grammar::InternerContext, items: ref Vec[Spanned[Item]], found: Vec[CxEntry], contracts: ref Ledger, prefix: ref String, package: ref String, concurrent: bool, target: ref String) -> CxExported? throws {
+    let mut user_code: String = "Sequential"
+    if concurrent {
+        user_code = "Concurrent"
+    }
+    let upper = prefix.to_uppercase()
+    let mut rust = cx_preamble()
+    rust.push_str(cx_library_functions(prefix, user_code))
+    let codes = cx_variant_codes(words, items, found, contracts, target)
+    let mut plains = cx_plain_enums(words, items)
+    let handles = cx_handled_structs(words, items)
+    let records = cx_records(words, items, plains)
+    // **The kind of each `enum` with payload** C holds is a C `enum` of its
+    // own, `<prefix>_<Type>_Kind`, its values `<PREFIX>_<TYPE>_<VARIANT>`
+    // (D31), and a Rust `enum` the wrapper hands it back through.
+    let mut kinds: Vec[i64?] = []
+    for handle in handles {
+        if handle.is_enum() {
+            let mut names: Vec[String] = []
+            for variant in handle.variants {
+                names.push(variant.name.clone())
+            }
+            plains.push(CxPlain { name: f"{handle.name}_Kind", variants: names, stem: handle.name.to_uppercase() })
+            kinds.push(plains.len() - 1)
+        } else {
+            kinds.push(null)
+        }
+    }
+    let mut crossing: Vec[bool] = []
+    for _ in plains {
+        crossing.push(false)
+    }
+    let mut held: Vec[bool] = []
+    for _ in handles {
+        held.push(false)
+    }
+    for entry in found {
+        let owner = entry.owner?.clone()
+        if owner != null {
+            let name = owner ?? continue
+            let at = cx_handle_named(handles, name)
+            if at != null {
+                held[at ?? 0] = true
+            } else if !cx_record_named(records, name) {
+                throw CxRefused::Because(cx_not_yet(entry.written(), "type, which is no `pub struct` of the entry file,"))
+            }
+        }
+        let mut types: Vec[Type] = entry.arg_types.clone()
+        let ret = entry.ret_type?.clone()
+        if ret != null {
+            types.push((ret ?? continue).clone())
+        }
+        for ty in types {
+            let at = cx_handle_of(words, handles, ty)
+            if at != null {
+                held[at ?? 0] = true
+            }
+        }
+    }
+    // **A getter per `pub` field** of every handle (D5), and of an enum `_kind`
+    // and a getter per field of each variant (D31).
+    let mut all: Vec[CxEntry] = found.clone()
+    let mut index = 0
+    while index < handles.len() {
+        if !held[index] {
+            index += 1
+            continue
+        }
+        let handle = handles[index]
+        for (field, ty) in handle.fields {
+            all.push(CxEntry { owner: handle.name.clone(), name: field.clone(), receiver: CxHold::Shared, exclusive: false, arg_names: [], arg_types: [], ret_type: ty.clone(), getter: true, of_variant: null, kind_of: null })
+        }
+        let kind = kinds[index]
+        if kind == null {
+            index += 1
+            continue
+        }
+        let ty = handle.name.clone()
+        let mut arms: Vec[String] = []
+        let mut names: Vec[String] = []
+        for variant in handle.variants {
+            arms.push(f"{variant.pattern} => ({ty}_Kind::{cx_escaped(variant.name)}, \"{variant.name}\"),")
+            names.push(cx_escaped(variant.name))
+        }
+        rust.push_str(f"\n/// The kinds of `{ty}`, as `{prefix}_{ty}_kind` writes them (ADR-284 D31).\n#[allow(non_camel_case_types, dead_code)]\n#[derive(Clone, Copy)]\nenum {ty}_Kind {{ {names.join(", ")} }}\n\n#[allow(non_snake_case, dead_code)]\nfn __nikaia_kind_{ty}(value: &{ty}) -> ({ty}_Kind, &'static str) {{\n    match value {{ {arms.join(" ")} }}\n}}\n")
+        all.push(CxEntry { owner: ty.clone(), name: "kind", receiver: CxHold::Shared, exclusive: false, arg_names: [], arg_types: [], ret_type: null, getter: true, of_variant: null, kind_of: kind })
+        for variant in handle.variants {
+            for (getter, pattern, field) in variant.fields {
+                all.push(CxEntry { owner: ty.clone(), name: getter.clone(), receiver: CxHold::Shared, exclusive: false, arg_names: [], arg_types: [], ret_type: field.clone(), getter: true, of_variant: CxVariantOf { variant: variant.name.clone(), pattern: pattern.clone() }, kind_of: null })
+            }
+        }
+        index += 1
+    }
+    // **Every `pub extern struct` is in the header**, as C lays it out (D14).
+    for record in records {
+        for part in record.parts() {
+            match part {
+                CxPart::Choice(at) => { crossing[at] = true },
+                else => {},
+            }
+        }
+        if record.is_enum() {
+            rust.push_str(cx_tagged_mirror(record, records, plains))
+        } else {
+            rust.push_str(cx_mirror(record, records, plains))
+        }
+    }
+    let mut constants: String = ""
+    for raising in codes {
+        for code in raising.codes {
+            let mut what = raising.error.clone()
+            let variant = code.variant?.clone()
+            if variant != null {
+                what = f"{raising.error}::{variant ?? ""}"
+            }
+            let mut errno: String = ""
+            let named = code.errno?.clone()
+            if named != null {
+                errno = f", {named ?? ""}"
+            }
+            constants.push_str(f"#define {upper}_E_{code.constant} {code.number} /* {what}{errno} */\n")
+        }
+    }
+    let ctx = CxCtx { plains: plains.clone(), handles: handles.clone(), records: records.clone(), codes: codes.clone(), prefix: prefix.clone(), upper: upper.clone(), user_code: user_code.clone() }
+    // **No symbol twice** (D13): a method, a getter and `_free` share a
+    // handle's names.
+    let mut symbols: collections::BTreeSet[String] = collections::BTreeSet()
+    for own in ["last_error", "init", "shutdown", "set_allocator", "alloc_fn", "free_fn"] {
+        symbols.insert(f"{prefix}_{own}")
+    }
+    let mut build = CxBuild { rust: rust, declarations: "", crossing: crossing, symbols: symbols, any_pause: false, python: CxPython::empty(), node: CxNode::empty() }
+    let mut at = 0
+    while at < handles.len() {
+        if held[at] {
+            let ty = handles[at].name.clone()
+            let symbol = f"{prefix}_{ty}_free"
+            cx_claim(build.symbols, symbol, ty)
+            build.rust.push_str(f"\n#[unsafe(no_mangle)]\npub extern \"C\" fn {symbol}(handle: *mut nikaia_std::c_boundary::Handle<{ty}>) -> std::ffi::c_int {{\n    if let Err(status) = __nikaia_enter() {{\n        return status;\n    }}\n    // SAFETY: the C caller hands a handle this library made, or NULL, and uses it no more (ADR-284 D6).\n    unsafe {{ nikaia_std::c_boundary::free(handle) }}\n}}\n")
+            build.declarations.push_str(f"int {symbol}({prefix}_{ty} *handle);\n")
+        }
+        at += 1
+    }
+    for entry in all {
+        cx_wrapper(words, ctx, contracts, entry, build)
+    }
+    // **The ticket of an `_async` call** (D19): `cancel` and `op_free`, and the
+    // cancellation every pausing call is driven under.
+    if build.any_pause {
+        for own in ["cancel", "op_free"] {
+            cx_claim(build.symbols, f"{prefix}_{own}", own)
+        }
+        build.rust.push_str(cx_ticket(prefix))
+        build.declarations.push_str(f"\n/* An _async call's ticket: cancel it at its next pause point, free it after done (ADR-284 D19). */\nint {prefix}_cancel({prefix}_op *op);\nint {prefix}_op_free({prefix}_op *op);\n")
+    }
+    // **A handle is an opaque struct** C holds by its address (D5).
+    let mut types: String = ""
+    if build.any_pause {
+        types.push_str(f"typedef struct {prefix}_op {prefix}_op;\n\n")
+    }
+    at = 0
+    while at < handles.len() {
+        if held[at] {
+            let name = handles[at].name.clone()
+            types.push_str(f"typedef struct {prefix}_{name} {prefix}_{name};\n\n")
+        }
+        at += 1
+    }
+    // **An `enum` without payload is a C `enum`**, numbered in declaration
+    // order (D5), each value `<PREFIX>_<TYPE>_<VARIANT>` (D13).
+    at = 0
+    while at < plains.len() {
+        if build.crossing[at] {
+            let plain = plains[at]
+            let mut values: Vec[String] = []
+            let mut number = 0
+            for variant in plain.variants {
+                values.push(f"    {upper}_{plain.stem}_{variant.to_uppercase()} = {number}")
+                number += 1
+            }
+            types.push_str(f"typedef enum {{\n{values.join(",\n")}\n}} {prefix}_{plain.name};\n\n")
+        }
+        at += 1
+    }
+    // A struct a field holds comes first: C wants it complete.
+    for place in cx_records_in_order(records) {
+        types.push_str(cx_record_type(records[place], ctx))
+    }
+    let guard = f"{upper}_H"
+    let header = cx_header(package, prefix, upper, guard, constants, types, build.declarations)
+    let python = build.python.module(package, prefix, ctx, held, build.any_pause)
+    let node = build.node.module(package, prefix, ctx, held)
+    if build.declarations.len() == 0 {
+        return null
+    }
+    return CxExported { rust: build.rust, header: header, python: python, node: node }
+}
+
+fn cx_handle_named(handles: ref Vec[CxHandled], name: ref String) -> i64? {
+    let mut at = 0
+    while at < handles.len() {
+        if handles[at].name == name {
+            return at
+        }
+        at += 1
+    }
+    return null
+}
+
+fn cx_record_named(records: ref Vec[CxRecord], name: ref String) -> bool {
+    for record in records {
+        if record.name == name {
+            return true
+        }
+    }
+    return false
+}
+
+fn cx_claim(mut symbols: collections::BTreeSet[String], symbol: ref String, written: ref String) throws {
+    if symbols.contains(symbol) {
+        throw CxRefused::Because(f"`{written}` would be exported as `{symbol}`, which another entry point, a getter, `_free` or the library's own `init`, `shutdown`, `set_allocator` or `last_error` is already: rename it (ADR-284 D13).")
+    }
+    symbols.insert(symbol.clone())
+}
+
+/// One `pub extern struct` or `pub extern enum` as a C `typedef`.
+fn cx_record_type(record: ref CxRecord, ctx: ref CxCtx) -> String {
+    let prefix = ctx.prefix.clone()
+    let upper = ctx.upper.clone()
+    // **A `pub extern enum`** (D32): its tag, and a union with a struct per
+    // variant that has fields, named as the variant in lower case.
+    if record.is_enum() {
+        let ty = record.name.clone()
+        let mut tags: Vec[String] = []
+        let mut tag = 0
+        for variant in record.variants {
+            tags.push(f"    {upper}_{ty.to_uppercase()}_{variant.name.to_uppercase()} = {tag}")
+            tag += 1
+        }
+        let mut members: Vec[String] = []
+        for variant in record.variants {
+            if variant.fields.len() == 0 {
+                continue
+            }
+            let mut fields: Vec[String] = []
+            for (field, part) in variant.fields {
+                fields.push(cx_c_field(field, part, ctx))
+            }
+            members.push(f"        struct {{ {fields.join(" ")} }} {variant.member};")
+        }
+        let mut union: String = ""
+        if members.len() > 0 {
+            union = f"    union {{\n{members.join("\n")}\n    }};\n"
+        }
+        return f"typedef enum {{\n{tags.join(",\n")}\n}} {prefix}_{ty}_Tag;\n\ntypedef struct {{\n    {prefix}_{ty}_Tag tag;\n{union}}} {prefix}_{ty};\n\n"
+    }
+    let mut fields: Vec[String] = []
+    for (field, part) in record.fields {
+        fields.push(f"    {cx_c_field(field, part, ctx)}")
+    }
+    return f"typedef struct {{\n{fields.join("\n")}\n}} {prefix}_{record.name};\n\n"
+}
+
+fn cx_c_name(part: ref CxPart, ctx: ref CxCtx) -> String {
+    return match part {
+        CxPart::Value(shape) => shape.c.clone(),
+        CxPart::Choice(at) => f"{ctx.prefix}_{ctx.plains[at].name}",
+        CxPart::Record(at) => f"{ctx.prefix}_{ctx.records[at].name}",
+        CxPart::Array(_, _) => "",
+    }
+}
+
+fn cx_c_field(field: ref String, part: ref CxPart, ctx: ref CxCtx) -> String {
+    return match part {
+        CxPart::Array(element, count) => f"{cx_c_name(element, ctx)} {field}[{count}];",
+        else => f"{cx_c_name(part, ctx)} {field};",
+    }
+}
+
+fn cx_header(package: ref String, prefix: ref String, upper: ref String, guard: ref String, constants: ref String, types: ref String, declarations: ref String) -> String {
+    let digest = CX_LEDGER_DIGEST
+    return f"/* {package}.h - GENERATED by nikaia from {package}'s ledger. Do not edit.\n * ledger: {digest}\n */\n#ifndef {guard}\n#define {guard}\n\n#include <stdbool.h>\n#include <stddef.h>\n#include <stdint.h>\n\n#ifdef __cplusplus\nextern \"C\" {{\n#endif\n\n/* Every entry point returns a status (ADR-284 D7). */\n#define {upper}_OK 0\n#define {upper}_E_ARGUMENT (-1)\n#define {upper}_E_TOO_SMALL (-2)\n#define {upper}_E_NOT_RUNNING (-3)\n#define {upper}_E_PANICKED (-4)\n#define {upper}_E_REENTRANT (-5)\n#define {upper}_E_CLEANUP (-6)\n#define {upper}_E_CANCELLED (-7)\n\n/* What the entry points throw: the library's own from 100000, std's below (ADR-284 D33). */\n{constants}\n{types}/* What the library holds across calls comes from alloc and free, with ctx,\n   when this is called before init and before any other call; it is\n   {upper}_E_ARGUMENT after (ADR-284 D6). */\ntypedef void *(*{prefix}_alloc_fn)(size_t size, size_t align, void *ctx);\ntypedef void (*{prefix}_free_fn)(void *at, size_t size, size_t align, void *ctx);\nint {prefix}_set_allocator({prefix}_alloc_fn alloc, {prefix}_free_fn free, void *ctx);\n\n/* Start the library, and start it again after shutdown (ADR-284 D10). */\nint {prefix}_init(void);\n/* Stop it: every call after this is {upper}_E_NOT_RUNNING until init. */\nint {prefix}_shutdown(void);\n\n/* This thread's last failure, with its site (ADR-284 D7). */\nint {prefix}_last_error(uint8_t *out, size_t cap, size_t *written);\n\n{declarations}\n#ifdef __cplusplus\n}}\n#endif\n\n#endif\n"
+}
+
+fn cx_preamble() -> String {
+    return "
+// --- The C boundary (ADR-284): one wrapper per entry point. ---
+
+/// Set by a panic at the boundary; every call after it is `E_PANICKED` (ADR-284 D8).
+static __NIKAIA_POISONED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Set by `shutdown`, cleared by `init`; every call between them is `E_NOT_RUNNING` (ADR-284 D10).
+static __NIKAIA_STOPPED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// What the library holds comes from the caller's allocator if it was set first,
+/// the platform heap otherwise (ADR-284 D6).
+#[global_allocator]
+static __NIKAIA_HEAP: nikaia_std::c_boundary::Heap = nikaia_std::c_boundary::Heap::new();
+
+/// Whether a call may go in: `E_NOT_RUNNING` after `shutdown`, `E_PANICKED` after a panic (ADR-284 D8, D10).
+fn __nikaia_enter() -> Result<(), std::ffi::c_int> {
+    if __NIKAIA_STOPPED.load(std::sync::atomic::Ordering::SeqCst) {
+        return Err(-3);
+    }
+    if __NIKAIA_POISONED.load(std::sync::atomic::Ordering::SeqCst) {
+        return Err(-4);
+    }
+    Ok(())
+}
+
+std::thread_local! {
+    /// This thread's last failure, as `<prefix>_last_error` renders it (ADR-284 D7).
+    static __NIKAIA_LAST_ERROR: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) };
+}
+
+fn __nikaia_failed(said: String) {
+    __NIKAIA_LAST_ERROR.with(|last| *last.borrow_mut() = said);
+}
+
+/// A handle the call could not hold, said for `<prefix>_last_error` (ADR-284 D7, D11).
+#[allow(dead_code)]
+fn __nikaia_refused(status: std::ffi::c_int) -> std::ffi::c_int {
+    __nikaia_failed(match status {
+        -5 => \"a call on a handle this thread holds already, from a callback of a call on it\",
+        _ => \"no handle where one is needed, or one that is closed\",
+    }.to_string());
+    status
+}
+"
+}
+
+fn cx_library_functions(prefix: ref String, user_code: ref String) -> String {
+    return f"\n/// This thread's last failure, with its site, into the caller's buffer (ADR-284 D7).\n#[unsafe(no_mangle)]\npub extern \"C\" fn {prefix}_last_error(out: *mut u8, cap: usize, written: *mut usize) -> std::ffi::c_int {{\n    __NIKAIA_LAST_ERROR.with(|last| {{\n        // SAFETY: the C caller hands `cap` bytes at `out` and a place for the length, or NULL (ADR-284 D6).\n        unsafe {{ nikaia_std::c_boundary::hand_back(last.borrow().as_bytes(), out, cap, written) }}\n    }})\n}}\n\n/// Hands what the library holds to the caller's allocator: before `init` and\n/// before any other call, or it is `E_ARGUMENT` (ADR-284 D6, D10).\n#[unsafe(no_mangle)]\npub extern \"C\" fn {prefix}_set_allocator(alloc: Option<nikaia_std::c_boundary::Alloc>, free: Option<nikaia_std::c_boundary::Free>, ctx: *mut std::ffi::c_void) -> std::ffi::c_int {{\n    __NIKAIA_HEAP.set(alloc, free, ctx)\n}}\n\n/// Starts the library, and starts it again after `shutdown`, which is what\n/// clears a panic's poison (ADR-284 D8, D10). Idempotent, from any thread.\n#[unsafe(no_mangle)]\npub extern \"C\" fn {prefix}_init() -> std::ffi::c_int {{\n    __NIKAIA_HEAP.settle();\n    let _ = nikaia_std::rt::start(nikaia_std::rt::UserCode::{user_code});\n    if __NIKAIA_STOPPED.load(std::sync::atomic::Ordering::SeqCst) {{\n        __NIKAIA_POISONED.store(false, std::sync::atomic::Ordering::SeqCst);\n        __NIKAIA_STOPPED.store(false, std::sync::atomic::Ordering::SeqCst);\n    }}\n    0\n}}\n\n/// Stops the library: every call after it is `E_NOT_RUNNING` until `init`. What is\n/// still running is drained within `cleanup-deadline`, and what is left is `E_CLEANUP`\n/// - the process goes on (ADR-284 D10).\n#[unsafe(no_mangle)]\npub extern \"C\" fn {prefix}_shutdown() -> std::ffi::c_int {{\n    __NIKAIA_STOPPED.store(true, std::sync::atomic::Ordering::SeqCst);\n    let left = nikaia_std::rt::start(nikaia_std::rt::UserCode::{user_code}).drain();\n    if left > 0 {{\n        __nikaia_failed(format!(\"{{left}} cleanups did not finish within the cleanup deadline\"));\n        return -6;\n    }}\n    0\n}}\n"
+}
+
+fn cx_ticket(prefix: ref String) -> String {
+    return f"\n/// An `_async` call's ticket (ADR-284 D19).\n#[derive(Default)]\npub struct __NikaiaTicket {{\n    cancelled: std::sync::atomic::AtomicBool,\n    done: std::sync::atomic::AtomicBool,\n    waker: std::sync::Mutex<Option<std::task::Waker>>,\n}}\n\nimpl __NikaiaTicket {{\n    fn cancel(&self) {{\n        self.cancelled.store(true, std::sync::atomic::Ordering::SeqCst);\n        let waker = self.waker.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).take();\n        if let Some(waker) = waker {{\n            waker.wake();\n        }}\n    }}\n}}\n\nstd::thread_local! {{\n    /// The ticket of the `_async` call this library thread runs.\n    static __NIKAIA_TICKET: std::cell::RefCell<Option<std::sync::Arc<__NikaiaTicket>>> = const {{ std::cell::RefCell::new(None) }};\n}}\n\n/// `work`, or `None` once its ticket is cancelled: at the next pause point (ADR-284 D19).\nasync fn __nikaia_cancellable<T>(work: impl std::future::Future<Output = T>) -> Option<T> {{\n    let ticket = __NIKAIA_TICKET.with(|current| current.borrow().clone());\n    let mut work = std::pin::pin!(work);\n    std::future::poll_fn(|context| {{\n        if let Some(ticket) = &ticket {{\n            *ticket.waker.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(context.waker().clone());\n            if ticket.cancelled.load(std::sync::atomic::Ordering::SeqCst) {{\n                return std::task::Poll::Ready(None);\n            }}\n        }}\n        work.as_mut().poll(context).map(Some)\n    }})\n    .await\n}}\n\n/// Cancels an `_async` call at its next pause point; after `done`, or twice, it is `OK` (ADR-284 D19).\n#[unsafe(no_mangle)]\npub extern \"C\" fn {prefix}_cancel(op: *const nikaia_std::c_boundary::Handle<std::sync::Arc<__NikaiaTicket>>) -> std::ffi::c_int {{\n    // SAFETY: the C caller hands a ticket this library made and has not freed, or NULL (ADR-284 D19).\n    match unsafe {{ nikaia_std::c_boundary::shared(op) }} {{\n        Ok(ticket) => {{\n            ticket.cancel();\n            0\n        }}\n        Err(status) => status,\n    }}\n}}\n\n/// Frees a ticket after `done`; before it, `E_ARGUMENT`, and the ticket is kept (ADR-284 D19).\n#[unsafe(no_mangle)]\npub extern \"C\" fn {prefix}_op_free(op: *mut nikaia_std::c_boundary::Handle<std::sync::Arc<__NikaiaTicket>>) -> std::ffi::c_int {{\n    if op.is_null() {{\n        return 0;\n    }}\n    // SAFETY: as `cancel`'s.\n    let finished = match unsafe {{ nikaia_std::c_boundary::shared(op) }} {{\n        Ok(ticket) => ticket.done.load(std::sync::atomic::Ordering::SeqCst),\n        Err(status) => return status,\n    }};\n    if !finished {{\n        return -1;\n    }}\n    // SAFETY: the C caller uses the ticket no more (ADR-284 D19).\n    unsafe {{ nikaia_std::c_boundary::free(op) }}\n}}\n"
+}
+
+/// One status code's arms for the error's type, matched on its value.
+fn cx_arms(raising: ref CxRaising) -> String {
+    let mut parts: Vec[String] = []
+    for code in raising.codes {
+        parts.push(f"{code.pattern(raising.error)} => {code.number},")
+    }
+    return parts.join(" ")
+}
+
+fn cx_choice_arms_in(plain: ref CxPlain) -> String {
+    let mut arms: Vec[String] = []
+    let mut number = 0
+    for variant in plain.variants {
+        arms.push(f"{number} => {plain.name}::{variant},")
+        number += 1
+    }
+    return arms.join(" ")
+}
+
+fn cx_choice_arms_out(plain: ref CxPlain) -> String {
+    let mut arms: Vec[String] = []
+    let mut number = 0
+    for variant in plain.variants {
+        arms.push(f"{plain.name}::{variant} => {number},")
+        number += 1
+    }
+    return arms.join(" ")
+}
+
+fn cx_value_of(shape: ref CxByValue) -> String {
+    if shape.scalar {
+        return "value as u32"
+    }
+    return "value"
+}
+
+/// What a wrapper does with the value its call handed back.
+fn cx_handed_back(result: ref CxResult, ctx: ref CxCtx) -> String {
+    return match result {
+        CxResult::Made(out) => cx_handed_back_out(out, ctx),
+        else => "Ok(()) => 0,",
+    }
+}
+
+fn cx_handed_back_out(out: ref CxOut, ctx: ref CxCtx) -> String {
+    return match out {
+        CxOut::Value(shape) => {
+            let value = cx_value_of(shape)
+            f"Ok(value) => {{\n            // SAFETY: the C caller hands a place for one value, or NULL (ADR-284 D7).\n            unsafe {{ nikaia_std::c_boundary::put(out, {value}) }};\n            0\n        }}"
+        },
+        CxOut::Buffer => "Ok(value) => {\n            // SAFETY: the C caller hands `cap` bytes at `out` and a place for the length, or NULL (ADR-284 D6).\n            unsafe { nikaia_std::c_boundary::hand_back(AsRef::<[u8]>::as_ref(&value), out, cap, written) }\n        }",
+        CxOut::Choice(at) => {
+            let arms = cx_choice_arms_out(ctx.plains[at])
+            f"Ok(value) => {{\n            let number: std::ffi::c_int = match value {{ {arms} }};\n            // SAFETY: the C caller hands a place for one value, or NULL (ADR-284 D7).\n            unsafe {{ nikaia_std::c_boundary::put(out, number) }};\n            0\n        }}"
+        },
+        // A new handle, which the caller frees; none is made where `out` is NULL.
+        CxOut::Handle(_) => "Ok(value) => {\n            if !out.is_null() {\n                // SAFETY: the C caller hands a place for one handle (ADR-284 D7).\n                unsafe { nikaia_std::c_boundary::put(out, nikaia_std::c_boundary::handle(value)) };\n            }\n            0\n        }",
+        CxOut::Records(at) => {
+            let name = ctx.records[at].name.clone()
+            f"Ok(value) => {{\n            let values: Vec<__nikaia_c_{name}> = value.into_iter().map(__nikaia_c_{name}::from_nikaia).collect();\n            // SAFETY: the C caller hands room for `cap` structs at `out` and a place for the count, or NULL (ADR-284 D16).\n            unsafe {{ nikaia_std::c_boundary::hand_back_run(&values, out, cap, written) }}\n        }}"
+        },
+        CxOut::Record(at) => {
+            let name = ctx.records[at].name.clone()
+            f"Ok(value) => {{\n            // SAFETY: the C caller hands a place for one value, or NULL (ADR-284 D7).\n            unsafe {{ nikaia_std::c_boundary::put(out, __nikaia_c_{name}::from_nikaia(value)) }};\n            0\n        }}"
+        },
+        // `null` is NULL (D5).
+        CxOut::AbsentHandle(_) => "Ok(value) => {\n            if !out.is_null() {\n                let made = value.map_or(std::ptr::null_mut(), nikaia_std::c_boundary::handle);\n                // SAFETY: the C caller hands a place for one handle (ADR-284 D7).\n                unsafe { nikaia_std::c_boundary::put(out, made) };\n            }\n            0\n        }",
+        // `null` leaves `out` as it was and writes `false` (D30).
+        CxOut::AbsentValue(shape) => {
+            let value = cx_value_of(shape)
+            f"Ok(value) => {{\n            let held = value.is_some();\n            if let Some(value) = value {{\n                // SAFETY: the C caller hands a place for one value, or NULL (ADR-284 D7).\n                unsafe {{ nikaia_std::c_boundary::put(out, {value}) }};\n            }}\n            // SAFETY: the C caller hands a place for the flag, or NULL (ADR-284 D30).\n            unsafe {{ nikaia_std::c_boundary::put(present, held) }};\n            0\n        }}"
+        },
+        CxOut::AbsentRecord(at) => {
+            let name = ctx.records[at].name.clone()
+            f"Ok(value) => {{\n            let held = value.is_some();\n            if let Some(value) = value {{\n                // SAFETY: the C caller hands a place for one value, or NULL (ADR-284 D7).\n                unsafe {{ nikaia_std::c_boundary::put(out, __nikaia_c_{name}::from_nikaia(value)) }};\n            }}\n            // SAFETY: the C caller hands a place for the flag, or NULL (ADR-284 D30).\n            unsafe {{ nikaia_std::c_boundary::put(present, held) }};\n            0\n        }}"
+        },
+    }
+}
+
+/// The parameters of the wrapper and of the C declaration, the checks that
+/// read them, and what the call is handed.
+struct CxParams {
+    rust_params: Vec[String],
+    c_params: Vec[String],
+    checks: String,
+    call_args: Vec[String],
+}
+
+/// **One wrapper**, its line in the header, and the entry in each binding.
+fn cx_wrapper(words: ref winnow_grammar::InternerContext, ctx: ref CxCtx, contracts: ref Ledger, entry: ref CxEntry, mut build: CxBuild) throws {
+    let prefix = ctx.prefix.clone()
+    let written = entry.written()
+    let key = entry.key()
+    // **A function that may pause is driven by the calling thread**, over the
+    // shared reactor (D9): the blocking form.
+    let mut pauses = false
+    if !entry.getter {
+        pauses = cx_pauses(contracts, key)
+    }
+    // **What it throws is the entry file's `enum`s and `std`'s errors** (D7,
+    // D33), each of whose values is a code; anything else is not exported yet.
+    let mut thrown: Vec[CxRaising] = []
+    if !entry.getter {
+        for one in cx_fails_with(contracts, key) {
+            let mut found = false
+            for raising in ctx.codes {
+                if raising.error == one {
+                    thrown.push(raising.clone())
+                    found = true
+                    break
+                }
+            }
+            if !found {
+                throw CxRefused::Because(cx_not_yet(written, "failure"))
+            }
+        }
+    }
+    let mut symbol = f"{prefix}_{entry.name}"
+    let owner_name = entry.owner?.clone()
+    let owner_text: String = entry.owner?.clone() ?? ""
+    if owner_name != null {
+        symbol = f"{prefix}_{owner_text}_{entry.name}"
+    }
+    cx_claim(build.symbols, symbol, written)
+    let mut rust_params: Vec[String] = []
+    let mut c_params: Vec[String] = []
+    let mut checks: String = ""
+    let mut call_args: Vec[String] = []
+    // **`self` is the handle, held for the call** (D11): shared where the
+    // method only reads it, alone where it changes it.
+    // **`self` of a struct C holds by value** (D16): `const T*` where the method
+    // reads it, `T*` where it changes it - and no lock, since it is the caller's
+    // memory. A change is written back only where the method returned.
+    let by_value = entry.of_a_record(ctx.records)
+    let mut exclusive = false
+    let hold = entry.receiver
+    if hold != null && owner_name != null {
+        let owner = owner_text.clone()
+        let held_exclusively = match hold ?? CxHold::Shared {
+            CxHold::Exclusive => true,
+            CxHold::Shared => false,
+        }
+        exclusive = held_exclusively
+        if by_value {
+            if held_exclusively && pauses {
+                throw CxRefused::Because(cx_not_yet(written, "changing `self` across a pause"))
+            }
+            let mut constant: String = ""
+            let mut pointer: String = "*mut"
+            let mut binding: String = "mut "
+            if !held_exclusively {
+                constant = "const "
+                pointer = "*const"
+                binding = ""
+            }
+            rust_params.push(f"__nikaia_at: {pointer} __nikaia_c_{owner}")
+            c_params.push(f"{constant}{prefix}_{owner} *self")
+            checks.push_str(f"    // SAFETY: the C caller hands its struct, or NULL, and leaves it alone for the call (ADR-284 D16).\n    let Some(__nikaia_self) = (unsafe {{ nikaia_std::c_boundary::read(__nikaia_at) }}) else {{ return -1; }};\n    let Some({binding}__nikaia_self) = __nikaia_self.into_nikaia() else {{ return -1; }};\n")
+        } else {
+            rust_params.push(f"__nikaia_self: *const nikaia_std::c_boundary::Handle<{owner}>")
+            let mut constant: String = ""
+            let mut how: String = "exclusive"
+            let mut binding: String = "mut "
+            if !held_exclusively {
+                constant = "const "
+                how = "shared"
+                binding = ""
+            }
+            c_params.push(f"{constant}{prefix}_{owner} *self")
+            checks.push_str(f"    // SAFETY: the C caller hands a handle this library made and has not freed, or NULL (ADR-284 D5).\n    let {binding}__nikaia_self = match unsafe {{ nikaia_std::c_boundary::{how}(__nikaia_self) }} {{ Ok(held) => held, Err(status) => return __nikaia_refused(status) }};\n")
+        }
+    }
+    let mut params = CxParams { rust_params: rust_params.clone(), c_params: c_params.clone(), checks: checks.clone(), call_args: call_args.clone() }
+    let mut position = 0
+    while position < entry.arg_names.len() {
+        let param = entry.arg_names[position].clone()
+        let local = cx_escaped(param)
+        let ty = entry.arg_types[position].clone()
+        let taken = cx_taken(words, ctx.plains, ctx.handles, ctx.records, ty) ?? throw CxRefused::Because(cx_not_yet(written, f"parameter `{param}`"))
+        cx_parameter(ctx, contracts, key, position, param, local, taken, params, build.crossing)
+        position += 1
+    }
+    rust_params = params.rust_params.clone()
+    c_params = params.c_params.clone()
+    checks = params.checks.clone()
+    call_args = params.call_args.clone()
+    let result = cx_result_of(entry, words, ctx.plains, ctx.handles, ctx.records)
+    match result {
+        CxResult::Refused => {
+            let mut what: String = "result"
+            if entry.getter {
+                what = "field's type"
+            }
+            throw CxRefused::Because(cx_not_yet(written, what))
+        },
+        CxResult::Made(out) => cx_out_params(out, ctx, rust_params, c_params, build.crossing),
+        CxResult::Nothing => {},
+    }
+    let name = cx_escaped(entry.name)
+    // **A getter of a variant** answers `E_ARGUMENT` on a handle that holds
+    // another, and `last_error` names the one it holds (D31).
+    let variant_of = entry.of_variant != null
+    let variant: String = entry.of_variant?.variant?.clone() ?? ""
+    let pattern: String = entry.of_variant?.pattern?.clone() ?? ""
+    let variant_pattern = pattern.clone()
+    if variant_of && owner_name != null {
+        let owner = owner_text.clone()
+        checks.push_str(f"    if !matches!(&*__nikaia_self, {pattern}) {{\n        __nikaia_failed(format!(\"the {owner} holds `{{}}`, not `{variant}`\", __nikaia_kind_{owner}(&__nikaia_self).1));\n        return -1;\n    }}\n")
+    }
+    let args_text = call_args.join(", ")
+    let mut call = cx_call_text(entry, owner_text, name, args_text, variant_of, variant_pattern)
+    if by_value && exclusive {
+        call = f"{{ let __nikaia_result = {call}; // SAFETY: as the read above; the struct is written back as the method left it (ADR-284 D16).\nunsafe {{ nikaia_std::c_boundary::put(__nikaia_at, __nikaia_c_{owner_text}::from_nikaia(__nikaia_self)) }}; __nikaia_result }}"
+    }
+    if pauses {
+        call = f"{{ let _ = nikaia_std::rt::start(nikaia_std::rt::UserCode::{ctx.user_code}); nikaia_std::rt::exec::block_on(__nikaia_cancellable({call})) }}"
+    }
+    let mut handed_back = cx_handed_back(result, ctx)
+    // A failure is the variant's code, and its message, with its site, is what
+    // `<prefix>_last_error` hands back (D7).
+    let mut failed: String = ""
+    if thrown.len() > 0 {
+        // Several types travel in the generated sum, one variant per type
+        // (ADR-280 D15).
+        let matched = cx_matched(thrown)
+        handed_back = cx_replace_first(cx_replace_first(handed_back, "Ok(", "Ok(Ok("), ") =>", ")) =>")
+        failed = f"\n        Ok(Err(thrown)) => {{\n            __nikaia_failed(thrown.full());\n            {matched}\n        }}"
+    }
+    // `AssertUnwindSafe`: after a panic the library is poisoned, and nothing it
+    // held is looked at again (D8). A call that pauses may be cancelled at a
+    // pause point instead, which is `E_CANCELLED` (D19).
+    let mut ran = f"match std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {call}))"
+    if pauses {
+        ran = f"let __nikaia_ran = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {call}));\n    let __nikaia_ran = match __nikaia_ran {{\n        Ok(Some(value)) => Ok(value),\n        Ok(None) => {{\n            __nikaia_failed(\"the call was cancelled\".to_string());\n            return -7;\n        }}\n        Err(panic) => Err(panic),\n    }};\n    match __nikaia_ran"
+    }
+    build.rust.push_str(f"\n#[unsafe(no_mangle)]\npub extern \"C\" fn {symbol}({rust_params.join(", ")}) -> std::ffi::c_int {{\n    if let Err(status) = __nikaia_enter() {{\n        return status;\n    }}\n{checks}    {ran} {{\n        {handed_back}{failed}\n        Err(_) => {{\n            __NIKAIA_POISONED.store(true, std::sync::atomic::Ordering::SeqCst);\n            __nikaia_failed(\"the library panicked; it answers E_PANICKED until shutdown and init have run\".to_string());\n            -4\n        }}\n    }}\n}}\n")
+    let c_text = if c_params.len() == 0 { "void" } else { c_params.join(", ") }
+    build.declarations.push_str(f"int {symbol}({c_text});\n")
+    let mut text_out = false
+    let returns = entry.ret_type?.clone()
+    if returns != null {
+        let ty = returns ?? return
+        text_out = words.resolve(ty.name) == "String"
+    }
+    build.python.entry(words, ctx, entry, symbol, text_out, pauses)
+    build.node.entry(words, ctx, entry, symbol, text_out, pauses)
+    // **The `_async` form** (D9, D19): the same call on a library thread, `done`
+    // called exactly once with its status, and a ticket that cancels it at its
+    // next pause point. What C handed it stays C's to keep until `done`.
+    if pauses {
+        build.any_pause = true
+        let names = cx_parameter_names(rust_params)
+        let forwarded = names.join(", ")
+        let mut async_params = rust_params.clone()
+        async_params.push("__nikaia_done: Option<extern \"C\" fn(std::ffi::c_int, *mut std::ffi::c_void)>, __nikaia_done_ctx: *mut std::ffi::c_void, __nikaia_op: *mut *mut nikaia_std::c_boundary::Handle<std::sync::Arc<__NikaiaTicket>>")
+        let async_symbol = f"{symbol}_async"
+        cx_claim(build.symbols, async_symbol, written)
+        build.rust.push_str(f"\n#[unsafe(no_mangle)]\npub extern \"C\" fn {async_symbol}({async_params.join(", ")}) -> std::ffi::c_int {{\n    if let Err(status) = __nikaia_enter() {{\n        return status;\n    }}\n    let Some(__nikaia_done) = __nikaia_done else {{ return -1; }};\n    let ticket = std::sync::Arc::new(__NikaiaTicket::default());\n    if !__nikaia_op.is_null() {{\n        // SAFETY: the C caller hands a place for one ticket (ADR-284 D19).\n        unsafe {{ nikaia_std::c_boundary::put(__nikaia_op, nikaia_std::c_boundary::handle(ticket.clone())) }};\n    }}\n    // SAFETY: the C caller keeps what it handed this call, and `done`'s context, until `done` (ADR-284 D9).\n    let sent = unsafe {{ nikaia_std::c_boundary::sent(({forwarded}, __nikaia_done_ctx)) }};\n    // A library thread, kept for the next call (`rt::library`).\n    nikaia_std::rt::library::run(Box::new(move || {{\n        let ({forwarded}, __nikaia_done_ctx) = sent.into_inner();\n        __NIKAIA_TICKET.with(|current| *current.borrow_mut() = Some(ticket.clone()));\n        let status = {symbol}({forwarded});\n        __NIKAIA_TICKET.with(|current| *current.borrow_mut() = None);\n        ticket.done.store(true, std::sync::atomic::Ordering::SeqCst);\n        __nikaia_done(status, __nikaia_done_ctx);\n    }}));\n    0\n}}\n")
+        let mut c_async: Vec[String] = []
+        if c_text != "void" {
+            c_async.push(c_text)
+        }
+        c_async.push(f"void (*done)(int status, void *ctx), void *ctx, {prefix}_op **op")
+        build.declarations.push_str(f"int {async_symbol}({c_async.join(", ")});\n")
+    }
+}
+
+/// What a result adds to the parameters of the wrapper and of the C declaration.
+fn cx_out_params(out: ref CxOut, ctx: ref CxCtx, mut rust_params: Vec[String], mut c_params: Vec[String], mut crossing: Vec[bool]) {
+    let prefix = ctx.prefix.clone()
+    match out {
+        CxOut::Value(shape) => {
+            rust_params.push(f"out: *mut {shape.rust}")
+            c_params.push(f"{shape.c} *out")
+        },
+        CxOut::Buffer => {
+            rust_params.push("out: *mut u8, cap: usize, written: *mut usize")
+            c_params.push("uint8_t *out, size_t cap, size_t *written")
+        },
+        CxOut::Choice(at) => {
+            crossing[at] = true
+            rust_params.push("out: *mut std::ffi::c_int")
+            c_params.push(f"{prefix}_{ctx.plains[at].name} *out")
+        },
+        CxOut::Handle(at) => {
+            let ty = ctx.handles[at].name.clone()
+            rust_params.push(f"out: *mut *mut nikaia_std::c_boundary::Handle<{ty}>")
+            c_params.push(f"{prefix}_{ty} **out")
+        },
+        CxOut::Records(at) => {
+            let ty = ctx.records[at].name.clone()
+            rust_params.push(f"out: *mut __nikaia_c_{ty}, cap: usize, written: *mut usize")
+            c_params.push(f"{prefix}_{ty} *out, size_t cap, size_t *written")
+        },
+        CxOut::Record(at) => {
+            let ty = ctx.records[at].name.clone()
+            rust_params.push(f"out: *mut __nikaia_c_{ty}")
+            c_params.push(f"{prefix}_{ty} *out")
+        },
+        CxOut::AbsentHandle(at) => {
+            let ty = ctx.handles[at].name.clone()
+            rust_params.push(f"out: *mut *mut nikaia_std::c_boundary::Handle<{ty}>")
+            c_params.push(f"{prefix}_{ty} **out")
+        },
+        CxOut::AbsentValue(shape) => {
+            rust_params.push(f"out: *mut {shape.rust}, present: *mut bool")
+            c_params.push(f"{shape.c} *out, bool *present")
+        },
+        CxOut::AbsentRecord(at) => {
+            let ty = ctx.records[at].name.clone()
+            rust_params.push(f"out: *mut __nikaia_c_{ty}, present: *mut bool")
+            c_params.push(f"{prefix}_{ty} *out, bool *present")
+        },
+    }
+}
+
+/// One parameter: what it adds to the wrapper's, to the C declaration's, and to
+/// the checks and the call.
+fn cx_parameter(ctx: ref CxCtx, contracts: ref Ledger, key: ref String, position: i64, param: ref String, local: ref String, taken: ref CxIn, mut params: CxParams, mut crossing: Vec[bool]) {
+    let prefix = ctx.prefix.clone()
+    match taken {
+        CxIn::Value(shape) => {
+            params.rust_params.push(f"{local}: {shape.rust}")
+            params.c_params.push(f"{shape.c} {param}")
+            if shape.scalar {
+                params.checks.push_str(f"    let Some({local}) = char::from_u32({local}) else {{ return -1; }};\n")
+            }
+            params.call_args.push(local.clone())
+        },
+        CxIn::Run { rust, c, as_text } => {
+            params.rust_params.push(f"{local}: *const {rust}, {local}_len: usize")
+            params.c_params.push(f"const {c} *{param}, size_t {param}_len")
+            let mut read: String = "run"
+            if as_text {
+                read = "text"
+            }
+            // A length with no address, or text that is not UTF-8, is
+            // `E_ARGUMENT` (ADR-284 D5).
+            params.checks.push_str(f"    // SAFETY: the C caller keeps `{param}_len` values at `{param}` for the call (ADR-284 D5).\n    let Some({local}) = (unsafe {{ nikaia_std::c_boundary::{read}({local}, {local}_len) }}) else {{ return -1; }};\n")
+            params.call_args.push(local.clone())
+        },
+        CxIn::Bytes => {
+            params.rust_params.push(f"{local}: *const u8, {local}_len: usize")
+            params.c_params.push(f"const uint8_t *{param}, size_t {param}_len")
+            params.checks.push_str(f"    // SAFETY: the C caller keeps `{param}_len` bytes at `{param}` for the call (ADR-284 D5).\n    let Some({local}) = (unsafe {{ nikaia_std::c_boundary::run({local}, {local}_len) }}) else {{ return -1; }};\n    let {local} = nikaia_std::bytes::Bytes::from({local});\n")
+            // **Lent where the function only reads it**, as the ledger says and
+            // the declaration was lowered.
+            if cx_lent(contracts, key, position) {
+                params.call_args.push(f"&{local}")
+            } else {
+                params.call_args.push(local.clone())
+            }
+        },
+        CxIn::Choice(at) => {
+            let plain = ctx.plains[at]
+            crossing[at] = true
+            params.rust_params.push(f"{local}: std::ffi::c_int")
+            params.c_params.push(f"{prefix}_{plain.name} {param}")
+            // A number no variant has is `E_ARGUMENT` (ADR-284 D5).
+            let arms = cx_choice_arms_in(plain)
+            params.checks.push_str(f"    let {local} = match {local} {{ {arms} _ => return -1 }};\n")
+            params.call_args.push(local.clone())
+        },
+        CxIn::Callback { lent, result } => {
+            // **A function pointer and the context C hands it back** (D5);
+            // called on the calling thread, and NULL is `E_ARGUMENT`.
+            let mut rust_args: Vec[String] = []
+            let mut c_args: Vec[String] = []
+            let mut closure_params: Vec[String] = []
+            let mut passed: Vec[String] = []
+            let mut at = 0
+            for part in lent {
+                let name = f"__nikaia_{at}"
+                match part {
+                    CxLent::Value(shape) => {
+                        rust_args.push(shape.rust.clone())
+                        c_args.push(shape.c.clone())
+                        if shape.scalar {
+                            closure_params.push(f"{name}: char")
+                            passed.push(f"{name} as u32")
+                        } else {
+                            closure_params.push(f"{name}: {shape.rust}")
+                            passed.push(name.clone())
+                        }
+                    },
+                    CxLent::Choice(which) => {
+                        let plain = ctx.plains[which]
+                        crossing[which] = true
+                        rust_args.push("std::ffi::c_int")
+                        c_args.push(f"{prefix}_{plain.name}")
+                        closure_params.push(f"{name}: {plain.name}")
+                        passed.push(f"match {name} {{ {cx_choice_arms_out(plain)} }}")
+                    },
+                    CxLent::Text => {
+                        rust_args.push("*const u8, usize")
+                        c_args.push("const uint8_t *, size_t")
+                        closure_params.push(f"{name}: &str")
+                        passed.push(f"{name}.as_ptr(), {name}.len()")
+                    },
+                }
+                at += 1
+            }
+            rust_args.push("*mut std::ffi::c_void")
+            c_args.push("void *ctx")
+            let mut rust_result: String = ""
+            let mut c_result: String = "void"
+            if result != null {
+                let shape = result ?? return
+                rust_result = f" -> {shape.rust}"
+                c_result = shape.c.clone()
+            }
+            params.rust_params.push(f"{local}: Option<extern \"C\" fn({rust_args.join(", ")}){rust_result}>, {local}_ctx: *mut std::ffi::c_void")
+            params.c_params.push(f"{c_result} (*{param})({c_args.join(", ")}), void *{param}_ctx")
+            passed.push(f"{local}_ctx")
+            params.checks.push_str(f"    let Some({local}) = {local} else {{ return -1; }};\n    let {local} = move |{closure_params.join(", ")}|{rust_result} {{ {local}({passed.join(", ")}) }};\n")
+            params.call_args.push(f"&{local}")
+        },
+        CxIn::Records { record, whole } => {
+            let ty = ctx.records[record].name.clone()
+            params.rust_params.push(f"{local}: *const __nikaia_c_{ty}, {local}_len: usize")
+            params.c_params.push(f"const {prefix}_{ty} *{param}, size_t {param}_len")
+            // A length with no address, or a struct no value of the type is, is
+            // `E_ARGUMENT` (ADR-284 D5, D16).
+            params.checks.push_str(f"    // SAFETY: the C caller keeps `{param}_len` structs at `{param}` for the call (ADR-284 D16).\n    let Some({local}) = (unsafe {{ nikaia_std::c_boundary::run({local}, {local}_len) }}) else {{ return -1; }};\n    let Some({local}) = {local}.iter().map(|one| one.into_nikaia()).collect::<Option<Vec<{ty}>>>() else {{ return -1; }};\n")
+            if !whole || cx_lent(contracts, key, position) {
+                params.call_args.push(f"&{local}")
+            } else {
+                params.call_args.push(local.clone())
+            }
+        },
+        CxIn::Record(at) => {
+            let ty = ctx.records[at].name.clone()
+            params.rust_params.push(f"{local}: __nikaia_c_{ty}")
+            params.c_params.push(f"{prefix}_{ty} {param}")
+            // An enum field no variant has, or a `scalar` that is none, is
+            // `E_ARGUMENT` (ADR-284 D5).
+            params.checks.push_str(f"    let Some({local}) = {local}.into_nikaia() else {{ return -1; }};\n")
+            if cx_lent(contracts, key, position) {
+                params.call_args.push(f"&{local}")
+            } else {
+                params.call_args.push(local.clone())
+            }
+        },
+        CxIn::AbsentText => {
+            params.rust_params.push(f"{local}: *const u8, {local}_len: usize")
+            params.c_params.push(f"const uint8_t *{param}, size_t {param}_len")
+            params.checks.push_str(f"    let {local} = match {local}.is_null() {{\n        true => None,\n        // SAFETY: the C caller keeps `{param}_len` bytes at `{param}` for the call (ADR-284 D5).\n        false => match unsafe {{ nikaia_std::c_boundary::text({local}, {local}_len) }} {{ Some(text) => Some(text), None => return -1 }},\n    }};\n")
+            params.call_args.push(local.clone())
+        },
+        CxIn::AbsentHandle(at) => {
+            let ty = ctx.handles[at].name.clone()
+            params.rust_params.push(f"{local}: *const nikaia_std::c_boundary::Handle<{ty}>")
+            params.c_params.push(f"const {prefix}_{ty} *{param}")
+            params.checks.push_str(f"    let {local} = match {local}.is_null() {{\n        true => None,\n        // SAFETY: the C caller hands a handle this library made and has not freed (ADR-284 D5).\n        false => match unsafe {{ nikaia_std::c_boundary::shared({local}) }} {{ Ok(held) => Some(held), Err(status) => return __nikaia_refused(status) }},\n    }};\n")
+            params.call_args.push(f"{local}.as_deref()")
+        },
+        CxIn::Handle(at) => {
+            let ty = ctx.handles[at].name.clone()
+            params.rust_params.push(f"{local}: *const nikaia_std::c_boundary::Handle<{ty}>")
+            params.c_params.push(f"const {prefix}_{ty} *{param}")
+            params.checks.push_str(f"    // SAFETY: the C caller hands a handle this library made and has not freed, or NULL (ADR-284 D5).\n    let {local} = match unsafe {{ nikaia_std::c_boundary::shared({local}) }} {{ Ok(held) => held, Err(status) => return __nikaia_refused(status) }};\n")
+            params.call_args.push(f"&*{local}")
+        },
+    }
+}
+
+/// The call an entry point's wrapper makes: a getter reads, a method is sent to
+/// `self`, a function of a type is called on it.
+fn cx_call_text(entry: ref CxEntry, owner: ref String, name: ref String, args_text: ref String, variant_of: bool, variant_pattern: ref String) -> String {
+    if entry.getter && entry.kind_of != null {
+        return f"__nikaia_kind_{owner}(&__nikaia_self).0"
+    }
+    if entry.getter && variant_of {
+        return f"match &*__nikaia_self {{ {variant_pattern} => __nikaia_v.clone(), _ => unreachable!(\"checked above\") }}"
+    }
+    if entry.getter {
+        return f"__nikaia_self.{name}.clone()"
+    }
+    if entry.receiver != null {
+        return f"__nikaia_self.{name}({args_text})"
+    }
+    if entry.owner != null {
+        return f"{owner}::{name}({args_text})"
+    }
+    return f"{name}({args_text})"
+}
+
+/// How a wrapper tells which status a thrown error is: one type matched on its
+/// value, several types in the generated sum, one variant per type (ADR-280 D15).
+fn cx_matched(thrown: ref Vec[CxRaising]) -> String {
+    if thrown.len() == 1 {
+        return f"match thrown.split().0 {{ {cx_arms(thrown[0])} }}"
+    }
+    let mut members: Vec[String] = []
+    for raising in thrown {
+        members.push(raising.error.clone())
+    }
+    let sum = cx_sum_name(members)
+    let mut each: Vec[String] = []
+    for raising in thrown {
+        each.push(f"crate::{sum}::{raising.error.replace("::", "_")}(thrown) => match thrown.split().0 {{ {cx_arms(raising)} }},")
+    }
+    return f"match thrown {{ {each.join(" ")} }}"
+}

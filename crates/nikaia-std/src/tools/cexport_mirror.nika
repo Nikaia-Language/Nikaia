@@ -1,0 +1,139 @@
+// crates/nikaia-std/src/tools/cexport_mirror.nika
+//
+// **A `pub extern struct` and a `pub extern enum` as C lays them out**
+// (ADR-284 D14, D15, D32): the mirror the wrapper takes and hands back, and its
+// two conversions, written into the library's Rust. Moved from the compiler's
+// `cexport` (ADR-294, #125).
+
+use std::collections
+
+/// **One field's, or one element's, conversion** between the mirror and the
+/// struct: the type in the mirror, what `of` is in the language - `None` where
+/// C's value is none - and what it is in the mirror.
+pub fn cx_converted(part: ref CxPart, records: ref Vec[CxRecord], plains: ref Vec[CxPlain], of: ref String) -> (String, String, String) {
+    return match part {
+        CxPart::Value(shape) => cx_converted_value(shape, of),
+        CxPart::Choice(at) => cx_converted_choice(plains[at], of),
+        CxPart::Record(at) => {
+            let inner = records[at].name.clone()
+            (f"__nikaia_c_{inner}", f"{of}.into_nikaia()", f"__nikaia_c_{inner}::from_nikaia({of})")
+        },
+        CxPart::Array(_, _) => (f"", f"", f""),
+    }
+}
+
+fn cx_converted_value(shape: ref CxByValue, of: ref String) -> (String, String, String) {
+    if shape.scalar {
+        return (f"u32", f"char::from_u32({of})", f"{of} as u32")
+    }
+    return (shape.rust.clone(), f"Some({of})", of.clone())
+}
+
+fn cx_converted_choice(plain: ref CxPlain, of: ref String) -> (String, String, String) {
+    let mut inward: Vec[String] = []
+    let mut outward: Vec[String] = []
+    let mut number = 0
+    for variant in plain.variants {
+        inward.push(f"{number} => Some({plain.name}::{variant}),")
+        outward.push(f"{plain.name}::{variant} => {number},")
+        number += 1
+    }
+    return (f"std::ffi::c_int", f"match {of} {{ {inward.join(" ")} _ => None }}", f"match {of} {{ {outward.join(" ")} }}")
+}
+
+/// One field of a mirror: its line, what takes it in and what makes it. `read`
+/// is how the struct's field is read when it is taken in, `kept` how a value's
+/// field is read when it is made.
+fn cx_field_mirror(part: ref CxPart, records: ref Vec[CxRecord], plains: ref Vec[CxPlain], read: ref String, made_from: ref String) -> (String, String, String) {
+    return match part {
+        CxPart::Array(element, count) => {
+            let (lowered, inward, outward) = cx_converted(element, records, plains, "e")
+            (f"[{lowered}; {count}]", f"{read}.iter().map(|&e| {inward}).collect::<Option<Vec<_>>>()?.try_into().ok()?", f"{made_from}.map(|e| {outward})")
+        },
+        else => {
+            let (lowered, inward, _) = cx_converted(part, records, plains, read)
+            let (_, _, outward) = cx_converted(part, records, plains, made_from)
+            (lowered, f"({inward})?", outward)
+        },
+    }
+}
+
+/// The mirror of a [`CxRecord`] the wrapper takes and hands back, and its two
+/// conversions: `None` where C's value is no value of the struct.
+pub fn cx_mirror(record: ref CxRecord, records: ref Vec[CxRecord], plains: ref Vec[CxPlain]) -> String {
+    let ty = record.name.clone()
+    let mut fields: String = ""
+    let mut into: Vec[String] = []
+    let mut from: Vec[String] = []
+    for (field, part) in record.fields {
+        let local = cx_escaped(field)
+        let (lowered, inward, outward) = cx_field_mirror(part, records, plains, f"self.{local}", f"value.{local}")
+        fields.push_str(f"    {local}: {lowered},\n")
+        into.push(f"{local}: {inward}")
+        from.push(f"{local}: {outward}")
+    }
+    return f"\n/// `{ty}` as C lays it out and hands it over (ADR-284 D14).\n#[repr(C)]\n#[derive(Clone, Copy)]\n#[allow(non_camel_case_types)]\npub struct __nikaia_c_{ty} {{\n{fields}}}\n\n#[allow(dead_code)]\nimpl __nikaia_c_{ty} {{\n    fn into_nikaia(self) -> Option<{ty}> {{\n        Some({ty} {{ {into.join(", ")} }})\n    }}\n    fn from_nikaia(value: {ty}) -> Self {{\n        Self {{ {from.join(", ")} }}\n    }}\n}}\n"
+}
+
+/// **The mirror of a `pub extern enum`** (D32): the tag as a C `int` and a
+/// union with one struct per variant that has fields, as `#[repr(C)]` lays out
+/// the enum - and its conversions, `None` for a tag that names no variant.
+pub fn cx_tagged_mirror(record: ref CxRecord, records: ref Vec[CxRecord], plains: ref Vec[CxPlain]) -> String {
+    let ty = record.name.clone()
+    let mut out: String = ""
+    let mut members: Vec[String] = []
+    let mut into: Vec[String] = []
+    let mut from: Vec[String] = []
+    let mut tag = 0
+    for variant in record.variants {
+        let path = f"{ty}::{cx_escaped(variant.name)}"
+        if variant.fields.len() == 0 {
+            into.push(f"{tag} => Some({path}),")
+            from.push(f"{path} => Self {{ tag: {tag}, ..Self::zeroed() }},")
+            tag += 1
+            continue
+        }
+        let shape = f"__nikaia_cv_{ty}_{variant.name}"
+        let member = cx_escaped(variant.member)
+        members.push(f"{member}: {shape}")
+        let mut fields: String = ""
+        let mut taken: Vec[String] = []
+        let mut made: Vec[String] = []
+        let mut bound: Vec[String] = []
+        for (field, part) in variant.fields {
+            let local = cx_escaped(field)
+            let mut named = local.clone()
+            if variant.positional {
+                named = f"__nikaia{local}"
+            }
+            let (lowered, inward, outward) = cx_field_mirror(part, records, plains, f"v.{local}", named)
+            fields.push_str(f"    {local}: {lowered},\n")
+            if variant.positional {
+                taken.push(inward)
+            } else {
+                taken.push(f"{local}: {inward}")
+            }
+            made.push(f"{local}: {outward}")
+            bound.push(named)
+        }
+        out.push_str(f"\n#[repr(C)]\n#[derive(Clone, Copy)]\n#[allow(non_camel_case_types)]\npub struct {shape} {{\n{fields}}}\n")
+        let mut built = f"{path} {{ {taken.join(", ")} }}"
+        let mut pattern = f"{path} {{ {bound.join(", ")} }}"
+        if variant.positional {
+            built = f"{path}({taken.join(", ")})"
+            pattern = f"{path}({bound.join(", ")})"
+        }
+        into.push(f"{tag} => {{\n            // SAFETY: the tag names this variant, so C wrote this member (ADR-284 D32).\n            let v = unsafe {{ self.u.{member} }};\n            Some({built})\n        }}")
+        from.push(f"{pattern} => {{\n            let mut made = Self {{ tag: {tag}, ..Self::zeroed() }};\n            made.u.{member} = {shape} {{ {made.join(", ")} }};\n            made\n        }}")
+        tag += 1
+    }
+    let mut union: String = ""
+    let mut held: String = ""
+    if members.len() > 0 {
+        union = f"\n#[repr(C)]\n#[derive(Clone, Copy)]\n#[allow(non_camel_case_types)]\npub union __nikaia_cu_{ty} {{ {members.join(", ")} }}\n"
+        held = f"    u: __nikaia_cu_{ty},\n"
+    }
+    let into_text = into.join("\n        ")
+    let from_text = from.join("\n        ")
+    return f"{out}{union}\n/// `{ty}` as C lays it out and hands it over: a tag and a union (ADR-284 D32).\n#[repr(C)]\n#[derive(Clone, Copy)]\n#[allow(non_camel_case_types)]\npub struct __nikaia_c_{ty} {{\n    tag: std::ffi::c_int,\n{held}}}\n\n#[allow(dead_code, unreachable_patterns)]\nimpl __nikaia_c_{ty} {{\n    /// All zero: every member of the union is numbers, for which zero is a value.\n    fn zeroed() -> Self {{\n        // SAFETY: a C int and a union of `#[repr(C)]` structs of numbers and `bool`; all-zero bytes are a value of each.\n        unsafe {{ std::mem::zeroed() }}\n    }}\n    fn into_nikaia(self) -> Option<{ty}> {{\n        match self.tag {{\n        {into_text}\n        _ => None,\n        }}\n    }}\n    fn from_nikaia(value: {ty}) -> Self {{\n        match value {{\n        {from_text}\n        }}\n    }}\n}}\n"
+}

@@ -1,0 +1,685 @@
+// crates/nikaia-std/src/tools/cexport_node.nika
+//
+// **`nikaia bind node`** (ADR-284 D26, D28, D29): an N-API module in C over the
+// library, written from the same reading of the package as the header and the
+// Python binding, which the host's toolchain compiles (`node-gyp` with the
+// `binding.gyp` beside it) - never a `napi` dependency in the emitted crate,
+// which would be a second artifact (D28).
+//
+// What it makes of the boundary: a status other than `OK` is an `Error` whose
+// `code` is the header's name for it (`CALC_E_NEGATIVE`) and whose `status` is
+// the number, with what `<prefix>_last_error` said; text is a `string`, bytes a
+// `Buffer` (a `Uint8Array` or an `ArrayBuffer` in); a run of numbers an array; a
+// `scalar` a one-character `string`; an `i64` a `number` where it is a safe
+// integer and a `bigint` beyond (either in); a handle a class with its methods,
+// a getter per `pub` field, `close()`, and a finalizer that frees it; an `extern`
+// struct a plain object, its methods functions of `<Struct>` taking it first; an
+// `enum` a frozen object of numbers; `null` and `undefined` are `NULL`; a
+// callback a JavaScript function called on the calling thread, whose exception
+// the call throws once it has returned. A function that may pause is called in
+// its blocking form, and as `<name>_async`: a Promise settled on the main thread,
+// whose `cancel()` is the ticket (D9, D19). Only the entry points (D29). Moved
+// from the compiler's `cexport/node` (ADR-294, #125).
+
+use std::collections
+
+/// The N-API module of one library, gathered entry by entry.
+pub struct CxNode {
+    /// Each entry point's `static napi_value` function.
+    pub functions: Vec[String],
+    /// The trampolines a callback parameter is handed as.
+    pub trampolines: Vec[String],
+    /// `exports.<name>`: the property name and the C function.
+    pub exported: Vec[(String, String)],
+    /// Per handle: its instance members, as `napi_property_descriptor`s.
+    pub members: collections::BTreeMap[String, Vec[String]],
+    /// Per handle, the function its constructor calls: `<prefix>_<T>_new`'s.
+    pub constructors: collections::BTreeMap[String, String],
+    /// Per `extern` struct: its methods, as `(name, function)`.
+    pub methods: collections::BTreeMap[String, Vec[(String, String)]],
+    /// Whether any entry has a Promise form, which needs the ticket.
+    pub any_async: bool,
+}
+
+/// The converter in and out of one value that crosses by value.
+fn cx_node_scalar(shape: ref CxByValue) -> String {
+    if shape.scalar {
+        return "scalar"
+    }
+    if shape.rust == "i32" || shape.rust == "i64" || shape.rust == "u8" || shape.rust == "f64" {
+        return shape.rust.clone()
+    }
+    return "bool"
+}
+
+/// The function an entry point is in C: `nk_<symbol>`.
+fn cx_node_function(symbol: ref String) -> String {
+    return f"nk_{symbol}"
+}
+
+/// The `if (!nk_length(…)) … for (…)` that reads a run of items, one by one.
+fn cx_node_run(value: ref String, name: ref String, at: i64, element: ref String) -> String {
+    return f"if (!nk_length(env, {value}, \"{name}\", &p{at}_len)) goto done;\n    p{at} = nk_keep(env, &kept, sizeof *p{at} * p{at}_len);\n    if (!p{at}) goto done;\n    for (uint32_t i = 0; i < p{at}_len; i++) {{\n        napi_value one;\n        napi_get_element(env, {value}, i, &one);\n        {element}\n    }}"
+}
+
+impl CxNode {
+    fn add_member(ref mut self, owner: ref String, text: String) {
+        let mut list: Vec[String] = []
+        let before = self.members[owner]
+        if before != null {
+            let held = before ?? return
+            for one in held {
+                list.push(one.clone())
+            }
+        }
+        list.push(text)
+        self.members.insert(owner.clone(), list)
+    }
+
+    fn add_method(ref mut self, owner: ref String, name: String, function: String) {
+        let mut list: Vec[(String, String)] = []
+        let before = self.methods[owner]
+        if before != null {
+            let held = before ?? return
+            for (a, b) in held {
+                list.push((a.clone(), b.clone()))
+            }
+        }
+        list.push((name, function))
+        self.methods.insert(owner.clone(), list)
+    }
+
+    pub fn empty() -> CxNode {
+        return CxNode { functions: [], trampolines: [], exported: [], members: collections::BTreeMap(), constructors: collections::BTreeMap(), methods: collections::BTreeMap(), any_async: false }
+    }
+
+    /// One entry point: a function, or a handle's constructor, method or
+    /// getter, or an `extern` struct's method.
+    pub fn entry(ref mut self, words: ref winnow_grammar::InternerContext, ctx: ref CxCtx, entry: ref CxEntry, symbol: ref String, text_out: bool, pauses: bool) {
+        let prefix = ctx.prefix.clone()
+        let by_value = entry.of_a_record(ctx.records)
+        let owner_name = entry.owner?.clone()
+        let owner_text: String = entry.owner?.clone() ?? ""
+        let constructor = owner_name != null && !by_value && entry.receiver == null && !entry.getter && entry.name == "new"
+        // Locals, declared before the first `goto done`.
+        let mut locals: Vec[String] = []
+        // The steps that read the arguments, each `goto done` on a refusal.
+        let mut steps: Vec[String] = []
+        // The arguments of the C call.
+        let mut args: Vec[String] = []
+        // The callbacks' states, whose `failed` ends the call with what was thrown.
+        let mut calls: Vec[String] = []
+        // The JavaScript argument the next parameter is read from.
+        let mut position = 0
+        let written = entry.written()
+        if entry.receiver != null && owner_name != null {
+            let owner = owner_text.clone()
+            if by_value {
+                locals.push(f"{prefix}_{owner} self_value;")
+                steps.push(f"if (!nk_in_{owner}(env, argv[0], \"self\", &self_value)) goto done;")
+                args.push("&self_value")
+                position = 1
+            } else {
+                locals.push(f"{prefix}_{owner} *self_ptr = NULL;")
+                steps.push(f"if (!nk_held_{owner}(env, self, \"this\", &self_ptr)) goto done;")
+                args.push("self_ptr")
+            }
+        }
+        let mut place = 0
+        while place < entry.arg_names.len() {
+            let name = entry.arg_names[place].clone()
+            let ty = entry.arg_types[place].clone()
+            place += 1
+            let at = position
+            position += 1
+            let value = f"argv[{at}]"
+            let taken = cx_taken(words, ctx.plains, ctx.handles, ctx.records, ty)
+            if taken == null {
+                continue
+            }
+            let kind_taken = taken ?? continue
+            match kind_taken {
+                CxIn::Value(shape) => {
+                    let kind = cx_node_scalar(shape)
+                    locals.push(f"{shape.c} p{at} = 0;")
+                    steps.push(f"if (!nk_{kind}(env, {value}, \"{name}\", &p{at})) goto done;")
+                    args.push(f"p{at}")
+                },
+                CxIn::Run { rust, c, as_text } => {
+                    if as_text {
+                        locals.push(f"const uint8_t *p{at} = NULL;")
+                        locals.push(f"size_t p{at}_len = 0;")
+                        steps.push(f"if (!nk_text(env, {value}, \"{name}\", &kept, &p{at}, &p{at}_len)) goto done;")
+                    } else {
+                        let kind = cx_node_scalar(CxByValue { rust: rust.clone(), c: c.clone(), scalar: false })
+                        locals.push(f"{c} *p{at} = NULL;")
+                        locals.push(f"uint32_t p{at}_len = 0;")
+                        steps.push(cx_node_run(value, name, at, f"if (!nk_{kind}(env, one, \"{name}\", &p{at}[i])) goto done;"))
+                    }
+                    args.push(f"p{at}")
+                    args.push(f"p{at}_len")
+                },
+                CxIn::Bytes => {
+                    locals.push(f"const uint8_t *p{at} = NULL;")
+                    locals.push(f"size_t p{at}_len = 0;")
+                    steps.push(f"if (!nk_bytes(env, {value}, \"{name}\", &kept, &p{at}, &p{at}_len)) goto done;")
+                    args.push(f"p{at}")
+                    args.push(f"p{at}_len")
+                },
+                CxIn::Choice(which) => {
+                    locals.push(f"int32_t p{at} = 0;")
+                    steps.push(f"if (!nk_i32(env, {value}, \"{name}\", &p{at})) goto done;")
+                    args.push(f"({prefix}_{ctx.plains[which].name})p{at}")
+                },
+                CxIn::Handle(which) => {
+                    let ty = ctx.handles[which].name.clone()
+                    locals.push(f"{prefix}_{ty} *p{at} = NULL;")
+                    steps.push(f"if (!nk_held_{ty}(env, {value}, \"{name}\", &p{at})) goto done;")
+                    args.push(f"p{at}")
+                },
+                CxIn::AbsentHandle(which) => {
+                    let ty = ctx.handles[which].name.clone()
+                    locals.push(f"{prefix}_{ty} *p{at} = NULL;")
+                    steps.push(f"if (!nk_absent(env, {value}) && !nk_held_{ty}(env, {value}, \"{name}\", &p{at})) goto done;")
+                    args.push(f"p{at}")
+                },
+                CxIn::AbsentText => {
+                    locals.push(f"const uint8_t *p{at} = NULL;")
+                    locals.push(f"size_t p{at}_len = 0;")
+                    steps.push(f"if (!nk_absent(env, {value}) && !nk_text(env, {value}, \"{name}\", &kept, &p{at}, &p{at}_len)) goto done;")
+                    args.push(f"p{at}")
+                    args.push(f"p{at}_len")
+                },
+                CxIn::Record(which) => {
+                    let ty = ctx.records[which].name.clone()
+                    locals.push(f"{prefix}_{ty} p{at};")
+                    steps.push(f"if (!nk_in_{ty}(env, {value}, \"{name}\", &p{at})) goto done;")
+                    args.push(f"p{at}")
+                },
+                CxIn::Records { record, .. } => {
+                    let ty = ctx.records[record].name.clone()
+                    locals.push(f"{prefix}_{ty} *p{at} = NULL;")
+                    locals.push(f"uint32_t p{at}_len = 0;")
+                    steps.push(cx_node_run(value, name, at, f"if (!nk_in_{ty}(env, one, \"{name}\", &p{at}[i])) goto done;"))
+                    args.push(f"p{at}")
+                    args.push(f"p{at}_len")
+                },
+                CxIn::Callback { lent, result } => {
+                    let trampoline = f"nk_back_{symbol}_{at}"
+                    let mut c_params: Vec[String] = []
+                    let mut handed: Vec[String] = []
+                    let mut number = 0
+                    for part in lent {
+                        match part {
+                            CxLent::Value(shape) => {
+                                c_params.push(f"{shape.c} a{number}")
+                                handed.push(f"handed[{number}] = nk_from_{cx_node_scalar(shape)}(call->env, a{number});")
+                            },
+                            CxLent::Choice(which) => {
+                                c_params.push(f"{prefix}_{ctx.plains[which].name} a{number}")
+                                handed.push(f"handed[{number}] = nk_from_i32(call->env, (int32_t)a{number});")
+                            },
+                            CxLent::Text => {
+                                c_params.push(f"const uint8_t *a{number}, size_t a{number}_len")
+                                handed.push(f"napi_create_string_utf8(call->env, (const char *)a{number}, a{number}_len, &handed[{number}]);")
+                            },
+                        }
+                        number += 1
+                    }
+                    c_params.push("void *ctx")
+                    let mut count = lent.len()
+                    if count < 1 {
+                        count = 1
+                    }
+                    let mut c_result: String = "void"
+                    let mut back: String = ""
+                    let mut early: String = "return;"
+                    if result != null {
+                        let shape = result ?? continue
+                        c_result = shape.c.clone()
+                        back = f"{shape.c} back = 0;\n    if (!nk_{cx_node_scalar(shape)}(call->env, result, \"the callback's result\", &back)) {{\n        call->failed = true;\n        return 0;\n    }}\n    return back;\n"
+                        early = "return 0;"
+                    }
+                    let handed_text = handed.join("\n    ")
+                    self.trampolines.push(f"static {c_result} {trampoline}({c_params.join(", ")}) {{\n    nk_call *call = ctx;\n    napi_value handed[{count}];\n    napi_value undefined;\n    napi_value result;\n    if (call->failed) {early}\n    {handed_text}\n    napi_get_undefined(call->env, &undefined);\n    if (napi_call_function(call->env, undefined, call->fn, {lent.len()}, handed, &result) != napi_ok) {{\n        call->failed = true;\n        {early}\n    }}\n    (void)result;\n    {back}}}\n")
+                    locals.push(f"nk_call p{at} = {{ env, NULL, false }};")
+                    steps.push(f"if (!nk_function(env, {value}, \"{name}\")) goto done;\n    p{at}.fn = {value};")
+                    args.push(trampoline)
+                    args.push(f"&p{at}")
+                    calls.push(f"p{at}")
+                },
+            }
+        }
+        let takes = position
+        // What comes back, through the out-parameter.
+        let found = cx_result_of(entry, words, ctx.plains, ctx.handles, ctx.records)
+        let mut body: Vec[String] = []
+        // The C type of the value and how it is made a JavaScript one, for the
+        // Promise form: `has_finish` is false where nothing comes back. `finish_c`
+        // is the finisher's C type of `out`, `finish_back` its conversion, and
+        // `finish_flagged` whether a `present` flag follows `out` (D30).
+        let mut has_finish = false
+        let mut finish_c: String? = null
+        let mut finish_back: String = ""
+        let mut finish_flagged = false
+        let mut failed: String = ""
+        if calls.len() > 0 {
+            let mut each: Vec[String] = []
+            for one in calls {
+                each.push(f"{one}.failed")
+            }
+            failed = f"if ({each.join(" || ")}) goto done;\n    "
+        }
+        let check = f"{failed}if (status != 0) {{\n        nk_fail(env, status);\n        goto done;\n    }}"
+        let call_text = f"{symbol}({args.join(", ")})"
+        match found {
+            CxResult::Made(out) => {
+                match out {
+                    CxOut::Buffer => {
+                        locals.push("uint8_t small[256];")
+                        locals.push("uint8_t *room = small;")
+                        locals.push("size_t written = 0;")
+                        let mut asked = args.clone()
+                        asked.push("room")
+                        asked.push("sizeof small")
+                        asked.push("&written")
+                        let mut again = args.clone()
+                        again.push("room")
+                        again.push("written")
+                        again.push("&written")
+                        // **A buffer of 256 bytes first**, and the size it asked
+                        // for where that was too small (D6): one call where it
+                        // fits.
+                        body.push(f"status = {symbol}({asked.join(", ")});")
+                        body.push(f"if (status == -2) {{\n        room = nk_keep(env, &kept, written);\n        if (!room) goto done;\n        status = {symbol}({again.join(", ")});\n    }}")
+                        body.push(check.clone())
+                        if text_out {
+                            body.push("napi_create_string_utf8(env, (const char *)room, written, &result);")
+                        } else {
+                            body.push("napi_create_buffer_copy(env, written, room, NULL, &result);")
+                        }
+                    },
+                    CxOut::Records(_) => {
+                        let ty = ctx.records[cx_out_index(out)].name.clone()
+                        locals.push(f"{prefix}_{ty} small[16];")
+                        locals.push(f"{prefix}_{ty} *room = small;")
+                        locals.push("size_t written = 0;")
+                        let mut asked = args.clone()
+                        asked.push("room")
+                        asked.push("16")
+                        asked.push("&written")
+                        let mut again = args.clone()
+                        again.push("room")
+                        again.push("written")
+                        again.push("&written")
+                        body.push(f"status = {symbol}({asked.join(", ")});")
+                        body.push(f"if (status == -2) {{\n        room = nk_keep(env, &kept, sizeof *room * written);\n        if (!room) goto done;\n        status = {symbol}({again.join(", ")});\n    }}")
+                        body.push(check.clone())
+                        body.push(f"napi_create_array_with_length(env, written, &result);\n    for (size_t i = 0; i < written; i++) {{\n        napi_set_element(env, result, (uint32_t)i, nk_out_{ty}(env, &room[i]));\n    }}")
+                    },
+                    else => {
+                        let (c, back) = cx_node_back(out, ctx, constructor, owner_text)
+                        let mut zero: String = "0"
+                        match out {
+                            CxOut::Record(_) => { zero = "{0}" },
+                            CxOut::AbsentRecord(_) => { zero = "{0}" },
+                            else => {},
+                        }
+                        locals.push(f"{c} out = {zero};")
+                        let mut asked = args.clone()
+                        asked.push("&out")
+                        if out.flagged() {
+                            locals.push("bool present = false;")
+                            asked.push("&present")
+                        }
+                        body.push(f"status = {symbol}({asked.join(", ")});")
+                        body.push(check.clone())
+                        if !constructor {
+                            has_finish = true
+                            finish_c = c.clone()
+                            finish_back = back.clone()
+                            finish_flagged = out.flagged()
+                        }
+                        body.push(back)
+                    },
+                }
+            },
+            else => {
+                body.push(f"status = {call_text};")
+                body.push(check.clone())
+                body.push("napi_get_undefined(env, &result);")
+                has_finish = true
+                finish_back = "napi_get_undefined(env, &result);"
+            },
+        }
+        // An exclusive method of an `extern` struct changed `self`: the object
+        // handed in gets its fields back (D16).
+        if by_value && entry.exclusive && owner_name != null {
+            body.push(f"nk_assign_{owner_text}(env, argv[0], &self_value);")
+        }
+        let mut argc = takes
+        if argc < 1 {
+            argc = 1
+        }
+        let function = cx_node_function(symbol)
+        let mut text = f"/* `{written}` */\nstatic napi_value {function}(napi_env env, napi_callback_info info) {{\n    size_t argc = {argc};\n    napi_value argv[{argc}];\n    napi_value self = NULL;\n    napi_value result = NULL;\n    nk_kept *kept = NULL;\n    int status = 0;\n"
+        for local in locals {
+            text.push_str(f"    {local}\n")
+        }
+        text.push_str("    if (napi_get_cb_info(env, info, &argc, argv, &self, NULL) != napi_ok) goto done;\n")
+        if takes > 0 {
+            text.push_str(f"    if (argc < {takes}) {{\n        napi_throw_type_error(env, NULL, \"`{written}` takes {takes} arguments\");\n        goto done;\n    }}\n")
+        }
+        for step in steps {
+            text.push_str(f"    {step}\n")
+        }
+        for step in body {
+            text.push_str(f"    {step}\n")
+        }
+        text.push_str("done:\n    nk_release(kept);\n    (void)self;\n    (void)status;\n    return result;\n}\n")
+        self.functions.push(text)
+        // **The Promise form** (D9, D19): the `_async` call, settled on the main
+        // thread through a thread-safe function, its `cancel()` the ticket. Not
+        // for a result into a buffer, nor for a callback, nor for `self` of a
+        // struct the call would have to keep.
+        let mut promised: String = ""
+        if has_finish && pauses && calls.len() == 0 && !by_value {
+            self.any_async = true
+            let finisher = f"nk_finish_{symbol}"
+            // A flagged result is kept as the value with its flag behind it, one
+            // block the finisher reads back (D30).
+            let mut taken_out: String = ""
+            let mut read_out: String = "(void)at;"
+            let mut out_arg: Vec[String] = []
+            let has_out = finish_c != null
+            if has_out {
+                let c: String = finish_c?.clone() ?? ""
+                if finish_flagged {
+                    taken_out = f"struct {{ {c} value; bool present; }} *out = NULL;"
+                    read_out = f"struct {{ {c} value; bool present; }} *held = at;\n    {c} out = held->value;\n    bool present = held->present;"
+                    out_arg.push("&out->value")
+                    out_arg.push("&out->present")
+                } else {
+                    taken_out = f"{c} *out = NULL;"
+                    read_out = f"{c} out = *({c} *)at;"
+                    out_arg.push("out")
+                }
+            }
+            let mut async_text = f"static napi_value {finisher}(napi_env env, void *at) {{\n    napi_value result = NULL;\n    {read_out}\n    {finish_back}\n    return result;\n}}\n\n/* `{written}`, as a Promise */\nstatic napi_value {function}_async(napi_env env, napi_callback_info info) {{\n    size_t argc = {argc};\n    napi_value argv[{argc}];\n    napi_value self = NULL;\n    napi_value result = NULL;\n    nk_kept *kept = NULL;\n    nk_async *job = NULL;\n    int status = 0;\n    {taken_out}\n"
+            for local in locals {
+                if !local.contains(" out = ") && !local.contains(" present = ") {
+                    async_text.push_str(f"    {local}\n")
+                }
+            }
+            async_text.push_str("    if (napi_get_cb_info(env, info, &argc, argv, &self, NULL) != napi_ok) goto done;\n")
+            if takes > 0 {
+                async_text.push_str(f"    if (argc < {takes}) {{\n        napi_throw_type_error(env, NULL, \"`{written}` takes {takes} arguments\");\n        goto done;\n    }}\n")
+            }
+            for step in steps {
+                async_text.push_str(f"    {step}\n")
+            }
+            if out_arg.len() > 0 {
+                async_text.push_str("    out = nk_keep(env, &kept, sizeof *out);\n    if (!out) goto done;\n    memset(out, 0, sizeof *out);\n")
+            }
+            let mut handed_args = args.clone()
+            handed_args.extend(out_arg)
+            handed_args.push("nk_landed")
+            handed_args.push("job")
+            handed_args.push("&job->ticket->op")
+            let mut started: String = "NULL"
+            if has_out {
+                started = "out"
+            }
+            async_text.push_str(f"    job = nk_start(env, &kept, {started}, {finisher}, &result);\n    if (!job) goto done;\n    status = {symbol}_async({handed_args.join(", ")});\n    if (status != 0) nk_abandon(env, job, status);\ndone:\n    nk_release(kept);\n    (void)self;\n    return result;\n}}\n")
+            self.functions.push(async_text)
+            promised = f"{function}_async"
+        }
+        let name = entry.name.clone()
+        if promised.len() > 0 {
+            let property = f"{name}_async"
+            if owner_name == null {
+                self.exported.push((property, promised))
+            } else if entry.receiver != null {
+                self.add_member(owner_text, f"{{ \"{property}\", NULL, {promised}, NULL, NULL, NULL, napi_default_method, NULL }}")
+            } else {
+                self.add_member(owner_text, f"{{ \"{property}\", NULL, {promised}, NULL, NULL, NULL, napi_static, NULL }}")
+            }
+        }
+        if owner_name == null {
+            self.exported.push((name, function))
+        } else {
+            let owner = owner_text.clone()
+            if by_value {
+                self.add_method(owner, name, function)
+            } else if entry.getter {
+                self.add_member(owner, f"{{ \"{name}\", NULL, NULL, {function}, NULL, NULL, napi_enumerable, NULL }}")
+            } else if entry.receiver != null {
+                self.add_member(owner, f"{{ \"{name}\", NULL, {function}, NULL, NULL, NULL, napi_default_method, NULL }}")
+            } else if constructor {
+                self.constructors.insert(owner, function)
+            } else {
+                self.add_member(owner, f"{{ \"{name}\", NULL, {function}, NULL, NULL, NULL, napi_static, NULL }}")
+            }
+        }
+    }
+
+    /// The module: `<package>.c`.
+    pub fn module(ref self, package: ref String, prefix: ref String, ctx: ref CxCtx, held: ref Vec[bool]) -> String {
+        let upper = prefix.to_uppercase()
+        let status_names: Array[ref String, 7] = ["ARGUMENT", "TOO_SMALL", "NOT_RUNNING", "PANICKED", "REENTRANT", "CLEANUP", "CANCELLED"]
+        let mut statuses: Vec[(i64, String)] = []
+        let mut number = 0
+        for name in status_names {
+            number -= 1
+            statuses.push((number, f"{upper}_E_{name}"))
+        }
+        // **An `errno`'s `code` is its name** (D33), as Node's own are, and
+        // `errno` is its number.
+        let mut errnos: String = ""
+        for raising in ctx.codes {
+            for code in raising.codes {
+                let errno = code.errno?.clone()
+                if errno != null {
+                    errnos.push_str(f"    case {code.number}: return true;\n")
+                    statuses.push((code.number, errno ?? ""))
+                } else {
+                    statuses.push((code.number, f"{upper}_E_{code.constant}"))
+                }
+            }
+        }
+        let mut cases: String = ""
+        for (code, name) in statuses {
+            cases.push_str(f"    case {code}: return \"{name}\";\n")
+        }
+        let mut exported: Vec[i64] = []
+        let mut at = 0
+        while at < ctx.handles.len() {
+            if held[at] {
+                exported.push(at)
+            }
+            at += 1
+        }
+        let mut state_fields: String = "    int none;\n"
+        if exported.len() > 0 {
+            state_fields = ""
+            for place in exported {
+                state_fields.push_str(f"    napi_ref {ctx.handles[place].name};\n")
+            }
+        }
+        let digest = CX_LEDGER_DIGEST
+        let mut out = cx_node_head(package, digest, state_fields, errnos, cases, upper, prefix)
+        // **An `extern` struct is a plain object** (D14), read field by field
+        // and checked, and made field by field.
+        for place in cx_records_in_order(ctx.records) {
+            out.push_str(cx_node_record_text(ctx.records[place], ctx))
+        }
+        // **A handle is an object of its class** (D5), tagged so that no other
+        // object passes for it, freed by `close()` or by the collector.
+        for place in exported {
+            out.push_str(cx_node_handle(ctx.handles[place].name, place, prefix, upper))
+        }
+        if self.any_async {
+            out.push_str(cx_node_async(prefix))
+        }
+        for trampoline in self.trampolines {
+            out.push_str(trampoline)
+            out.push_str("\n")
+        }
+        for function in self.functions {
+            out.push_str(function)
+            out.push_str("\n")
+        }
+        // Each class's constructor: around a handle the module made, or the
+        // library's `_new`.
+        for place in exported {
+            let ty = ctx.handles[place].name.clone()
+            let made_by = self.constructors[ty]
+            let mut made = f"napi_throw_type_error(env, NULL, \"{ty} has no constructor: the library makes it\");\n    return NULL;"
+            if made_by != null {
+                let function = made_by ?? ""
+                made = f"return {function}(env, info);"
+            }
+            out.push_str(cx_node_class(ty, made))
+        }
+        out.push_str(cx_node_init(prefix))
+        let mut functions: Vec[String] = ["{ \"init\", NULL, nk_init, NULL, NULL, NULL, napi_enumerable, NULL }", "{ \"shutdown\", NULL, nk_shutdown, NULL, NULL, NULL, napi_enumerable, NULL }"]
+        for (name, function) in self.exported {
+            functions.push(f"{{ \"{name}\", NULL, {function}, NULL, NULL, NULL, napi_enumerable, NULL }}")
+        }
+        out.push_str(f"    {{\n        napi_property_descriptor functions[] = {{\n            {functions.join(",\n            ")}\n        }};\n        napi_define_properties(env, exports, sizeof functions / sizeof *functions, functions);\n    }}\n")
+        for place in exported {
+            let ty = ctx.handles[place].name.clone()
+            let mut members: Vec[String] = [f"{{ \"close\", NULL, nk_close_{ty}, NULL, NULL, NULL, napi_default_method, NULL }}"]
+            let own = self.members[ty]
+            if own != null {
+                let held = own ?? return ""
+                for one in held {
+                    members.push(one.clone())
+                }
+            }
+            out.push_str(f"    {{\n        napi_property_descriptor members[] = {{\n            {members.join(",\n            ")}\n        }};\n        napi_value class;\n        napi_define_class(env, \"{ty}\", NAPI_AUTO_LENGTH, nk_class_{ty}, NULL, sizeof members / sizeof *members, members, &class);\n        napi_create_reference(env, class, 1, &state->{ty});\n        napi_set_named_property(env, exports, \"{ty}\", class);\n    }}\n")
+        }
+        for plain in ctx.plains {
+            let mut values: String = ""
+            let mut at_value = 0
+            for variant in plain.variants {
+                values.push_str(f"        napi_set_named_property(env, choices, \"{variant}\", nk_from_i32(env, {at_value}));\n")
+                at_value += 1
+            }
+            out.push_str(f"    {{\n        napi_value choices;\n        napi_create_object(env, &choices);\n{values}        napi_object_freeze(env, choices);\n        napi_set_named_property(env, exports, \"{plain.name}\", choices);\n    }}\n")
+        }
+        for (owner, methods) in self.methods {
+            let mut listed: Vec[String] = []
+            for (name, function) in methods {
+                listed.push(f"{{ \"{name}\", NULL, {function}, NULL, NULL, NULL, napi_enumerable, NULL }}")
+            }
+            out.push_str(f"    {{\n        napi_value methods;\n        napi_property_descriptor listed[] = {{\n            {listed.join(",\n            ")}\n        }};\n        napi_create_object(env, &methods);\n        napi_define_properties(env, methods, sizeof listed / sizeof *listed, listed);\n        napi_object_freeze(env, methods);\n        napi_set_named_property(env, exports, \"{owner}\", methods);\n    }}\n")
+        }
+        out.push_str("    return exports;\n}\n")
+        return out
+    }
+}
+
+/// The C type of the value that comes back through `out`, and how it is made a
+/// JavaScript one.
+fn cx_node_back(out: ref CxOut, ctx: ref CxCtx, constructor: bool, owner: ref String) -> (String, String) {
+    let prefix = ctx.prefix.clone()
+    // `null` where `present` is false (D30).
+    return match out {
+        CxOut::Value(shape) => (shape.c.clone(), f"result = nk_from_{cx_node_scalar(shape)}(env, out);"),
+        CxOut::AbsentValue(shape) => (shape.c.clone(), cx_node_absent(f"result = nk_from_{cx_node_scalar(shape)}(env, out);")),
+        CxOut::AbsentRecord(which) => {
+            let ty = ctx.records[which].name.clone()
+            (f"{prefix}_{ty}", cx_node_absent(f"result = nk_out_{ty}(env, &out);"))
+        },
+        CxOut::Choice(which) => (f"{prefix}_{ctx.plains[which].name}", f"result = nk_from_i32(env, (int32_t)out);"),
+        CxOut::Record(which) => {
+            let ty = ctx.records[which].name.clone()
+            (f"{prefix}_{ty}", f"result = nk_out_{ty}(env, &out);")
+        },
+        CxOut::Handle(which) => {
+            let ty = ctx.handles[which].name.clone()
+            let mut back = f"result = nk_made_{ty}(env, out);"
+            if constructor && owner == ty {
+                back = f"result = nk_adopt_{ty}(env, self, out);"
+            }
+            (f"{prefix}_{ty} *", back)
+        },
+        CxOut::AbsentHandle(which) => {
+            let ty = ctx.handles[which].name.clone()
+            (f"{prefix}_{ty} *", f"if (out) {{\n        result = nk_made_{ty}(env, out);\n    }} else {{\n        napi_get_null(env, &result);\n    }}")
+        },
+        else => (f"", f""),
+    }
+}
+
+fn cx_node_absent(back: ref String) -> String {
+    return f"if (present) {{\n        {back}\n    }} else {{\n        napi_get_null(env, &result);\n    }}"
+}
+
+/// One field's read and write: `at` is where it sits in the C value, `owner`
+/// how a refusal names what holds it.
+fn cx_node_pair(part: ref CxPart, ctx: ref CxCtx, what: ref String, place: ref String) -> (String, String) {
+    return match part {
+        CxPart::Value(shape) => (f"if (!nk_{cx_node_scalar(shape)}(env, one, \"{what}\", &{place})) return false;", f"nk_from_{cx_node_scalar(shape)}(env, {place})"),
+        CxPart::Choice(_) => (f"{{ int c = 0; if (!nk_choice(env, one, \"{what}\", &c)) return false; {place} = c; }}", f"nk_from_i32(env, (int32_t){place})"),
+        CxPart::Record(which) => (f"if (!nk_in_{ctx.records[which].name}(env, one, \"{what}\", &{place})) return false;", f"nk_out_{ctx.records[which].name}(env, &{place})"),
+        CxPart::Array(_, _) => (f"", f""),
+    }
+}
+
+fn cx_node_field_code(field: ref String, part: ref CxPart, owner: ref String, at: ref String, ctx: ref CxCtx, mut reads: String, mut writes: String) {
+    let what = f"{owner}{field}"
+    match part {
+        CxPart::Array(element, count) => {
+            let (read, write) = cx_node_pair(element, ctx, what, f"out->{at}{field}[i]")
+            reads.push_str(f"    napi_get_named_property(env, value, \"{field}\", &field);\n    if (!nk_length(env, field, \"{what}\", &n)) return false;\n    if (n != {count}) return nk_wrong(env, \"{what}\", \"an array of {count}\");\n    for (uint32_t i = 0; i < {count}; i++) {{\n        napi_value one;\n        napi_get_element(env, field, i, &one);\n        {read}\n    }}\n")
+            let moved = write.replace("out->", "value->")
+            writes.push_str(f"    napi_create_array_with_length(env, {count}, &field);\n    for (uint32_t i = 0; i < {count}; i++) {{\n        napi_set_element(env, field, i, {moved});\n    }}\n    napi_set_named_property(env, target, \"{field}\", field);\n")
+        },
+        else => {
+            let (read, write) = cx_node_pair(part, ctx, what, f"out->{at}{field}")
+            reads.push_str(f"    {{\n        napi_value one;\n        napi_get_named_property(env, value, \"{field}\", &one);\n        {read}\n    }}\n")
+            let moved = write.replace("out->", "value->")
+            writes.push_str(f"    napi_set_named_property(env, target, \"{field}\", {moved});\n")
+        },
+    }
+}
+
+/// An `extern` struct or enum, as a plain object.
+fn cx_node_record_text(record: ref CxRecord, ctx: ref CxCtx) -> String {
+    let ty = record.name.clone()
+    let mut reads: String = ""
+    let mut writes: String = ""
+    // **An `extern` enum is `{ kind: "Variant", field… }`** (D32): its tag by the
+    // variant's name, its fields beside it.
+    if record.is_enum() {
+        let mut chosen: Vec[String] = []
+        let mut cases: Vec[String] = []
+        let mut names: Vec[String] = []
+        let mut tag = 0
+        for variant in record.variants {
+            let mut variant_reads: String = ""
+            let mut variant_writes: String = ""
+            for (field, part) in variant.fields {
+                cx_node_field_code(field, part, f"{ty}::{variant.name}.", f"{variant.member}.", ctx, variant_reads, variant_writes)
+            }
+            chosen.push(f"if (strcmp(kind, \"{variant.name}\") == 0) {{\n    out->tag = {tag};\n{variant_reads}    }}")
+            cases.push(f"    case {tag}:\n    napi_create_string_utf8(env, \"{variant.name}\", NAPI_AUTO_LENGTH, &field);\n    napi_set_named_property(env, target, \"kind\", field);\n{variant_writes}    break;\n")
+            names.push(variant.name.clone())
+            tag += 1
+        }
+        reads.push_str(f"    char kind[64];\n    size_t kind_len = 0;\n    napi_get_named_property(env, value, \"kind\", &field);\n    if (napi_get_value_string_utf8(env, field, kind, sizeof kind, &kind_len) != napi_ok)\n        return nk_wrong(env, name, \"a {ty} with a kind\");\n    {chosen.join(" else ")} else {{\n        return nk_wrong(env, name, \"a {ty}: {names.join(", ")}\");\n    }}\n")
+        writes.push_str(f"    switch (value->tag) {{\n{cases.join("")}    default:\n        break;\n    }}\n")
+    } else {
+        for (field, part) in record.fields {
+            cx_node_field_code(field, part, f"{ty}.", "", ctx, reads, writes)
+        }
+    }
+    return cx_node_record(ty, ctx.prefix, reads, writes)
+}
+
+/// `binding.gyp`, which builds the module against the library beside it.
+pub fn cx_node_gyp(package: ref String) -> String {
+    return f"# GENERATED by `nikaia bind node`. Do not edit.\n{{\n  \"targets\": [\n    {{\n      \"target_name\": \"{package}\",\n      \"sources\": [\"{package}.c\"],\n      \"include_dirs\": [\"..\"],\n      \"libraries\": [\"-L<(module_root_dir)/..\", \"-l{package}\", \"-Wl,-rpath,<(module_root_dir)/..\"]\n    }}\n  ]\n}}\n"
+}

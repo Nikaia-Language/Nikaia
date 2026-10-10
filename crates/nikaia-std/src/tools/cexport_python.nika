@@ -1,0 +1,673 @@
+// crates/nikaia-std/src/tools/cexport_python.nika
+//
+// **`nikaia bind python`** (ADR-284 D26, D27): a `ctypes` module over the
+// library, written from the same reading of the package as the header, so that
+// the two cannot disagree: a status is an exception, a buffer is `str` or
+// `bytes` with the size query done here, a handle is a class with its methods, a
+// property per `pub` field, `close()` and a context manager, an `extern` struct
+// a `ctypes.Structure`, an `enum` an `IntEnum`, `null` is `None`, and a callback
+// a callable `CFUNCTYPE` keeps alive for the call. Only the entry points (D29).
+// Not written yet: the `_async` form's awaitable and a stream as a generator; a
+// pausing function is called in its blocking form. Moved from the compiler's
+// `cexport` (ADR-294, #125).
+
+use std::collections
+
+/// The Python of one library, gathered entry by entry.
+pub struct CxPython {
+    /// Module-level functions.
+    pub functions: Vec[String],
+    /// Each handle's class body: its constructor, methods and properties.
+    pub classes: collections::BTreeMap[String, Vec[String]],
+    /// `_lib.<symbol>.argtypes = …` lines.
+    pub signatures: Vec[String],
+    /// Whether any entry has an `_async` form, which needs the ticket.
+    pub any_async: bool,
+    /// Whether any entry is a stream, which needs `_stream`.
+    pub any_stream: bool,
+}
+
+/// A name Python may bind: one of its words gets a `_` after it.
+fn cx_python_name(name: ref String) -> String {
+    let words: Array[ref String, 36] = ["False", "None", "True", "and", "as", "assert", "async", "await", "break", "class", "continue", "def", "del", "elif", "else", "except", "finally", "for", "from", "global", "if", "import", "in", "is", "lambda", "nonlocal", "not", "or", "pass", "raise", "return", "try", "while", "with", "yield", "self"]
+    for word in words {
+        if word == name {
+            return f"{name}_"
+        }
+    }
+    return name.clone()
+}
+
+/// The `ctypes` type of a value that crosses by value.
+fn cx_python_scalar(shape: ref CxByValue) -> String {
+    if shape.rust == "i32" {
+        return "ctypes.c_int32"
+    }
+    if shape.rust == "i64" {
+        return "ctypes.c_int64"
+    }
+    if shape.rust == "u8" {
+        return "ctypes.c_uint8"
+    }
+    if shape.rust == "f64" {
+        return "ctypes.c_double"
+    }
+    if shape.rust == "bool" {
+        return "ctypes.c_bool"
+    }
+    return "ctypes.c_uint32"
+}
+
+/// `lines`, each indented by `by` and ended.
+fn cx_indent(lines: ref Vec[String], by: ref String) -> String {
+    let mut out: String = ""
+    for line in lines {
+        out.push_str(f"{by}{line}\n")
+    }
+    return out
+}
+
+fn cx_call(symbol: ref String, args: ref Vec[String]) -> String {
+    return f"_lib.{symbol}({args.join(", ")})"
+}
+
+impl CxPython {
+    fn add_class(ref mut self, owner: ref String, text: String) {
+        let mut list: Vec[String] = []
+        let before = self.classes[owner]
+        if before != null {
+            let held = before ?? return
+            for one in held {
+                list.push(one.clone())
+            }
+        }
+        list.push(text)
+        self.classes.insert(owner.clone(), list)
+    }
+
+    pub fn empty() -> CxPython {
+        return CxPython { functions: [], classes: collections::BTreeMap(), signatures: [], any_async: false, any_stream: false }
+    }
+
+    /// One entry point: a function, or a handle's constructor, method or
+    /// property.
+    pub fn entry(ref mut self, words: ref winnow_grammar::InternerContext, ctx: ref CxCtx, entry: ref CxEntry, symbol: ref String, text_out: bool, pauses: bool) {
+        let mut def_params: Vec[String] = []
+        let mut argtypes: Vec[String] = []
+        let mut before: Vec[String] = []
+        let mut args: Vec[String] = []
+        let mut keep: Vec[String] = []
+        let mut raising: Vec[String] = []
+        let by_value = entry.of_a_record(ctx.records)
+        let owner_name = entry.owner?.clone()
+        let owner_text: String = entry.owner?.clone() ?? ""
+        if entry.receiver != null {
+            if by_value && owner_name != null {
+                argtypes.push(f"ctypes.POINTER({owner_text})")
+                args.push("ctypes.byref(self)")
+            } else {
+                argtypes.push("ctypes.c_void_p")
+                args.push("self._live()")
+            }
+        }
+        let mut position = 0
+        while position < entry.arg_names.len() {
+            let name = cx_python_name(entry.arg_names[position])
+            let ty = entry.arg_types[position].clone()
+            position += 1
+            def_params.push(name.clone())
+            let taken = cx_taken(words, ctx.plains, ctx.handles, ctx.records, ty)
+            if taken == null {
+                continue
+            }
+            let kind_taken = taken ?? continue
+            match kind_taken {
+                CxIn::Value(shape) => {
+                    argtypes.push(cx_python_scalar(shape))
+                    if shape.scalar {
+                        args.push(f"ord({name})")
+                    } else {
+                        args.push(name.clone())
+                    }
+                },
+                CxIn::Run { rust, as_text, .. } => {
+                    let mut element: String = "ctypes.c_bool"
+                    if as_text {
+                        element = "ctypes.c_uint8"
+                    } else if rust == "i32" {
+                        element = "ctypes.c_int32"
+                    } else if rust == "i64" {
+                        element = "ctypes.c_int64"
+                    } else if rust == "u8" {
+                        element = "ctypes.c_uint8"
+                    } else if rust == "f64" {
+                        element = "ctypes.c_double"
+                    }
+                    argtypes.push(f"ctypes.POINTER({element})")
+                    argtypes.push("ctypes.c_size_t")
+                    if as_text {
+                        before.push(f"{name}_at, {name}_len = _text({name})")
+                    } else {
+                        before.push(f"{name}_at, {name}_len = _run({element}, {name})")
+                    }
+                    args.push(f"{name}_at")
+                    args.push(f"{name}_len")
+                },
+                CxIn::Bytes => {
+                    argtypes.push("ctypes.POINTER(ctypes.c_uint8)")
+                    argtypes.push("ctypes.c_size_t")
+                    before.push(f"{name}_at, {name}_len = _bytes({name})")
+                    args.push(f"{name}_at")
+                    args.push(f"{name}_len")
+                },
+                CxIn::Choice(at) => {
+                    argtypes.push("ctypes.c_int")
+                    args.push(f"int({ctx.plains[at].name}({name}))")
+                },
+                CxIn::Record(at) => {
+                    argtypes.push(ctx.records[at].name.clone())
+                    args.push(name.clone())
+                },
+                CxIn::Records { record, .. } => {
+                    let record_name = ctx.records[record].name.clone()
+                    argtypes.push(f"ctypes.POINTER({record_name})")
+                    argtypes.push("ctypes.c_size_t")
+                    before.push(f"{name}_at, {name}_len = _run({record_name}, {name})")
+                    args.push(f"{name}_at")
+                    args.push(f"{name}_len")
+                },
+                CxIn::Handle(_) => {
+                    argtypes.push("ctypes.c_void_p")
+                    args.push(f"{name}._live()")
+                },
+                CxIn::AbsentHandle(_) => {
+                    argtypes.push("ctypes.c_void_p")
+                    args.push(f"None if {name} is None else {name}._live()")
+                },
+                CxIn::AbsentText => {
+                    argtypes.push("ctypes.POINTER(ctypes.c_uint8)")
+                    argtypes.push("ctypes.c_size_t")
+                    before.push(f"{name}_at, {name}_len = (None, 0) if {name} is None else _text({name})")
+                    args.push(f"{name}_at")
+                    args.push(f"{name}_len")
+                },
+                CxIn::Callback { lent, result } => {
+                    let mut c_args: Vec[String] = []
+                    let mut params: Vec[String] = []
+                    let mut handed: Vec[String] = []
+                    let mut at = 0
+                    for part in lent {
+                        match part {
+                            CxLent::Value(shape) => {
+                                c_args.push(cx_python_scalar(shape))
+                                params.push(f"a{at}")
+                                if shape.scalar {
+                                    handed.push(f"chr(a{at})")
+                                } else {
+                                    handed.push(f"a{at}")
+                                }
+                            },
+                            CxLent::Choice(which) => {
+                                c_args.push("ctypes.c_int")
+                                params.push(f"a{at}")
+                                handed.push(f"{ctx.plains[which].name}(a{at})")
+                            },
+                            CxLent::Text => {
+                                c_args.push("ctypes.POINTER(ctypes.c_uint8)")
+                                c_args.push("ctypes.c_size_t")
+                                params.push(f"a{at}, a{at}_len")
+                                handed.push(f"ctypes.string_at(a{at}, a{at}_len).decode(\"utf-8\")")
+                            },
+                        }
+                        at += 1
+                    }
+                    c_args.push("ctypes.c_void_p")
+                    params.push("ctx")
+                    let mut restype: String = "None"
+                    let mut default: String = "None"
+                    if result != null {
+                        restype = cx_python_scalar(result ?? continue)
+                        default = "0"
+                    }
+                    let kind = f"ctypes.CFUNCTYPE({restype}, {c_args.join(", ")})"
+                    argtypes.push(kind.clone())
+                    argtypes.push("ctypes.c_void_p")
+                    // **What the callback raises is raised by the call**, once it
+                    // has returned: `ctypes` cannot carry an exception out
+                    // through C, so it is held and the callback answers its
+                    // default.
+                    before.push(f"{name}_raised = []")
+                    before.push(f"{name}_c = {kind}(lambda {params.join(", ")}: _calling({name}_raised, {default}, {name}, {handed.join(", ")}))")
+                    raising.push(f"{name}_raised")
+                    // Kept alive until the call has returned (D27).
+                    keep.push(f"{name}_c")
+                    args.push(f"{name}_c")
+                    args.push("None")
+                },
+            }
+        }
+        // What comes back, through the out-parameter.
+        let mut after: Vec[String] = []
+        let found = cx_result_of(entry, words, ctx.plains, ctx.handles, ctx.records)
+        let mut body_call: String = f"_check({cx_call(symbol, args)})"
+        let mut has_result = false
+        let mut buffered = false
+        let mut flagged = false
+        match found {
+            CxResult::Made(out) => {
+                has_result = true
+                match out {
+                    CxOut::Buffer => {
+                        buffered = true
+                        argtypes.push("ctypes.POINTER(ctypes.c_uint8)")
+                        argtypes.push("ctypes.c_size_t")
+                        argtypes.push("ctypes.POINTER(ctypes.c_size_t)")
+                        let mut asked = args.clone()
+                        asked.push("out")
+                        asked.push("cap")
+                        asked.push("written")
+                        body_call = f"got = _buffer(lambda out, cap, written: {cx_call(symbol, asked)})"
+                        if text_out {
+                            after.push("return got.decode(\"utf-8\")")
+                        } else {
+                            after.push("return got")
+                        }
+                    },
+                    CxOut::Records(_) => {
+                        buffered = true
+                        let record = ctx.records[cx_out_index(out)].name.clone()
+                        argtypes.push(f"ctypes.POINTER({record})")
+                        argtypes.push("ctypes.c_size_t")
+                        argtypes.push("ctypes.POINTER(ctypes.c_size_t)")
+                        let mut asked = args.clone()
+                        asked.push("out")
+                        asked.push("cap")
+                        asked.push("written")
+                        body_call = f"got = _structs({record}, lambda out, cap, written: {cx_call(symbol, asked)})"
+                        after.push("return got")
+                    },
+                    else => {
+                        flagged = out.flagged()
+                        let (ctype, back) = cx_python_back(out, ctx)
+                        argtypes.push(f"ctypes.POINTER({ctype})")
+                        before.push(f"out = {ctype}()")
+                        let mut asked = args.clone()
+                        asked.push("ctypes.byref(out)")
+                        if flagged {
+                            argtypes.push("ctypes.POINTER(ctypes.c_bool)")
+                            before.push("present = ctypes.c_bool()")
+                            asked.push("ctypes.byref(present)")
+                        }
+                        body_call = f"_check({cx_call(symbol, asked)})"
+                        after.push(f"return {back}")
+                    },
+                }
+            },
+            else => {},
+        }
+        self.signatures.push(f"_lib.{symbol}.argtypes = [{argtypes.join(", ")}]\n_lib.{symbol}.restype = ctypes.c_int")
+        // **The `_async` form** (D9, D19, D27): `done` called with the value or
+        // the exception on a library thread, or - under a running `asyncio` loop
+        // and without `done` - an awaitable whose `cancel()` cancels the call at
+        // its next pause point. Not for a result into a buffer, whose size
+        // cannot be asked before the call has run, nor for a callback, whose
+        // exception has nowhere to go.
+        let asyncable = pauses && raising.len() == 0 && !buffered
+        let mut async_lines: Vec[String] = []
+        if asyncable {
+            self.any_async = true
+            let mut async_types = argtypes.clone()
+            async_types.push("_DONE")
+            async_types.push("ctypes.c_void_p")
+            async_types.push("ctypes.POINTER(ctypes.c_void_p)")
+            self.signatures.push(f"_lib.{symbol}_async.argtypes = [{async_types.join(", ")}]\n_lib.{symbol}_async.restype = ctypes.c_int")
+            async_lines = before.clone()
+            let mut handed_args = args.clone()
+            if has_result {
+                handed_args.push("ctypes.byref(out)")
+            }
+            if flagged {
+                handed_args.push("ctypes.byref(present)")
+            }
+            async_lines.push("def finish(status):")
+            async_lines.push("    if status != 0:")
+            async_lines.push("        return _ERRORS.get(status, Error)(_said())")
+            if after.len() > 0 {
+                async_lines.push(f"    {after[0]}")
+            } else {
+                async_lines.push("    return None")
+            }
+            async_lines.push(f"return _start(_lib.{symbol}_async, [{handed_args.join(", ")}], finish, done)")
+        }
+        let mut lines: Vec[String] = before.clone()
+        if raising.len() == 0 {
+            lines.push(body_call.clone())
+        } else {
+            lines.push("try:")
+            lines.push(f"    {body_call}")
+            lines.push("finally:")
+            for held in raising {
+                lines.push(f"    if {held}:")
+                lines.push(f"        raise {held}[0]")
+            }
+        }
+        for kept in keep {
+            lines.push(f"del {kept}")
+        }
+        lines.extend(after)
+        // **A stream is a generator** (D20, D21, D27): a function taking one
+        // callback that answers `bool` is also `<name>_iter(…)`, its other
+        // parameters the same, and the items yielded one at a time.
+        let mut streams: Vec[i64] = []
+        position = 0
+        while position < entry.arg_names.len() {
+            let taken = cx_taken(words, ctx.plains, ctx.handles, ctx.records, entry.arg_types[position])
+            if taken != null {
+                let kind_taken = taken ?? continue
+                match kind_taken {
+                    CxIn::Callback { result, .. } => {
+                        if result != null {
+                            let shape = result ?? continue
+                            if shape.rust == "bool" {
+                                streams.push(position)
+                            }
+                        }
+                    },
+                    else => {},
+                }
+            }
+            position += 1
+        }
+        if streams.len() == 1 && owner_name == null {
+            self.any_stream = true
+            let mut others: Vec[String] = []
+            let mut forwarded: Vec[String] = []
+            let mut place = 0
+            while place < def_params.len() {
+                if place != streams[0] {
+                    others.push(def_params[place].clone())
+                    forwarded.push(def_params[place].clone())
+                } else {
+                    forwarded.push("each")
+                }
+                place += 1
+            }
+            self.functions.push(f"def {entry.name}_iter({others.join(", ")}):\n    return _stream(lambda each: {cx_python_name(entry.name)}({forwarded.join(", ")}))\n")
+        }
+        if async_lines.len() > 0 {
+            let mut params = def_params.clone()
+            params.push("done=None")
+            if owner_name == null {
+                self.functions.push(f"def {entry.name}_async({params.join(", ")}):\n{cx_indent(async_lines, "    ")}")
+            } else if entry.receiver != null {
+                params.insert(0, "self")
+                self.add_class(owner_text, f"    def {entry.name}_async({params.join(", ")}):\n{cx_indent(async_lines, "        ")}")
+            }
+        }
+        let python = cx_python_name(entry.name)
+        if owner_name == null {
+            self.functions.push(f"def {python}({def_params.join(", ")}):\n{cx_indent(lines, "    ")}")
+        } else {
+            let owner = owner_text.clone()
+            if entry.getter {
+                self.add_class(owner, f"    @property\n    def {python}(self):\n{cx_indent(lines, "        ")}")
+            } else if entry.receiver != null {
+                let mut params: Vec[String] = ["self"]
+                params.extend(def_params)
+                self.add_class(owner, f"    def {python}({params.join(", ")}):\n{cx_indent(lines, "        ")}")
+            } else if entry.name == "new" {
+                // The anonymous constructor is the class's own `__init__`; any
+                // other function of the type is a static method.
+                let mut params: Vec[String] = ["self"]
+                params.extend(def_params)
+                let mut made = lines.clone()
+                if made.len() > 0 {
+                    let last = made.len() - 1
+                    made[last] = "self._ptr = out.value"
+                }
+                self.add_class(owner, f"    def __init__({params.join(", ")}):\n{cx_indent(made, "        ")}")
+            } else {
+                self.add_class(owner, f"    @staticmethod\n    def {python}({def_params.join(", ")}):\n{cx_indent(lines, "        ")}")
+            }
+        }
+    }
+
+    /// The module.
+    pub fn module(ref self, package: ref String, prefix: ref String, ctx: ref CxCtx, held: ref Vec[bool], any_pause: bool) -> String {
+        let library = package.replace("-", "_")
+        let digest = CX_LEDGER_DIGEST
+        let mut out = f"\"\"\"{package} - GENERATED by `nikaia bind python` from {package}'s ledger. Do not edit.\n\nledger: {digest}\n\"\"\"\n\nimport ctypes\nimport enum\nimport os\nimport sys\n\n_here = os.path.dirname(os.path.abspath(__file__))\nif sys.platform == \"darwin\":\n    _file = \"lib{library}.dylib\"\nelif sys.platform == \"win32\":\n    _file = \"{library}.dll\"\nelse:\n    _file = \"lib{library}.so\"\n_lib = ctypes.CDLL(os.path.join(_here, \"..\", _file))\n\n\nclass Error(Exception):\n    \"\"\"A status other than OK, with what `{prefix}_last_error` said.\"\"\"\n    code = None\n\n\nclass BoundaryError(Error):\n    \"\"\"One of the seven statuses the boundary owns.\"\"\"\n\n\n"
+        let boundary_names: Array[ref String, 7] = ["ArgumentError", "TooSmallError", "NotRunningError", "PanickedError", "ReentrantError", "CleanupError", "CancelledError"]
+        let mut errors: Vec[(String, i64)] = []
+        let mut taken: collections::BTreeSet[String] = collections::BTreeSet()
+        let mut number = 0
+        for name in boundary_names {
+            number -= 1
+            out.push_str(f"class {name}(BoundaryError):\n    code = {number}\n\n\n")
+            errors.push((name.clone(), number))
+            taken.insert(name.clone())
+        }
+        for raising in ctx.codes {
+            let error = raising.error.clone()
+            let spelled = error.replace("::", "")
+            for code in raising.codes {
+                let word: String = code.variant?.clone() ?? ""
+                let mut what = error.clone()
+                let mut name: String = f"{spelled}{word}"
+                if code.variant != null {
+                    what = f"{error}::{word}"
+                    if !taken.contains(word) {
+                        taken.insert(word.clone())
+                        name = word.clone()
+                    }
+                } else {
+                    let first = spelled[0..<1].to_uppercase()
+                    name = f"{first}{spelled[1..<spelled.len()]}"
+                    taken.insert(name.clone())
+                }
+                let code_number = code.number
+                // **An `errno` is the matching `OSError` too** (D33): `ENOENT` a
+                // `FileNotFoundError`, `EACCES` a `PermissionError`, each with
+                // `errno` set.
+                let errno = code.errno?.clone()
+                if errno != null {
+                    let named = errno ?? ""
+                    let mut os: String = "OSError"
+                    if named == "ENOENT" {
+                        os = "FileNotFoundError"
+                    } else if named == "EACCES" {
+                        os = "PermissionError"
+                    }
+                    out.push_str(f"class {name}(Error, {os}):\n    \"\"\"`{what}`, `{named}`.\"\"\"\n    code = {code_number}\n\n    def __init__(self, said):\n        {os}.__init__(self, {code_number}, said)\n\n\n")
+                } else {
+                    out.push_str(f"class {name}(Error):\n    \"\"\"`{what}`.\"\"\"\n    code = {code_number}\n\n\n")
+                }
+                errors.push((name, code_number))
+            }
+        }
+        let mut table: Vec[String] = []
+        for (name, code) in errors {
+            table.push(f"{code}: {name}")
+        }
+        out.push_str(cx_python_helpers(prefix, table.join(", ")))
+        if self.any_stream {
+            out.push_str(cx_python_stream())
+        }
+        if any_pause && self.any_async {
+            out.push_str(cx_python_ticket(prefix))
+        }
+        for plain in ctx.plains {
+            let mut values: String = ""
+            let mut at = 0
+            for variant in plain.variants {
+                values.push_str(f"    {variant} = {at}\n")
+                at += 1
+            }
+            out.push_str(f"class {plain.name}(enum.IntEnum):\n{values}\n\n")
+        }
+        for place in cx_records_in_order(ctx.records) {
+            let record = ctx.records[place]
+            // **An `extern` enum** (D32): a structure per variant with fields,
+            // their union, and the tag beside it; the union is anonymous, so
+            // `figure.frame.w` reads as C's does, and each variant's tag is a
+            // class attribute.
+            if record.is_enum() {
+                let ty = record.name.clone()
+                let mut members: Vec[String] = []
+                for variant in record.variants {
+                    if variant.fields.len() == 0 {
+                        continue
+                    }
+                    out.push_str(f"class _{ty}_{variant.name}(ctypes.Structure):\n    _fields_ = [{cx_python_laid_out(variant.fields, ctx)}]\n\n\n")
+                    members.push(f"(\"{variant.member}\", _{ty}_{variant.name})")
+                }
+                let mut tags: String = ""
+                let mut tag = 0
+                for variant in record.variants {
+                    tags.push_str(f"    {variant.name} = {tag}\n")
+                    tag += 1
+                }
+                if members.len() == 0 {
+                    out.push_str(f"class {ty}(ctypes.Structure):\n    _fields_ = [(\"tag\", ctypes.c_int)]\n{tags}\n")
+                } else {
+                    out.push_str(f"class _{ty}_Union(ctypes.Union):\n    _fields_ = [{members.join(", ")}]\n\n\nclass {ty}(ctypes.Structure):\n    _anonymous_ = (\"_u\",)\n    _fields_ = [(\"tag\", ctypes.c_int), (\"_u\", _{ty}_Union)]\n{tags}\n")
+                }
+            } else {
+                out.push_str(f"class {record.name}(ctypes.Structure):\n    _fields_ = [{cx_python_laid_out(record.fields, ctx)}]\n\n")
+            }
+            // Its methods (ADR-284 D16): `self` is handed by address.
+            let own = self.classes[record.name]
+            if own != null {
+                let held = own ?? return out
+                for member in held {
+                    out.push_str(member)
+                    out.push_str("\n")
+                }
+            }
+            out.push_str("\n")
+        }
+        let mut at = 0
+        while at < ctx.handles.len() {
+            if held[at] {
+                let ty = ctx.handles[at].name.clone()
+                out.push_str(f"_lib.{prefix}_{ty}_free.argtypes = [ctypes.c_void_p]\n_lib.{prefix}_{ty}_free.restype = ctypes.c_int\n\n\nclass {ty}:\n    \"\"\"A handle (ADR-284 D5): `close()` frees it, as leaving a `with` does.\"\"\"\n\n    _ptr = None\n\n    @classmethod\n    def _from(cls, ptr):\n        made = cls.__new__(cls)\n        made._ptr = ptr\n        return made\n\n    def _live(self):\n        if not self._ptr:\n            raise ArgumentError(\"the handle is closed\")\n        return self._ptr\n\n    def close(self):\n        if self._ptr:\n            ptr, self._ptr = self._ptr, None\n            _check(_lib.{prefix}_{ty}_free(ptr))\n\n    def __enter__(self):\n        return self\n\n    def __exit__(self, *_):\n        self.close()\n\n    def __del__(self):\n        try:\n            self.close()\n        except Exception:\n            pass\n\n")
+                let own = self.classes[ty]
+                if own != null {
+                    let held_members = own ?? return out
+                    for member in held_members {
+                        out.push_str(member)
+                        out.push_str("\n")
+                    }
+                }
+                out.push_str("\n")
+            }
+            at += 1
+        }
+        for signature in self.signatures {
+            out.push_str(signature)
+            out.push_str("\n")
+        }
+        out.push_str("\n\n")
+        for function in self.functions {
+            out.push_str(function)
+            out.push_str("\n\n")
+        }
+        return out
+    }
+}
+
+/// The `ctypes` type of one field of a structure.
+fn cx_python_field_type(part: ref CxPart, ctx: ref CxCtx) -> String {
+    return match part {
+        CxPart::Value(shape) => cx_python_scalar(shape),
+        CxPart::Choice(_) => "ctypes.c_int",
+        CxPart::Record(at) => ctx.records[at].name.clone(),
+        CxPart::Array(element, count) => f"{cx_python_field_type(element, ctx)} * {count}",
+    }
+}
+
+fn cx_python_laid_out(fields: ref Vec[(String, CxPart)], ctx: ref CxCtx) -> String {
+    let mut parts: Vec[String] = []
+    for (field, part) in fields {
+        parts.push(f"(\"{field}\", {cx_python_field_type(part, ctx)})")
+    }
+    return parts.join(", ")
+}
+
+/// The `ctypes` type of what comes back through `out`, and what it is made.
+fn cx_python_back(out: ref CxOut, ctx: ref CxCtx) -> (String, String) {
+    return match out {
+        CxOut::Value(shape) => (cx_python_scalar(shape), cx_python_value(shape)),
+        // `null` is `None` (D30).
+        CxOut::AbsentValue(shape) => (cx_python_scalar(shape), f"{cx_python_value(shape)} if present.value else None"),
+        CxOut::AbsentRecord(at) => (ctx.records[at].name.clone(), f"out if present.value else None"),
+        CxOut::Choice(at) => (f"ctypes.c_int", f"{ctx.plains[at].name}(out.value)"),
+        CxOut::Record(at) => (ctx.records[at].name.clone(), f"out"),
+        CxOut::Handle(at) => (f"ctypes.c_void_p", f"{ctx.handles[at].name}._from(out.value)"),
+        CxOut::AbsentHandle(at) => (f"ctypes.c_void_p", f"None if not out.value else {ctx.handles[at].name}._from(out.value)"),
+        else => (f"", f""),
+    }
+}
+
+fn cx_python_value(shape: ref CxByValue) -> String {
+    if shape.scalar {
+        return "chr(out.value)"
+    }
+    if shape.rust == "bool" {
+        return "bool(out.value)"
+    }
+    return "out.value"
+}
+
+fn cx_python_helpers(prefix: ref String, table: ref String) -> String {
+    return f"_ERRORS = {{{table}}}\n\n_lib.{prefix}_last_error.argtypes = [ctypes.POINTER(ctypes.c_uint8), ctypes.c_size_t, ctypes.POINTER(ctypes.c_size_t)]\n_lib.{prefix}_last_error.restype = ctypes.c_int\n\n\ndef _buffer(call):\n    \"\"\"Asks the size, then hands a buffer of it (ADR-284 D6).\"\"\"\n    written = ctypes.c_size_t(0)\n    _check(call(None, 0, ctypes.byref(written)))\n    room = (ctypes.c_uint8 * max(written.value, 1))()\n    _check(call(room, written.value, ctypes.byref(written)))\n    return bytes(room[: written.value])\n\n\ndef _structs(kind, call):\n    \"\"\"Asks the count, then hands room for it, counted in structs (ADR-284 D16).\"\"\"\n    written = ctypes.c_size_t(0)\n    _check(call(None, 0, ctypes.byref(written)))\n    room = (kind * max(written.value, 1))()\n    _check(call(room, written.value, ctypes.byref(written)))\n    return list(room[: written.value])\n\n\ndef _said():\n    written = ctypes.c_size_t(0)\n    _lib.{prefix}_last_error(None, 0, ctypes.byref(written))\n    room = (ctypes.c_uint8 * max(written.value, 1))()\n    _lib.{prefix}_last_error(room, written.value, ctypes.byref(written))\n    return bytes(room[: written.value]).decode(\"utf-8\", \"replace\")\n\n\ndef _check(status):\n    if status != 0:\n        raise _ERRORS.get(status, Error)(_said())\n\n\ndef _calling(raised, default, call, *args):\n    try:\n        return call(*args)\n    except BaseException as error:\n        raised.append(error)\n        return default\n\n\ndef _bytes(data):\n    data = bytes(data)\n    return (ctypes.c_uint8 * len(data)).from_buffer_copy(data), len(data)\n\n\ndef _text(text):\n    return _bytes(text.encode(\"utf-8\"))\n\n\ndef _run(kind, values):\n    values = list(values)\n    return (kind * len(values))(*values), len(values)\n\n\n_lib.{prefix}_init.restype = ctypes.c_int\n_lib.{prefix}_shutdown.restype = ctypes.c_int\n\n\ndef init():\n    \"\"\"Starts the library, and starts it again after `shutdown` (ADR-284 D10).\"\"\"\n    _check(_lib.{prefix}_init())\n\n\ndef shutdown():\n    \"\"\"Stops the library; every call after it raises `NotRunningError` until `init`.\"\"\"\n    _check(_lib.{prefix}_shutdown())\n\n\n"
+}
+
+fn cx_python_stream() -> String {
+    return "def _stream(call):
+    \"\"\"The items a callback is handed, yielded one at a time: the next is made
+    after this one was asked for, and closing the generator is the stop (ADR-284 D21).\"\"\"
+    import queue
+    import threading
+
+    items = queue.Queue(maxsize=1)
+    go = queue.Queue(maxsize=1)
+    end = object()
+    outcome = []
+
+    def each(*item):
+        items.put(item[0] if len(item) == 1 else item)
+        return go.get()
+
+    def run():
+        try:
+            outcome.append(call(each))
+        except BaseException as error:
+            outcome.append(error)
+        items.put(end)
+
+    threading.Thread(target=run, daemon=True).start()
+    ended = False
+    try:
+        while True:
+            item = items.get()
+            if item is end:
+                ended = True
+                break
+            yield item
+            go.put(True)
+    finally:
+        if not ended:
+            go.put(False)
+            while items.get() is not end:
+                go.put(False)
+    if outcome and isinstance(outcome[0], BaseException):
+        raise outcome[0]
+
+
+"
+}
+
+fn cx_python_ticket(prefix: ref String) -> String {
+    return f"_DONE = ctypes.CFUNCTYPE(None, ctypes.c_int, ctypes.c_void_p)\n_lib.{prefix}_cancel.argtypes = [ctypes.c_void_p]\n_lib.{prefix}_cancel.restype = ctypes.c_int\n_lib.{prefix}_op_free.argtypes = [ctypes.c_void_p]\n_lib.{prefix}_op_free.restype = ctypes.c_int\n# Every call in flight, with what it must keep alive until `done`.\n_HELD = {{}}\n\n\nclass Ticket:\n    \"\"\"An `_async` call: `cancel()` cancels it at its next pause point (ADR-284 D19).\"\"\"\n\n    def __init__(self):\n        self._op = ctypes.c_void_p()\n\n    def cancel(self):\n        if self._op:\n            _check(_lib.{prefix}_cancel(self._op))\n\n    def __del__(self):\n        # Only once `done` has run: until then `_HELD` holds this.\n        if self._op:\n            _lib.{prefix}_op_free(self._op)\n\n\ndef _settle(future, value):\n    if future.done():\n        return\n    if isinstance(value, BaseException):\n        future.set_exception(value)\n    else:\n        future.set_result(value)\n\n\ndef _start(function, args, finish, done):\n    loop = None\n    if done is None:\n        import asyncio\n\n        loop = asyncio.get_running_loop()\n        future = loop.create_future()\n    ticket = Ticket()\n    held = []\n\n    def landed(status, ctx):\n        value = finish(status)\n        _HELD.pop(id(held), None)\n        if loop is None:\n            done(value)\n        else:\n            try:\n                loop.call_soon_threadsafe(_settle, future, value)\n            except RuntimeError:\n                pass  # the loop has closed: nobody waits for it\n\n    callback = _DONE(landed)\n    held.extend([callback, args, ticket])\n    _HELD[id(held)] = held\n    _check(function(*args, callback, None, ctypes.byref(ticket._op)))\n    if loop is None:\n        return ticket\n    future.add_done_callback(lambda f: f.cancelled() and ticket.cancel())\n    return future\n\n\n"
+}

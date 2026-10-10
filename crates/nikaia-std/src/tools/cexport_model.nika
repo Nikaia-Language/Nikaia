@@ -1,0 +1,998 @@
+// crates/nikaia-std/src/tools/cexport_model.nika
+//
+// **A package as a library C calls, what is read of it** (ADR-284, ADR-324 D6):
+// the entry points of the entry file, the types that cross the boundary and the
+// shape each one crosses in - read off the declarations, before anything is
+// written. Moved from the compiler's `cexport` (ADR-294, #125); the wrappers,
+// the header and the two bindings are written from this by `cexport.nika`,
+// `cexport_python.nika` and `cexport_node.nika`.
+
+use std::collections
+
+/// Why an entry point is refused, in the words the compiler reports.
+pub enum CxRefused {
+    Because(String),
+}
+
+impl Error for CxRefused {
+    fn message(ref self) -> String {
+        return match self {
+            CxRefused::Because(why) => why.clone()
+        }
+    }
+}
+
+/// One value crossing by value (ADR-284 D5's first row): its type in the
+/// language below and in C.
+pub struct CxByValue {
+    pub rust: String,
+    pub c: String,
+    /// A `scalar` crosses as a `uint32_t` and is checked on the way in: not
+    /// every number is a Unicode scalar value.
+    pub scalar: bool,
+}
+
+/// What a parameter takes from C (ADR-284 D5).
+pub enum CxIn {
+    Value(CxByValue),
+    /// `ref String`, or `ref Array[T]` of a number: an address and a length C
+    /// keeps for the call.
+    Run { rust: String, c: String, as_text: bool },
+    /// `Bytes`: the same, made a `Bytes` of its own.
+    Bytes,
+    /// An `enum` without payload: a C `enum`, its number checked on the way in.
+    Choice(i64),
+    /// `ref T` of a handle: held shared for the call.
+    Handle(i64),
+    /// `ref String?`: NULL is `null` (D5).
+    AbsentText,
+    /// `ref T?` of a handle: NULL is `null` (D5).
+    AbsentHandle(i64),
+    /// A `pub extern struct`, by value (D14).
+    Record(i64),
+    /// `ref Array[T]` or `Vec[T]` of a `pub extern struct`: an address and a
+    /// count C keeps for the call (D16). `true` where the callee takes it whole.
+    Records { record: i64, whole: bool },
+    /// `fn(A…) -> R sync`: a function pointer and the `void *ctx` C hands it
+    /// back (D5).
+    Callback { lent: Vec[CxLent], result: CxByValue? },
+}
+
+/// What a callback hands C (ADR-284 D5, D6).
+pub enum CxLent {
+    Value(CxByValue),
+    Choice(i64),
+    /// `ref String`: an address and a length that live for the call.
+    Text,
+}
+
+/// What a result hands back (ADR-284 D5, D6).
+pub enum CxOut {
+    Value(CxByValue),
+    /// `String`, `Bytes` or `Vec[u8]`: into the caller's buffer.
+    Buffer,
+    /// An `enum` without payload: its number.
+    Choice(i64),
+    /// A `pub struct`: a new handle, which the caller frees.
+    Handle(i64),
+    /// `T?` of a handle: NULL for `null` (D5).
+    AbsentHandle(i64),
+    /// A `pub extern struct`, by value (D14).
+    Record(i64),
+    /// `Vec[T]` of a `pub extern struct`: the caller's buffer, counted in
+    /// structs (D16).
+    Records(i64),
+    /// `T?` of a number: the value's out-parameter, then `bool *present`,
+    /// the status `OK` either way (D30).
+    AbsentValue(CxByValue),
+    /// `T?` of a `pub extern struct`, the same way (D30).
+    AbsentRecord(i64),
+}
+
+/// The place a result's type holds in `plains`, `handles` or `records`.
+pub fn cx_out_index(out: ref CxOut) -> i64 {
+    return match out {
+        CxOut::Choice(at) => at,
+        CxOut::Handle(at) => at,
+        CxOut::AbsentHandle(at) => at,
+        CxOut::Record(at) => at,
+        CxOut::Records(at) => at,
+        CxOut::AbsentRecord(at) => at,
+        else => 0,
+    }
+}
+
+impl CxOut {
+    /// Whether a `bool *present` follows the value's out-parameter (D30).
+    pub fn flagged(ref self) -> bool {
+        return match self {
+            CxOut::AbsentValue(_) => true,
+            CxOut::AbsentRecord(_) => true,
+            else => false,
+        }
+    }
+}
+
+/// **A `pub extern struct`** of the entry file (ADR-284 D14, D15): C's layout,
+/// crossing by value.
+pub struct CxRecord {
+    pub name: String,
+    pub fields: Vec[(String, CxPart)],
+    /// **A `pub extern enum`** (D32): its variants, as the tagged union lays
+    /// them out. Empty for a struct, whose fields are `fields`.
+    pub variants: Vec[CxAlternative],
+}
+
+/// One variant of a `pub extern enum` (D32): its member of the union, its
+/// name in lower case, and its fields - `_0`, `_1`, … where it has no names.
+pub struct CxAlternative {
+    pub name: String,
+    pub member: String,
+    pub positional: bool,
+    pub fields: Vec[(String, CxPart)],
+}
+
+/// One field of a [`CxRecord`].
+pub enum CxPart {
+    Value(CxByValue),
+    Choice(i64),
+    Record(i64),
+    /// `Array[T, N]` of any of the others: laid out as C lays out `T x[N]`
+    /// (ADR-152 D2, ADR-284 D15), each element converted as a field would be.
+    Array(CxPart, i64),
+}
+
+impl CxRecord {
+    pub fn is_enum(ref self) -> bool {
+        return self.variants.len() > 0
+    }
+
+    /// Every field it holds, of every variant; an array by its element.
+    pub fn parts(ref self) -> Vec[CxPart] {
+        let mut out: Vec[CxPart] = []
+        for (_, part) in self.fields {
+            out.push(cx_element(part))
+        }
+        for variant in self.variants {
+            for (_, part) in variant.fields {
+                out.push(cx_element(part))
+            }
+        }
+        return out
+    }
+}
+
+/// A field, or the element of an array field.
+pub fn cx_element(part: ref CxPart) -> CxPart {
+    return match part {
+        CxPart::Array(element, _) => element.clone(),
+        else => part.clone(),
+    }
+}
+
+/// An `enum` without payload the entry file declares (ADR-284 D5): its name
+/// and its variants, numbered in declaration order.
+pub struct CxPlain {
+    pub name: String,
+    pub variants: Vec[String],
+    /// What its C constants start with after the prefix: its name, or for
+    /// the kind of an `enum` with payload that enum's (D31).
+    pub stem: String,
+}
+
+/// How a call holds a handle (ADR-284 D11): shared to read it, alone to change it.
+pub enum CxHold {
+    Shared,
+    Exclusive,
+}
+
+/// The variant a getter reads, and the pattern that binds its field.
+pub struct CxVariantOf {
+    pub variant: String,
+    pub pattern: String,
+}
+
+/// **One function C calls**: an entry point, a handle's method or constructor,
+/// or the getter of one of its `pub` fields.
+pub struct CxEntry {
+    /// The handle type it belongs to.
+    pub owner: String?,
+    /// As written: `new` for the anonymous constructor, the field for a getter.
+    pub name: String,
+    /// How it holds `self`, where it has one.
+    pub receiver: CxHold?,
+    pub arg_names: Vec[String],
+    pub arg_types: Vec[Type],
+    pub ret_type: Type?,
+    /// A getter reads its field rather than calling anything.
+    pub getter: bool,
+    /// Whether it holds `self` alone (D11).
+    pub exclusive: bool,
+    /// A getter of an enum's variant: the variant, and the pattern that binds
+    /// the field as `__nikaia_v` (D31).
+    pub of_variant: CxVariantOf?,
+    /// `_kind` of an enum, which writes the kind `plains[at]` (D31).
+    pub kind_of: i64?,
+}
+
+impl CxEntry {
+    /// The name the ledger knows it by.
+    pub fn key(ref self) -> String {
+        let owner = self.owner ?? return self.name.clone()
+        return f"{owner}::{self.name}"
+    }
+
+    /// As a refusal names it.
+    pub fn written(ref self) -> String {
+        let owner = self.owner ?? return self.name.clone()
+        return f"{owner}.{self.name}"
+    }
+
+    /// Whether it is a method of a struct C holds by value (D16), which
+    /// `records` decide.
+    pub fn of_a_record(ref self, records: ref Vec[CxRecord]) -> bool {
+        let owner = self.owner ?? return false
+        for record in records {
+            if record.name == owner {
+                return true
+            }
+        }
+        return false
+    }
+}
+
+/// A `pub struct` of the entry file C holds as a handle (ADR-284 D5), with
+/// its `pub` fields, each of which gets a getter - or a `pub enum` with
+/// payload, read through `_kind` and a getter per field of each variant (D31).
+pub struct CxHandled {
+    pub name: String,
+    pub fields: Vec[(String, Type)],
+    /// An enum's variants, each with the pattern that tells it, and its
+    /// fields. Empty for a struct.
+    pub variants: Vec[CxShown],
+}
+
+/// One variant of a handled `enum`: the getter's name, the pattern that binds
+/// the field as `__nikaia_v`, and its type, for each field.
+pub struct CxShown {
+    pub name: String,
+    pub pattern: String,
+    pub fields: Vec[(String, String, Type)],
+}
+
+impl CxHandled {
+    pub fn is_enum(ref self) -> bool {
+        return self.variants.len() > 0
+    }
+}
+
+/// **One error type an entry point throws**, with the status each of its
+/// values is (D7, D33).
+pub struct CxRaising {
+    /// As the ledger names it: `ConfigError`, `io::IoError`.
+    pub error: String,
+    pub codes: Vec[CxCode],
+}
+
+/// One status a thrown error is.
+pub struct CxCode {
+    /// The variant, where the type has variants.
+    pub variant: String?,
+    pub number: i64,
+    /// What follows `<PACKAGE>_E_` in the header.
+    pub constant: String,
+    /// The `errno` it is, for a `std` error that is one (D33).
+    pub errno: String?,
+}
+
+impl CxCode {
+    /// The pattern of the error's type that is this code, in the wrapper.
+    pub fn pattern(ref self, error: ref String) -> String {
+        let variant = self.variant ?? return "_"
+        return f"{error}::{variant} {{ .. }}"
+    }
+}
+
+/// A source name, written so the language below can read it (ADR-296 D17).
+pub fn cx_escaped(name: ref String) -> String {
+    let reserved: Array[ref String, 28] = ["abstract", "async", "await", "become", "box", "const", "do", "dyn", "extern", "final", "gen", "loop", "macro", "mod", "move", "override", "priv", "ref", "static", "trait", "try", "type", "typeof", "unsafe", "unsized", "virtual", "where", "yield"]
+    for word in reserved {
+        if word == name {
+            return f"r#{name}"
+        }
+    }
+    return name.clone()
+}
+
+/// The refusal for an entry point whose `what` is not exported yet.
+pub fn cx_not_yet(written: ref String, what: ref String) -> String {
+    return f"`{written}` is an entry point whose {what} this compiler does not export yet: what is built is numbers, `bool`, `scalar` and an `enum` without payload in and out, text and bytes in and out, a run of numbers in, and a `pub struct` as a handle, of a function in `src/main.nika` (ADR-284 D5)."
+}
+
+/// The refusal for a library build whose entry package exports nothing.
+pub fn cx_nothing_exported() -> String {
+    return "`artifact = \"c-library\"`, and the package exports nothing: write `pub extern fn` before a function C may call (ADR-284 D4)."
+}
+
+/// How a value of this type crosses by value, where it does.
+pub fn cx_by_value(words: ref winnow_grammar::InternerContext, ty: ref Type) -> CxByValue? {
+    if ty.is_view || ty.is_nullable || ty.is_tuple || ty.generics.len() > 0 || ty.code != null {
+        return null
+    }
+    let name = words.resolve(ty.name)
+    if name == "i32" {
+        return CxByValue { rust: "i32", c: "int32_t", scalar: false }
+    }
+    if name == "i64" {
+        return CxByValue { rust: "i64", c: "int64_t", scalar: false }
+    }
+    if name == "u8" {
+        return CxByValue { rust: "u8", c: "uint8_t", scalar: false }
+    }
+    if name == "f64" {
+        return CxByValue { rust: "f64", c: "double", scalar: false }
+    }
+    if name == "bool" {
+        return CxByValue { rust: "bool", c: "bool", scalar: false }
+    }
+    if name == "scalar" || name == "char" {
+        return CxByValue { rust: "u32", c: "uint32_t", scalar: true }
+    }
+    return null
+}
+
+/// A callback C may be: one that does not pause or throw, takes values, enums
+/// and text, and hands back a number or `bool`, or nothing.
+fn cx_callback(words: ref winnow_grammar::InternerContext, plains: ref Vec[CxPlain], ty: ref Type) -> CxIn? {
+    let code = ty.code ?? return null
+    if !code.is_sync || code.can_throw || ty.is_nullable {
+        return null
+    }
+    let mut args: Vec[CxLent] = []
+    for arg in ty.generics {
+        let shape = cx_by_value(words, arg)
+        if shape != null {
+            args.push(CxLent::Value(shape ?? return null))
+            continue
+        }
+        let at = cx_choice(words, plains, arg)
+        if at != null {
+            args.push(CxLent::Choice(at ?? return null))
+            continue
+        }
+        let name = words.resolve(arg.name)
+        if arg.is_view && arg.generics.len() == 0 && (name == "String" || name == "str") {
+            args.push(CxLent::Text)
+            continue
+        }
+        return null
+    }
+    let mut result: CxByValue? = null
+    let written = code.result?.clone()
+    if written != null {
+        let shape = cx_by_value(words, written ?? return null) ?? return null
+        if shape.scalar {
+            return null
+        }
+        result = shape
+    }
+    return CxIn::Callback { lent: args, result: result }
+}
+
+fn cx_one_part(words: ref winnow_grammar::InternerContext, plains: ref Vec[CxPlain], declared: ref Vec[String], ty: ref Type) -> CxPart? {
+    let shape = cx_by_value(words, ty)
+    if shape != null {
+        return CxPart::Value(shape ?? return null)
+    }
+    let at = cx_choice(words, plains, ty)
+    if at != null {
+        return CxPart::Choice(at ?? return null)
+    }
+    if ty.generics.len() > 0 || ty.is_nullable {
+        return null
+    }
+    let name = words.resolve(ty.name)
+    let mut index = 0
+    while index < declared.len() {
+        if declared[index] == name {
+            return CxPart::Record(index)
+        }
+        index += 1
+    }
+    return null
+}
+
+fn cx_part(words: ref winnow_grammar::InternerContext, plains: ref Vec[CxPlain], declared: ref Vec[String], ty: ref Type, written: ref String) -> CxPart throws {
+    let mut found: CxPart? = null
+    if words.resolve(ty.name) == "Array" && ty.generics.len() == 2 {
+        let element = cx_one_part(words, plains, declared, ty.generics[0])
+        let count = ty.generics[1].count
+        if element != null && count != null {
+            found = CxPart::Array(element ?? CxPart::Choice(0), count ?? 0)
+        }
+    } else {
+        found = cx_one_part(words, plains, declared, ty)
+    }
+    return found ?? throw CxRefused::Because(cx_not_yet(written, "field of an `extern` struct or enum"))
+}
+
+/// Every `pub extern struct` and `pub extern enum` of the file, in the order
+/// it declares them.
+pub fn cx_records(words: ref winnow_grammar::InternerContext, items: ref Vec[Spanned[Item]], plains: ref Vec[CxPlain]) -> Vec[CxRecord] throws {
+    let mut declared: Vec[String] = []
+    for item in items {
+        match item.node {
+            Item::Struct { name, is_extern, .. } => {
+                if is_extern {
+                    declared.push(words.resolve(name).clone())
+                }
+            },
+            Item::Enum { name, is_extern, .. } => {
+                if is_extern {
+                    declared.push(words.resolve(name).clone())
+                }
+            },
+            else => {},
+        }
+    }
+    let mut out: Vec[CxRecord] = []
+    for item in items {
+        match item.node {
+            Item::Struct { name, fields, is_extern, .. } => {
+                if !is_extern {
+                    continue
+                }
+                let ty = words.resolve(name).clone()
+                let mut made: Vec[(String, CxPart)] = []
+                for field in fields {
+                    let field_name = words.resolve(field.name).clone()
+                    let at = cx_part(words, plains, declared, field.ty, f"{ty}.{field_name}")
+                    made.push((field_name, at))
+                }
+                out.push(CxRecord { name: ty, fields: made, variants: [] })
+            },
+            Item::Enum { name, variants, is_extern, .. } => {
+                if !is_extern {
+                    continue
+                }
+                let ty = words.resolve(name).clone()
+                let mut alternatives: Vec[CxAlternative] = []
+                for variant in variants {
+                    let variant_name = words.resolve(variant.name).clone()
+                    let mut positional = false
+                    let mut fields: Vec[(String, CxPart)] = []
+                    match variant.fields {
+                        VariantFields::Unit => {},
+                        VariantFields::Tuple(types) => {
+                            positional = true
+                            let mut at = 0
+                            for field_ty in types {
+                                let part = cx_part(words, plains, declared, field_ty, f"{ty}::{variant_name}.{at}")
+                                fields.push((f"_{at}", part))
+                                at += 1
+                            }
+                        },
+                        VariantFields::Named(named) => {
+                            for field in named {
+                                let field_name = words.resolve(field.name).clone()
+                                let part = cx_part(words, plains, declared, field.ty, f"{ty}::{variant_name}.{field_name}")
+                                fields.push((field_name, part))
+                            }
+                        },
+                    }
+                    alternatives.push(CxAlternative { member: variant_name.to_lowercase(), name: variant_name, positional: positional, fields: fields })
+                }
+                out.push(CxRecord { name: ty, fields: [], variants: alternatives })
+            },
+            else => {},
+        }
+    }
+    return out
+}
+
+pub fn cx_record_of(words: ref winnow_grammar::InternerContext, records: ref Vec[CxRecord], ty: ref Type) -> i64? {
+    if ty.is_view || ty.is_nullable || ty.is_tuple || ty.generics.len() > 0 || ty.code != null {
+        return null
+    }
+    let name = words.resolve(ty.name)
+    let mut at = 0
+    while at < records.len() {
+        if records[at].name == name {
+            return at
+        }
+        at += 1
+    }
+    return null
+}
+
+/// **The records, each after every record its fields hold**: C, and Python's
+/// `ctypes`, want a struct complete before another holds it. One that holds
+/// itself has no size, which rustc says; this only must not walk it forever.
+pub fn cx_records_in_order(records: ref Vec[CxRecord]) -> Vec[i64] {
+    let mut order: Vec[i64] = []
+    let mut at = 0
+    while at < records.len() {
+        let mut walking: Vec[i64] = []
+        cx_ordered(at, records, order, walking)
+        at += 1
+    }
+    return order
+}
+
+fn cx_ordered(at: i64, records: ref Vec[CxRecord], mut seen: Vec[i64], mut walking: Vec[i64]) {
+    if seen.contains(at) || walking.contains(at) {
+        return
+    }
+    walking.push(at)
+    for part in records[at].parts() {
+        match part {
+            CxPart::Record(inner) => { cx_ordered(inner, records, seen, walking) },
+            else => {},
+        }
+    }
+    seen.push(at)
+}
+
+/// The `enum`s without payload the file declares.
+pub fn cx_plain_enums(words: ref winnow_grammar::InternerContext, items: ref Vec[Spanned[Item]]) -> Vec[CxPlain] {
+    let mut out: Vec[CxPlain] = []
+    for item in items {
+        match item.node {
+            Item::Enum { name, variants, is_extern, .. } => {
+                if is_extern {
+                    continue
+                }
+                let mut plain = true
+                let mut names: Vec[String] = []
+                for variant in variants {
+                    match variant.fields {
+                        VariantFields::Unit => {},
+                        else => { plain = false },
+                    }
+                    names.push(words.resolve(variant.name).clone())
+                }
+                if plain {
+                    let ty = words.resolve(name)
+                    out.push(CxPlain { name: ty.clone(), variants: names, stem: ty.to_uppercase() })
+                }
+            },
+            else => {},
+        }
+    }
+    return out
+}
+
+/// Which of `plains` a type names, when it is one of them as written.
+pub fn cx_choice(words: ref winnow_grammar::InternerContext, plains: ref Vec[CxPlain], ty: ref Type) -> i64? {
+    if ty.is_view || ty.is_nullable || ty.is_tuple || ty.generics.len() > 0 || ty.code != null {
+        return null
+    }
+    let name = words.resolve(ty.name)
+    let mut at = 0
+    while at < plains.len() {
+        if plains[at].name == name {
+            return at
+        }
+        at += 1
+    }
+    return null
+}
+
+/// Which of `handles` a type names, as a view or not, nullable or not.
+pub fn cx_handle_of(words: ref winnow_grammar::InternerContext, handles: ref Vec[CxHandled], ty: ref Type) -> i64? {
+    if ty.is_tuple || ty.generics.len() > 0 || ty.code != null {
+        return null
+    }
+    let name = words.resolve(ty.name)
+    let mut at = 0
+    while at < handles.len() {
+        if handles[at].name == name {
+            return at
+        }
+        at += 1
+    }
+    return null
+}
+
+/// What a parameter of this type takes from C, where it can.
+pub fn cx_taken(words: ref winnow_grammar::InternerContext, plains: ref Vec[CxPlain], handles: ref Vec[CxHandled], records: ref Vec[CxRecord], ty: ref Type) -> CxIn? {
+    let record = cx_record_of(words, records, ty)
+    if record != null {
+        return CxIn::Record(record ?? return null)
+    }
+    let name = words.resolve(ty.name)
+    if (name == "Array" || name == "Vec") && ty.generics.len() == 1 && !ty.is_nullable {
+        let element = cx_record_of(words, records, ty.generics[0])
+        if element != null {
+            let at = element ?? return null
+            if name == "Array" && ty.is_view {
+                return CxIn::Records { record: at, whole: false }
+            }
+            if name == "Vec" && !ty.is_view {
+                return CxIn::Records { record: at, whole: true }
+            }
+            return null
+        }
+    }
+    if ty.code != null {
+        return cx_callback(words, plains, ty)
+    }
+    if ty.is_nullable {
+        let mut present = ty.clone()
+        present.is_nullable = false
+        let inner = cx_taken(words, plains, handles, records, present) ?? return null
+        return match inner {
+            CxIn::Run { as_text, .. } => if as_text { CxIn::AbsentText } else { null },
+            CxIn::Handle(at) => CxIn::AbsentHandle(at),
+            else => null,
+        }
+    }
+    let handle = cx_handle_of(words, handles, ty)
+    if handle != null {
+        // A handle taken by value would end it: not exported yet.
+        if ty.is_view {
+            return CxIn::Handle(handle ?? return null)
+        }
+        return null
+    }
+    let shape = cx_by_value(words, ty)
+    if shape != null {
+        return CxIn::Value(shape ?? return null)
+    }
+    let choice = cx_choice(words, plains, ty)
+    if choice != null {
+        return CxIn::Choice(choice ?? return null)
+    }
+    if ty.is_nullable || ty.code != null {
+        return null
+    }
+    if (name == "String" || name == "str") && ty.is_view && ty.generics.len() == 0 {
+        return CxIn::Run { rust: "u8", c: "uint8_t", as_text: true }
+    }
+    if name == "Array" && ty.is_view && ty.generics.len() == 1 {
+        let shape = cx_by_value(words, ty.generics[0]) ?? return null
+        if shape.scalar {
+            return null
+        }
+        return CxIn::Run { rust: shape.rust, c: shape.c, as_text: false }
+    }
+    if name == "Bytes" && ty.generics.len() == 0 {
+        return CxIn::Bytes
+    }
+    return null
+}
+
+/// What a result of this type hands back, where it can.
+pub fn cx_handed(words: ref winnow_grammar::InternerContext, plains: ref Vec[CxPlain], handles: ref Vec[CxHandled], records: ref Vec[CxRecord], ty: ref Type) -> CxOut? {
+    let record = cx_record_of(words, records, ty)
+    if record != null {
+        return CxOut::Record(record ?? return null)
+    }
+    let name = words.resolve(ty.name)
+    if name == "Vec" && ty.generics.len() == 1 && !ty.is_view && !ty.is_nullable {
+        let element = cx_record_of(words, records, ty.generics[0])
+        if element != null {
+            return CxOut::Records(element ?? return null)
+        }
+    }
+    if ty.is_nullable && !ty.is_view {
+        let mut present = ty.clone()
+        present.is_nullable = false
+        let held = cx_record_of(words, records, present)
+        if held != null {
+            return CxOut::AbsentRecord(held ?? return null)
+        }
+        let shape = cx_by_value(words, present)
+        if shape != null {
+            return CxOut::AbsentValue(shape ?? return null)
+        }
+        let handle = cx_handle_of(words, handles, present) ?? return null
+        return CxOut::AbsentHandle(handle)
+    }
+    let handle = cx_handle_of(words, handles, ty)
+    if handle != null {
+        if !ty.is_view {
+            return CxOut::Handle(handle ?? return null)
+        }
+        return null
+    }
+    let shape = cx_by_value(words, ty)
+    if shape != null {
+        return CxOut::Value(shape ?? return null)
+    }
+    let choice = cx_choice(words, plains, ty)
+    if choice != null {
+        return CxOut::Choice(choice ?? return null)
+    }
+    if ty.is_nullable || ty.is_view || ty.code != null {
+        return null
+    }
+    if (name == "String" || name == "Bytes") && ty.generics.len() == 0 {
+        return CxOut::Buffer
+    }
+    if name == "Vec" && ty.generics.len() == 1 && words.resolve(ty.generics[0].name) == "u8" {
+        return CxOut::Buffer
+    }
+    return null
+}
+
+/// The names of a wrapper's parameters, as `name: type` lists write them - a
+/// type may hold commas of its own (`fn(i64, *mut c_void)`), so only a comma
+/// outside brackets ends one.
+pub fn cx_parameter_names(params: ref Vec[String]) -> Vec[String] {
+    let mut names: Vec[String] = []
+    for list in params {
+        let mut depth = 0
+        let mut current: String = ""
+        let mut previous = ' '
+        for c in list.chars() {
+            if c == '<' || c == '(' || c == '[' {
+                depth += 1
+            } else if c == '>' && previous == '-' {
+                depth += 0
+            } else if c == '>' || c == ')' || c == ']' {
+                depth -= 1
+            }
+            if c == ',' && depth == 0 {
+                names.push(current.trim().clone())
+                current = f""
+            } else {
+                current.push(c)
+            }
+            previous = c
+        }
+        names.push(current.trim().clone())
+    }
+    let mut out: Vec[String] = []
+    for param in names {
+        let pieces: Vec[ref String] = param.split(":").collect()
+        out.push(pieces[0].trim().clone())
+    }
+    return out
+}
+
+/// Each `pub struct` and each `pub enum` with payload the file declares: what C holds by its address.
+pub fn cx_handled_structs(words: ref winnow_grammar::InternerContext, items: ref Vec[Spanned[Item]]) -> Vec[CxHandled] {
+    let mut out: Vec[CxHandled] = []
+    for item in items {
+        match item.node {
+            Item::Struct { name, generics, fields, is_public, is_extern } => {
+                if is_public && !is_extern && generics.len() == 0 {
+                    let mut shown: Vec[(String, Type)] = []
+                    for field in fields {
+                        if field.is_public {
+                            shown.push((words.resolve(field.name).clone(), field.ty.clone()))
+                        }
+                    }
+                    out.push(CxHandled { name: words.resolve(name).clone(), fields: shown, variants: [] })
+                }
+            },
+            Item::Enum { name, variants, is_public, is_extern } => {
+                if !is_public || is_extern {
+                    continue
+                }
+                let mut payload = false
+                for variant in variants {
+                    match variant.fields {
+                        VariantFields::Unit => {},
+                        else => { payload = true },
+                    }
+                }
+                if !payload {
+                    continue
+                }
+                let ty = words.resolve(name).clone()
+                let mut made: Vec[CxShown] = []
+                for variant in variants {
+                    let variant_name = words.resolve(variant.name).clone()
+                    let path = f"{ty}::{cx_escaped(variant_name)}"
+                    let mut pattern = path.clone()
+                    let mut fields: Vec[(String, String, Type)] = []
+                    match variant.fields {
+                        VariantFields::Unit => {},
+                        VariantFields::Tuple(types) => {
+                            pattern = f"{path}(..)"
+                            let mut at = 0
+                            for field in types {
+                                let mut places: Vec[String] = []
+                                let mut other = 0
+                                while other < types.len() {
+                                    if other == at {
+                                        places.push("__nikaia_v")
+                                    } else {
+                                        places.push("_")
+                                    }
+                                    other += 1
+                                }
+                                fields.push((f"{variant_name}_{at}", f"{path}({places.join(", ")})", field.clone()))
+                                at += 1
+                            }
+                        },
+                        VariantFields::Named(named) => {
+                            pattern = f"{path} {{ .. }}"
+                            for field in named {
+                                let label = words.resolve(field.name).clone()
+                                fields.push((f"{variant_name}_{label}", f"{path} {{ {cx_escaped(label)}: __nikaia_v, .. }}", field.ty.clone()))
+                            }
+                        },
+                    }
+                    made.push(CxShown { name: variant_name, pattern: pattern, fields: fields })
+                }
+                out.push(CxHandled { name: ty, fields: [], variants: made })
+            },
+            else => {},
+        }
+    }
+    return out
+}
+
+/// What an entry hands back: its result's shape, or the kind `_kind` writes
+/// (D31). The outer `null` is an entry that has no result.
+pub fn cx_result_of(entry: ref CxEntry, words: ref winnow_grammar::InternerContext, plains: ref Vec[CxPlain], handles: ref Vec[CxHandled], records: ref Vec[CxRecord]) -> CxResult {
+    let kind = entry.kind_of
+    if kind != null {
+        return CxResult::Made(CxOut::Choice(kind ?? 0))
+    }
+    let ty = entry.ret_type?.clone()
+    if ty == null {
+        return CxResult::Nothing
+    }
+    let handed = cx_handed(words, plains, handles, records, ty ?? return CxResult::Nothing)
+    if handed == null {
+        return CxResult::Refused
+    }
+    return CxResult::Made(handed ?? return CxResult::Refused)
+}
+
+/// What `result_of` found: no result, a result that does not cross, or its shape.
+pub enum CxResult {
+    Nothing,
+    Refused,
+    Made(CxOut),
+}
+
+/// Every `extern` function and method one file of the package declares;
+/// `first` says whether it is the entry file, the only one that may declare any.
+pub fn cx_entries_in(words: ref winnow_grammar::InternerContext, items: ref Vec[Spanned[Item]], first: bool, mut out: Vec[CxEntry]) throws {
+    for item in items {
+        match item.node {
+            Item::Impl { trait_name, target, methods } => {
+                if trait_name == null {
+                    for method in methods {
+                        cx_take(words, words.resolve(target.name).clone(), method.node, first, out)
+                    }
+                }
+            },
+            else => cx_take(words, null, item.node, first, out),
+        }
+    }
+}
+
+fn cx_take(words: ref winnow_grammar::InternerContext, owner: String?, item: ref Item, first: bool, mut out: Vec[CxEntry]) throws {
+    match item {
+        Item::Fn { name, receiver, args, ret_type, is_extern, .. } => {
+            if !is_extern {
+                return
+            }
+            let mut written: String = "new"
+            if name != null {
+                written = words.resolve(name ?? return).clone()
+            }
+            if !first {
+                throw CxRefused::Because(cx_not_yet(written, "file"))
+            }
+            let mut hold: CxHold? = null
+            let mut exclusive = false
+            if receiver != null {
+                let r = receiver ?? return
+                if r.is_ref && r.is_mut {
+                    exclusive = true
+                    hold = CxHold::Exclusive
+                } else if r.is_ref {
+                    hold = CxHold::Shared
+                } else {
+                    throw CxRefused::Because(cx_not_yet(written, "`self` taken by value"))
+                }
+            }
+            let mut arg_names: Vec[String] = []
+            let mut arg_types: Vec[Type] = []
+            for arg in args {
+                arg_names.push(words.resolve(arg.name).clone())
+                arg_types.push(arg.ty.clone())
+            }
+            out.push(CxEntry { owner: owner, name: written, receiver: hold, exclusive: exclusive, arg_names: arg_names, arg_types: arg_types, ret_type: ret_type?.clone(), getter: false, of_variant: null, kind_of: null })
+        },
+        else => {},
+    }
+}
+
+/// **The library's own variants are `100 000…`** (D33): every variant of every
+/// error `enum` the entry file declares and an entry point throws, in
+/// declaration order across the library. After them, every `std` error an
+/// entry point throws, with `std`'s numbers for the target.
+pub fn cx_variant_codes(words: ref winnow_grammar::InternerContext, items: ref Vec[Spanned[Item]], entries: ref Vec[CxEntry], contracts: ref Ledger, target: ref String) -> Vec[CxRaising] {
+    let mut thrown: collections::BTreeSet[String] = collections::BTreeSet()
+    for entry in entries {
+        let contract = contracts.functions[entry.key()] ?? continue
+        for error in contract.fails_with {
+            thrown.insert(error.clone())
+        }
+    }
+    let mut next = 100000
+    let mut out: Vec[CxRaising] = []
+    for item in items {
+        match item.node {
+            Item::Enum { name, variants, .. } => {
+                let error = words.resolve(name).clone()
+                if !thrown.contains(error) {
+                    continue
+                }
+                let mut codes: Vec[CxCode] = []
+                for variant in variants {
+                    let variant_name = words.resolve(variant.name).clone()
+                    next += 1
+                    codes.push(CxCode { constant: variant_name.to_uppercase(), variant: variant_name, number: next - 1, errno: null })
+                }
+                out.push(CxRaising { error: error, codes: codes })
+            },
+            else => {},
+        }
+    }
+    for error in thrown {
+        let codes = cx_std_codes(error, target)
+        if codes.len() > 0 {
+            out.push(CxRaising { error: error.clone(), codes: codes })
+        }
+    }
+    return out
+}
+
+fn cx_one_code(variant: String?, number: i64, constant: ref String, errno: String?) -> CxCode {
+    return CxCode { variant: variant, number: number, constant: constant.clone(), errno: errno }
+}
+
+fn cx_numbered(target: ref String, variant: ref String, constant: ref String, errno: ref String) -> CxCode {
+    return CxCode { variant: variant.clone(), number: cx_errno(target, errno), constant: constant.clone(), errno: errno.clone() }
+}
+
+/// **`std`'s errors, below `100 000`** (D33, Part III 15.1): an `errno` has the
+/// number of the target the library is built for; the rest are fixed, a block of
+/// a hundred per type, appended and never moved. None for an error `std` has no
+/// block for.
+pub fn cx_std_codes(error: ref String, target: ref String) -> Vec[CxCode] {
+    if error == "io::IoError" {
+        return [
+            cx_numbered(target, "NotFound", "IO_NOT_FOUND", "ENOENT"),
+            cx_numbered(target, "PermissionDenied", "IO_PERMISSION_DENIED", "EACCES"),
+            cx_numbered(target, "NotText", "IO_NOT_TEXT", "EILSEQ"),
+            cx_one_code("Outside", 1000, "IO_OUTSIDE", null),
+            cx_one_code("Other", 1001, "IO_OTHER", null),
+        ]
+    }
+    if error == "task::Crashed" {
+        return [cx_one_code(null, 1100, "TASK_CRASHED", null)]
+    }
+    if error == "supervisor::Escalated" {
+        return [cx_one_code(null, 1200, "SUPERVISOR_ESCALATED", null)]
+    }
+    if error == "cleanup::Failure" {
+        return [cx_one_code(null, 1300, "CLEANUP_FAILURE", null)]
+    }
+    if error == "Overtaken" {
+        return [cx_one_code(null, 1400, "OVERTAKEN", null)]
+    }
+    return []
+}
+
+/// An `errno`'s number on the target: Linux's on both Linux targets, WASI's
+/// under WebAssembly (D33).
+pub fn cx_errno(target: ref String, name: ref String) -> i64 {
+    let wasi = target.starts_with("wasm32")
+    if name == "ENOENT" {
+        return if wasi { 44 } else { 2 }
+    }
+    if name == "EACCES" {
+        return if wasi { 2 } else { 13 }
+    }
+    return if wasi { 25 } else { 84 }
+}
