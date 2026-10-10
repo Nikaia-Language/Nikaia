@@ -201,8 +201,8 @@ pub struct CheckWayOut {
 
 /// A `??` whose left side may be lent rather than taken.
 pub struct CheckPendingCoalesce {
-    /// The `??`, by statement and shape: what the emitter looks it up by.
-    pub key: (i64, String),
+    /// The `??`, by its id (ADR-340): what the emitter looks it up by.
+    pub key: i64,
     /// The read its left side is, for the hand-over.
     pub left: i64,
     /// The left side's type, `T?`.

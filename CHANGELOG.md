@@ -8,6 +8,13 @@ or the specification. A change only to the guide, the notes, the README, the
 website, the tests, the examples or the tooling around them raises nothing and
 has no heading here; `CLAUDE.md` draws the line.
 
+## [0.0.782] — 2026-10-10
+
+**The checker's tables about an expression, kept by statement and the text of its shape, are keyed on its id (ADR-340 D4, #558, step 4).**
+- 28 tables of `Checked` (`owned_copies`, `boxed_reads`, `flat_reads`, `copied_reads`, `text_as_is`, `lent_coalesces`, `view_coalesces`, `kept_lambdas`, `pausing_lambdas`, `map_keys`, ...) were keyed on `(the byte the statement starts at, argument_shape(expr))`, the `{:?}` text of the expression: two equal expressions of one statement shared an entry, and a copy made by one reader and another by the next agreed only by their text. They are keyed on `value_node(expr)`, the id; `(usize, String)` is `usize`.
+- `CheckPendingCoalesce.key` is the `??`'s id. Seven functions that took a `span`, a `statement` or a `flow` only to build the old key lose the parameter.
+- Not changed: the tables keyed by statement and a name (a loop's binding, a method's name), by a callee and a position, and by a pattern's address; `claims`, which keeps its statement for the line it reports.
+
 ## [0.0.781] — 2026-10-10
 
 **The key `at` stood for on a list, a text literal and a `with` is the node's id (ADR-340 D4, #558, step 4).**

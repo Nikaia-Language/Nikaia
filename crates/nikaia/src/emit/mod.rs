@@ -1309,9 +1309,9 @@ struct Emitter<'p> {
     /// [`check::Checked::number_lets`].
     number_lets: std::collections::BTreeMap<usize, String>,
     /// [`check::Checked::changed_elements`].
-    changed_elements: std::collections::BTreeSet<(usize, String)>,
+    changed_elements: std::collections::BTreeSet<usize>,
     /// [`check::Checked::text_finds`].
-    text_finds: std::collections::BTreeSet<(usize, String)>,
+    text_finds: std::collections::BTreeSet<usize>,
     /// The arguments that are a count in `usize` below, by the entry the checker
     /// resolved ([ADR-293](../../docs/specification/adr/adr-293.md) D20).
     count_args: std::collections::BTreeSet<(usize, String, usize)>,
@@ -1319,9 +1319,9 @@ struct Emitter<'p> {
     path_methods: std::collections::BTreeSet<(usize, String, String)>,
     /// How a key goes into a map's brackets where the map's keys are owned
     /// ([ADR-293](../../docs/specification/adr/adr-293.md) D27).
-    map_keys: std::collections::BTreeMap<(usize, String, bool), crate::check::KeyForm>,
+    map_keys: std::collections::BTreeMap<(usize, bool), crate::check::KeyForm>,
     /// Indexes that are a range kept in a name (ADR-293 D23).
-    slice_indices: std::collections::BTreeSet<(usize, String)>,
+    slice_indices: std::collections::BTreeSet<usize>,
     /// [`check::Checked::list_indices`], kept only where [`crate::bounds`]
     /// proved the position inside: the indexes written without their check
     /// ([ADR-306](../../docs/specification/adr/adr-306.md) D5).
@@ -1337,22 +1337,22 @@ struct Emitter<'p> {
     /// `xs[i] op= v` on a list of numbers (`check::Checked::copied_slots`).
     copied_slots: std::collections::BTreeSet<usize>,
     /// `std` copies, written `to_owned` (ADR-293 D24).
-    owned_copies: std::collections::BTreeSet<(usize, String)>,
+    owned_copies: std::collections::BTreeSet<usize>,
     /// Whether the `?.` being written copies the view it reached, which is
     /// `owned_copies` asked of the receiver the `match` bound.
     reached_copy: std::cell::Cell<bool>,
     /// `.to_string()` on text, written as its receiver (ADR-282 D8).
-    text_as_is: std::collections::BTreeSet<(usize, String)>,
+    text_as_is: std::collections::BTreeSet<usize>,
     /// `??`s that lend their left side, and how it is opened (ADR-279 D5).
-    lent_coalesces: std::collections::BTreeMap<(usize, String), &'static str>,
+    lent_coalesces: std::collections::BTreeMap<usize, &'static str>,
     /// `check::Checked::plain_reaches`: a `??` or a `?.` after a value that
     /// cannot be absent, written as its left side alone or the plain `.`.
     plain_reaches: std::collections::BTreeSet<usize>,
     /// A number, `bool` or `char` a `let` reads past a jump, copied (#456).
-    copied_jump_reads: std::collections::BTreeSet<(usize, String)>,
+    copied_jump_reads: std::collections::BTreeSet<usize>,
     /// **`std`'s count of a sequence**, by statement and receiver shape, which
     /// gets the conversion a length gets (Part I 2.2).
-    counted: std::collections::BTreeSet<(usize, String)>,
+    counted: std::collections::BTreeSet<usize>,
     /// **The names a `match` arm binds as a view**, by the arm's pattern
     /// (ADR-291): written `ref name`, so the scrutinee stays whole.
     lent_bindings: std::collections::BTreeMap<usize, std::collections::BTreeSet<String>>,
@@ -1369,25 +1369,25 @@ struct Emitter<'p> {
     /// `check::Checked::lent_scrutinees`.
     lent_scrutinees: std::collections::BTreeSet<usize>,
     /// `collect()` into a declared map, set or text (ADR-293 D25).
-    collected_into: std::collections::BTreeSet<(usize, String)>,
+    collected_into: std::collections::BTreeSet<usize>,
     /// `check::Checked::copied_walks` (ADR-231 D1).
-    copied_walks: std::collections::BTreeSet<(usize, String)>,
+    copied_walks: std::collections::BTreeSet<usize>,
     /// `check::Checked::filter_patterns` (ADR-231 D2).
-    filter_patterns: std::collections::BTreeSet<(usize, String)>,
+    filter_patterns: std::collections::BTreeSet<usize>,
     /// `check::Checked::kept_lambdas`.
-    kept_lambdas: std::collections::BTreeMap<(usize, String), (bool, bool)>,
+    kept_lambdas: std::collections::BTreeMap<usize, (bool, bool)>,
     /// The first lines of the function body being written: a published
     /// parameter both kinds of text flow into, taken as it goes in
     /// (ADR-282 D23).
     either_prelude: std::cell::RefCell<Vec<String>>,
     /// `check::Checked::kept_hulls` (ADR-230 D4).
-    kept_hulls: std::collections::BTreeMap<(usize, String), Vec<String>>,
+    kept_hulls: std::collections::BTreeMap<usize, Vec<String>>,
     /// `check::Checked::kept_owned` (#95 step 6).
-    kept_owned: std::collections::BTreeMap<(usize, String), Vec<String>>,
+    kept_owned: std::collections::BTreeMap<usize, Vec<String>>,
     /// `check::Checked::kept_calls`.
     kept_calls: std::collections::BTreeMap<(usize, String), (bool, bool)>,
     /// `check::Checked::kept_args`.
-    kept_args: std::collections::BTreeSet<(usize, String)>,
+    kept_args: std::collections::BTreeSet<usize>,
     /// `check::Checked::kept_functions`.
     kept_functions: std::collections::BTreeMap<(usize, String), (bool, bool, usize)>,
     /// Set while the call a kept named function stands for is written, whose
@@ -1455,21 +1455,21 @@ struct Emitter<'p> {
     /// computed once over the unit against the package's ledger.
     keep_plans: HashMap<String, crate::contracts::keep::Plan>,
     /// `check::Checked::lent_list_reads`.
-    lent_list_reads: std::collections::BTreeSet<(usize, String)>,
+    lent_list_reads: std::collections::BTreeSet<usize>,
     /// `check::Checked::view_fallbacks`.
     view_fallbacks: std::collections::BTreeSet<usize>,
     /// `check::Checked::view_coalesces`.
-    view_coalesces: std::collections::BTreeSet<(usize, String)>,
+    view_coalesces: std::collections::BTreeSet<usize>,
     /// `check::Checked::lent_map_fallbacks`.
-    lent_map_fallbacks: std::collections::BTreeSet<(usize, String)>,
+    lent_map_fallbacks: std::collections::BTreeSet<usize>,
     /// `check::Checked::optional_fallbacks`.
-    optional_fallbacks: std::collections::BTreeSet<(usize, String)>,
+    optional_fallbacks: std::collections::BTreeSet<usize>,
     /// `check::Checked::flat_reads`.
-    flat_reads: std::collections::BTreeSet<(usize, String)>,
+    flat_reads: std::collections::BTreeSet<usize>,
     /// `check::Checked::copied_reads`.
-    copied_reads: std::collections::BTreeSet<(usize, String)>,
+    copied_reads: std::collections::BTreeSet<usize>,
     /// `check::Checked::text_in_lists`.
-    text_in_lists: std::collections::BTreeSet<(usize, String)>,
+    text_in_lists: std::collections::BTreeSet<usize>,
     /// The statements whose keeps are already declared, because a `throws`
     /// body declares them before its `Ok(` rather than inside it.
     preluded: std::cell::RefCell<HashSet<usize>>,
@@ -1540,9 +1540,9 @@ struct Emitter<'p> {
     cleaned_types: std::collections::BTreeSet<String>,
     /// The lambdas that pause, handed to a `std` entry, and what the call is
     /// lowered to ([ADR-233](../../docs/specification/adr/adr-233.md) D1, D2).
-    pausing_lambdas: std::collections::BTreeMap<(usize, String), PausingEntry>,
+    pausing_lambdas: std::collections::BTreeMap<usize, PausingEntry>,
     /// The `task::scope` calls whose tasks pause (`check::Checked::paused_scopes`).
-    paused_scopes: std::collections::BTreeSet<(usize, String)>,
+    paused_scopes: std::collections::BTreeSet<usize>,
     /// The method calls that **pause**, by the byte their statement starts at
     /// and the name written (`check::Checked::pausing_methods`).
     ///
@@ -1594,7 +1594,7 @@ struct Emitter<'p> {
     /// `check::Checked::mixed_comparisons`.
     mixed_comparisons: std::collections::BTreeMap<usize, bool>,
     /// `check::Checked::path_holes`.
-    path_holes: std::collections::BTreeMap<(usize, String), Vec<bool>>,
+    path_holes: std::collections::BTreeMap<usize, Vec<bool>>,
     /// What each `comptime` is written as below - its type and its value - by the
     /// byte its statement starts at (`check::Checked::comptime_values`,
     /// [ADR-287](../../docs/specification/adr/adr-287.md) D4, D5).
@@ -1690,7 +1690,7 @@ struct Emitter<'p> {
     /// ([ADR-246](../../docs/specification/adr/adr-246.md)).
     boxed_members: std::collections::BTreeMap<String, std::collections::BTreeSet<String>>,
     /// `check::Checked::boxed_reads`.
-    boxed_reads: std::collections::BTreeSet<(usize, String)>,
+    boxed_reads: std::collections::BTreeSet<usize>,
     /// `check::Checked::copied_bindings` (0.0.236).
     copied_bindings: std::collections::BTreeSet<(usize, String)>,
     /// `check::Checked::some_tails`: a plain arm beside a `null`, by address.
@@ -6804,7 +6804,7 @@ impl<'p> Emitter<'p> {
         flow: Flow<'_>,
     ) -> Result<()> {
         self.hold_owned_receiver(out, stmt, depth, flow)?;
-        self.hold_indices_read_from_the_target(out, stmt, span, depth, flow)?;
+        self.hold_indices_read_from_the_target(out, stmt, depth, flow)?;
         if self.held_reaches.is_empty() {
             return Ok(());
         }
@@ -6850,7 +6850,6 @@ impl<'p> Emitter<'p> {
         &self,
         out: &mut Out,
         stmt: &Stmt,
-        span: &Span,
         depth: usize,
         flow: Flow<'_>,
     ) -> Result<()> {
@@ -6872,7 +6871,7 @@ impl<'p> Emitter<'p> {
         };
         // Evaluated in the order they are written: the innermost base first.
         for index in chain.into_iter().rev() {
-            if only_literals(index) || self.map_key(span.at(), index, true).is_some() {
+            if only_literals(index) || self.map_key(index, true).is_some() {
                 continue;
             }
             let mut mentions = false;
@@ -7321,7 +7320,7 @@ impl<'p> Emitter<'p> {
                 if self
                     .proven_indices
                     .contains(&crate::check::value_node(base))
-                    && self.map_key(span.at(), index, true).is_none()
+                    && self.map_key(index, true).is_none()
                 {
                     out.push(match lent_on {
                         true => "; unsafe { nikaia_std::proven::write(&mut *",
@@ -7349,7 +7348,7 @@ impl<'p> Emitter<'p> {
                 self.expr(out, base, depth, flow.place())?;
                 // **A key the map keeps goes in as it is** (ADR-293 D27): it is
                 // not a position, and `at` is for positions.
-                match self.map_key(span.at(), index, true) {
+                match self.map_key(index, true) {
                     Some(form) => {
                         out.push(", ");
                         self.key(out, form, index, depth, flow)?;
@@ -7434,7 +7433,7 @@ impl<'p> Emitter<'p> {
                 && self
                     .proven_indices
                     .contains(&crate::check::value_node(base))
-                && self.map_key(span.at(), index, true).is_none() =>
+                && self.map_key(index, true).is_none() =>
             {
                 let lent_on = matches!(&**base, Expr::Variable(name, _)
                     if self.changes_in_place(flow, self.text(*name)));
@@ -8111,24 +8110,19 @@ impl<'p> Emitter<'p> {
 
     /// Whether what stands in the brackets is a **run**: a range written there,
     /// or one the checker says is kept in a name (ADR-293 D23).
-    fn slices(&self, statement: usize, index: &Expr) -> bool {
+    fn slices(&self, index: &Expr) -> bool {
         matches!(index, Expr::Range { .. })
             || self
                 .slice_indices
-                .contains(&(statement, crate::check::argument_shape(index)))
+                .contains(&crate::check::value_node(index))
     }
 
     /// How the checker said this key goes into a map's brackets, where the
     /// map's keys are owned ([ADR-293](../../docs/specification/adr/adr-293.md)
     /// D1).
-    fn map_key(
-        &self,
-        statement: usize,
-        index: &Expr,
-        written: bool,
-    ) -> Option<crate::check::KeyForm> {
+    fn map_key(&self, index: &Expr, written: bool) -> Option<crate::check::KeyForm> {
         self.map_keys
-            .get(&(statement, crate::check::argument_shape(index), written))
+            .get(&(crate::check::value_node(index), written))
             .copied()
     }
 
@@ -8256,7 +8250,7 @@ impl<'p> Emitter<'p> {
         // ([ADR-293](../../docs/specification/adr/adr-293.md) D15). A read
         // through the brackets is `*get(…)`, whose `*` would take the whole
         // chain, so it is held in parentheses.
-        let shape = (flow.statement, crate::check::argument_shape(expr));
+        let shape = crate::check::value_node(expr);
         if self.copied_reads.contains(&shape) {
             let held = matches!(expr, Expr::Index { .. }) && !self.flat_reads.contains(&shape);
             if held {
@@ -8283,9 +8277,7 @@ impl<'p> Emitter<'p> {
         // **`get` on a map of `T?`** is one `T?`, as the brackets are
         // ([ADR-293](../../docs/specification/adr/adr-293.md) D14).
         if matches!(expr, Expr::MethodCall { .. })
-            && self
-                .flat_reads
-                .contains(&(flow.statement, crate::check::argument_shape(expr)))
+            && self.flat_reads.contains(&crate::check::value_node(expr))
         {
             out.push("nikaia_std::index::flat(");
             self.expr_as_written(out, expr, depth, flow)?;
@@ -8559,7 +8551,7 @@ impl<'p> Emitter<'p> {
                 if self.text(*method) == "find"
                     && self
                         .text_finds
-                        .contains(&(flow.statement, crate::check::argument_shape(receiver)))
+                        .contains(&crate::check::value_node(receiver))
                 {
                     out.push("nikaia_std::search::find(&");
                     self.nested(out, receiver, u8::MAX, depth, flow)?;
@@ -8641,10 +8633,7 @@ impl<'p> Emitter<'p> {
                         self.method_call(out, Some(receiver), *method, args, config, depth, flow)?;
                         // **Views of values that copy are the values**
                         // (ADR-231 D1).
-                        if self
-                            .copied_walks
-                            .contains(&(flow.statement, crate::check::argument_shape(expr)))
-                        {
+                        if self.copied_walks.contains(&crate::check::value_node(expr)) {
                             out.push(".copied()");
                         }
                     }
@@ -8716,7 +8705,7 @@ impl<'p> Emitter<'p> {
                 // one this `match` bound.
                 let copy = self
                     .owned_copies
-                    .contains(&(flow.statement, crate::check::argument_shape(receiver)));
+                    .contains(&crate::check::value_node(receiver));
                 let held_copy = self.reached_copy.replace(copy);
                 let written =
                     match self.a_field_call(out, receiver, true, *method, args, depth + 1, flow) {
@@ -9014,9 +9003,7 @@ impl<'p> Emitter<'p> {
                 // ([ADR-246](../../docs/specification/adr/adr-246.md) D2):
                 // `(*base.field)` is a place that behaves as the unboxed field
                 // would - read, lent, moved out of an owned value, assigned.
-                let boxed = self
-                    .boxed_reads
-                    .contains(&(flow.statement, crate::check::argument_shape(expr)));
+                let boxed = self.boxed_reads.contains(&crate::check::value_node(expr));
                 if boxed {
                     out.push("(*");
                 }
@@ -9031,8 +9018,8 @@ impl<'p> Emitter<'p> {
                         index: at,
                         ..
                     } if !flow.in_a_place
-                        && !self.slices(flow.statement, at)
-                        && self.map_key(flow.statement, at, false).is_none()
+                        && !self.slices(at)
+                        && self.map_key(at, false).is_none()
                         && !self.reads_through_handle(flow, inner) =>
                     {
                         self.index_read(out, inner, at, depth, flow, false)?;
@@ -9097,10 +9084,7 @@ impl<'p> Emitter<'p> {
                 // because this emitter has no types (ADR-296 D17).
                 // **A boxed field is reached through its box**
                 // ([ADR-246](../../docs/specification/adr/adr-246.md) D2).
-                let place = match self
-                    .boxed_reads
-                    .contains(&(flow.statement, crate::check::argument_shape(expr)))
-                {
+                let place = match self.boxed_reads.contains(&crate::check::value_node(expr)) {
                     true => format!("(*__nikaia_it.{field})"),
                     false => format!("__nikaia_it.{field}"),
                 };
@@ -9182,10 +9166,7 @@ impl<'p> Emitter<'p> {
                     // `index::flat` over the read, which is the `Option<&T>`
                     // a `ref T?` is below - so a lend in front of it is
                     // already there, and is taken.
-                    if self
-                        .flat_reads
-                        .contains(&(flow.statement, crate::check::argument_shape(expr)))
-                    {
+                    if self.flat_reads.contains(&crate::check::value_node(expr)) {
                         let _ = out.take_lend();
                         out.push("nikaia_std::index::flat(");
                         self.index_read(out, base, index, depth, flow, true)?;
@@ -9197,11 +9178,11 @@ impl<'p> Emitter<'p> {
                     // against the lend left `index::Found`, which no `ref V?`
                     // parameter takes (found moving `sharing`'s leaves into
                     // Nikaia, #125). A sequence's read keeps the cancelling.
-                    if self.map_key(flow.statement, index, false).is_some() {
+                    if self.map_key(index, false).is_some() {
                         let _ = out.take_lend();
                         return self.index_read(out, base, index, depth, flow, true);
                     }
-                    let lent = !self.slices(flow.statement, index) && out.take_lend();
+                    let lent = !self.slices(index) && out.take_lend();
                     return self.index_read(out, base, index, depth, flow, !lent);
                 }
                 self.postfix_base(out, base, depth, flow)?;
@@ -9468,7 +9449,7 @@ impl<'p> Emitter<'p> {
                 // closure, and it takes what it captures with it.
                 let kept = self
                     .kept_lambdas
-                    .get(&(flow.statement, crate::check::argument_shape(expr)))
+                    .get(&crate::check::value_node(expr))
                     .copied();
                 if let Some((pauses, fails)) = kept {
                     // Each hull it captures is a handle of its own
@@ -9476,7 +9457,7 @@ impl<'p> Emitter<'p> {
                     // the name outside is not moved into it.
                     let hulls = self
                         .kept_hulls
-                        .get(&(flow.statement, crate::check::argument_shape(expr)))
+                        .get(&crate::check::value_node(expr))
                         .cloned()
                         .unwrap_or_default();
                     // **What a pausing one takes is owned once and lent to every
@@ -9484,7 +9465,7 @@ impl<'p> Emitter<'p> {
                     // call's future holds a count of it rather than a copy.
                     let owned = self
                         .kept_owned
-                        .get(&(flow.statement, crate::check::argument_shape(expr)))
+                        .get(&crate::check::value_node(expr))
                         .cloned()
                         .unwrap_or_default();
                     let block = !hulls.is_empty() || !owned.is_empty();
@@ -9574,7 +9555,7 @@ impl<'p> Emitter<'p> {
                 // counterpart. Its body is an ordinary body that pauses.
                 let pauses = self
                     .pausing_lambdas
-                    .contains_key(&(flow.statement, crate::check::argument_shape(expr)));
+                    .contains_key(&crate::check::value_node(expr));
                 if pauses {
                     out.push("async ");
                 }
@@ -9582,7 +9563,7 @@ impl<'p> Emitter<'p> {
                 // where the item copies, the pattern takes it out.
                 let pattern = self
                     .filter_patterns
-                    .contains(&(flow.statement, crate::check::argument_shape(expr)));
+                    .contains(&crate::check::value_node(expr));
                 match (pattern, names.as_slice()) {
                     (true, [one]) => out.push(&format!("|&{one}| ")),
                     _ => out.push(&format!("|{}| ", names.join(", "))),
@@ -9648,7 +9629,7 @@ impl<'p> Emitter<'p> {
                 // either: the source's `&` and the read's own view are one
                 // claim written twice.
                 if let (UnaryOp::Ref, Expr::Index { index, .. }) = (op, &**expr)
-                    && self.slices(flow.statement, index)
+                    && self.slices(index)
                     && !flow.in_a_place
                 {
                     return self.expr(out, expr, depth, flow);
@@ -9875,17 +9856,14 @@ impl<'p> Emitter<'p> {
                 self.expr(out, value, depth, flow)?;
                 // **A loan on the left is opened, and the answer is a view**
                 // ([ADR-279](../../docs/specification/adr/adr-279.md) D10).
-                if let Some(opened) = self
-                    .lent_coalesces
-                    .get(&(flow.statement, crate::check::argument_shape(expr)))
-                {
+                if let Some(opened) = self.lent_coalesces.get(&crate::check::value_node(expr)) {
                     out.push(opened);
                 }
                 // **A number read past a jump is read out of the view**
                 // (#456, `Checked::copied_jump_reads`).
                 let copied = self
                     .copied_jump_reads
-                    .contains(&(flow.statement, crate::check::argument_shape(expr)));
+                    .contains(&crate::check::value_node(expr));
                 out.push(if copied {
                     " { Some(__nikaia_value) => nikaia_std::num::value(__nikaia_value), None => "
                 } else {
@@ -9903,10 +9881,9 @@ impl<'p> Emitter<'p> {
                 value, fallback, ..
             } if self
                 .lent_coalesces
-                .contains_key(&(flow.statement, crate::check::argument_shape(expr))) =>
+                .contains_key(&crate::check::value_node(expr)) =>
             {
-                let opened =
-                    self.lent_coalesces[&(flow.statement, crate::check::argument_shape(expr))];
+                let opened = self.lent_coalesces[&crate::check::value_node(expr)];
                 out.push("nikaia_std::index::or(");
                 self.expr(out, value, depth, flow)?;
                 out.push(opened);
@@ -10006,13 +9983,13 @@ impl<'p> Emitter<'p> {
                     || matches!(&**fallback, Expr::LitStr { .. } if self.view_fallbacks.contains(&crate::check::value_node(fallback)))
                     || self
                         .view_coalesces
-                        .contains(&(flow.statement, crate::check::argument_shape(expr)));
+                        .contains(&crate::check::value_node(expr));
                 // **A fallback that may be `null` too** (Part I 3.5): the
                 // first option that has a value, which is the language
                 // below's `or_else`, and the answer is an option still.
                 if self
                     .optional_fallbacks
-                    .contains(&(flow.statement, crate::check::argument_shape(expr)))
+                    .contains(&crate::check::value_node(expr))
                 {
                     out.push("nikaia_std::index::or_maybe(");
                     self.expr(out, value, depth, flow)?;
@@ -10026,7 +10003,7 @@ impl<'p> Emitter<'p> {
                 // place, and `&` in front of it borrows the element.
                 if self
                     .lent_list_reads
-                    .contains(&(flow.statement, crate::check::argument_shape(expr)))
+                    .contains(&crate::check::value_node(expr))
                 {
                     out.push("&");
                 }
@@ -10037,7 +10014,7 @@ impl<'p> Emitter<'p> {
                 // view, and so is the fallback.
                 if self
                     .lent_map_fallbacks
-                    .contains(&(flow.statement, crate::check::argument_shape(expr)))
+                    .contains(&crate::check::value_node(expr))
                 {
                     out.push("&");
                     self.expr(out, fallback, depth, flow)?;
@@ -10843,9 +10820,7 @@ impl<'p> Emitter<'p> {
                 // **A file's name is written as its bytes** (ADR-319 D4): an
                 // `f"…"` with one in it, or the name itself.
                 if let [given] = args
-                    && let Some(names) = self
-                        .path_holes
-                        .get(&(flow.statement, crate::check::argument_shape(given)))
+                    && let Some(names) = self.path_holes.get(&crate::check::value_node(given))
                 {
                     let (to_err, newline) = (text.starts_with('e'), text.ends_with("ln"));
                     out.push("nikaia_std::fs::path::print(&(");
@@ -10979,7 +10954,7 @@ impl<'p> Emitter<'p> {
         // `async` block that names it in turn - not a closure handed it, which
         // would be higher-ranked, and a future `rustc` cannot show `Send`.
         // Awaited inside the block that owns the scope.
-        if self.opens_a_paused_scope(func, args, flow)
+        if self.opens_a_paused_scope(func, args)
             && let Some(Expr::Closure { params, body, .. }) = args.first()
             && let [named] = params.as_slice()
         {
@@ -12492,7 +12467,7 @@ impl<'p> Emitter<'p> {
 
     /// Whether a call is `task::scope` with a task that pauses, which the
     /// scope polls itself (ADR-328 D10).
-    fn opens_a_paused_scope(&self, func: &Expr, args: &[Expr], flow: Flow<'_>) -> bool {
+    fn opens_a_paused_scope(&self, func: &Expr, args: &[Expr]) -> bool {
         let Expr::Path(segments, _) = func else {
             return false;
         };
@@ -12502,10 +12477,9 @@ impl<'p> Emitter<'p> {
             .collect::<Vec<_>>()
             .join("::");
         self.parsed.unaliased(&name) == "task::scope"
-            && args.first().is_some_and(|body| {
-                self.paused_scopes
-                    .contains(&(flow.statement, crate::check::argument_shape(body)))
-            })
+            && args
+                .first()
+                .is_some_and(|body| self.paused_scopes.contains(&crate::check::value_node(body)))
     }
 
     /// Whether a call names an own function written `sync(f)`.
@@ -12880,10 +12854,7 @@ impl<'p> Emitter<'p> {
                 // **A file's name in a hole** (ADR-319 D4): the parts are
                 // joined in the platform's encoding, a name by its bytes and
                 // anything else by its text.
-                if let Some(names) = self
-                    .path_holes
-                    .get(&(flow.statement, crate::check::argument_shape(expr)))
-                {
+                if let Some(names) = self.path_holes.get(&crate::check::value_node(expr)) {
                     return self.joined_name(out, parts, names, depth, flow);
                 }
                 // A malformed literal never gets here: the grammar refuses it
@@ -13455,10 +13426,9 @@ impl<'p> Emitter<'p> {
             && args.is_empty()
             && none.is_empty()
             && self.text(*chars) == "chars"
-            && !self.collected_into.contains(&(
-                flow.statement,
-                crate::check::argument_shape(receiver.unwrap()),
-            ))
+            && !self
+                .collected_into
+                .contains(&(crate::check::value_node(receiver.unwrap())))
         {
             out.push("nikaia_std::list::chars(");
             self.postfix_base(out, text, depth, flow)?;
@@ -13608,7 +13578,7 @@ impl<'p> Emitter<'p> {
                 && args.is_empty()
                 && self
                     .text_as_is
-                    .contains(&(flow.statement, crate::check::argument_shape(receiver)))
+                    .contains(&crate::check::value_node(receiver))
         }) {
             return self.postfix_base(out, text, depth, flow);
         }
@@ -13620,7 +13590,7 @@ impl<'p> Emitter<'p> {
                 && args.len() == 1
                 && self
                     .text_in_lists
-                    .contains(&(flow.statement, crate::check::argument_shape(receiver)))
+                    .contains(&crate::check::value_node(receiver))
         }) {
             // The value lent with `&` whichever text it is (#375): `&str`,
             // `String` and their references compare with each other.
@@ -13650,7 +13620,7 @@ impl<'p> Emitter<'p> {
         let copies = match receiver {
             Some(receiver) => self
                 .owned_copies
-                .contains(&(flow.statement, crate::check::argument_shape(receiver))),
+                .contains(&crate::check::value_node(receiver)),
             None => self.reached_copy.get(),
         };
         let written = match self.text(method) {
@@ -13663,7 +13633,7 @@ impl<'p> Emitter<'p> {
             other => other,
         };
         let length = is_length(self.text(method), args)
-            || receiver.is_some_and(|receiver| self.is_counted(receiver, method, args, flow));
+            || receiver.is_some_and(|receiver| self.is_counted(receiver, method, args));
         // **ADR-055 D6, the method half.** A recursive `async fn` is an
         // infinitely sized future, and a call that closes a cycle of pausing
         // functions puts it behind a pointer. `call` has asked this since D6's
@@ -13712,10 +13682,7 @@ impl<'p> Emitter<'p> {
         let pausing = args
             .last()
             .filter(|arg| matches!(arg, Expr::Closure { .. }))
-            .and_then(|arg| {
-                self.pausing_lambdas
-                    .get(&(flow.statement, crate::check::argument_shape(arg)))
-            })
+            .and_then(|arg| self.pausing_lambdas.get(&crate::check::value_node(arg)))
             .copied();
         match pausing {
             Some(PausingEntry::Function(name)) => {
@@ -13753,7 +13720,7 @@ impl<'p> Emitter<'p> {
         // builds when nothing overrides the type it reads off that place.
         let declared = receiver.is_some_and(|receiver| {
             self.collected_into
-                .contains(&(flow.statement, crate::check::argument_shape(receiver)))
+                .contains(&crate::check::value_node(receiver))
         });
         if self.text(method) == "collect"
             && args.is_empty()
@@ -13917,7 +13884,7 @@ impl<'p> Emitter<'p> {
             Some(expr)
                 if self
                     .changed_elements
-                    .contains(&(flow.statement, crate::check::argument_shape(expr))) =>
+                    .contains(&crate::check::value_node(expr)) =>
             {
                 flow.place()
             }
@@ -13945,7 +13912,7 @@ impl<'p> Emitter<'p> {
         flow: Flow<'_>,
         deref: bool,
     ) -> Result<()> {
-        let slicing = self.slices(flow.statement, index);
+        let slicing = self.slices(index);
         if deref && !slicing {
             out.push("*");
         }
@@ -13957,7 +13924,7 @@ impl<'p> Emitter<'p> {
             && self
                 .proven_indices
                 .contains(&crate::check::value_node(base))
-            && self.map_key(flow.statement, index, false).is_none()
+            && self.map_key(index, false).is_none()
         {
             out.push("unsafe { nikaia_std::proven::read(");
             match base {
@@ -13965,8 +13932,8 @@ impl<'p> Emitter<'p> {
                     base: inner,
                     index: at,
                     ..
-                } if !self.slices(flow.statement, at)
-                    && self.map_key(flow.statement, at, false).is_none()
+                } if !self.slices(at)
+                    && self.map_key(at, false).is_none()
                     && !self.reads_through_handle(flow, inner) =>
                 {
                     self.index_read(out, inner, at, depth, flow, false)?;
@@ -13999,8 +13966,8 @@ impl<'p> Emitter<'p> {
                 base: inner,
                 index: at,
                 ..
-            } if !self.slices(flow.statement, at)
-                && self.map_key(flow.statement, at, false).is_none()
+            } if !self.slices(at)
+                && self.map_key(at, false).is_none()
                 && !self.reads_through_handle(flow, inner) =>
             {
                 out.push("nikaia_std::index::get(");
@@ -14050,7 +14017,7 @@ impl<'p> Emitter<'p> {
         let counts_down = slicing && a_negation_inside(index);
         // **A key the map keeps nothing of is lent** (ADR-293 D27),
         // and a key is not a position, so `at` does not see it.
-        let key = self.map_key(flow.statement, index, false);
+        let key = self.map_key(index, false);
         // **`xs[a..<xs.len()]` is the language below's `a..`** (#527): the
         // form `xs[a..]` comes to, and the base is read once.
         if slicing
@@ -14130,15 +14097,15 @@ impl<'p> Emitter<'p> {
         // **A read through the brackets is a `*`**, which binds looser than a
         // postfix: `*get(…).len()` is the deref of the length. The one place
         // its parentheses belong (ADR-293 D33).
-        let a_read = !flow.in_a_place
-            && matches!(expr, Expr::Index { index, .. } if !self.slices(flow.statement, index));
+        let a_read =
+            !flow.in_a_place && matches!(expr, Expr::Index { index, .. } if !self.slices( index));
         // **And so is a `mut` parameter read as its number**
         // (`copied_in_place`): `(*n).abs()`.
         let a_read = a_read
             || !flow.in_a_place
                 && matches!(expr, Expr::Variable(name, _) if self.copied_in_place(flow, self.text(*name)));
         let parenthesise = a_read
-            || self.emits_as_cast(expr, flow)
+            || self.emits_as_cast(expr)
             || matches!(
                 expr,
                 Expr::Binary { .. }
@@ -14192,11 +14159,11 @@ impl<'p> Emitter<'p> {
                 Expr::Binary { op: inner, .. } if precedence(*inner) < precedence(*op) + 1 => false,
                 rhs => self.ends_in_a_cast(rhs, flow),
             },
-            _ => self.emits_as_cast(expr, flow),
+            _ => self.emits_as_cast(expr),
         }
     }
 
-    fn emits_as_cast(&self, expr: &Expr, flow: Flow<'_>) -> bool {
+    fn emits_as_cast(&self, expr: &Expr) -> bool {
         match expr {
             Expr::Cast { .. } => true,
             Expr::MethodCall {
@@ -14208,7 +14175,7 @@ impl<'p> Emitter<'p> {
                 let name = self.text(*method);
                 truncating(name).is_some()
                     || is_length(name, args)
-                    || self.is_counted(receiver, *method, args, flow)
+                    || self.is_counted(receiver, *method, args)
             }
             _ => false,
         }
@@ -14217,18 +14184,10 @@ impl<'p> Emitter<'p> {
     /// **`std`'s count of a sequence**, which counts in `usize` below and is
     /// an `i64` here, as a length is (Part I 2.2): the checker says which
     /// `count()` resolved to it, so a program's own `count` is left alone.
-    fn is_counted(
-        &self,
-        receiver: &Expr,
-        method: winnow_grammar::Symbol,
-        args: &[Expr],
-        flow: Flow<'_>,
-    ) -> bool {
+    fn is_counted(&self, receiver: &Expr, method: winnow_grammar::Symbol, args: &[Expr]) -> bool {
         self.text(method) == "count"
             && args.is_empty()
-            && self
-                .counted
-                .contains(&(flow.statement, crate::check::argument_shape(receiver)))
+            && self.counted.contains(&crate::check::value_node(receiver))
     }
 
     /// An operand of an operator, parenthesised only where it binds looser
@@ -14264,8 +14223,7 @@ impl<'p> Emitter<'p> {
             // parentheses and a parenthesis nobody needs is the other half of
             // C.1 - `unused_parens` is a warning about the generated file.
             _ => {
-                self.emits_as_cast(expr, flow)
-                    && (needs == u8::MAX || needs == precedence(BinaryOp::Lt))
+                self.emits_as_cast(expr) && (needs == u8::MAX || needs == precedence(BinaryOp::Lt))
             }
         };
 
@@ -14427,7 +14385,7 @@ impl<'p> Emitter<'p> {
                 && self.future_lambdas.contains(&(flow.statement, i))
                 && !self
                     .kept_lambdas
-                    .contains_key(&(flow.statement, crate::check::argument_shape(arg)));
+                    .contains_key(&crate::check::value_node(arg));
             // **The pointer a C declaration takes**
             // ([ADR-302](../../docs/specification/adr/adr-302.md) D5). The
             // declaration says `&[u8]` and C wants an address, so the address
@@ -14516,10 +14474,8 @@ impl<'p> Emitter<'p> {
             // `(*get(&m, &k)).as_ref()`, an `Option<&&T>` (found writing
             // ADR-293's tests).
             let a_map_read = matches!(arg, Expr::Index { index, .. }
-                    if self.map_key(flow.statement, index, false).is_some())
-                || self
-                    .flat_reads
-                    .contains(&(flow.statement, crate::check::argument_shape(arg)));
+                    if self.map_key( index, false).is_some())
+                || self.flat_reads.contains(&crate::check::value_node(arg));
             let inside_the_option = match (inside_the_option, a_map_read) {
                 (Some(".as_deref()"), true) => Some(".map(String::as_str)"),
                 (Some(_), true) => Some(""),
@@ -14681,10 +14637,7 @@ impl<'p> Emitter<'p> {
                         None => {
                             // A kept value handed to a parameter that only
                             // runs it: the closure it holds.
-                            if self
-                                .kept_args
-                                .contains(&(flow.statement, crate::check::argument_shape(arg)))
-                            {
+                            if self.kept_args.contains(&crate::check::value_node(arg)) {
                                 out.push("&*");
                             }
                             // **A view of a value that copies, where the value

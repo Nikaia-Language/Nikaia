@@ -419,11 +419,11 @@ pub struct Checked {
     /// **A list element a method call changes**, by statement and the
     /// receiver's shape: the emitter writes it as the place it is,
     /// `xs[at(i)].push(…)`, and not as a read.
-    pub changed_elements: BTreeSet<(usize, String)>,
+    pub changed_elements: BTreeSet<usize>,
     /// **`s.find(needle; from:)` on text** (ADR-320 D6), by statement and the
     /// receiver's shape: the emitter writes it as `std`'s search, since the
     /// language below's `str::find` has another shape.
-    pub text_finds: BTreeSet<(usize, String)>,
+    pub text_finds: BTreeSet<usize>,
     /// The arguments that are a **count the language below takes in `usize`**,
     /// by the byte the statement starts at, the method as written and the
     /// position ([ADR-293](../../docs/specification/adr/adr-293.md) D20).
@@ -442,11 +442,11 @@ pub struct Checked {
     /// = (m[k.clone()] ?? 0) + 1` spells one key twice in one statement, once
     /// read and once written, and the read's lent form was the write's too -
     /// `index::set(&mut m, &(k.to_owned()), …)`, which `rustc` refused.
-    pub map_keys: BTreeMap<(usize, String, bool), KeyForm>,
+    pub map_keys: BTreeMap<(usize, bool), KeyForm>,
     /// Indexes that are a **range kept in a name**, by the byte the statement
     /// starts at and the index's shape: a slice, like a range written in the
     /// brackets ([ADR-293](../../docs/specification/adr/adr-293.md) D23).
-    pub slice_indices: BTreeSet<(usize, String)>,
+    pub slice_indices: BTreeSet<usize>,
     /// **Indexes of a list**, by the node of the indexed expression
     /// ([`value_node`] of the `base`): a position into a `Vec` or an `Array`,
     /// not a range and not a key. What
@@ -491,15 +491,15 @@ pub struct Checked {
     /// `clone` calls that went to a `std` entry, by statement and receiver
     /// shape: written `to_owned` below, which is a copy whether the receiver
     /// is a value or a view of one (ADR-293 D24).
-    pub owned_copies: BTreeSet<(usize, String)>,
+    pub owned_copies: BTreeSet<usize>,
     /// `.to_string()` on **text**, by statement and receiver shape: the text
     /// form of text is the text itself, so the call is written as its receiver
     /// ([ADR-282](../../docs/specification/adr/adr-282.md) D8).
-    pub text_as_is: BTreeSet<(usize, String)>,
+    pub text_as_is: BTreeSet<usize>,
     /// **`??`s that lend their left side** (ADR-279 D5), by statement and
     /// shape, with how the option is opened below: `.as_deref()` for text and
     /// `.as_ref()` for anything else.
-    pub lent_coalesces: BTreeMap<(usize, String), &'static str>,
+    pub lent_coalesces: BTreeMap<usize, &'static str>,
     /// **A `??` or a `?.` after a value that cannot be absent**
     /// ([ADR-279](../../docs/specification/adr/adr-279.md) D13), by node:
     /// `NK1216` and `NK1217` warn, and the line is its left side alone, or the
@@ -509,37 +509,37 @@ pub struct Checked {
     /// a jump** (#456), by statement and the value's shape: `let v = m[k] ??
     /// return null` binds the value, read out of the view as a loop binding's
     /// is ([`Checked::copied_loop_bindings`]).
-    pub copied_jump_reads: BTreeSet<(usize, String)>,
+    pub copied_jump_reads: BTreeSet<usize>,
     /// **A `??` over a map's text whose fallback is a view of text** (#297),
     /// by statement and shape: the answer is a view, and the fallback is
     /// written as it is - `m.get(k) ?? name` for a `name: ref String`.
-    pub view_coalesces: BTreeSet<(usize, String)>,
+    pub view_coalesces: BTreeSet<usize>,
     /// **A `??` over what a map holds whose fallback is a name of that type**
     /// (ADR-279 D7), by statement and shape: `m[k] ?? spare` for a map of
     /// lists is a view whichever side answers, and the name is lent - written
     /// `|| &spare` - as `r ?? spare` lends it over a `ref T?`.
-    pub lent_map_fallbacks: BTreeSet<(usize, String)>,
+    pub lent_map_fallbacks: BTreeSet<usize>,
     /// **A `??` whose fallback may be `null` too**, by statement and shape:
     /// the answer is the first side that has a value, or `null`, so it is a
     /// `T?` and the fallback is written as the option it is (Part I 3.5).
-    pub optional_fallbacks: BTreeSet<(usize, String)>,
+    pub optional_fallbacks: BTreeSet<usize>,
     /// **A read of a map whose values are `T?`**, by statement and shape: it
     /// is one `T?` and not a `T?` of a `T?` - a stored `null` and an absent key
     /// both answer `null` ([ADR-293](../../docs/specification/adr/adr-293.md)
     /// D1), and the read is written through `index::flat` (D3).
-    pub flat_reads: BTreeSet<(usize, String)>,
+    pub flat_reads: BTreeSet<usize>,
     /// **A map's read copied out where a `T?` of its own is kept**, by
     /// statement and shape ([ADR-293](../../docs/specification/adr/adr-293.md)
     /// D4): the value copies, and the emitter writes `.copied()`.
-    pub copied_reads: BTreeSet<(usize, String)>,
+    pub copied_reads: BTreeSet<usize>,
     /// **A list of text asked whether it holds a view of text**, by statement
     /// and receiver: `xs.contains(name)` for a `name: ref String`, which is a
     /// `&str` below, where a `Vec<String>`'s own `contains` takes a `&String`.
-    pub text_in_lists: BTreeSet<(usize, String)>,
+    pub text_in_lists: BTreeSet<usize>,
     /// **`count()` calls that are `std`'s count of a sequence**, by statement
     /// and receiver shape: the language below counts in `usize`, and a count
     /// is an `i64` here, as a length is (Part I 2.2, ADR-285 D1).
-    pub counted: BTreeSet<(usize, String)>,
+    pub counted: BTreeSet<usize>,
     /// **The names a `match` arm binds as a view of its scrutinee**, by the
     /// arm's pattern: the scrutinee is a place this function owns, the part
     /// does not copy, and the arm does not keep it - so the name stays whole
@@ -576,29 +576,29 @@ pub struct Checked {
     /// ([ADR-293](../../docs/specification/adr/adr-293.md) D25): written
     /// without `::<Vec<_>>`, so the declared type is what the language below
     /// builds.
-    pub collected_into: BTreeSet<(usize, String)>,
+    pub collected_into: BTreeSet<usize>,
     /// Method calls that hand back a sequence of **views of values that copy**,
     /// numbers, truth values and characters, by statement and the call's shape
     /// ([ADR-231](../../docs/specification/adr/adr-231.md) D1): written with
     /// `.copied()`, so each item is the value.
-    pub copied_walks: BTreeSet<(usize, String)>,
+    pub copied_walks: BTreeSet<usize>,
     /// `filter` lambdas whose item copies, by statement and the lambda's shape
     /// (ADR-231 D2): the language below hands the lambda a reference to the
     /// item, and the parameter is written `|&x|` so it is the item.
-    pub filter_patterns: BTreeSet<(usize, String)>,
+    pub filter_patterns: BTreeSet<usize>,
     /// **Lambdas put where a function value is kept** - a field, a result, an
     /// annotated `let`, an assignment, a parameter the callee keeps - by
     /// statement and shape, and whether the function type may pause. Written
     /// below as one shared closure, `nikaia_std::func::Kept`.
-    pub kept_lambdas: BTreeMap<(usize, String), (bool, bool)>,
+    pub kept_lambdas: BTreeMap<usize, (bool, bool)>,
     /// The names a kept lambda captures that are **hulls** - a `Shared`, a
     /// `SharedMut`, a `Locked` - by the same key
     /// ([ADR-230](../../docs/specification/adr/adr-230.md) D4): the lambda
     /// takes its own handle, and the one it was written beside stays usable.
-    pub kept_hulls: BTreeMap<(usize, String), Vec<String>>,
+    pub kept_hulls: BTreeMap<usize, Vec<String>>,
     /// **What a pausing kept lambda takes**, by name: owned once behind an
     /// `Arc`, and lent to each call (#95 step 6).
-    pub kept_owned: BTreeMap<(usize, String), Vec<String>>,
+    pub kept_owned: BTreeMap<usize, Vec<String>>,
     /// **Calls of a field that holds a function**, `button.on_click(4)`, by
     /// statement and `receiver.field`, and whether the call may pause.
     pub field_calls: BTreeMap<(usize, String), bool>,
@@ -607,7 +607,7 @@ pub struct Checked {
     pub kept_calls: BTreeMap<(usize, String), (bool, bool)>,
     /// **A kept value handed to a parameter the callee only runs**, by
     /// statement and shape: lent to it as the closure it holds.
-    pub kept_args: BTreeSet<(usize, String)>,
+    pub kept_args: BTreeSet<usize>,
     /// **A named function put where a function value is kept**, by statement
     /// and name: whether the type may pause, may fail, and how many parameters
     /// it takes. Written below as a kept closure that calls it.
@@ -679,13 +679,13 @@ pub struct Checked {
     /// lowered to ([ADR-233](../../docs/specification/adr/adr-233.md) D1, D2).
     /// The lambda is written as an `async` closure and the call as the
     /// entry's counterpart; the emitter has no types to tell which one.
-    pub pausing_lambdas: BTreeMap<(usize, String), PausingEntry>,
+    pub pausing_lambdas: BTreeMap<usize, PausingEntry>,
     /// **The `task::scope` calls with a task that pauses**, by the byte the
     /// statement starts at and the scope's lambda's shape
     /// ([ADR-328](../../docs/specification/adr/adr-328.md) D10): the scope
     /// polls that task itself, so its lambda is an `async` closure and the
     /// call is `scope_paused`, awaited.
-    pub paused_scopes: BTreeSet<(usize, String)>,
+    pub paused_scopes: BTreeSet<usize>,
     pub witnessed_sets: BTreeSet<usize>,
     /// The method calls that **pause**, keyed the same way and narrowed the same
     /// way ([ADR-055](../../docs/specification/adr/adr-055.md) D2).
@@ -747,7 +747,7 @@ pub struct Checked {
     /// ([ADR-319](../../docs/specification/adr/adr-319.md) D4), by the
     /// statement and the literal's shape, with which holes are names: it is
     /// joined in the platform's encoding into an `fs::Path`.
-    pub path_holes: BTreeMap<(usize, String), Vec<bool>>,
+    pub path_holes: BTreeMap<usize, Vec<bool>>,
     /// The `?.` reaches whose field is **itself** nullable, as the byte the
     /// statement starts at and the field's name (Part I 3.5).
     ///
@@ -925,7 +925,7 @@ pub struct Checked {
     /// **The reads of a boxed field**, by statement and the read's shape: the
     /// emitter writes `(*base.field)`, the place that behaves as the unboxed
     /// field would ([ADR-246](../../docs/specification/adr/adr-246.md) D2).
-    pub boxed_reads: BTreeSet<(usize, String)>,
+    pub boxed_reads: BTreeSet<usize>,
     /// **A number an arm binds out of a value it was lent** (0.0.236), by the
     /// pattern's address and the name: the language below binds a `&i64`
     /// there, and the emitter copies the number out at the head of the arm, so
@@ -1139,7 +1139,7 @@ pub struct Checked {
     /// **`ys[i] ?? "…"` over a list of `String?`** (#342), by statement and
     /// shape: the read is lent - the list keeps its text - and the answer is a
     /// view, as a map's is (ADR-293 D28).
-    pub lent_list_reads: BTreeSet<(usize, String)>,
+    pub lent_list_reads: BTreeSet<usize>,
     pub view_fallbacks: BTreeSet<usize>,
     /// Per function - by the name the ledger records it under - where its
     /// method calls went (ADR-288).
@@ -2029,17 +2029,17 @@ pub struct Propagation {
     /// [`Checked::number_lets`].
     pub number_lets: BTreeMap<usize, String>,
     /// [`Checked::changed_elements`].
-    pub changed_elements: BTreeSet<(usize, String)>,
+    pub changed_elements: BTreeSet<usize>,
     /// [`Checked::text_finds`].
-    pub text_finds: BTreeSet<(usize, String)>,
+    pub text_finds: BTreeSet<usize>,
     /// [`Checked::count_args`].
     pub count_args: BTreeSet<(usize, String, usize)>,
     /// [`Checked::path_methods`].
     pub path_methods: BTreeSet<(usize, String, String)>,
     /// [`Checked::map_keys`].
-    pub map_keys: BTreeMap<(usize, String, bool), KeyForm>,
+    pub map_keys: BTreeMap<(usize, bool), KeyForm>,
     /// [`Checked::slice_indices`].
-    pub slice_indices: BTreeSet<(usize, String)>,
+    pub slice_indices: BTreeSet<usize>,
     /// [`Checked::list_indices`].
     pub list_indices: BTreeSet<usize>,
     /// [`Checked::copied_tuple_parts`].
@@ -2057,29 +2057,29 @@ pub struct Propagation {
     /// [`Checked::copied_slots`].
     pub copied_slots: BTreeSet<usize>,
     /// [`Checked::owned_copies`].
-    pub owned_copies: BTreeSet<(usize, String)>,
+    pub owned_copies: BTreeSet<usize>,
     /// [`Checked::text_as_is`].
-    pub text_as_is: BTreeSet<(usize, String)>,
+    pub text_as_is: BTreeSet<usize>,
     /// [`Checked::lent_coalesces`].
-    pub lent_coalesces: BTreeMap<(usize, String), &'static str>,
+    pub lent_coalesces: BTreeMap<usize, &'static str>,
     /// [`Checked::plain_reaches`].
     pub plain_reaches: BTreeSet<usize>,
     /// [`Checked::copied_jump_reads`].
-    pub copied_jump_reads: BTreeSet<(usize, String)>,
+    pub copied_jump_reads: BTreeSet<usize>,
     /// [`Checked::view_coalesces`].
-    pub view_coalesces: BTreeSet<(usize, String)>,
+    pub view_coalesces: BTreeSet<usize>,
     /// [`Checked::lent_map_fallbacks`].
-    pub lent_map_fallbacks: BTreeSet<(usize, String)>,
+    pub lent_map_fallbacks: BTreeSet<usize>,
     /// [`Checked::optional_fallbacks`].
-    pub optional_fallbacks: BTreeSet<(usize, String)>,
+    pub optional_fallbacks: BTreeSet<usize>,
     /// [`Checked::flat_reads`].
-    pub flat_reads: BTreeSet<(usize, String)>,
+    pub flat_reads: BTreeSet<usize>,
     /// [`Checked::copied_reads`].
-    pub copied_reads: BTreeSet<(usize, String)>,
+    pub copied_reads: BTreeSet<usize>,
     /// [`Checked::text_in_lists`].
-    pub text_in_lists: BTreeSet<(usize, String)>,
+    pub text_in_lists: BTreeSet<usize>,
     /// [`Checked::counted`].
-    pub counted: BTreeSet<(usize, String)>,
+    pub counted: BTreeSet<usize>,
     /// [`Checked::lent_bindings`].
     pub lent_bindings: BTreeMap<usize, BTreeSet<String>>,
     /// [`Checked::taking_arms`].
@@ -2093,24 +2093,24 @@ pub struct Propagation {
     /// [`Checked::lent_scrutinees`].
     pub lent_scrutinees: BTreeSet<usize>,
     /// [`Checked::collected_into`].
-    pub collected_into: BTreeSet<(usize, String)>,
+    pub collected_into: BTreeSet<usize>,
     /// [`Checked::copied_walks`].
-    pub copied_walks: BTreeSet<(usize, String)>,
+    pub copied_walks: BTreeSet<usize>,
     /// [`Checked::filter_patterns`].
-    pub filter_patterns: BTreeSet<(usize, String)>,
+    pub filter_patterns: BTreeSet<usize>,
     /// [`Checked::kept_lambdas`].
-    pub kept_lambdas: BTreeMap<(usize, String), (bool, bool)>,
+    pub kept_lambdas: BTreeMap<usize, (bool, bool)>,
     /// [`Checked::kept_hulls`].
-    pub kept_hulls: BTreeMap<(usize, String), Vec<String>>,
+    pub kept_hulls: BTreeMap<usize, Vec<String>>,
     /// **What a pausing kept lambda takes**, by name: owned once behind an
     /// `Arc`, and lent to each call (#95 step 6).
-    pub kept_owned: BTreeMap<(usize, String), Vec<String>>,
+    pub kept_owned: BTreeMap<usize, Vec<String>>,
     /// [`Checked::field_calls`].
     pub field_calls: BTreeMap<(usize, String), bool>,
     /// [`Checked::kept_calls`].
     pub kept_calls: BTreeMap<(usize, String), (bool, bool)>,
     /// [`Checked::kept_args`].
-    pub kept_args: BTreeSet<(usize, String)>,
+    pub kept_args: BTreeSet<usize>,
     /// [`Checked::kept_functions`].
     pub kept_functions: BTreeMap<(usize, String), (bool, bool, usize)>,
     /// [`Checked::pausing_walks`].
@@ -2128,9 +2128,9 @@ pub struct Propagation {
     /// [`Checked::sync_functions_run_async`].
     pub sync_functions_run_async: BTreeMap<(usize, usize), usize>,
     /// [`Checked::pausing_lambdas`].
-    pub pausing_lambdas: BTreeMap<(usize, String), PausingEntry>,
+    pub pausing_lambdas: BTreeMap<usize, PausingEntry>,
     /// [`Checked::paused_scopes`].
-    pub paused_scopes: BTreeSet<(usize, String)>,
+    pub paused_scopes: BTreeSet<usize>,
     /// [`Checked::narrowing_casts`].
     pub narrowing: BTreeMap<(usize, String), Narrowing>,
     /// [`Checked::nullable_sites`].
@@ -2171,7 +2171,7 @@ pub struct Propagation {
     /// [`Checked::mixed_comparisons`].
     pub mixed_comparisons: BTreeMap<usize, bool>,
     /// [`Checked::path_holes`].
-    pub path_holes: BTreeMap<(usize, String), Vec<bool>>,
+    pub path_holes: BTreeMap<usize, Vec<bool>>,
     /// [`Checked::lent_lets`].
     pub lent_lets: BTreeSet<usize>,
     /// [`Checked::lent_returns`].
@@ -2203,7 +2203,7 @@ pub struct Propagation {
     /// [`Checked::owned_texts`].
     pub owned_texts: BTreeSet<usize>,
     /// [`Checked::lent_list_reads`].
-    pub lent_list_reads: BTreeSet<(usize, String)>,
+    pub lent_list_reads: BTreeSet<usize>,
     /// [`Checked::view_fallbacks`].
     pub view_fallbacks: BTreeSet<usize>,
     /// [`Checked::lent_args`].
@@ -2213,7 +2213,7 @@ pub struct Propagation {
     /// [`Checked::boxed_members`].
     pub boxed_members: BTreeMap<String, BTreeSet<String>>,
     /// [`Checked::boxed_reads`].
-    pub boxed_reads: BTreeSet<(usize, String)>,
+    pub boxed_reads: BTreeSet<usize>,
     /// [`Checked::copied_bindings`].
     pub copied_bindings: BTreeSet<(usize, String)>,
     /// **A plain value beside a `null`**, by the address of the arm's last
@@ -5846,9 +5846,7 @@ impl<'a> Checker<'a> {
         // reached or not: `b?.clone()` for a `b: ref String?` is a
         // `String?`, which `.clone()` of the `&str` inside is not.
         if inner.is_a_view() && name == "clone" && args.is_empty() {
-            self.checked
-                .owned_copies
-                .insert((span.at(), argument_shape(receiver)));
+            self.checked.owned_copies.insert(value_node(receiver));
         }
         // **A field that holds a function is called as one** here too
         // (#533): `x?.apply(1)` is `(x.apply)(1)` on what is inside.
@@ -5902,9 +5900,7 @@ impl<'a> Checker<'a> {
             .get(ty)
             .is_some_and(|members| members.contains(&field))
         {
-            self.checked
-                .boxed_reads
-                .insert((span.at(), argument_shape(expr)));
+            self.checked.boxed_reads.insert(value_node(expr));
         }
         let Some(fields) = self.s.fields_of(&self.world, ty) else {
             return Ty::Unknown;
@@ -6606,7 +6602,7 @@ impl<'a> Checker<'a> {
         // **A `??` handed to a position that only reads it lends its left
         // side** (ADR-279 D5): the answer is a view already, of the name or of
         // the fallback, and needs no `&` of its own.
-        if self.a_pending_coalesce_is_lent(given, span) {
+        if self.a_pending_coalesce_is_lent(given) {
             return true;
         }
         // **A plain value lent to a `ref T?` is put in the option too** (Part
@@ -7818,7 +7814,7 @@ impl<'a> Checker<'a> {
         };
         self.checked
             .pausing_lambdas
-            .insert((span.at(), argument_shape(lambda)), entry);
+            .insert(value_node(lambda), entry);
         if matches!(key, "Seq::map" | "Seq::filter") {
             return a_pausing_sequence(result, on);
         }
@@ -8082,9 +8078,7 @@ impl<'a> Checker<'a> {
             return;
         }
         if self.s.copied(&self.world, inner) || !self.s.takes_away(&self.world, inner) {
-            self.checked
-                .copied_reads
-                .insert((span.at(), argument_shape(value)));
+            self.checked.copied_reads.insert(value_node(value));
             return;
         }
         self.s.findings.push(Finding {
@@ -8377,9 +8371,7 @@ impl<'a> Checker<'a> {
             return;
         }
         if self.s.copied(&self.world, into) || !self.s.takes_away(&self.world, into) {
-            self.checked
-                .copied_reads
-                .insert((span.at(), argument_shape(read)));
+            self.checked.copied_reads.insert(value_node(read));
             return;
         }
         self.s.findings.push(Finding {
@@ -9484,9 +9476,7 @@ impl<'a> Checker<'a> {
                                 if self.parsed.text(*method) == "get"))
                             && self.s.leaves(&self.world, fallback));
                 if copied_read {
-                    self.checked
-                        .copied_jump_reads
-                        .insert((span.at(), argument_shape(value)));
+                    self.checked.copied_jump_reads.insert(value_node(value));
                 }
                 let read_through_a_jump = read_through_a_jump && !copied_read;
                 if matches!(&bound, Ty::Named { name, .. } if name == "fs::Path")
@@ -10067,9 +10057,7 @@ impl<'a> Checker<'a> {
                     && args.len() == 1
                     && matches!(outer.as_ref(), Ty::Nullable(_)) =>
             {
-                self.checked
-                    .flat_reads
-                    .insert((span.at(), argument_shape(expr)));
+                self.checked.flat_reads.insert(value_node(expr));
                 *outer
             }
             (_, ty) => ty,
@@ -10281,11 +10269,7 @@ impl<'a> Checker<'a> {
                 // D4): the parts are joined in the platform's encoding, and a
                 // position that asks for text refuses it at the hole
                 // (`a_name_in_text`).
-                match self
-                    .checked
-                    .path_holes
-                    .contains_key(&(span.at(), argument_shape(expr)))
-                {
+                match self.checked.path_holes.contains_key(&value_node(expr)) {
                     true => Ty::named("fs::Path"),
                     false => Ty::named("String"),
                 }
@@ -11148,7 +11132,7 @@ impl<'a> Checker<'a> {
                         .s
                         .only_reads_its_receiver(&self.world, self.parsed.text(*method))
                 {
-                    self.a_pending_coalesce_is_lent(receiver, span);
+                    self.a_pending_coalesce_is_lent(receiver);
                 }
                 // **The tier pass's own conversion**
                 // ([ADR-282](../../docs/specification/adr/adr-282.md) D5):
@@ -11431,9 +11415,7 @@ impl<'a> Checker<'a> {
                         // **And so is a field of one** (#526):
                         // `items[1].tags.push(x)` changes the element too.
                         if an_element_beneath(receiver) {
-                            self.checked
-                                .changed_elements
-                                .insert((span.at(), argument_shape(receiver)));
+                            self.checked.changed_elements.insert(value_node(receiver));
                         }
                     }
                 }
@@ -11446,18 +11428,14 @@ impl<'a> Checker<'a> {
                 let text = matches!(&on, Ty::Named { name, args: none, .. }
                     if none.is_empty() && matches!(name.as_str(), "String" | "str"));
                 if text && self.parsed.text(*method) == "find" {
-                    self.checked
-                        .text_finds
-                        .insert((span.at(), argument_shape(receiver)));
+                    self.checked.text_finds.insert(value_node(receiver));
                 }
                 if text
                     && args.is_empty()
                     && self.parsed.text(*method) == "to_string"
                     && self.world.own.candidates("to_string").is_empty()
                 {
-                    self.checked
-                        .text_as_is
-                        .insert((span.at(), argument_shape(receiver)));
+                    self.checked.text_as_is.insert(value_node(receiver));
                     self.receiver_name = outer_named;
                     self.at_a_write_door = outer_door;
                     self.s.inside_a_door = outer_inside;
@@ -11491,9 +11469,7 @@ impl<'a> Checker<'a> {
                 if let (Some(item), "clone", true) =
                     (&a_run, self.parsed.text(*method), args.is_empty())
                 {
-                    self.checked
-                        .owned_copies
-                        .insert((span.at(), argument_shape(receiver)));
+                    self.checked.owned_copies.insert(value_node(receiver));
                     self.receiver_name = outer_named;
                     self.at_a_write_door = outer_door;
                     self.s.inside_a_door = outer_inside;
@@ -11514,9 +11490,7 @@ impl<'a> Checker<'a> {
                         && self.world.library.functions.contains_key(&key)
                         && !self.world.own.functions.contains_key(&key);
                     if library && args.is_empty() {
-                        self.checked
-                            .owned_copies
-                            .insert((span.at(), argument_shape(receiver)));
+                        self.checked.owned_copies.insert(value_node(receiver));
                     }
                     // **A list of text asked for a view of text** (#125): the
                     // name is a `&str` below, and what the list's own
@@ -11539,9 +11513,7 @@ impl<'a> Checker<'a> {
                                 local.ty == Ty::view("str") || local.ty == Ty::named("String")
                             })
                     {
-                        self.checked
-                            .text_in_lists
-                            .insert((span.at(), argument_shape(receiver)));
+                        self.checked.text_in_lists.insert(value_node(receiver));
                     }
                     // **A sequence's count is an `i64`** (Part I 2.2): the
                     // emitter writes the conversion a length has.
@@ -11549,9 +11521,7 @@ impl<'a> Checker<'a> {
                         .iter()
                         .any(|of| key == format!("{of}::count"));
                     if counts && !self.world.own.functions.contains_key(&key) {
-                        self.checked
-                            .counted
-                            .insert((span.at(), argument_shape(receiver)));
+                        self.checked.counted.insert(value_node(receiver));
                     }
                 }
                 self.receiver_name = outer_named;
@@ -11572,9 +11542,7 @@ impl<'a> Checker<'a> {
                         parallel,
                         shape,
                     } if copies_as_a_view(&item) => {
-                        self.checked
-                            .copied_walks
-                            .insert((span.at(), argument_shape(expr)));
+                        self.checked.copied_walks.insert(value_node(expr));
                         Ty::Seq {
                             item: Box::new(unviewed(&item)),
                             is_sync,
@@ -11596,9 +11564,7 @@ impl<'a> Checker<'a> {
                     && !item.is_unknown()
                     && (item.is_a_view() || !crate::contracts::keeps::moves(item))
                 {
-                    self.checked
-                        .filter_patterns
-                        .insert((span.at(), argument_shape(lambda)));
+                    self.checked.filter_patterns.insert(value_node(lambda));
                 }
                 // **And what `access` hands back came out of a lock** (D1).
 
@@ -11718,9 +11684,7 @@ impl<'a> Checker<'a> {
                     .get(ty)
                     .is_some_and(|members| members.contains(&field))
                 {
-                    self.checked
-                        .boxed_reads
-                        .insert((span.at(), argument_shape(expr)));
+                    self.checked.boxed_reads.insert(value_node(expr));
                 }
                 // **A handle has no fields** (ADR-302 D7): it is an address
                 // this language never dereferences, so there is nothing inside
@@ -12362,7 +12326,7 @@ impl<'a> Checker<'a> {
                         // view of text with text and with a view, and a view of
                         // anything else with nothing but a view.
                         for side in [lhs, rhs] {
-                            self.a_pending_coalesce_of_text_is_lent(side, span);
+                            self.a_pending_coalesce_of_text_is_lent(side);
                         }
                         // **`x == null` asks whether there is one**, and the
                         // emitter writes it `x.is_none()` (0.0.250): nothing
@@ -12623,7 +12587,7 @@ impl<'a> Checker<'a> {
                         if matches!(inner.as_ref(), Ty::Named { name, args, view: false }
                             if args.is_empty() && name == ty::TEXT));
                     self.checked.lent_coalesces.insert(
-                        (span.at(), argument_shape(expr)),
+                        value_node(expr),
                         if text { ".as_deref()" } else { ".as_ref()" },
                     );
                     if let Ty::Nullable(inner) = &left {
@@ -12636,7 +12600,7 @@ impl<'a> Checker<'a> {
                         .a_coalesce_that_may_lend(&self.world, &left, fallback, &other)
                     {
                         Some(opened) => self.pending_coalesces.push(PendingCoalesce {
-                            key: (span.at() as i64, argument_shape(expr)),
+                            key: value_node(expr) as i64,
                             left: value_node(value) as i64,
                             ty: left.clone(),
                             span: *span,
@@ -12668,9 +12632,7 @@ impl<'a> Checker<'a> {
                         && matches!(&**value, Expr::Index { .. })
                     {
                         self.checked.view_fallbacks.insert(value_node(fallback));
-                        self.checked
-                            .lent_list_reads
-                            .insert((span.at(), argument_shape(expr)));
+                        self.checked.lent_list_reads.insert(value_node(expr));
                         return Ty::view("str");
                     }
                 }
@@ -12685,9 +12647,7 @@ impl<'a> Checker<'a> {
                     && matches!(&other, Ty::Named { name, .. }
                         if matches!(crate::contracts::ty::base(name), "String" | "str"))
                 {
-                    self.checked
-                        .view_coalesces
-                        .insert((span.at(), argument_shape(expr)));
+                    self.checked.view_coalesces.insert(value_node(expr));
                     return Ty::view("str");
                 }
                 // **And a name of the type the map holds** (ADR-279 D7):
@@ -12710,9 +12670,7 @@ impl<'a> Checker<'a> {
                         })
                     && crate::contracts::keeps::moves(&other)
                 {
-                    self.checked
-                        .lent_map_fallbacks
-                        .insert((span.at(), argument_shape(expr)));
+                    self.checked.lent_map_fallbacks.insert(value_node(expr));
                     return view_of(&other);
                 }
                 // **A value written out beside a view of a type of the program's
@@ -12732,9 +12690,7 @@ impl<'a> Checker<'a> {
                     )
                     && self.a_value_written_out(fallback)
                 {
-                    self.checked
-                        .lent_map_fallbacks
-                        .insert((span.at(), argument_shape(expr)));
+                    self.checked.lent_map_fallbacks.insert(value_node(expr));
                     return *inner.clone();
                 }
                 if let Ty::Nullable(inner) = &left {
@@ -12776,9 +12732,7 @@ impl<'a> Checker<'a> {
                 // is not, so `rustc` refused the file (found moving `dsl` into
                 // Nikaia, #125).
                 if let (Ty::Nullable(_), Ty::Nullable(_)) = (&left, &other) {
-                    self.checked
-                        .optional_fallbacks
-                        .insert((span.at(), argument_shape(expr)));
+                    self.checked.optional_fallbacks.insert(value_node(expr));
                     return other;
                 }
                 // **`a ?? b` on a `T?` is a `T`** (Part I 3.5): that is what
@@ -12882,9 +12836,7 @@ impl<'a> Checker<'a> {
                 let a_range = matches!(&**index, Expr::Range { .. })
                     || matches!(&key, Ty::Seq { shape, .. } if shape.replays);
                 if a_range && !matches!(&**index, Expr::Range { .. }) {
-                    self.checked
-                        .slice_indices
-                        .insert((span.at(), argument_shape(index)));
+                    self.checked.slice_indices.insert(value_node(index));
                 }
                 // **An index is a use that prefers an `i64`**
                 // ([ADR-285](../../docs/specification/adr/adr-285.md) D24): a
@@ -12939,9 +12891,7 @@ impl<'a> Checker<'a> {
                         // (D2).
                         match (value, writing) {
                             (Ty::Nullable(held), false) => {
-                                self.checked
-                                    .flat_reads
-                                    .insert((span.at(), argument_shape(expr)));
+                                self.checked.flat_reads.insert(value_node(expr));
                                 Ty::Nullable(held)
                             }
                             (value, _) => Ty::Nullable(Box::new(value)),
@@ -13799,10 +13749,7 @@ impl<'a> Checker<'a> {
                 receiver, method, ..
             } => match self.parsed.text(*method) {
                 "clone" | "to_owned" => true,
-                "to_string" => !self
-                    .checked
-                    .text_as_is
-                    .contains(&(span.at(), argument_shape(receiver))),
+                "to_string" => !self.checked.text_as_is.contains(&value_node(receiver)),
                 _ => false,
             },
             _ => false,
@@ -14069,7 +14016,7 @@ impl<'a> Checker<'a> {
             // **A hole is formatted by reference** (ADR-279 D5): a `??` that
             // is the hole lends its left side, as a print call's argument does.
             if matches!(literal, Expr::LitInterpolated { .. }) {
-                self.a_pending_coalesce_is_lent(hole, span);
+                self.a_pending_coalesce_is_lent(hole);
             }
             self.s.scope.pop();
             if let Some(spec) = specs.get(index) {
@@ -14080,9 +14027,7 @@ impl<'a> Checker<'a> {
         // **An `f"…"` with a file's name in it is joined in the platform's
         // encoding** (ADR-319 D4), so a name that is not text keeps its bytes.
         if matches!(literal, Expr::LitInterpolated { .. }) && names.contains(&true) {
-            self.checked
-                .path_holes
-                .insert((span.at(), argument_shape(literal)), names);
+            self.checked.path_holes.insert(value_node(literal), names);
         }
     }
 
@@ -14150,12 +14095,7 @@ impl<'a> Checker<'a> {
         if !wants_text {
             return false;
         }
-        let Some(names) = self
-            .checked
-            .path_holes
-            .get(&(span.at(), argument_shape(literal)))
-            .cloned()
-        else {
+        let Some(names) = self.checked.path_holes.get(&value_node(literal)).cloned() else {
             return false;
         };
         let holes = crate::emit::interpolated_holes(parts);
@@ -14756,9 +14696,7 @@ impl<'a> Checker<'a> {
                 .first()
                 .filter(|arg| paused_here.contains(&argument_shape(arg)))
         {
-            self.checked
-                .paused_scopes
-                .insert((span.at(), argument_shape(body)));
+            self.checked.paused_scopes.insert(value_node(body));
             self.s
                 .a_call_that_may_pause("task::scope", true, false, span);
         }
@@ -15253,7 +15191,7 @@ impl<'a> Checker<'a> {
             // handed to one lends its left side as a lent argument does.
             if matches!(written, "println" | "eprintln" | "print" | "eprint")
                 && let Some(given) = given.get(at)
-                && self.a_pending_coalesce_is_lent(given, span)
+                && self.a_pending_coalesce_is_lent(given)
             {
                 continue;
             }
@@ -15266,7 +15204,7 @@ impl<'a> Checker<'a> {
                 // An `f"…"` recorded which of its holes are names already.
                 self.checked
                     .path_holes
-                    .entry((span.at(), argument_shape(given)))
+                    .entry(value_node(given))
                     .or_insert_with(|| vec![true]);
                 continue;
             }
@@ -16455,7 +16393,7 @@ impl<'a> Checker<'a> {
             };
             self.checked
                 .map_keys
-                .insert((span.at(), argument_shape(index), writing), form);
+                .insert((value_node(index), writing), form);
             return;
         }
         if keys.is_a_view() {
@@ -16505,7 +16443,7 @@ impl<'a> Checker<'a> {
         };
         self.checked
             .map_keys
-            .insert((span.at(), argument_shape(index), writing), form);
+            .insert((value_node(index), writing), form);
     }
 
     /// **A value handed to something that keeps it**
@@ -16526,10 +16464,7 @@ impl<'a> Checker<'a> {
     fn hands_over(&mut self, value: &Expr, ty: &Ty, to: &str, span: &Span) {
         // `name.to_string()` is `name` (ADR-282 D8): what is handed over is it.
         if let Expr::MethodCall { receiver, .. } = value
-            && self
-                .checked
-                .text_as_is
-                .contains(&(span.at(), argument_shape(receiver)))
+            && self.checked.text_as_is.contains(&value_node(receiver))
         {
             return self.hands_over(receiver, ty, to, span);
         }
@@ -16548,31 +16483,30 @@ impl<'a> Checker<'a> {
 
     /// **A `??` in a position that only reads it lends its left side**
     /// (ADR-279 D5): recorded for the emitter, and no longer pending.
-    fn a_pending_coalesce_is_lent(&mut self, given: &Expr, span: &Span) -> bool {
+    fn a_pending_coalesce_is_lent(&mut self, given: &Expr) -> bool {
         if !matches!(given, Expr::Coalesce { .. }) {
             return false;
         }
-        let key = (span.at() as i64, argument_shape(given));
+        let key = value_node(given) as i64;
         let Some(at) = self.pending_coalesces.iter().position(|p| p.key == key) else {
             return false;
         };
         let pending = self.pending_coalesces.remove(at);
-        self.checked.lent_coalesces.insert(
-            (pending.key.0 as usize, pending.key.1),
-            opened_text(&pending.opened),
-        );
+        self.checked
+            .lent_coalesces
+            .insert(pending.key as usize, opened_text(&pending.opened));
         true
     }
 
     /// The same for a `??` of text, where the position is a comparison
     /// (issue #98).
-    fn a_pending_coalesce_of_text_is_lent(&mut self, given: &Expr, span: &Span) -> bool {
-        let key = (span.at() as i64, argument_shape(given));
+    fn a_pending_coalesce_of_text_is_lent(&mut self, given: &Expr) -> bool {
+        let key = value_node(given) as i64;
         let of_text = self
             .pending_coalesces
             .iter()
             .any(|p| p.key == key && p.opened == ".as_deref()");
-        of_text && self.a_pending_coalesce_is_lent(given, span)
+        of_text && self.a_pending_coalesce_is_lent(given)
     }
 
     /// Every `??` of the statement just walked that no reading position lent
@@ -19517,7 +19451,7 @@ impl<'a> Checker<'a> {
             .or_else(|| self.text_literal(want, value, true))
             .or_else(|| self.tuple_literal(found, want, value))
             .or_else(|| self.list_of_tuple_literals(found, want, value))
-            .or_else(|| self.collect_by_use(found, want, value, span))
+            .or_else(|| self.collect_by_use(found, want, value))
             .or_else(|| number_where_no_number_is(want, value))
     }
 
@@ -19560,7 +19494,7 @@ impl<'a> Checker<'a> {
     /// says otherwise; where a `let`, a field or a result declares another
     /// container the items fit, that is the value's type, and the language
     /// below is told nothing more - its own `collect` builds the declared type.
-    fn collect_by_use(&mut self, found: &Ty, want: &Ty, value: &Expr, span: &Span) -> Option<Ty> {
+    fn collect_by_use(&mut self, found: &Ty, want: &Ty, value: &Expr) -> Option<Ty> {
         let Expr::MethodCall {
             receiver,
             method,
@@ -19608,9 +19542,7 @@ impl<'a> Checker<'a> {
         if !fits {
             return None;
         }
-        self.checked
-            .collected_into
-            .insert((span.at(), argument_shape(receiver)));
+        self.checked.collected_into.insert(value_node(receiver));
         Some(want.clone())
     }
 
@@ -19618,7 +19550,7 @@ impl<'a> Checker<'a> {
     /// D4, ADR-312 D5): handing a hull on duplicates the count, so the name
     /// outside is still there on the next line. Asked wherever a lambda is
     /// kept - a field, a `let`, and a parameter the callee keeps (#536).
-    fn a_kept_lambdas_hulls(&mut self, value: &Expr, span: &Span) {
+    fn a_kept_lambdas_hulls(&mut self, value: &Expr) {
         let Expr::Closure { params, body, .. } = value else {
             return;
         };
@@ -19640,9 +19572,7 @@ impl<'a> Checker<'a> {
             })
             .collect();
         if !hulls.is_empty() {
-            self.checked
-                .kept_hulls
-                .insert((span.at(), argument_shape(value)), hulls);
+            self.checked.kept_hulls.insert(value_node(value), hulls);
         }
     }
 
@@ -19678,9 +19608,7 @@ impl<'a> Checker<'a> {
                 .push((name, ty, span.stop(), "a function kept for later"));
         }
         if pauses && !owned.is_empty() {
-            self.checked
-                .kept_owned
-                .insert((span.at(), argument_shape(value)), owned);
+            self.checked.kept_owned.insert(value_node(value), owned);
         }
     }
 
@@ -19715,9 +19643,9 @@ impl<'a> Checker<'a> {
         {
             self.checked
                 .kept_lambdas
-                .insert((span.at(), argument_shape(value)), (!is_sync, *throws));
+                .insert(value_node(value), (!is_sync, *throws));
             self.a_lambdas_text_is_its_own(want, value);
-            self.a_kept_lambdas_hulls(value, span);
+            self.a_kept_lambdas_hulls(value);
             self.a_kept_lambda_takes_these(value, !is_sync, span);
         }
         // **A function of this program, named**, is the closure that calls it:
@@ -21529,8 +21457,8 @@ impl<'a> Checker<'a> {
                     if !self.runs_the_parameter(callee, at) {
                         self.checked
                             .kept_lambdas
-                            .insert((span.at(), argument_shape(arg)), (!is_sync, *throws));
-                        self.a_kept_lambdas_hulls(arg, span);
+                            .insert(value_node(arg), (!is_sync, *throws));
+                        self.a_kept_lambdas_hulls(arg);
                         self.a_kept_lambda_takes_these(arg, !is_sync, span);
                     }
                     if let Some(want) = expected.get(at) {
@@ -21609,9 +21537,7 @@ impl<'a> Checker<'a> {
                         && !matches!(arg, Expr::Variable(name, _)
                             if self.s.binding(self.parsed.text(*name)).is_none())
                     {
-                        self.checked
-                            .kept_args
-                            .insert((span.at(), argument_shape(arg)));
+                        self.checked.kept_args.insert(value_node(arg));
                     }
                     found
                 }

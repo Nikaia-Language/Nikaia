@@ -11850,7 +11850,7 @@ pub struct CheckWayOut {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CheckPendingCoalesce {
-    pub key: (i64, String),
+    pub key: i64,
     pub left: i64,
     pub ty: Ty,
     pub span: Span,
