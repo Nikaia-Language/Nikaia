@@ -18450,6 +18450,48 @@ pub fn an_or_a(word: &str) -> String {
     String::from("a")
 }
 
+fn after_help(note: &str) -> String {
+    let rest = match note.strip_prefix("help: ") { Some(__nikaia_value) => __nikaia_value, None => return note.to_owned() };
+    after_help(rest)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Relayed {
+    pub level: String,
+    pub message: String,
+    pub internal: Option<String>,
+    pub generated_line: i64,
+    pub located: bool,
+    pub span: Span,
+    pub word: String,
+    pub notes: Vec<String>,
+}
+
+pub fn relayed(message: &Relayed, path: &str, source: &str, generated_path: &str) -> String {
+    let mut at = generated_path.to_owned();
+    if message.generated_line > 0 { at = format!("{}:{}", generated_path, message.generated_line); }
+    if message.internal.is_some() {
+        let original = match message.internal.as_deref() { Some(__nikaia_value) => __nikaia_value, None => return String::from("") };
+        if message.located {
+            let shown = Shown { warning: false, code: String::from(""), message: String::from("This is a bug in Nikaia, not in your program. Please report it."), notes: vec![String::from("The compiler generated two different types for one of yours."), format!("What the Rust compiler said: {}", original)], help: None, span: message.span.clone(), labels: vec![] };
+            let out = rendered(&shown, path, source);
+            if out.starts_with("error:") { return format!("internal {}", out); }
+            return out;
+        }
+        return format!("internal error: {}: This is a bug in Nikaia, not in your program. Please report it.\n   = note: The compiler generated two different types for one of yours.\n   = note: What the Rust compiler said: {}\n", at, original);
+    }
+    if message.located {
+        let mut notes: Vec<String> = vec![];
+        let mut help: Option<String> = None;
+        for note in message.notes.iter() { if note.starts_with("help: ") { help = Some(after_help(note)); } else { notes.push(note.to_owned()); } }
+        let shown = Shown { warning: message.level == "warning", code: String::from(""), message: message.message.to_owned(), notes, help, span: message.span.clone(), labels: vec![Marked { span: message.span.clone(), word: message.word.to_owned(), text: String::from(""), main: true }] };
+        return rendered(&shown, path, source);
+    }
+    let mut out = format!("{}: {}: {} (no Nikaia source maps to this)\n", message.level, at, message.message);
+    for note in message.notes.iter() { out.push_str(&format!("   = note: {}\n", said(note))); }
+    out
+}
+
 
 // --- rust.nika ---
 
@@ -27478,7 +27520,7 @@ pub mod prover_walk {
 }
 pub mod render {
     #[allow(unused_imports)]
-    pub use super::{Marked, Shown, rendered, Pause, paused, an_or_a};
+    pub use super::{Marked, Shown, rendered, Pause, paused, an_or_a, Relayed, relayed};
 }
 pub mod rust {
     #[allow(unused_imports)]

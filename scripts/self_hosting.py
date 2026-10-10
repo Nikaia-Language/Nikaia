@@ -61,7 +61,7 @@ COMPILER_NIKA = {
     "diffs.nika": "project: what changed in a ledger, and an output test's difference (0.0.350)",
     "types.nika": "types: a name declared twice, a bound naming no trait, a type nothing declares (0.0.354)",
     "views.nika": "views: where a naked view parameter's view ends up, NK2302 and the buffer the emitter names (0.0.355)",
-    "render.nika": "diagnostics: a finding laid out on the lines it is about, each place underlined, and NK2202's message (0.0.356, 0.0.358)",
+    "render.nika": "diagnostics: a finding laid out on the lines it is about, each place underlined, and NK2202's message (0.0.356, 0.0.358), a relayed rustc message, laid out (0.0.748)",
     "boundaries.nika": "diagnostics: a backend mismatch at a boundary said as the stale ledger it is (0.0.358)",
     "threads.nika": "contracts::send: whether a value may cross a thread, to our own code or to code nothing describes (0.0.361)",
     "order.nika": "contracts::order: a statement reduced to an operation or the reason it cannot be, and whether two statements, or a run of them, keep their order, and the `--overlaps` report (0.0.362-0.0.364)",

@@ -566,108 +566,37 @@ pub fn log_internal(diagnostics: &[Diagnostic], gen_dir: &Path) -> Option<PathBu
 }
 
 pub fn render(diagnostic: &Diagnostic, path: &str, source: &str, generated_path: &str) -> String {
-    let mut out = String::new();
-
-    // **An internal error, and the backend's own words with it**
-    // ([ADR-056](../../../../docs/specification/adr/adr-056.md) D2). Part III
-    // C.1 says an unmapped backend error reaching the user is a bug in this
-    // compiler and is reported as one rather than as normal output; this is the
-    // neighbouring case, where the mapping *succeeded* and produced a message
-    // that cannot be about the program. The reader needs to know it is not their
-    // mistake; whoever fixes it needs the sentence `rustc` actually wrote, so
-    // that is shown here as well as written to the log beside the generated Rust.
-    if let Some(original) = &diagnostic.internal {
-        // Where the map knew, the `.nika` line; where it did not, the generated
-        // one - saying `.nika` for a line nothing maps to would be a guess, and
-        // in a message that already says something went wrong here that is the
-        // worst place to make one.
-        // Where the map knew, the same layout as every other message, with
-        // the heading saying whose mistake it is.
-        if let Some(location) = &diagnostic.location {
-            let finding = crate::check::Finding {
-                severity: crate::check::Severity::Error,
-                span: location.span,
-                code: "",
-                message: "This is a bug in Nikaia, not in your program. Please report it."
-                    .to_string(),
-                notes: vec![
-                    "The compiler generated two different types for one of yours.".to_string(),
-                    format!("What the Rust compiler said: {original}"),
-                ],
-                help: None,
-                labels: Vec::new(),
-            };
-            return render_finding(&finding, path, source).replacen("error:", "internal error:", 1);
-        }
-        let at = match diagnostic.generated_line {
-            Some(line) => format!("{generated_path}:{line}"),
-            None => generated_path.to_string(),
-        };
-        out.push_str(&format!(
-            "internal error: {at}: This is a bug in Nikaia, not in your program. Please \
-             report it.\n\
-             \x20  = note: The compiler generated two different types for one of yours.\n\
-             \x20  = note: What the Rust compiler said: {original}\n"
-        ));
-        return out;
-    }
-
-    match &diagnostic.location {
-        // **A relayed message in the layout of the compiler's own**: the
-        // backend's sentence, the `.nika` line with the span underlined, and
-        // its notes - one shape for every message a reader gets.
-        Some(location) => {
-            let word: String = source
+    // **In Nikaia** (`tools/render.nika`, ADR-294, #125): the layout, the
+    // internal error and the message nothing maps.
+    let (located, span, word) = match &diagnostic.location {
+        Some(location) => (
+            true,
+            location.span,
+            source
                 .get(location.span.bytes())
                 .unwrap_or_default()
                 .lines()
                 .next()
                 .unwrap_or_default()
-                .to_string();
-            let (helps, notes): (Vec<&String>, Vec<&String>) = diagnostic
-                .notes
-                .iter()
-                .partition(|note| note.starts_with("help: "));
-            let finding = crate::check::Finding {
-                severity: match diagnostic.level.as_str() {
-                    "warning" => crate::check::Severity::Warning,
-                    _ => crate::check::Severity::Error,
-                },
-                span: location.span,
-                code: "",
-                message: diagnostic.message.clone(),
-                notes: notes.into_iter().cloned().collect(),
-                help: helps
-                    .last()
-                    .map(|help| help.trim_start_matches("help: ").to_string()),
-                labels: vec![crate::check::Label {
-                    span: location.span,
-                    word,
-                    text: String::new(),
-                    main: true,
-                }],
-            };
-            return render_finding(&finding, path, source);
-        }
-        None => {
-            // Nothing in the map covers it: the emitted line is all there is,
-            // and saying so is better than pointing somewhere plausible.
-            let line = diagnostic
-                .generated_line
-                .map(|l| format!("{generated_path}:{l}"))
-                .unwrap_or_else(|| generated_path.to_string());
-            out.push_str(&format!(
-                "{}: {}: {} (no Nikaia source maps to this)\n",
-                diagnostic.level, line, diagnostic.message
-            ));
-        }
-    }
-
-    for note in &diagnostic.notes {
-        out.push_str(&format!("   = note: {}\n", said(note)));
-    }
-
-    out
+                .to_string(),
+        ),
+        None => (false, Span::from(0..0), String::new()),
+    };
+    nikaia_std::tools::render::relayed(
+        &nikaia_std::tools::render::Relayed {
+            level: diagnostic.level.clone(),
+            message: diagnostic.message.clone(),
+            internal: diagnostic.internal.clone(),
+            generated_line: diagnostic.generated_line.unwrap_or(0) as i64,
+            located,
+            span,
+            word,
+            notes: diagnostic.notes.clone(),
+        },
+        path,
+        source,
+        generated_path,
+    )
 }
 
 /// A finding of the compiler's own, reported the way it reports rustc's:

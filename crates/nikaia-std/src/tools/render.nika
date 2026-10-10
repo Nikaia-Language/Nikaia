@@ -310,3 +310,76 @@ pub fn an_or_a(word: ref String) -> String {
     }
     return "a"
 }
+
+/// What follows the `help: ` a note starts with, however often it is written.
+fn after_help(note: ref String) -> String {
+    let rest = note.strip_prefix("help: ") ?? return note.clone()
+    return after_help(rest)
+}
+
+/// One message the backend reported, placed in the `.nika` file where that was
+/// possible, as the compiler's `diagnostics` holds it.
+pub struct Relayed {
+    pub level: String,
+    pub message: String,
+    /// The backend's own words, kept only where translating them made the
+    /// message say the same thing on both sides of an `expected ... found ...`
+    /// (ADR-056 D2).
+    pub internal: String?,
+    /// The line of the emitted Rust, or `0` where there is none.
+    pub generated_line: i64,
+    /// Whether the map knew where in the `.nika` file it is, and `span` and
+    /// `word` - the first line of the text under it - are then its place.
+    pub located: bool,
+    pub span: Span,
+    pub word: String,
+    pub notes: Vec[String],
+}
+
+/// A relayed message in the layout of the compiler's own: the backend's
+/// sentence, the `.nika` line with the span underlined, and its notes - one
+/// shape for every message a reader gets (ADR-300).
+///
+/// **An internal error says whose mistake it is** (ADR-056 D2): the mapping
+/// succeeded and produced a message that cannot be about the program. Where
+/// the map knew, it has the same layout as every other message; where it did
+/// not, the generated line is all there is, and saying `.nika` for a line
+/// nothing maps to would be a guess.
+pub fn relayed(message: ref Relayed, path: ref String, source: ref String, generated_path: ref String) -> String {
+    let mut at = generated_path.clone()
+    if message.generated_line > 0 {
+        at = f"{generated_path}:{message.generated_line}"
+    }
+    if message.internal != null {
+        let original = message.internal ?? return ""
+        if message.located {
+            let shown = Shown { warning: false, code: "", message: "This is a bug in Nikaia, not in your program. Please report it.", notes: ["The compiler generated two different types for one of yours.", f"What the Rust compiler said: {original}"], help: null, span: message.span.clone(), labels: [] }
+            let out = rendered(shown, path, source)
+            if out.starts_with("error:") {
+                return f"internal {out}"
+            }
+            return out
+        }
+        return f"internal error: {at}: This is a bug in Nikaia, not in your program. Please report it.\n   = note: The compiler generated two different types for one of yours.\n   = note: What the Rust compiler said: {original}\n"
+    }
+    if message.located {
+        let mut notes: Vec[String] = []
+        let mut help: String? = null
+        for note in message.notes {
+            if note.starts_with("help: ") {
+                help = after_help(note)
+            } else {
+                notes.push(note.clone())
+            }
+        }
+        let shown = Shown { warning: message.level == "warning", code: "", message: message.message.clone(), notes: notes, help: help, span: message.span.clone(), labels: [Marked { span: message.span.clone(), word: message.word.clone(), text: "", main: true }] }
+        return rendered(shown, path, source)
+    }
+    // Nothing in the map covers it: the emitted line is all there is, and
+    // saying so is better than pointing somewhere plausible.
+    let mut out = f"{message.level}: {at}: {message.message} (no Nikaia source maps to this)\n"
+    for note in message.notes {
+        out.push_str(ref f"   = note: {said(note)}\n")
+    }
+    return out
+}
