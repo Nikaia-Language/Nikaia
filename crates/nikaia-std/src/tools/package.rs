@@ -9869,6 +9869,7 @@ pub fn stale_units(ledger: &Ledger, sources: &collections::BTreeMap<String, Stri
 pub fn absorb_into(ledger: &mut Ledger, module: Option<&str>, renames: &collections::BTreeMap<String, String>, other: &Ledger) {
     let mut declared: collections::BTreeSet<String> = collections::BTreeSet::new();
     for (name, _) in other.types.iter() { declared.insert(name.to_owned()); }
+    for (name, _) in other.traits.iter() { declared.insert(name.to_owned()); }
     let prefix = nikaia_std::index::or(match module {
         Some(__nikaia_it) => Some(__nikaia_it.to_owned()),
         None => None,

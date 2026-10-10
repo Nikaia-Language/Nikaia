@@ -8,6 +8,24 @@ or the specification. A change only to the guide, the notes, the README, the
 website, the tests, the examples or the tooling around them raises nothing and
 has no heading here; `CLAUDE.md` draws the line.
 
+## [0.0.730] — 2026-10-10
+
+**A supervisor's child takes a policy: `policy:` and `supervisor::Restart`**
+(ADR-328 D5, D9, #95).
+- `supervisor::Restart`, `supervisor::Next` and `supervisor::Failures` are
+  declared in `std`'s Nikaia half (`src/supervisor.nika`), and their ledger
+  entries are derived from it. The supervisor's runtime is
+  `src/supervision.rs`, which includes what that file lowers to.
+- `supervisor::child(…; policy: …)` takes any value whose type implements
+  `supervisor::Restart`; `std`'s default is `supervisor::Backoff()`. The
+  supervisor keeps each child's history - how long the attempt ran, its
+  failures, how long since the first - and asks the child's policy at every
+  restart. `Backoff` starts a new cycle after a healthy run by itself.
+- `SharedMut::supervised(fn { … }; policy: …)` takes the same policy; one
+  that gives up leaves the value poisoned.
+- A module's traits are qualified like its types where its ledger is
+  absorbed: `supervisor::Restart::decide`'s `self` is `supervisor::Restart`.
+
 ## [0.0.729] — 2026-10-10
 
 **A task in `task::scope` may pause, and the scope polls it: built**

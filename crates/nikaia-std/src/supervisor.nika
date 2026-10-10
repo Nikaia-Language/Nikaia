@@ -1,0 +1,33 @@
+// crates/nikaia-std/src/supervisor.nika
+//
+// `std::supervisor`'s policy, written in Nikaia: the trait a program
+// implements and the types it speaks in (ADR-328 D5). The supervisor itself is
+// Rust, in `supervision.rs`, which includes what this lowers to.
+
+use std::time
+
+/// What a policy answers for a crash.
+pub enum Next {
+    /// Restart now.
+    Immediate,
+    /// Restart after this long.
+    Delay(time::Duration),
+    /// Give up: the supervisor stops every child and throws.
+    Escalate,
+}
+
+/// What a policy decides from: a history of fixed size.
+pub struct Failures {
+    /// How long the attempt that just ended ran.
+    pub last_uptime: time::Duration,
+    /// The failures of this cycle, this one included.
+    pub consecutive: i64,
+    /// Since this cycle's first failure, on a monotonic clock.
+    pub since_first: time::Duration,
+}
+
+/// When to restart a child that ended: `supervisor::child(…; policy: …)`
+/// takes one, and a policy that needs more history keeps it itself.
+pub trait Restart {
+    fn decide(ref mut self, history: Failures) -> Next sync
+}

@@ -82,6 +82,11 @@ pub fn absorb_into(mut ledger: Ledger, module: ref String?, renames: ref collect
     for (name, _) in other.types {
         declared.insert(name.clone())
     }
+    // **And its traits**: a trait method's `self` is the trait, which a caller
+    // writes `module::Trait` too (`supervisor::Restart::decide`).
+    for (name, _) in other.traits {
+        declared.insert(name.clone())
+    }
     let prefix = module?.clone() ?? ""
     let qualified = module != null
     // **What a function field's stored code reaches** (ADR-230 D1), under the

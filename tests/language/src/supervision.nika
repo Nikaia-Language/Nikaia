@@ -1,7 +1,7 @@
 // A supervisor runs tasks and restarts them when they end (ADR-328, Part II
 // 12.8): what a child's kind and the strategy restart, at both settings. The
 // default policy's delays and its giving up are `std`'s own tests
-// (`crates/nikaia-std/src/supervisor.rs`).
+// (`crates/nikaia-std/src/supervision.rs`).
 
 use std::supervisor
 use std::time
@@ -88,4 +88,57 @@ test "a supervised shared value is rebuilt after a panic in its door" {
     let now = cache.get()
     assert(crashed)
     assert(now == 10)
+}
+
+// **A policy of the program's own** (ADR-328 D5, `policy:`): a type
+// implementing `supervisor::Restart`, asked at every restart with the history.
+struct SupervisionNever {
+    asked: SharedMut[i64],
+}
+
+impl supervisor::Restart for SupervisionNever {
+    fn decide(ref mut self, history: supervisor::Failures) -> supervisor::Next sync {
+        self.asked.update fn(mut v) { v += history.consecutive }
+        return supervisor::Next::Escalate
+    }
+}
+
+fn supervision_escalated(attempts: SharedMut[i64], asked: SharedMut[i64]) -> String {
+    supervisor::run([
+        supervisor::child(fn { supervision_flaky(attempts) }; restart: supervisor::Kind::Transient, policy: SupervisionNever { asked: asked }),
+    ]) catch { return f"{error.message}" }
+    return "finished".clone()
+}
+
+test "a policy that gives up makes the first crash escalate" {
+    let attempts = SharedMut(0)
+    let asked = SharedMut(0)
+    let said = supervision_escalated(attempts, asked)
+    let tried = attempts.get()
+    let counted = asked.get()
+    assert(tried == 1)
+    assert(counted == 1)
+    assert(said == "not yet")
+}
+
+struct SupervisionLater {
+    limit: i64,
+}
+
+impl supervisor::Restart for SupervisionLater {
+    fn decide(ref mut self, history: supervisor::Failures) -> supervisor::Next sync {
+        if history.consecutive > self.limit {
+            return supervisor::Next::Escalate
+        }
+        return supervisor::Next::Delay(2.millis())
+    }
+}
+
+test "a policy that delays restarts after the delay" {
+    let attempts = SharedMut(0)
+    supervisor::run([
+        supervisor::child(fn { supervision_flaky(attempts) }; restart: supervisor::Kind::Transient, policy: SupervisionLater { limit: 5 }),
+    ])
+    let tried = attempts.get()
+    assert(tried == 3)
 }

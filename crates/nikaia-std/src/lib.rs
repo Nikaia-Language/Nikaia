@@ -61,6 +61,10 @@ pub mod range;
 pub mod rt;
 pub mod search;
 pub mod seq;
+/// `std::supervisor`: the runtime in Rust, `supervision.rs`, which includes
+/// `src/supervisor.nika` lowered to `src/supervisor.rs` - the policy's trait
+/// and the types it speaks in (ADR-328 D5).
+#[path = "supervision.rs"]
 pub mod supervisor;
 pub mod task;
 pub mod tether;

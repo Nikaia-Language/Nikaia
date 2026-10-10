@@ -719,12 +719,27 @@ fn the_shipped_std_ledger_agrees_with_its_nikaia_sources() {
             .to_string();
         let source = std::fs::read_to_string(&path).expect("read the module");
         let inferred = Ledger::infer(&parse_to_ast(&source).expect("the module parses"));
+        // In the shipped ledger an item is named as a caller writes it, which
+        // includes the module it lives in - and so is every type the module
+        // declares, in the signatures too: `supervisor::Next`, where the file
+        // wrote `Next`. Absorbing it as a module does both.
+        let mut absorbed = Ledger::blank();
+        absorbed.absorb(Some(&module), inferred);
+        for name in absorbed.types.keys() {
+            assert!(
+                shipped.types.contains_key(name),
+                "std.contracts has no entry for the type `{name}`, which `{module}.nika` declares"
+            );
+        }
+        for name in absorbed.traits.keys() {
+            assert!(
+                shipped.traits.contains_key(name),
+                "std.contracts has no entry for the trait `{name}`, which `{module}.nika` declares"
+            );
+        }
 
-        for (name, contract) in &inferred.functions {
-            // In the shipped ledger an item is named as a caller writes it,
-            // which includes the module it lives in.
-            let key = format!("{module}::{name}");
-            let shipped_contract = shipped.functions.get(&key).unwrap_or_else(|| {
+        for (key, contract) in &absorbed.functions {
+            let shipped_contract = shipped.functions.get(key).unwrap_or_else(|| {
                 panic!("std.contracts has no entry for `{key}`, which `{module}.nika` declares")
             });
             assert_eq!(

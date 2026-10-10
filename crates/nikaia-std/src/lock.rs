@@ -62,22 +62,36 @@ fn poisoned() -> ! {
 /// ([ADR-327](../../../docs/specification/adr/adr-327.md) D3,
 /// [ADR-328](../../../docs/specification/adr/adr-328.md) D9): the restart
 /// policy a supervisor's child has, asked by the door that finds the poison.
-#[derive(Debug)]
 pub struct Phase {
-    policy: crate::supervisor::Backoff,
+    policy: Box<dyn crate::supervisor::Restart + Send>,
     /// When the value was last built, for how long the attempt ran.
     built: std::time::Instant,
+    /// The history the policy decides from, as a supervisor keeps a child's:
+    /// how many times it was poisoned, and when first.
+    failures: i64,
+    first: Option<std::time::Instant>,
     /// A delay the policy asked for: a door before it panics.
     waiting_until: Option<std::time::Instant>,
     /// The policy gave up: the value stays poisoned.
     given_up: bool,
 }
 
+impl std::fmt::Debug for Phase {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Phase")
+            .field("failures", &self.failures)
+            .field("given_up", &self.given_up)
+            .finish_non_exhaustive()
+    }
+}
+
 impl Phase {
-    fn new() -> std::sync::Mutex<Phase> {
+    fn new(policy: impl crate::supervisor::Restart + Send + 'static) -> std::sync::Mutex<Phase> {
         std::sync::Mutex::new(Phase {
-            policy: crate::supervisor::Backoff::default(),
+            policy: Box::new(policy),
             built: std::time::Instant::now(),
+            failures: 0,
+            first: None,
             waiting_until: None,
             given_up: false,
         })
@@ -93,8 +107,13 @@ impl Phase {
         }
         let now = std::time::Instant::now();
         if phase.waiting_until.is_none() {
-            let ran = now.duration_since(phase.built);
-            match phase.policy.decide(ran, now) {
+            phase.failures += 1;
+            let history = crate::supervisor::Failures {
+                last_uptime: now.duration_since(phase.built),
+                consecutive: phase.failures,
+                since_first: now.duration_since(*phase.first.get_or_insert(now)),
+            };
+            match phase.policy.decide(history) {
                 crate::supervisor::Next::Immediate => {}
                 crate::supervisor::Next::Delay(span) => phase.waiting_until = Some(now + span),
                 crate::supervisor::Next::Escalate => {
@@ -198,18 +217,25 @@ impl<T> Local<T> {
 
     /// `SharedMut::supervised(fn { … })` as the compiler writes it: the kept
     /// function a program hands over.
-    pub fn supervised_kept<F: Fn() -> T + ?Sized + 'static>(build: crate::func::Kept<F>) -> Self {
-        Self::supervised(move || (build.0)())
+    pub fn supervised_kept<F: Fn() -> T + ?Sized + 'static>(
+        build: crate::func::Kept<F>,
+        policy: impl crate::supervisor::Restart + Send + 'static,
+    ) -> Self {
+        Self::supervised(move || (build.0)(), policy)
     }
 
     /// **A value that is built again when a panic poisons it**
     /// ([ADR-327](../../../docs/specification/adr/adr-327.md) D3,
-    /// [ADR-328](../../../docs/specification/adr/adr-328.md) D9).
-    pub fn supervised(build: impl Fn() -> T + 'static) -> Self {
+    /// [ADR-328](../../../docs/specification/adr/adr-328.md) D9), when
+    /// `policy` says so - as a supervisor's child is restarted.
+    pub fn supervised(
+        build: impl Fn() -> T + 'static,
+        policy: impl crate::supervisor::Restart + Send + 'static,
+    ) -> Self {
         Self {
             inner: RefCell::new(build()),
             poisoned: std::cell::Cell::new(false),
-            rebuild: Some((Builder(Box::new(build)), Phase::new())),
+            rebuild: Some((Builder(Box::new(build)), Phase::new(policy))),
         }
     }
 
@@ -387,16 +413,20 @@ impl<T> Crossing<T> {
     /// `SharedMut::supervised(fn { … })` where the value crosses threads.
     pub fn supervised_kept<F: Fn() -> T + ?Sized + Send + Sync + 'static>(
         build: crate::func::Kept<F>,
+        policy: impl crate::supervisor::Restart + Send + 'static,
     ) -> Self {
-        Self::supervised(move || (build.0)())
+        Self::supervised(move || (build.0)(), policy)
     }
 
     /// [`Local::supervised`], where the value crosses threads.
-    pub fn supervised(build: impl Fn() -> T + Send + Sync + 'static) -> Self {
+    pub fn supervised(
+        build: impl Fn() -> T + Send + Sync + 'static,
+        policy: impl crate::supervisor::Restart + Send + 'static,
+    ) -> Self {
         Self {
             inner: Mutex::new(build()),
             held_by: AtomicU64::new(NOBODY),
-            rebuild: Some((Builder(Box::new(build)), Phase::new())),
+            rebuild: Some((Builder(Box::new(build)), Phase::new(policy))),
         }
     }
 
@@ -573,10 +603,13 @@ mod tests {
     fn a_supervised_value_is_rebuilt_by_its_policy() {
         let builds = std::rc::Rc::new(std::cell::Cell::new(0));
         let counted = builds.clone();
-        let lock = std::panic::AssertUnwindSafe(Local::supervised(move || {
-            counted.set(counted.get() + 1);
-            10_i64
-        }));
+        let lock = std::panic::AssertUnwindSafe(Local::supervised(
+            move || {
+                counted.set(counted.get() + 1);
+                10_i64
+            },
+            crate::supervisor::Backoff(),
+        ));
         lock.update(|v| *v = 11);
         poison(|| lock.update(|_| panic!("boom")));
         assert_eq!(lock.get(), 10, "rebuilt at once");
@@ -588,9 +621,26 @@ mod tests {
         assert_eq!(builds.get(), 3);
     }
 
+    /// **A policy of the program's** (ADR-328 D9): one that gives up at once
+    /// leaves the value poisoned after the first panic.
+    #[test]
+    fn a_supervised_value_whose_policy_gives_up_stays_poisoned() {
+        struct Never;
+        impl crate::supervisor::Restart for Never {
+            fn decide(&mut self, _: crate::supervisor::Failures) -> crate::supervisor::Next {
+                crate::supervisor::Next::Escalate
+            }
+        }
+        let lock = std::panic::AssertUnwindSafe(Local::supervised(|| 1_i64, Never));
+        poison(|| lock.update(|_| panic!("boom")));
+        assert!(panics(|| lock.get()), "the policy gave up");
+        assert!(panics(|| lock.get()), "and the value stays poisoned");
+    }
+
     #[test]
     fn a_supervised_crossing_value_is_rebuilt() {
-        let lock = std::sync::Arc::new(Crossing::supervised(|| 7_i64));
+        let lock =
+            std::sync::Arc::new(Crossing::supervised(|| 7_i64, crate::supervisor::Backoff()));
         lock.update(|v| *v = 8);
         let held = lock.clone();
         let _ = std::thread::spawn(move || {

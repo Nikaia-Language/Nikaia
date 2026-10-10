@@ -2817,7 +2817,7 @@ pub = true
 sync = true
 touches = []
 keeps = ["build"]
-signature = "[T](build: fn() -> T sync) -> SharedMut[T]"
+signature = "[T, P: supervisor::Restart](build: fn() -> T sync; policy: P = supervisor::Backoff()) -> SharedMut[T]"
 
 [fn."SharedMut::access"]
 pub = true
@@ -4133,9 +4133,26 @@ signature = "(address: ref String, handler: fn(net::Connection) throws)"
 
 # --- `supervisor`: tasks restarted when they end (ADR-328, Part II 12.8) -------
 #
-# **The `policy:` option is not here yet**: it takes a value of a trait a
-# program implements (`supervisor::Restart`), and this file describes no trait.
-# Every child is restarted by `std`'s default until it does.
+# **`policy:` takes a value of `supervisor::Restart`**, a trait a program
+# implements. The trait and the types it speaks in are Nikaia
+# (`src/supervisor.nika`), and their entries are among the inferred ones at the
+# end of this file; `std`'s default, `supervisor::Backoff`, is here.
+
+# **`std`'s default policy** (ADR-328 D5): the first failure restarted at once,
+# then after a delay that grows, with jitter, up to a ceiling; a new cycle after
+# an attempt that ran long enough; giving up when a cycle lasts too long.
+[type."supervisor::Backoff"]
+pub = true
+crosses = true
+
+# `std`'s default policy, the value `policy:` has where a child names none.
+[fn."supervisor::Backoff"]
+pub = true
+sync = true
+touches = []
+signature = "() -> supervisor::Backoff"
+
+[impl."supervisor::Restart for supervisor::Backoff"]
 
 # Which siblings restart with a child that crashed.
 [type."supervisor::Strategy"]
@@ -4172,7 +4189,7 @@ pub = true
 sync = true
 touches = []
 keeps = ["body"]
-signature = "(body: fn() throws; restart: supervisor::Kind = supervisor::Kind::Permanent) -> supervisor::Child"
+signature = "[P: supervisor::Restart](body: fn() throws; restart: supervisor::Kind = supervisor::Kind::Permanent, policy: P = supervisor::Backoff()) -> supervisor::Child"
 
 # No `touches`, the fail-closed answer: what the children do is theirs.
 # Run the children until the supervisor gives up.
@@ -4427,3 +4444,31 @@ pub = true
 sync = true
 touches = []
 signature = "(ref self, byte: u8; from: i64 = 0) -> i64?"
+
+# **`std::supervisor`'s policy** (`src/supervisor.nika`, ADR-328 D5): what a
+# program implements to say when a child is restarted, and the types it speaks
+# in.
+# What a policy answers for a crash.
+[type."supervisor::Next"]
+pub = true
+crosses = true
+compares = true
+copies = true
+variants = ["Immediate", "Delay(time::Duration)", "Escalate"]
+
+# What a policy decides from: a history of fixed size.
+[type."supervisor::Failures"]
+pub = true
+crosses = true
+compares = true
+copies = true
+fields = ["pub last_uptime: time::Duration", "pub consecutive: i64", "pub since_first: time::Duration"]
+
+# When to restart a child that ended: `supervisor::child(…; policy: …)` takes
+# one, and a policy that needs more history keeps it itself.
+[trait."supervisor::Restart"]
+
+[fn."supervisor::Restart::decide"]
+pub = true
+sync = true
+signature = "(ref self, history: supervisor::Failures) -> supervisor::Next"

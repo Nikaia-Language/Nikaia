@@ -10451,6 +10451,12 @@ impl<'p> Emitter<'p> {
         {
             out.push(&format!("{handle}::new({lock}::supervised_kept("));
             self.expr(out, build, depth, flow)?;
+            // **Its policy** (ADR-328 D9): the one `policy:` names, or `std`'s.
+            out.push(", ");
+            match config.iter().find(|a| self.text(a.name) == "policy") {
+                Some(policy) => self.expr(out, &policy.value, depth, flow)?,
+                None => out.push("nikaia_std::supervisor::Backoff()"),
+            }
             out.push("))");
             return Ok(());
         }
