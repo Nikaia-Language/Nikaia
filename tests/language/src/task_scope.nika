@@ -3,7 +3,9 @@
 // throw `task::Crashed` where it ends (ADR-328 D8). The same at both settings:
 // at `yes` the tasks run on the pool.
 
+use std::channel
 use std::task
+use std::time
 
 test "a scope's tasks borrow and the scope waits for them" {
     let data = [1, 2, 3]
@@ -25,4 +27,58 @@ test "a task that panicked is thrown where the scope ends" {
         "finished".clone()
     } catch { f"{error.message}" }
     assert(said == "boom")
+}
+
+// A task that pauses is polled by the scope itself (ADR-328 D10): it borrows
+// what the function holds, at both settings, and the scope waits for it.
+test "a task that pauses borrows, and the scope waits for it" {
+    let config = "abc".clone()
+    let seen = SharedMut(0)
+    let made = task::scope fn(s) {
+        s.spawn fn {
+            time::sleep(2.millis())
+            seen.update fn(mut v) { v += config.len() }
+        }
+        s.spawn fn { seen.update fn(mut v) { v += 1 } }
+        7
+    } catch { 0 }
+    let total = seen.get()
+    assert(made == 7)
+    assert(total == 4)
+    assert(config.len() == 3)
+}
+
+// The tasks are polled together, not one after the other: each of these
+// waits for what the other sends.
+test "two tasks that wait on each other complete" {
+    let (to_second, from_first) = channel::bounded(1)
+    let (to_first, from_second) = channel::bounded(1)
+    let seen = SharedMut(0)
+    task::scope fn(s) {
+        s.spawn fn {
+            to_second.send(1)
+            let answer = from_second.recv() ?? 0
+            seen.update fn(mut v) { v += answer }
+        }
+        s.spawn fn {
+            let asked = from_first.recv() ?? 0
+            to_first.send(asked + 10)
+        }
+    } catch { }
+    let total = seen.get()
+    assert(total == 11)
+}
+
+// A crash drops the tasks still running rather than waiting for them: the
+// one asleep for a minute does not hold the scope up.
+test "a crash after a pause drops the other tasks" {
+    let said = task::scope fn(s) {
+        s.spawn fn {
+            time::sleep(1.millis())
+            panic("after a pause")
+        }
+        s.spawn fn { time::sleep(60000.millis()) }
+        "finished".clone()
+    } catch { f"{error.message}" }
+    assert(said == "after a pause")
 }

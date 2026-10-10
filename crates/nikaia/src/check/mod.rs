@@ -703,6 +703,12 @@ pub struct Checked {
     /// The lambda is written as an `async` closure and the call as the
     /// entry's counterpart; the emitter has no types to tell which one.
     pub pausing_lambdas: BTreeMap<(usize, String), PausingEntry>,
+    /// **The `task::scope` calls with a task that pauses**, by the byte the
+    /// statement starts at and the scope's lambda's shape
+    /// ([ADR-328](../../docs/specification/adr/adr-328.md) D10): the scope
+    /// polls that task itself, so its lambda is an `async` closure and the
+    /// call is `scope_paused`, awaited.
+    pub paused_scopes: BTreeSet<(usize, String)>,
     pub witnessed_sets: BTreeSet<usize>,
     /// The method calls that **pause**, keyed the same way and narrowed the same
     /// way ([ADR-055](../../docs/specification/adr/adr-055.md) D2).
@@ -2267,6 +2273,8 @@ pub struct Propagation {
     pub sync_functions_run_async: BTreeMap<(usize, usize), usize>,
     /// [`Checked::pausing_lambdas`].
     pub pausing_lambdas: BTreeMap<(usize, String), PausingEntry>,
+    /// [`Checked::paused_scopes`].
+    pub paused_scopes: BTreeSet<(usize, String)>,
     /// [`Checked::narrowing_casts`].
     pub narrowing: BTreeMap<(usize, String), Narrowing>,
     /// [`Checked::nullable_sites`].
@@ -2590,6 +2598,7 @@ fn propagation(
         run_lambdas: checked.run_lambdas,
         sync_functions_run_async: checked.sync_functions_run_async,
         pausing_lambdas: checked.pausing_lambdas,
+        paused_scopes: checked.paused_scopes,
         narrowing: checked.narrowing_casts,
         nullable: checked.nullable_sites,
         flattened: checked.flattened_reaches,
@@ -9909,6 +9918,9 @@ impl<'a> Checker<'a> {
                 false => PausingEntry::Lent("sort_by_key"),
             },
             ("Entry::or_insert_with", _) => PausingEntry::Function("or_insert_with"),
+            // **A task of `task::scope` that pauses** (ADR-328 D10): handed to
+            // the scope to poll, and the scope around it pauses.
+            ("task::Scope::spawn", _) => PausingEntry::Method("spawn_paused"),
             ("Entry::and_modify", _) => PausingEntry::Function("and_modify"),
             // An entry with no counterpart keeps the lowering's refusal, which
             // names the call and the way out.
@@ -16628,6 +16640,7 @@ impl<'a> Checker<'a> {
         // The same walk the method path uses, so the same questions are asked
         // in both - or `takes(self.name)` slips past `NK1131` while
         // `x.takes(self.name)` does not.
+        let outer_paused = std::mem::take(&mut self.paused_args);
         let found = self.arguments_given(
             args,
             &expected,
@@ -16637,6 +16650,21 @@ impl<'a> Checker<'a> {
             resolved.as_ref().map(|(_, contract)| &**contract),
             span,
         );
+        let paused_here = std::mem::replace(&mut self.paused_args, outer_paused);
+        // **A scope with a task that pauses polls it, and pauses itself**
+        // (ADR-328 D10): its lambda paused because a task in it did.
+        if resolved
+            .as_ref()
+            .is_some_and(|(key, _)| key == "task::scope")
+            && let Some(body) = args
+                .first()
+                .filter(|arg| paused_here.contains(&argument_shape(arg)))
+        {
+            self.checked
+                .paused_scopes
+                .insert((span.at(), argument_shape(body)));
+            self.a_call_that_may_pause("task::scope", true, false, span);
+        }
         if resolved
             .as_ref()
             .is_some_and(|(key, _)| key == "supervisor::child")
@@ -18183,31 +18211,9 @@ impl<'a> Checker<'a> {
         // **`NK2209` in a lambda that runs on several cores at once**
         // (Part II 12.6, ADR-235 D2): a core is not given up, so a pause there
         // holds one for as long as the wait takes.
-        if self.in_parallel.is_some() && self.scoped_task {
-            self.checked.findings.push(Finding {
-                severity: Severity::Error,
-                span: *span,
-                code: "NK2102",
-                message: format!(
-                    "{} {pauses}, but a task in `task::scope` has to be `sync`.",
-                    sentence(&what)
-                ),
-                notes: std::iter::once(
-                    "A scope promises to wait for its tasks. With tasks running in parallel, \
-                     that promise only holds for work that finishes on its own (`sync` \
-                     functions), and a task that waits might not."
-                        .to_string(),
-                )
-                .chain(why.clone())
-                .collect(),
-                help: Some(
-                    "Do the waiting before the scope and keep only the computation in it, or \
-                     run it as a background task with `spawn` and `join` it."
-                        .to_string(),
-                ),
-                labels: Vec::new(),
-            });
-        } else if self.in_parallel.is_some() {
+        // **A pausing task of `task::scope` is polled by the scope itself**
+        // (ADR-328 D10): its pause is the scope's, so it is not refused here.
+        if self.in_parallel.is_some() && !self.scoped_task {
             self.checked.findings.push(Finding {
                 severity: Severity::Error,
                 span: *span,

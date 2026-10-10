@@ -1538,6 +1538,8 @@ struct Emitter<'p> {
     /// The lambdas that pause, handed to a `std` entry, and what the call is
     /// lowered to ([ADR-233](../../docs/specification/adr/adr-233.md) D1, D2).
     pausing_lambdas: std::collections::BTreeMap<(usize, String), PausingEntry>,
+    /// The `task::scope` calls whose tasks pause (`check::Checked::paused_scopes`).
+    paused_scopes: std::collections::BTreeSet<(usize, String)>,
     /// The method calls that **pause**, by the byte their statement starts at
     /// and the name written (`check::Checked::pausing_methods`).
     ///
@@ -2861,6 +2863,7 @@ impl<'p> Emitter<'p> {
                 .cloned()
                 .unwrap_or_default(),
             pausing_lambdas: propagation.pausing_lambdas,
+            paused_scopes: propagation.paused_scopes,
             narrowing_casts: propagation.narrowing,
             shared,
             nullable_sites: propagation.nullable,
@@ -10637,6 +10640,33 @@ impl<'p> Emitter<'p> {
             }
         }
 
+        // **A scope that polls the tasks that pause** (ADR-328 D10): the scope
+        // is made here and named as the lambda names it, and its function is an
+        // `async` block that names it in turn - not a closure handed it, which
+        // would be higher-ranked, and a future `rustc` cannot show `Send`.
+        // Awaited inside the block that owns the scope.
+        if self.opens_a_paused_scope(func, args, flow)
+            && let Some(Expr::Closure { params, body, .. }) = args.first()
+            && let [named] = params.as_slice()
+        {
+            let (scope, run) = match self.build.overlaps_user_code() {
+                true => ("PausedPoolScope", "scope_paused_on_pool"),
+                false => ("PausedScope", "scope_paused"),
+            };
+            let named = self.name(*named).into_owned();
+            out.push(&format!(
+                "{{ let {named} = &nikaia_std::task::{scope}::new(); \
+                 nikaia_std::task::{run}({named}, async "
+            ));
+            let inside = Flow {
+                statement: flow.statement,
+                changed: flow.changed,
+                ..Flow::PLAIN
+            };
+            self.block(out, body, depth, inside, Tail::Return)?;
+            out.push(").await }");
+            return Ok(());
+        }
         self.expr(out, func, depth, flow)?;
         // **What runs a kept function in a task of its own** - `net::serve`'s
         // handler (ADR-326 D1), a supervisor's children (ADR-328) - has a twin
@@ -12097,6 +12127,24 @@ impl<'p> Emitter<'p> {
     /// Whether the function under `key` is lowered as an `async fn`.
     fn lowered_pausing(&self, key: &str) -> bool {
         self.pauses(key) || self.lambda_decides(key)
+    }
+
+    /// Whether a call is `task::scope` with a task that pauses, which the
+    /// scope polls itself (ADR-328 D10).
+    fn opens_a_paused_scope(&self, func: &Expr, args: &[Expr], flow: Flow<'_>) -> bool {
+        let Expr::Path(segments) = func else {
+            return false;
+        };
+        let name = segments
+            .iter()
+            .map(|s| self.text(*s))
+            .collect::<Vec<_>>()
+            .join("::");
+        self.parsed.unaliased(&name) == "task::scope"
+            && args.first().is_some_and(|body| {
+                self.paused_scopes
+                    .contains(&(flow.statement, crate::check::argument_shape(body)))
+            })
     }
 
     /// Whether a call names an own function written `sync(f)`.

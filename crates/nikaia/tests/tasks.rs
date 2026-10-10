@@ -433,12 +433,12 @@ fn data_a_kept_child_took_and_the_program_used_again_is_refused() {
     );
 }
 
-/// **A scope's tasks are judged as a `par_iter()` lambda is** (Part II 12.7,
-/// #95 step 2): one that pauses is `NK2102`, and one that changes a name the
-/// tasks share is `NK2107`, at both settings. Reading a borrowed value is
-/// fine.
+/// **A scope's task that changes a name the tasks share is refused**, as a
+/// `par_iter()` lambda's is (Part II 12.7): `NK2107`, at both settings. One
+/// that pauses is not (ADR-328 D10): the scope polls it, and `NK2102` is
+/// retired. Reading a borrowed value is fine.
 #[test]
-fn a_scoped_task_that_pauses_or_changes_a_shared_name_is_refused() {
+fn a_scoped_task_that_changes_a_shared_name_is_refused_and_one_that_pauses_is_not() {
     let found = findings(
         "use std::task\n\
          use std::time\n\
@@ -454,18 +454,45 @@ fn a_scoped_task_that_pauses_or_changes_a_shared_name_is_refused() {
          }",
     );
     let codes: Vec<&str> = found.iter().map(|f| f.code).collect();
-    assert_eq!(
-        codes.iter().filter(|code| **code == "NK2107").count(),
-        1,
-        "{found:?}"
+    assert_eq!(codes, ["NK2107"], "{found:?}");
+}
+
+/// **A scope with a task that pauses polls it, and pauses itself** (ADR-328
+/// D10): the scope is made where it is opened, its function is an `async`
+/// block, and the call is awaited; the pausing task is handed to the scope.
+#[test]
+fn a_scope_with_a_pausing_task_is_awaited_and_polls_it() {
+    let source = "use std::task\n\
+                  use std::time\n\
+                  fn main() throws {\n\
+                  \x20   let data = [1, 2, 3]\n\
+                  \x20   task::scope fn(s) {\n\
+                  \x20       s.spawn fn { println(f\"{data.len()}\") }\n\
+                  \x20       s.spawn fn {\n\
+                  \x20           time::sleep(5.millis())\n\
+                  \x20           println(f\"{data[0]}\")\n\
+                  \x20       }\n\
+                  \x20   }\n\
+                  }";
+    let sequential = lower_at(source, "no");
+    let parallel = lower_at(source, "yes");
+    assert!(
+        sequential.contains("{ let s = &nikaia_std::task::PausedScope::new(); nikaia_std::task::scope_paused(s, async {"),
+        "{sequential}"
     );
-    assert_eq!(
-        codes.iter().filter(|code| **code == "NK2102").count(),
-        1,
-        "{found:?}"
+    assert!(
+        sequential.contains("s.spawn_paused(async || {"),
+        "{sequential}"
     );
-    let paused = found.iter().find(|f| f.code == "NK2102").expect("NK2102");
-    assert!(paused.message.contains("task::scope"), "{paused:?}");
+    assert!(sequential.contains("}).await }?;"), "{sequential}");
+    assert!(
+        sequential.contains("async fn __nikaia_main"),
+        "{sequential}"
+    );
+    assert!(
+        parallel.contains("nikaia_std::task::scope_paused_on_pool(s, async {"),
+        "{parallel}"
+    );
 }
 
 /// **One written scope, two lowerings** (Part II 12.7): the pool's twin at

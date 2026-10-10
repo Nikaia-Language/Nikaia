@@ -8,6 +8,23 @@ or the specification. A change only to the guide, the notes, the README, the
 website, the tests, the examples or the tooling around them raises nothing and
 has no heading here; `CLAUDE.md` draws the line.
 
+## [0.0.729] — 2026-10-10
+
+**A task in `task::scope` may pause, and the scope polls it: built**
+(ADR-328 D10, #95).
+- The checker no longer refuses a pausing scoped task (`NK2102` is retired);
+  `NK2107` and the lock rules stay. A scope with a pausing task pauses itself,
+  and so does the function around it.
+- `std::task::scope_paused` and `scope_paused_on_pool`: the scope's function
+  and every pausing task are polled together inside the scope's own future,
+  never handed to an executor, so a task may borrow and two tasks that wait on
+  each other complete. A task that never pauses runs where it is started at
+  `no`, on the pool at `yes`. A crash drops the running tasks, so their
+  cleanups run, and the scope throws `task::Crashed`.
+- The lowering makes the scope where it is opened and writes its function as
+  an `async` block that names it, awaited in the block that owns it; a pausing
+  task is `s.spawn_paused(async || …)`.
+
 ## [0.0.728] — 2026-10-10
 
 **A C library's error codes are built: `std`'s below 100 000, its own from
