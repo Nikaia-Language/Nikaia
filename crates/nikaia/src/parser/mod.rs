@@ -6,6 +6,9 @@ use winnow::stream::{LocatingSlice, Location};
 use winnow_grammar::error::ParseError;
 use winnow_grammar::{InternerContext, ParseContext, ParseInput, StateOf, Symbol, grammar};
 
+/// **The words this language keeps for itself** (ADR-298): `tools/parse_errors.nika`'s.
+pub use nikaia_std::tools::parse_errors::RESERVED_WORDS;
+
 /// What the whitespace skip has seen: where it ended, whether it held a line
 /// break, and the run of `///` lines in it.
 ///
@@ -563,29 +566,6 @@ pub fn fits(length: usize) -> Result<()> {
     Ok(())
 }
 
-/// **The words this language keeps for itself**
-/// ([ADR-298](../../../docs/specification/adr/adr-298.md)).
-///
-/// This is the same list the grammar's `RESERVED` rule alternates over, and it
-/// is here in Rust because two readers need it outside the grammar: the note
-/// [`reserved_word_note`] adds to a parse error, and the checker, which refuses
-/// `self` as a *declared* name (the one word the grammar cannot exclude,
-/// because `self.min` refers to it).
-///
-/// `rule`, `boundary`, `fold`, `par_fold` and `unchecked` are **not** here: they
-/// are the grammar sublanguage's vocabulary, reserved inside a `grammar` block
-/// and words a program may want everywhere else.
-///
-/// `crates/nikaia/tests/parser.rs` holds the two halves together by behaviour -
-/// every word here is refused as a name, and the sublanguage's words are not -
-/// so the list and the rule cannot drift apart in silence.
-pub const RESERVED_WORDS: [&str; 38] = [
-    "as", "break", "catch", "comptime", "continue", "dsl", "else", "enum", "extern", "false", "fn",
-    "for", "grammar", "if", "impl", "in", "let", "match", "mut", "null", "overlap", "pub", "ref",
-    "return", "select", "self", "spawn", "struct", "sync", "test", "throw", "throws", "trait",
-    "true", "unsafe", "use", "while", "with",
-];
-
 /// The note a parse error gets when what it tripped over is a reserved word.
 ///
 /// **Read off the rendered message rather than off the error**, because what a
@@ -611,250 +591,6 @@ fn split_mut(params: Vec<(bool, Symbol)>) -> (Vec<Symbol>, Vec<Symbol>) {
     (params.into_iter().map(|(_, name)| name).collect(), mutable)
 }
 
-/// **The note a parse error gets where the program wrote the spelling `ref`
-/// replaced** ([ADR-184](../../../docs/specification/adr/adr-184.md) D4).
-///
-/// `&` left the language at 0.0.134 and the grammar has no rule for it, so what
-/// a program written before that gets is *found unexpected token `&`* — true,
-/// and no help at all. A way out that cannot be taken is not one
-/// ([Part III C.2](../../../docs/specification/30-nikaia-tooling.md)), and here
-/// there is one and it is a single word.
-///
-/// **Only for a bare `&`.** `&&` is a program's *and* and is untouched, which
-/// is the one place the character is still the language's.
-fn the_spelling_ref_replaced_note(found: Option<&str>) -> Option<String> {
-    nikaia_std::tools::parse_notes::the_spelling_ref_replaced_note(found.unwrap_or_default())
-}
-
-/// `` `struct` is a reserved word`` - said only where a **name** was what
-/// the parser needed: the program parses further with a plain name in the
-/// word's place. `let struct = 1` gets it; `struct` inside an `impl`, or `ref`
-/// where a `:` was missing, is some other mistake, and the note would explain
-/// the wrong one.
-fn reserved_word_note(found: Option<&str>, source: &str, at: usize) -> Option<String> {
-    let token = found?;
-    if !RESERVED_WORDS.contains(&token) || !source[at..].starts_with(token) {
-        return None;
-    }
-    let mut with_a_name = source.to_string();
-    with_a_name.replace_range(at..at + token.len(), &"z".repeat(token.len()));
-    let further = match stops_at(&with_a_name) {
-        None => true,
-        Some(offset) => offset > at + token.len(),
-    };
-    further.then(|| format!("`{token}` is a reserved word, so it can't be used as a name here."))
-}
-
-/// `fn(info) sync { … }`: an effect written on a lambda, which Part I 7.2 and
-/// ADR-297 D10 write for the panic hook and nothing in the grammar gives a
-/// lambda yet. Said where the word stands right after a parameter list.
-fn an_effect_on_a_lambda_note(found: Option<&str>, before: &str) -> Option<String> {
-    nikaia_std::tools::parse_notes::an_effect_on_a_lambda_note(found.unwrap_or_default(), before)
-}
-
-/// **The mistake, where the reader made it** ([Part III C.2](../../../../docs/specification/30-nikaia-tooling.md),
-/// rule 5; `docs/error-corpus.md`): a parse stops where the input stopped
-/// making sense, which is often a line after the mistake - a missing `,`
-/// fails at the next field, a missing value at the `}` below it, an unclosed
-/// `{` at the end of the file. Each reading here names one such mistake and
-/// puts the caret where it was made. A reading that proposes a change is
-/// only offered where the program, changed that way, parses further.
-fn a_better_reading(
-    error: &ParseError,
-    source: &str,
-    at: usize,
-    found: Option<&str>,
-) -> Option<crate::check::Finding> {
-    // What the parser needed here, and not what it could also have taken:
-    // an open string is always something it *could* have continued.
-    let expected = |what: &str| error.expected.iter().any(|e| e == what);
-    let prev_end = source[..at].trim_end().len();
-    let prev = previous_token(source, prev_end);
-    let finding = |at: usize, word: &str, message: &str, help: &str| {
-        Some(a_parse_finding(
-            at,
-            word,
-            message.to_string(),
-            Vec::new(),
-            Some(help.to_string()),
-        ))
-    };
-
-    // The file ended inside a string: the caret on the quote that opened it.
-    if found.is_none()
-        && expected("`\"`")
-        && let Some(open) = unclosed_quote(source)
-    {
-        return finding(
-            open,
-            "\"",
-            "This string is never closed.",
-            "End it with `\"` where the text is meant to stop.",
-        );
-    }
-    // A block, a list or a call never closed: the file ended inside it, or
-    // another bracket closed first (`[1, 2` and then `}`). The caret goes on
-    // the bracket that opened it.
-    let wrong_closer = matches!(found, Some("}" | ")" | "]"))
-        && !found.is_some_and(|f| expected(&format!("`{f}`")));
-    if (found.is_none() || wrong_closer) && (expected("`}`") || expected("`)`") || expected("`]`"))
-    {
-        let (open, bracket) = unclosed_bracket(&source[..at])?;
-        let close = match bracket {
-            '{' => '}',
-            '(' => ')',
-            _ => ']',
-        };
-        let why = match found {
-            None => "the file ended while it was still open".to_string(),
-            Some(other) => format!("a `{other}` closed something else first"),
-        };
-        return finding(
-            open,
-            &bracket.to_string(),
-            &format!("This `{bracket}` is never closed."),
-            &format!("Add the `{close}` where it's meant to end; {why}."),
-        );
-    }
-    // `struct` inside an `impl`: an `impl` holds methods.
-    if let Some(word) =
-        found.filter(|w| matches!(*w, "struct" | "enum" | "trait" | "impl" | "grammar"))
-        && let Some((open, '{')) = unclosed_bracket(&source[..at])
-        && source[..open]
-            .trim_end()
-            .rsplit('\n')
-            .next()
-            .is_some_and(|l| l.trim_start().starts_with("impl"))
-    {
-        return finding(
-            at,
-            word,
-            &format!("An `impl` holds methods, and a `{word}` can't be declared inside one."),
-            &format!("Move the `{word}` out of the `impl`, to the top level of the file."),
-        );
-    }
-    // `/ text` at the start of a line: a comment written with one slash.
-    if found == Some("/")
-        && source[..at]
-            .rsplit('\n')
-            .next()
-            .is_some_and(|l| l.trim().is_empty())
-        && !source[at..].starts_with("//")
-    {
-        return finding(
-            at,
-            "/",
-            "A single `/` is division, and nothing stands before it to divide.",
-            "A comment starts with `//`.",
-        );
-    }
-    // `“hi”`: a typographic quote, from a word processor or a phone.
-    if let Some(quote) = found.filter(|q| matches!(*q, "“" | "”" | "‘" | "’" | "„")) {
-        return finding(
-            at,
-            quote,
-            &format!("`{quote}` isn't a quote the language reads."),
-            "Text is written between straight quotes: `\"hi\"`.",
-        );
-    }
-    // A value is missing: `let y =` or `1 +` with nothing after it, found at
-    // whatever stands on the next line.
-    let closes = matches!(
-        found,
-        None | Some("}") | Some(")") | Some("]") | Some("newline")
-    );
-    if expected("expression") && closes {
-        let operator = prev.as_str();
-        let message = match operator {
-            "=" => "`=` has nothing after it.".to_string(),
-            "+" | "-" | "*" | "/" | "%" | "==" | "!=" | "<" | ">" | "<=" | ">=" | "&&" | "||" => {
-                format!("`{operator}` has nothing on its right.")
-            }
-            _ => return None,
-        };
-        return finding(
-            prev_end - operator.len(),
-            operator,
-            &message,
-            "Write the value after it, on the same line.",
-        );
-    }
-    // `if { … }`: a condition is missing.
-    if found == Some("{") && matches!(prev.as_str(), "if" | "while") {
-        let word = prev.as_str();
-        return finding(
-            prev_end - word.len(),
-            word,
-            &format!("`{word}` needs a condition before its `{{`."),
-            &format!("Write `{word} cond {{ … }}`."),
-        );
-    }
-    // `let 5 = x`: a value where the name goes.
-    if matches!(prev.as_str(), "let" | "mut")
-        && let Some(word) = found
-        && word.starts_with(|c: char| c.is_ascii_digit() || c == '"' || c == '\'')
-    {
-        return finding(
-            at,
-            word,
-            &format!("`let` names what it binds, but `{word}` is a value."),
-            "Write a name: `let x = …`, then use `x`.",
-        );
-    }
-    // `a: i32,,`: two commas.
-    if found == Some(",") && prev == "," {
-        return finding(at, ",", "There are two commas here.", "Remove one.");
-    }
-    // `if a = b`: an assignment where a comparison goes.
-    if found == Some("=")
-        && source[..at].lines().last().is_some_and(|l| {
-            let l = l.trim_start();
-            l.starts_with("if ") || l.starts_with("while ") || l.contains(" if ")
-        })
-    {
-        let mut compared = source.to_string();
-        compared.replace_range(at..at + 1, "==");
-        if parses_further(&compared, at + 2) {
-            return finding(
-                at,
-                "=",
-                "`=` gives a name a value; a condition compares with `==`.",
-                "Write `==` here.",
-            );
-        }
-    }
-    // `name: String` then `temp: i32` with no `,` between: the caret after
-    // the element the comma belongs to.
-    let closer_wanted = expected("`}`") || expected("`)`") || expected("`]`");
-    if closer_wanted
-        && let Some(word) = found
-        && word.starts_with(|c: char| c.is_alphabetic() || c == '_')
-    {
-        let mut separated = source.to_string();
-        separated.insert(prev_end, ',');
-        if parses_further(&separated, at + 1) {
-            return finding(
-                prev_end,
-                "",
-                &format!("A `,` is missing before `{word}`."),
-                &format!("Separate `{prev}` and `{word}` with a comma."),
-            );
-        }
-    }
-    None
-}
-
-/// Whether `input` parses past `past`.
-fn parses_further(input: &str, past: usize) -> bool {
-    stops_at(input).is_none_or(|stop| stop > past)
-}
-
-/// The token that ends at `end`: a word, or a run of operator characters, or
-/// one other character.
-fn previous_token(source: &str, end: usize) -> String {
-    nikaia_std::tools::parse_notes::previous_token(source, source[..end].chars().count() as i64)
-}
-
 /// The byte a character index of `source` stands at - what the text half in
 /// Nikaia answers in, turned into what a span counts.
 fn byte_of(source: &str, at: i64) -> Option<usize> {
@@ -865,24 +601,6 @@ fn byte_of(source: &str, at: i64) -> Option<usize> {
             .nth(at)
             .map_or(source.len(), |(byte, _)| byte),
     )
-}
-
-/// Where the last string that is never closed opens.
-fn unclosed_quote(source: &str) -> Option<usize> {
-    byte_of(
-        source,
-        nikaia_std::tools::parse_notes::unclosed_quote(source),
-    )
-}
-
-/// The innermost bracket still open at the end of the file, outside strings
-/// and `//` comments.
-fn unclosed_bracket(source: &str) -> Option<(usize, char)> {
-    let at = byte_of(
-        source,
-        nikaia_std::tools::parse_notes::unclosed_bracket(source),
-    )?;
-    Some((at, source[at..].chars().next()?))
 }
 
 /// Where a parse of `input` stops, or `None` where it goes through.
@@ -898,105 +616,66 @@ fn stops_at(input: &str) -> Option<usize> {
     }
 }
 
-/// **The message an unclosed `/* … */` gets, said at the `/*` that opened it**
-/// ([ADR-307](../../../../docs/specification/adr/adr-307.md) D2).
-///
-/// `BLOCK_COMMENT`'s cut fires where the input ran out, which is the end of the
-/// file and not the place the reader has to fix - a comment that swallowed the
-/// rest of a program fails at its last byte, and the caret there points at
-/// nothing. The grammar cannot say better: the opening may be thousands of bytes
-/// behind the position it failed at.
-///
-/// So the opening is **found by scanning**, and the scan is the reading the lexer
-/// does: a `"` opens a string until its unescaped close, a `//` runs to the end
-/// of its line, and `/*` and `*/` count against each other. `None` where the
-/// counts come out even, which is a `*/` the grammar wanted for some other
-/// reason and whose own message is the better one.
-///
-/// **Only ever reached on a parse that has already failed with `*/` missing**,
-/// which is what keeps the one thing this cannot read - a `/*` inside a `dsl … eod`
-/// or a `grammar { … }` block, where it is text - from turning a good message into
-/// a wrong one. The condition is the grammar's own: it was inside a
-/// `BLOCK_COMMENT` and wanted its close.
-fn unclosed_block_comment(error: &ParseError, source: &str) -> Option<crate::check::Finding> {
-    if !error.expected.iter().any(|e| e == "`*/`") {
-        return None;
-    }
-    let at = opening_of_an_unclosed_comment(source)?;
-    Some(a_parse_finding(
-        at,
-        "/*",
-        "This block comment is never closed.".to_string(),
-        Vec::new(),
-        Some(
-            "Close it with `*/`. Comments nest, so every `/*` inside it needs its own `*/` too."
-                .to_string(),
-        ),
-    ))
+/// The character index a byte offset of `source` stands at - what the parse
+/// errors in Nikaia (`tools/parse_errors.nika`) count in.
+fn char_of(source: &str, byte: usize) -> i64 {
+    source[..byte.min(source.len())].chars().count() as i64
 }
 
-/// The byte offset of the outermost `/*` that never closed, if there is one.
-///
-/// Bytes and not characters, deliberately: everything compared here is ASCII, and
-/// every byte of a multi-byte character is `>= 0x80`, so the scan cannot stop
-/// inside one.
-fn opening_of_an_unclosed_comment(source: &str) -> Option<usize> {
-    byte_of(
-        source,
-        nikaia_std::tools::parse_notes::opening_of_an_unclosed_comment(source),
+/// Where a parse of `input` stops, as a character index, or -1 where it goes
+/// through: what the readings in Nikaia ask of a program changed to see
+/// whether it would have got further.
+fn stops_at_char(input: &str) -> i64 {
+    stops_at(input).map_or(-1, |byte| char_of(input, byte))
+}
+
+/// What the generated parser reported, for the parse errors in Nikaia.
+fn failure_of(error: &ParseError, source: &str) -> nikaia_std::tools::parse_errors::Failure {
+    nikaia_std::tools::parse_errors::Failure {
+        offset: char_of(source, error.offset),
+        expected: error.expected.clone(),
+        also: error.also.clone(),
+        has_found: error.found.is_some(),
+        found: error.found.clone().unwrap_or_default(),
+        has_message: error.message.is_some(),
+        message: error.message.clone().unwrap_or_default(),
+    }
+}
+
+/// A reading Nikaia made, as the compiler's finding.
+fn finding_of(
+    reading: nikaia_std::tools::parse_errors::ParseReading,
+    source: &str,
+) -> crate::check::Finding {
+    let at = byte_of(source, reading.at).unwrap_or(source.len());
+    a_parse_finding(
+        at,
+        &reading.word,
+        reading.message,
+        reading.notes,
+        reading.help,
     )
 }
 
-/// The note a parse error gets when a `??`'s fallback reached for an operator.
-///
-/// **A refusal in the grammar cannot always say why**, and this is the case that
-/// proves it. `coalesce_fallback` takes one value, so `a ?? 0 > 3` fails — but
-/// it fails *after* the fallback has succeeded on `0`, in whatever rule was
-/// enclosing it, and that rule's message is about its own closing brace. The
-/// caret lands on a token the reader did not type wrong.
-///
-/// So the note is added from what a reader **sees**: a source line that has a
-/// `??` before the column the error points at, and a binary operator at it.
-/// Read off the rendered message for the same reason
-/// [`reserved_word_note`] is — what a reader needs is attached to what a reader
-/// sees, and a note that disappears is the safe way for this to be wrong, since
-/// it adds a sentence and corrects nothing
-/// ([ADR-279](../../../docs/specification/adr/adr-279.md) D2).
-fn coalesce_fallback_note(found: Option<&str>, before: &str) -> Option<(String, String)> {
-    a_pair(nikaia_std::tools::parse_notes::coalesce_fallback_note(
-        found?, before,
-    ))
+/// **The message an unclosed `/* … */` gets, said at the `/*` that opened it**
+/// ([ADR-307](../../../../docs/specification/adr/adr-307.md) D2); the words are
+/// `tools/parse_errors.nika`'s.
+fn unclosed_block_comment(error: &ParseError, source: &str) -> Option<crate::check::Finding> {
+    nikaia_std::tools::parse_errors::unclosed_block_comment(&failure_of(error, source), source)
+        .map(|reading| finding_of(reading, source))
 }
 
-/// A note and its help, where there are both.
-fn a_pair(said: Vec<String>) -> Option<(String, String)> {
-    let mut said = said.into_iter();
-    Some((said.next()?, said.next()?))
-}
-
-/// **A `let` taking apart something a flat tuple of names cannot**
-/// ([ADR-291](../../../docs/specification/adr/adr-291.md)).
-///
-/// `let (a, b) = …` binds names by position and nothing else: a **nested**
-/// tuple is written nowhere in the specification and is refused rather than
-/// quietly accepted, which is this compiler's rule for a form nobody decided.
-/// What a bare parse error says about it is a list of tokens, and a list of
-/// tokens does not tell a reader that the *shape* is the thing that is missing.
-///
-/// **`_` is not part of this**, and deliberately so: it parses as a name and
-/// has since long before this form existed (`let _ = f()` lowers today), so
-/// refusing it here would narrow something already accepted and would say
-/// nothing about the single-name spelling beside it. What it *means* - Rust's
-/// wildcard rather than a binding - is on issue #209 as its own finding.
-///
-/// Recognised from the rendering rather than from the grammar, for the reason
-/// [`coalesce_fallback_note`] has: the failure happens after `(` has already
-/// matched, so the backend's message is about the token it stopped at and the
-/// note is what supplies the sentence.
-fn let_names_note(found: Option<&str>, before: &str) -> Option<(String, String)> {
-    a_pair(nikaia_std::tools::parse_notes::let_names_note(
-        found?, before,
-    ))
+/// **A parse error in the words every other message uses** (Part III C.2,
+/// rule 5): what was expected, what was there, and what to write. All of it is
+/// `tools/parse_errors.nika`; the program changed to see whether a reading
+/// would parse further is asked of this parser.
+fn a_parse_error(error: &ParseError, source: &str) -> crate::check::Finding {
+    let reading = nikaia_std::tools::parse_errors::a_parse_error(
+        &failure_of(error, source),
+        source,
+        &stops_at_char,
+    );
+    finding_of(reading, source)
 }
 
 pub fn parse_to_ast(input: &str) -> Result<Parsed> {
@@ -1060,53 +739,6 @@ pub fn parse_to_ast(input: &str) -> Result<Parsed> {
     Ok(parsed)
 }
 
-/// **A parse error in the words every other message uses** (Part III C.2,
-/// rule 5): what was expected, what was there, and what to write - and not the
-/// rules the parser was inside when it stopped, which are this compiler's
-/// business and not the reader's.
-///
-/// A `fail("…")` in the grammar is a message written for the reader: its first
-/// sentence is the headline and the rest is the help. Everywhere else the
-/// headline is made from what the parser expected and what it found.
-fn a_parse_error(error: &ParseError, source: &str) -> crate::check::Finding {
-    let at = error.offset.min(source.len());
-    let found = error.found.as_deref();
-    let line_start = source[..at].rfind('\n').map_or(0, |i| i + 1);
-    let before = &source[line_start..at];
-    if error.message.is_none()
-        && let Some(better) = a_better_reading(error, source, at, found)
-    {
-        return better;
-    }
-    let (message, mut help) = match &error.message {
-        Some(written) => {
-            let (headline, rest) = first_sentence(written);
-            (headline, rest)
-        }
-        None => (what_was_expected(error), None),
-    };
-    let mut notes: Vec<String> = [
-        reserved_word_note(found, source, at),
-        an_effect_on_a_lambda_note(found, before),
-        the_spelling_ref_replaced_note(found),
-    ]
-    .into_iter()
-    .flatten()
-    .collect();
-    for (note, way_out) in [
-        coalesce_fallback_note(found, before),
-        let_names_note(found, before),
-    ]
-    .into_iter()
-    .flatten()
-    {
-        notes.push(note);
-        help = Some(way_out);
-    }
-    let word = found.filter(|f| source[at..].starts_with(f)).unwrap_or("");
-    a_parse_finding(at, word, message, notes, help)
-}
-
 fn a_parse_finding(
     at: usize,
     word: &str,
@@ -1139,50 +771,6 @@ fn refuse_parsing(finding: crate::check::Finding, source: &str) -> anyhow::Error
         crate::diagnostics::said(&finding.message)
     );
     crate::diagnostics::refuse_finding(finding, message)
-}
-
-/// `Expected `}` here, but found `temp`.` - from what the parser wanted at the
-/// place it stopped. A list too long to read is left out: the caret and what
-/// was found say more than twenty alternatives do.
-fn what_was_expected(error: &ParseError) -> String {
-    const NOT_WORTH_SAYING: &[&str] = &["whitespace", "block comment", "`//`"];
-    let mut expected: Vec<&str> = match error.expected.is_empty() {
-        true => error.also.iter().map(String::as_str).collect(),
-        false => error.expected.iter().map(String::as_str).collect(),
-    };
-    expected.retain(|e| !NOT_WORTH_SAYING.contains(e));
-    // *Expected end of input* where something stands is a sentence about the
-    // parser: what the reader needs is that this does not belong here.
-    if error.found.is_some() {
-        expected.retain(|e| *e != "end of input");
-    }
-    expected.sort_unstable();
-    expected.dedup();
-    let wanted = match expected.as_slice() {
-        [] => None,
-        [one] => Some(one.to_string()),
-        [rest @ .., last] if expected.len() <= 4 => Some(format!("{} or {last}", rest.join(", "))),
-        _ => None,
-    };
-    let found = match error.found.as_deref() {
-        None => None,
-        Some("newline") => Some("the end of the line".to_string()),
-        Some(found) => Some(format!("`{found}`")),
-    };
-    match (wanted, found) {
-        (Some(wanted), Some(found)) => format!("Expected {wanted} here, but found {found}."),
-        (Some(wanted), None) => format!("Expected {wanted}, but the file ended."),
-        (None, Some(found)) => format!("Didn't expect {found} here."),
-        (None, None) => "The file ended too early.".to_string(),
-    }
-}
-
-/// The first sentence of a written message and what follows it: the headline
-/// and the help. A sentence ends at `. ` outside backticks.
-fn first_sentence(text: &str) -> (String, Option<String>) {
-    let mut parts = nikaia_std::tools::parse_notes::first_sentence(text).into_iter();
-    let headline = parts.next().unwrap_or_default();
-    (headline, parts.next())
 }
 
 // --- Action-block helpers ---

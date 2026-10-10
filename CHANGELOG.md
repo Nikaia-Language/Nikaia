@@ -8,6 +8,13 @@ or the specification. A change only to the guide, the notes, the README, the
 website, the tests, the examples or the tooling around them raises nothing and
 has no heading here; `CLAUDE.md` draws the line.
 
+## [0.0.747] — 2026-10-10
+
+**More of the toolchain is Nikaia**
+- `parser`: a parse error in the reader's words - what was expected, the mistake
+  where it was made, the notes a refusal gets - is `tools/parse_errors.nika`
+  (ADR-294, #125).
+
 ## [0.0.746] — 2026-10-10
 
 **More of the toolchain is Nikaia** (ADR-294, #125).

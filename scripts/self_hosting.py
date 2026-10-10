@@ -73,6 +73,7 @@ COMPILER_NIKA = {
     "lends.nika": "contracts::keeps: whether a callee lends a parameter, whether a ledger says a type copies, and whether a value moves (0.0.384), and the least fixpoint of what each function keeps (0.0.399)",
     "parse_numbers.nika": "parser: a number as it is read - the four spellings, the separator, a scale - and every way it is refused (0.0.744)",
     "interpreter.nika": "interpreter: what `nikaia interpret` walks and says of `main` (0.0.744)",
+    "parse_errors.nika": "parser: a parse error in the reader's words - what was expected, the mistake where it was made, the notes (0.0.747)",
     "libraries.nika": "libraries: the linker flags a package may be handed from `pkg-config`'s words, and the flags as `rustc` takes them (0.0.742)",
     "assets.nika": "assets: why a read at build time is refused and the way out, the allowlist's lines, a path that leaves the root, the entries nothing read (0.0.389)",
     "sync.nika": "contracts::sync: the greatest fixpoint of which functions keep their claim to be `sync`, the ones only their lambdas pause, and the shortest way to a pause (0.0.390), the walk of what a body does to its claim and the check of what a `sync` function may not call (0.0.398)",

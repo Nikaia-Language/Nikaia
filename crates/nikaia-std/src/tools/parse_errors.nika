@@ -1,0 +1,456 @@
+// crates/nikaia-std/src/tools/parse_errors.nika
+//
+// **A parse error in the words every other message uses** (Part III C.2,
+// rule 5; `docs/error-corpus.md`): what was expected, what was there, what to
+// write - and, where the reader made the mistake somewhere other than where
+// the parser stopped, the mistake where it was made. Moved from the compiler's
+// `parser` (ADR-294, #125); `parse_notes.nika` has the text half.
+//
+// **Every position is a character index into the text**, and the compiler
+// turns it into the byte its spans are counted in. What the parser says about
+// a refused program arrives as a `Failure`, and a program parsed again with a
+// change - to ask whether the change would have got further - is the
+// compiler's `stops_at`, which answers the character the parse stopped at, or
+// -1 where it went through.
+
+/// What the generated parser reported: where it stopped, what it needed and
+/// what else it could have taken, the token it found, and the message a
+/// `fail("…")` in the grammar wrote.
+pub struct Failure {
+    pub offset: i64,
+    pub expected: Vec[String],
+    pub also: Vec[String],
+    pub has_found: bool,
+    pub found: String,
+    pub has_message: bool,
+    pub message: String,
+}
+
+/// The refusal: where the caret goes, the word it underlines, and the words.
+pub struct ParseReading {
+    pub at: i64,
+    pub word: String,
+    pub message: String,
+    pub notes: Vec[String],
+    pub help: String?,
+}
+
+/// **The words this language keeps for itself** (ADR-298). The note a parse
+/// error gets when it tripped over one, and the checker, which refuses `self`
+/// as a declared name, read this list; `rule`, `boundary`, `fold`, `par_fold`
+/// and `unchecked` are the grammar sublanguage's vocabulary and not here.
+pub comptime RESERVED_WORDS: Array[ref String, 38] = ["as", "break", "catch", "comptime", "continue", "dsl", "else", "enum", "extern", "false", "fn", "for", "grammar", "if", "impl", "in", "let", "match", "mut", "null", "overlap", "pub", "ref", "return", "select", "self", "spawn", "struct", "sync", "test", "throw", "throws", "trait", "true", "unsafe", "use", "while", "with"]
+
+// What a missing value is said as after this token, or nothing where the token
+// is none an operand follows.
+fn missing_value_message(prev: ref String) -> String {
+    if prev == "=" {
+        return "`=` has nothing after it."
+    }
+    if prev == "+" || prev == "-" || prev == "*" || prev == "/" || prev == "%" || prev == "==" || prev == "!=" || prev == "<" || prev == ">" || prev == "<=" || prev == ">=" || prev == "&&" || prev == "||" {
+        return f"`{prev}` has nothing on its right."
+    }
+    return ""
+}
+
+fn reading_at(at: i64, word: ref String, message: ref String, help: ref String) -> ParseReading {
+    return ParseReading { at: at, word: word.clone(), message: message.clone(), notes: [], help: help.clone() }
+}
+
+fn lists(what: ref Vec[String], one: ref String) -> bool {
+    for e in what {
+        if e == one {
+            return true
+        }
+    }
+    return false
+}
+
+fn is_digit(ch: scalar) -> bool {
+    return ch >= '0' && ch <= '9'
+}
+
+// The text up to `to`.
+fn upto(c: ref Array[scalar], to: i64) -> String {
+    return slice(c, 0, to)
+}
+
+// The text after the last line break in `c[..to]`.
+fn last_line_to(c: ref Array[scalar], to: i64) -> String {
+    let mut from = to
+    while from > 0 && c[from - 1] != '\n' {
+        from -= 1
+    }
+    return slice(c, from, to)
+}
+
+// Rust's `lines().last()` of `c[..to]`: the last line, a final line break not
+// starting another one. Nothing for an empty text.
+fn last_line_of(c: ref Array[scalar], to: i64) -> String? {
+    if to == 0 {
+        return null
+    }
+    let mut end = to
+    if c[end - 1] == '\n' {
+        end -= 1
+        if end > 0 && c[end - 1] == '\r' {
+            end -= 1
+        }
+    }
+    let mut from = end
+    while from > 0 && c[from - 1] != '\n' {
+        from -= 1
+    }
+    return slice(c, from, end)
+}
+
+// How far the text reaches without its trailing whitespace.
+fn trimmed_len(c: ref Array[scalar], to: i64) -> i64 {
+    let mut end = to
+    while end > 0 && c[end - 1].is_whitespace() {
+        end -= 1
+    }
+    return end
+}
+
+// Whether the parse of `input` gets past the character `past`.
+fn parses_further(input: ref String, past: i64, stops_at: fn(ref String) -> i64 sync) -> bool {
+    let stop = stops_at(input)
+    return stop < 0 || stop > past
+}
+
+/// **The mistake, where the reader made it**: a parse stops where the input
+/// stopped making sense, which is often a line after the mistake - a missing
+/// `,` fails at the next field, a missing value at the `}` below it, an
+/// unclosed `{` at the end of the file. Each reading names one such mistake
+/// and puts the caret where it was made. A reading that proposes a change is
+/// only offered where the program, changed that way, parses further.
+fn a_better_reading(error: ref Failure, c: ref Array[scalar], at: i64, stops_at: fn(ref String) -> i64 sync) -> ParseReading? {
+    let source = slice(c, 0, c.len())
+    // What the parser needed here, and not what it could also have taken: an
+    // open string is always something it *could* have continued.
+    let prev_end = trimmed_len(c, at)
+    let prev = previous_token(source, prev_end)
+    let before = upto(c, at)
+    let has_found = error.has_found
+    let found_word = error.found.clone()
+    // The file ended inside a string: the caret on the quote that opened it.
+    if !has_found && lists(error.expected, "`\"`") {
+        let open = unclosed_quote(source)
+        if open >= 0 {
+            return reading_at(open, "\"", "This string is never closed.", "End it with `\"` where the text is meant to stop.")
+        }
+    }
+    // A block, a list or a call never closed: the file ended inside it, or
+    // another bracket closed first (`[1, 2` and then `}`). The caret goes on
+    // the bracket that opened it.
+    let mut wrong_closer = false
+    if has_found {
+        let word = found_word.clone()
+        wrong_closer = (word == "}" || word == ")" || word == "]") && !lists(error.expected, f"`{word}`")
+    }
+    if (!has_found || wrong_closer) && (lists(error.expected, "`}`") || lists(error.expected, "`)`") || lists(error.expected, "`]`")) {
+        let open = unclosed_bracket(before)
+        if open < 0 {
+            return null
+        }
+        let bracket = c[open]
+        let mut close = ']'
+        if bracket == '{' {
+            close = '}'
+        } else if bracket == '(' {
+            close = ')'
+        }
+        let mut why: String = "the file ended while it was still open"
+        if has_found {
+            why = f"a `{found_word}` closed something else first"
+        }
+        return reading_at(open, f"{bracket}", f"This `{bracket}` is never closed.", f"Add the `{close}` where it's meant to end; {why}.")
+    }
+    // `struct` inside an `impl`: an `impl` holds methods.
+    if has_found {
+        let word = found_word.clone()
+        if word == "struct" || word == "enum" || word == "trait" || word == "impl" || word == "grammar" {
+            let open = unclosed_bracket(before)
+            if open >= 0 && c[open] == '{' {
+                let opened = trimmed_len(c, open)
+                let whole = last_line_to(c, opened)
+                let line = whole.trim_start()
+                if line.starts_with("impl") {
+                    return reading_at(at, word, f"An `impl` holds methods, and a `{word}` can't be declared inside one.", f"Move the `{word}` out of the `impl`, to the top level of the file.")
+                }
+            }
+        }
+    }
+    // `/ text` at the start of a line: a comment written with one slash.
+    if (has_found && found_word == "/") && last_line_to(c, at).trim().len() == 0 && !(at + 1 < c.len() && c[at + 1] == '/') {
+        return reading_at(at, "/", "A single `/` is division, and nothing stands before it to divide.", "A comment starts with `//`.")
+    }
+    // `“hi”`: a typographic quote, from a word processor or a phone.
+    if has_found {
+        let quote = found_word.clone()
+        if quote == "“" || quote == "”" || quote == "‘" || quote == "’" || quote == "„" {
+            return reading_at(at, quote, f"`{quote}` isn't a quote the language reads.", "Text is written between straight quotes: `\"hi\"`.")
+        }
+    }
+    // A value is missing: `let y =` or `1 +` with nothing after it, found at
+    // whatever stands on the next line.
+    let mut closes = !has_found
+    if has_found {
+        let word = found_word.clone()
+        closes = word == "}" || word == ")" || word == "]" || word == "newline"
+    }
+    if lists(error.expected, "expression") && closes {
+        let message = missing_value_message(prev)
+        if message.len() == 0 {
+            return null
+        }
+        return reading_at(prev_end - prev.len(), prev, message, "Write the value after it, on the same line.")
+    }
+    // `if { … }`: a condition is missing.
+    if (has_found && found_word == "{") && (prev == "if" || prev == "while") {
+        return reading_at(prev_end - prev.len(), prev, f"`{prev}` needs a condition before its `{{`.", f"Write `{prev} cond {{ … }}`.")
+    }
+    // `let 5 = x`: a value where the name goes.
+    if (prev == "let" || prev == "mut") && has_found {
+        let word = found_word.clone()
+        if word.len() > 0 {
+            let letters: Vec[scalar] = word.chars().collect()
+            let first = letters[0]
+            if is_digit(first) || first == '"' || first == '\'' {
+                return reading_at(at, word, f"`let` names what it binds, but `{word}` is a value.", "Write a name: `let x = …`, then use `x`.")
+            }
+        }
+    }
+    // `a: i32,,`: two commas.
+    if (has_found && found_word == ",") && prev == "," {
+        return reading_at(at, ",", "There are two commas here.", "Remove one.")
+    }
+    // `if a = b`: an assignment where a comparison goes.
+    if (has_found && found_word == "=") {
+        let line = last_line_of(c, at) ?? ""
+        let l = line.trim_start()
+        if l.starts_with("if ") || l.starts_with("while ") || l.contains(" if ") {
+            let compared = f"{upto(c, at)}=={slice(c, at + 1, c.len())}"
+            if parses_further(compared, at + 2, stops_at) {
+                return reading_at(at, "=", "`=` gives a name a value; a condition compares with `==`.", "Write `==` here.")
+            }
+        }
+    }
+    // `name: String` then `temp: i32` with no `,` between: the caret after the
+    // element the comma belongs to.
+    let closer_wanted = lists(error.expected, "`}`") || lists(error.expected, "`)`") || lists(error.expected, "`]`")
+    if closer_wanted && has_found {
+        let word = found_word.clone()
+        if word.len() > 0 {
+            let letters: Vec[scalar] = word.chars().collect()
+            let first = letters[0]
+            if first.is_alphabetic() || first == '_' {
+                let separated = f"{upto(c, prev_end)},{slice(c, prev_end, c.len())}"
+                if parses_further(separated, at + 1, stops_at) {
+                    return reading_at(prev_end, "", f"A `,` is missing before `{word}`.", f"Separate `{prev}` and `{word}` with a comma.")
+                }
+            }
+        }
+    }
+    return null
+}
+
+// **A reserved word where a name was wanted**, said only where the program
+// parses further with a plain name in the word's place: `let struct = 1` gets
+// it; `struct` inside an `impl`, or `ref` where a `:` was missing, is some other
+// mistake, and the note would explain the wrong one.
+fn reserved_word_note(has_found: bool, found: ref String, c: ref Array[scalar], at: i64, stops_at: fn(ref String) -> i64 sync) -> String? {
+    if !has_found {
+        return null
+    }
+    let token = found.clone()
+    let mut listed = false
+    for word in RESERVED_WORDS {
+        if word == token {
+            listed = true
+        }
+    }
+    if !listed {
+        return null
+    }
+    let rest = slice(c, at, c.len())
+    if !rest.starts_with(ref token) {
+        return null
+    }
+    let letters: Vec[scalar] = token.chars().collect()
+    let width = letters.len()
+    let mut with_a_name = upto(c, at)
+    let mut placed = 0
+    while placed < width {
+        with_a_name.push('z')
+        placed += 1
+    }
+    with_a_name = f"{with_a_name}{slice(c, at + width, c.len())}"
+    if parses_further(with_a_name, at + width, stops_at) {
+        return f"`{token}` is a reserved word, so it can't be used as a name here."
+    }
+    return null
+}
+
+// The strings in order, each once.
+fn sorted_words(list: ref Vec[String]) -> Vec[String] {
+    let mut out: Vec[String] = []
+    for item in list {
+        let mut at = 0
+        let mut seen = false
+        while at < out.len() && out[at] < item {
+            at += 1
+        }
+        if at < out.len() && out[at] == item {
+            seen = true
+        }
+        if !seen {
+            let mut rest: Vec[String] = []
+            for k in at..<out.len() {
+                rest.push(out[k].clone())
+            }
+            while out.len() > at {
+                out.pop()
+            }
+            out.push(item.clone())
+            for r in rest {
+                out.push(r.clone())
+            }
+        }
+    }
+    return out
+}
+
+/// `Expected `}` here, but found `temp`.` - from what the parser wanted at the
+/// place it stopped. A list too long to read is left out: the caret and what
+/// was found say more than twenty alternatives do.
+fn what_was_expected(error: ref Failure) -> String {
+    let mut listed: Vec[String] = []
+    let from = if_empty(error.expected, error.also)
+    for e in from {
+        // *Expected end of input* where something stands is a sentence about
+        // the parser: what the reader needs is that this does not belong here.
+        if e == "whitespace" || e == "block comment" || e == "`//`" || (error.has_found && e == "end of input") {
+            continue
+        }
+        listed.push(e.clone())
+    }
+    let expected = sorted_words(listed)
+    let mut wanted: String? = null
+    if expected.len() == 1 {
+        wanted = expected[0].clone()
+    } else if expected.len() >= 2 && expected.len() <= 4 {
+        let mut head: Vec[String] = []
+        for k in 0..<(expected.len() - 1) {
+            head.push(expected[k].clone())
+        }
+        wanted = f"{head.join(", ")} or {expected[expected.len() - 1]}"
+    }
+    let mut found: String? = null
+    if error.has_found {
+        let word = error.found.clone()
+        if word == "newline" {
+            found = "the end of the line"
+        } else {
+            found = f"`{word}`"
+        }
+    }
+    if wanted != null && found != null {
+        return f"Expected {wanted ?? ""} here, but found {found ?? ""}."
+    }
+    if wanted != null {
+        return f"Expected {wanted ?? ""}, but the file ended."
+    }
+    if found != null {
+        return f"Didn't expect {found ?? ""} here."
+    }
+    return "The file ended too early."
+}
+
+fn if_empty(first: ref Vec[String], second: ref Vec[String]) -> Vec[String] {
+    let mut out: Vec[String] = []
+    if first.len() == 0 {
+        for s in second {
+            out.push(s.clone())
+        }
+    } else {
+        for s in first {
+            out.push(s.clone())
+        }
+    }
+    return out
+}
+
+/// **A parse error in the words every other message uses**. A `fail("…")` in
+/// the grammar is a message written for the reader: its first sentence is the
+/// headline and the rest is the help. Everywhere else the headline is made
+/// from what the parser expected and what it found.
+pub fn a_parse_error(error: ref Failure, source: ref String, stops_at: fn(ref String) -> i64 sync) -> ParseReading {
+    let c: Vec[scalar] = source.chars().collect()
+    let mut at = error.offset
+    if at > c.len() {
+        at = c.len()
+    }
+    let before = last_line_to(c, at)
+    if !error.has_message {
+        let better = a_better_reading(error, c, at, stops_at)
+        if better != null {
+            return better ?? reading_at(at, "", "", "")
+        }
+    }
+    let mut help: String? = null
+    let mut message = what_was_expected(error)
+    if error.has_message {
+        let parts = first_sentence(error.message)
+        message = parts[0].clone()
+        if parts.len() > 1 {
+            help = parts[1].clone()
+        }
+    }
+    let mut notes: Vec[String] = []
+    let said_word = error.found.clone()
+    let reserved = reserved_word_note(error.has_found, error.found, c, at, stops_at)
+    if reserved != null {
+        notes.push(reserved ?? "")
+    }
+    let lambda = an_effect_on_a_lambda_note(said_word, before)
+    if lambda != null {
+        notes.push(lambda ?? "")
+    }
+    let ref_note = the_spelling_ref_replaced_note(said_word)
+    if ref_note != null {
+        notes.push(ref_note ?? "")
+    }
+    if error.has_found {
+        let pairs = [coalesce_fallback_note(said_word, before), let_names_note(said_word, before)]
+        for pair in pairs {
+            if pair.len() >= 2 {
+                notes.push(pair[0].clone())
+                help = pair[1].clone()
+            }
+        }
+    }
+    let mut word: String = ""
+    if error.has_found && slice(c, at, c.len()).starts_with(ref said_word) {
+        word = said_word
+    }
+    return ParseReading { at: at, word: word, message: message, notes: notes, help: help }
+}
+
+/// **The message an unclosed `/* … */` gets, said at the `/*` that opened
+/// it** (ADR-307 D2): the parse fails where the input ran out, which is the end
+/// of the file and not the place the reader has to fix. Only ever reached on a
+/// parse that has already failed with `*/` missing. Nothing where the counts
+/// come out even, which is a `*/` the grammar wanted for some other reason
+/// and whose own message is the better one.
+pub fn unclosed_block_comment(error: ref Failure, source: ref String) -> ParseReading? {
+    if !lists(error.expected, "`*/`") {
+        return null
+    }
+    let at = opening_of_an_unclosed_comment(source)
+    if at < 0 {
+        return null
+    }
+    return ParseReading { at: at, word: "/*", message: "This block comment is never closed.", notes: [], help: "Close it with `*/`. Comments nest, so every `/*` inside it needs its own `*/` too." }
+}
