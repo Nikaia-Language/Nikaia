@@ -8,6 +8,11 @@ or the specification. A change only to the guide, the notes, the README, the
 website, the tests, the examples or the tooling around them raises nothing and
 has no heading here; `CLAUDE.md` draws the line.
 
+## [0.0.758] — 2026-10-10
+
+**A view cut from a call's result no longer outlives it (#559).**
+- `let v = f().trim_start()` bound a view of a temporary `String` dropped at the end of the statement (`rustc`'s E0716). The lowering binds the call's result to a hidden local first whenever a text view method is in the chain. Test: `selfhosting_defects.rs`.
+
 ## [0.0.757] — 2026-10-10
 
 **More of the toolchain is Nikaia** (ADR-294, #125).

@@ -6780,6 +6780,7 @@ impl<'p> Emitter<'p> {
         tail: Tail,
         flow: Flow<'_>,
     ) -> Result<()> {
+        self.hold_owned_receiver(out, stmt, depth, flow)?;
         if self.held_reaches.is_empty() {
             return Ok(());
         }
@@ -6809,6 +6810,52 @@ impl<'p> Emitter<'p> {
                 .borrow_mut()
                 .insert(receiver as *const Expr as usize, name);
         }
+        Ok(())
+    }
+
+    /// **A view cut from a call's result outlives the statement only if the
+    /// result does** (#559). `let v = f().trim_start()` hands back a view of
+    /// the `String` `f()` made, and that value dies at the `;` - `rustc`'s
+    /// E0716 about a file nobody wrote. So the call is bound first,
+    /// `let __nikaia_held_0 = f();`, and the chain reads the binding. Nothing is
+    /// copied and nothing runs that did not run: the receiver is the first thing
+    /// the chain evaluates.
+    ///
+    /// Only for a `let`, whose name outlives the statement, and only where a
+    /// method of the chain is one of text's views (`tools/tiers.nika`).
+    fn hold_owned_receiver(
+        &self,
+        out: &mut Out,
+        stmt: &Stmt,
+        depth: usize,
+        flow: Flow<'_>,
+    ) -> Result<()> {
+        let Stmt::Let { value, .. } = stmt else {
+            return Ok(());
+        };
+        let mut viewed = false;
+        let mut at = value;
+        while let Expr::MethodCall {
+            receiver, method, ..
+        } = at
+        {
+            viewed |= nikaia_std::tools::tiers::views_what_it_is_called_on(self.text(*method));
+            at = receiver;
+        }
+        let base = match at {
+            Expr::Try(inner) => inner.as_ref(),
+            other => other,
+        };
+        if !viewed || std::ptr::eq(at, value) || !matches!(base, Expr::Call { .. }) {
+            return Ok(());
+        }
+        let name = format!("__nikaia_held_{}", self.held.borrow().len());
+        out.push(&format!("let {name} = "));
+        self.expr(out, at, depth, flow)?;
+        out.push(&format!(";\n{}", "    ".repeat(depth)));
+        self.held
+            .borrow_mut()
+            .insert(at as *const Expr as usize, name);
         Ok(())
     }
 
@@ -8016,6 +8063,12 @@ impl<'p> Emitter<'p> {
     }
 
     fn expr(&self, out: &mut Out, expr: &Expr, depth: usize, flow: Flow<'_>) -> Result<()> {
+        // **A receiver bound before the statement** reads as its name
+        // (`hold_owned_receiver`).
+        if let Some(name) = self.held.borrow().get(&(expr as *const Expr as usize)) {
+            out.push(name);
+            return Ok(());
+        }
         // **A plain arm beside a `null` is `Some`** (`check::Checked::some_tails`).
         if self.some_tails.contains(&(expr as *const Expr as usize)) {
             out.push("Some(");
