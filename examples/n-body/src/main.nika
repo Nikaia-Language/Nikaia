@@ -15,6 +15,7 @@
 // what it prints against `tests/` (ADR-269 D13).
 
 use std::cli
+use std::text
 
 // One body: a position, a velocity, and a mass. All of it is changed in place,
 // since the step below runs millions of times.
@@ -179,7 +180,7 @@ fn main() {
     // different, it can fail, so its fallback is a `catch` whose block gives
     // the value to use instead.
     let steps = cli::args().nth(1) ?? "1000"
-    let n: i32 = steps.parse() catch { 1000 }
+    let n = text::parse_i32(steps) ?? 1000
 
     let mut system = solar_system()
     system.offset_momentum()

@@ -35,3 +35,48 @@ pub fn parse_i64(text: &str) -> Option<i64> {
     Some(0 - value)
 }
 
+// sync (Part II, 12.1): pure CPU, cannot pause. Checked before
+// this was written - see `contracts::sync`.
+pub fn parse_i32(text: &str) -> Option<i32> {
+    let n = match parse_i64(text) { Some(__nikaia_value) => __nikaia_value, None => return None };
+    i32::try_from(n).ok()
+}
+
+// sync (Part II, 12.1): pure CPU, cannot pause. Checked before
+// this was written - see `contracts::sync`.
+pub fn parse_u32(text: &str) -> Option<u32> {
+    let n = match parse_u64(text) { Some(__nikaia_value) => __nikaia_value, None => return None };
+    u32::try_from(n).ok()
+}
+
+// sync (Part II, 12.1): pure CPU, cannot pause. Checked before
+// this was written - see `contracts::sync`.
+pub fn parse_u8(text: &str) -> Option<u8> {
+    let n = match parse_u64(text) { Some(__nikaia_value) => __nikaia_value, None => return None };
+    if n > 255u64 { return None; }
+    Some(u8::try_from(n).unwrap_or_else(|_| panic!("the value does not fit in an `u8`")))
+}
+
+// sync (Part II, 12.1): pure CPU, cannot pause. Checked before
+// this was written - see `contracts::sync`.
+pub fn parse_u64(text: &str) -> Option<u64> {
+    let most: u64 = 18446744073709551615u64;
+    let mut value: u64 = 0u64;
+    let mut digits = 0;
+    let mut first = true;
+    for c in text.chars() {
+        let signed = first && c == '+';
+        first = false;
+        if signed { continue; }
+        let d = match c {
+            '0'..='9' => c as u64 - 48u64,
+            _ => return None,
+        };
+        if value > (most - d) / 10u64 { return None; }
+        value = value * 10u64 + d;
+        digits += 1;
+    }
+    if digits == 0 { return None; }
+    Some(value)
+}
+

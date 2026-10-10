@@ -21,6 +21,39 @@ test "text reads a whole number" {
     assert(sum == 21)
 }
 
+// **A function per number type** (ADR-285 D35, #504): each is the number the
+// whole text writes, or `null` where it writes none or one the type does not
+// hold. An unsigned type takes no `-`; no space and no `_` anywhere.
+test "text reads a number of each type" {
+    let mut out = ""
+    for s in ["2147483647", "2147483648", "-2147483648", " 1", "1_0"] {
+        let found = text::parse_i32(s)
+        out = out + if found == null { "null " } else { f"{found ?? 0} " }
+    }
+    for s in ["255", "256", "-1", "+7"] {
+        let found = text::parse_u8(s)
+        out = out + if found == null { "null " } else { f"{found ?? 0} " }
+    }
+    for s in ["4294967295", "4294967296", "-0"] {
+        let found = text::parse_u32(s)
+        out = out + if found == null { "null " } else { f"{found ?? 0} " }
+    }
+    for s in ["18446744073709551615", "18446744073709551616", "-1", ""] {
+        let found = text::parse_u64(s)
+        out = out + if found == null { "null " } else { f"{found ?? 0} " }
+    }
+    assert(out == "2147483647 null -2147483648 null null 255 null null 7 4294967295 null null 18446744073709551615 null null null ")
+}
+
+test "text reads a float" {
+    let mut out = ""
+    for s in ["1.5", "1.5e3", "1E3", "-2.5e-1", "+4", "inf", "-Inf", "NaN", "infinity", ".5", "1.", "1e", " 1", "1_0", ""] {
+        let found = text::parse_f64(s)
+        out = out + if found == null { "null " } else { f"{found ?? 0.0} " }
+    }
+    assert(out == "1.5 1500 1000 -0.25 4 inf -inf NaN null null null null null null null ")
+}
+
 enum SelfHostingExpr {
     Num(i64),
     Name(String),

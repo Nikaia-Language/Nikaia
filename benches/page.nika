@@ -13,6 +13,7 @@
 // Measured by `crates/nikaia/tests/measure.rs`.
 
 use std::cli
+use std::text
 use std::html
 
 fn page(title: ref String, body: ref String) -> String {
@@ -42,7 +43,7 @@ fn page(title: ref String, body: ref String) -> String {
 
 fn main() {
     let count = cli::args().nth(1) ?? "2000"
-    let n: i32 = count.parse() catch { 2000 }
+    let n = text::parse_i32(count) ?? 2000
 
     let mut total = 0
     for i in 0..<n {

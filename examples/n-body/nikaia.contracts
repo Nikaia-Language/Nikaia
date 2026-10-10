@@ -25,7 +25,9 @@ touches = []
 signature = "(ref mut self)"
 
 [fn."main"]
+sync = "inferred"
 locks = true
+touches = ["args read", "stdout write"]
 signature = "()"
 
 [fn."solar_system"]

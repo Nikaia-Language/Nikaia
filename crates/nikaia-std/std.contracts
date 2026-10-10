@@ -3228,6 +3228,57 @@ touches = []
 views = ["text: borrowed"]
 signature = "(text: ref String) -> i64?"
 
+# The whole number this text writes as an `i32`, or nothing where it writes
+# none or one an `i32` does not hold. The text is read as `parse_i64` reads
+# it.
+[fn."text::parse_i32"]
+pub = true
+sync = true
+touches = []
+views = ["text: borrowed"]
+signature = "(text: ref String) -> i32?"
+
+# The whole number this text writes as a `u32`, or nothing where it writes
+# none or one a `u32` does not hold. Decimal digits with an optional `+`; an
+# unsigned number takes no `-`, not even `-0`.
+[fn."text::parse_u32"]
+pub = true
+sync = true
+touches = []
+views = ["text: borrowed"]
+signature = "(text: ref String) -> u32?"
+
+# The whole number this text writes as a `u8`, or nothing where it writes
+# none or one a `u8` does not hold, as `parse_u32` reads it.
+[fn."text::parse_u8"]
+pub = true
+sync = true
+touches = []
+views = ["text: borrowed"]
+signature = "(text: ref String) -> u8?"
+
+# The whole number this text writes as a `u64`, or nothing where it writes
+# none or one a `u64` does not hold, as `parse_u32` reads it.
+[fn."text::parse_u64"]
+pub = true
+sync = true
+touches = []
+views = ["text: borrowed"]
+signature = "(text: ref String) -> u64?"
+
+# The number this text writes as an `f64`, or nothing where it writes none.
+#
+# An optional `-` or `+`, decimal digits, an optional `.` followed by digits,
+# and an optional exponent: `e` or `E`, an optional sign, and digits. Or one
+# of `inf` and `nan` after the optional sign, in any case (`NaN`, `-Inf`).
+# Nothing else: no space, no `_`, no `.5`, no `1.`, no `infinity`.
+[fn."text::parse_f64"]
+pub = true
+sync = true
+touches = []
+views = ["text: borrowed"]
+signature = "(text: ref String) -> f64?"
+
 # What the program was started with, and the one type here that says it **may
 # cross a thread** (`crosses`, ADR-005 §1 Group B). Its parts are Rust, so
 # `contracts::send` cannot walk them and would answer "nobody said" - which is

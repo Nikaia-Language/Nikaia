@@ -26,6 +26,7 @@
 // numbers and what they mean live there and in `docs/break-continue-cost.md`.
 
 use std::cli
+use std::text
 
 // --- a `while` that learns it is finished half way through its body --------
 
@@ -158,7 +159,7 @@ fn skip_with_nesting(n: i64) -> i64 {
 // different answers.
 fn main() {
     let count = cli::args().nth(1) ?? "200000"
-    let n: i64 = count.parse() catch { 200000 }
+    let n = text::parse_i64(count) ?? 200000
     let which = cli::args().nth(2) ?? "all"
 
     if which == "stop-break" {

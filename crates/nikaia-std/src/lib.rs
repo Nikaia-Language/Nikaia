@@ -93,6 +93,7 @@ pub mod text {
     #[allow(unused_imports)]
     use crate::prelude::scalar;
     include!("text.rs");
+    include!("text_float.rs");
 }
 
 /// **Nikaia that the toolchain - or `std` itself, below its surface - uses and

@@ -2,11 +2,14 @@
 // reads it still has it. How each handler is lowered and what `rustc` says
 // about it stay in `crates/nikaia/tests/catch_handler.rs`.
 
-fn catch_handler_parsed(text: ref String, mut said: Vec[String]) -> i32 {
-    return text.parse() catch {
+use std::fs
+
+fn catch_handler_read(path: ref String, mut said: Vec[String]) -> i64 {
+    let text = fs::read_to_string(path, fs::Root::Anywhere) catch {
         said.push(f"caught {error}")
-        0
+        return 0
     }
+    return text.len()
 }
 
 // The other half of the polarity: a handler that does read the error still
@@ -14,7 +17,7 @@ fn catch_handler_parsed(text: ref String, mut said: Vec[String]) -> i32 {
 // written here would not compile at all.
 test "a handler that reads the error still can" {
     let mut said: Vec[String] = []
-    let it = catch_handler_parsed("not a number", said)
+    let it = catch_handler_read("no-such-file.txt", said)
     assert(it == 0)
     assert(said.len() == 1)
     assert(said[0].starts_with("caught "))

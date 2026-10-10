@@ -13,6 +13,7 @@
 // language, and this is a program a compiler is weighed with.
 
 use std::cli
+use std::text
 use std::html
 
 pub struct Row {
@@ -30,7 +31,7 @@ fn table(rows: Vec[Row]) -> String {
 
 fn main() {
     let count = cli::args().nth(1) ?? "2000"
-    let n: i32 = count.parse() catch { 2000 }
+    let n = text::parse_i32(count) ?? 2000
 
     let mut rows = Vec()
     for i in 0..<n {

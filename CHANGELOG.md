@@ -8,6 +8,21 @@ or the specification. A change only to the guide, the notes, the README, the
 website, the tests, the examples or the tooling around them raises nothing and
 has no heading here; `CLAUDE.md` draws the line.
 
+## [0.0.733] — 2026-10-10
+
+**Text becomes a number by a function per type** (ADR-285 D35, #504).
+- `std::text` has `parse_i32`, `parse_u8`, `parse_u32`, `parse_u64` and
+  `parse_f64` beside `parse_i64`, each a `T?`: `null` where the text writes no
+  number or one the type does not hold. An unsigned type takes no `-`, not even
+  `-0`. A float is digits, an optional `.` and digits, an optional exponent, or
+  `inf`, `-inf` or `nan` in any case; `.5`, `1.` and `infinity` are `null`.
+- `parse_f64` checks the shape in Rust (`text_float.rs`) and hands the reading
+  to Rust's correctly rounding conversion; the integers are written in
+  Nikaia (`text.nika`).
+- `parse_f32` waits for `f32` (#552).
+- The six `.parse()` calls in the examples and benches are now
+  `text::parse_i32(…) ?? N` (`parse_i64` in `jumps`).
+
 ## [0.0.732] — 2026-10-10
 
 **A list written in numbers has one open number for its elements** (ADR-285

@@ -13,11 +13,12 @@
 // `user_parallelism = no` in both, which is the point: before D10 this program
 // had no overlap to measure there at all.
 use std::cli
+use std::text
 use std::fs
 
 fn main() throws {
     let runden = cli::args().nth(1) ?? "200000"
-    let n: i32 = runden.parse() catch { 200000 }
+    let n = text::parse_i32(runden) ?? 200000
     let mut gesamt = 0
     for _runde in 0..<n {
         let a = fs::read_to_string("eins.txt", fs::Root::Anywhere) catch { "" }
