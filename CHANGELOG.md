@@ -8,6 +8,13 @@ or the specification. A change only to the guide, the notes, the README, the
 website, the tests, the examples or the tooling around them raises nothing and
 has no heading here; `CLAUDE.md` draws the line.
 
+## [0.0.744] — 2026-10-10
+
+**More of the toolchain is Nikaia**
+- `parser`: a number as the grammar reads it - the four spellings, the separator,
+  a scale, and every refusal - is `tools/parse_numbers.nika`; the interpreter
+  `nikaia interpret` is `tools/interpreter.nika` (ADR-294, #125).
+
 ## [0.0.743] — 2026-10-10
 
 **More of the toolchain is Nikaia** (ADR-294, #125).

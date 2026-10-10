@@ -1,0 +1,385 @@
+// crates/nikaia-std/src/tools/parse_numbers.nika
+//
+// **A number as the parser reads it** (Part I 2.2, ADR-285 D16, ADR-322): the
+// four spellings, the separator, the scale `K M G T P` and `Ki Mi Gi Ti Pi`,
+// and every way a number is refused. Moved from the compiler's `parser`
+// (ADR-294, #125); the grammar's input and the error type stay Rust, and hand
+// this the characters in front of the caret.
+
+/// What was read at the caret.
+pub enum Number {
+    /// Not a number here: the alternative that wanted one says so in the
+    /// ordinary way.
+    Not,
+    /// A number that is wrong; the caret goes on `consumed` bytes in, at the
+    /// character that is wrong.
+    Refused { message: String, consumed: i64 },
+    /// The number, its magnitude and sign, and the bytes it took.
+    Taken { magnitude: u64, negative: bool, consumed: i64 },
+}
+
+/// A scale after a decimal whole number's digits: what it multiplies by and
+/// how many characters it takes.
+pub struct Scale {
+    pub by: u64,
+    pub len: i64,
+}
+
+// The value of a digit in the radix, or -1.
+fn digit_of(ch: scalar, radix: i64) -> i64 {
+    let mut d = -1
+    if ch >= '0' && ch <= '9' {
+        d = (ch as i64) - ('0' as i64)
+    } else if ch >= 'a' && ch <= 'f' {
+        d = (ch as i64) - ('a' as i64) + 10
+    } else if ch >= 'A' && ch <= 'F' {
+        d = (ch as i64) - ('A' as i64) + 10
+    }
+    if d >= radix {
+        return -1
+    }
+    return d
+}
+
+fn an_ascii_digit(ch: scalar) -> bool {
+    return ch >= '0' && ch <= '9'
+}
+
+fn an_ascii_word(ch: scalar) -> bool {
+    return (ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || ch == '_'
+}
+
+fn an_ascii_alphanumeric(ch: scalar) -> bool {
+    return an_ascii_word(ch) && ch != '_'
+}
+
+// 10^3 to 10^15 / 2^10 to 2^50 are the powers 1 to 5 of `K M G T P`; 0 is a
+// letter that is none of them.
+fn scale_power(ch: scalar) -> i64 {
+    if ch == 'K' {
+        return 1
+    }
+    if ch == 'M' {
+        return 2
+    }
+    if ch == 'G' {
+        return 3
+    }
+    if ch == 'T' {
+        return 4
+    }
+    if ch == 'P' {
+        return 5
+    }
+    return 0
+}
+
+/// A scale at `from`, or none where a name goes on (`1Gx` is a number beside a
+/// name).
+fn scale_at(c: ref Array[scalar], from: i64) -> Scale? {
+    if from >= c.len() {
+        return null
+    }
+    let power = scale_power(c[from])
+    if power == 0 {
+        return null
+    }
+    let mut base: u64 = 1000
+    let mut len = 1
+    if from + 1 < c.len() && c[from + 1] == 'i' {
+        base = 1024
+        len = 2
+    }
+    if from + len < c.len() && an_ascii_word(c[from + len]) {
+        return null
+    }
+    let mut by: u64 = 1
+    let mut turns = 0
+    while turns < power {
+        by = by * base
+        turns += 1
+    }
+    return Scale { by: by, len: len }
+}
+
+/// An exponent written `E`, which is not one: how many characters `E5`, `E-4`
+/// or `E+2` take, or 0.
+fn upper_exponent(c: ref Array[scalar], from: i64) -> i64 {
+    if from >= c.len() || c[from] != 'E' {
+        return 0
+    }
+    let mut sign = 0
+    if from + 1 < c.len() && (c[from + 1] == '+' || c[from + 1] == '-') {
+        sign = 1
+    }
+    let mut digits = 0
+    while from + 1 + sign + digits < c.len() && an_ascii_digit(c[from + 1 + sign + digits]) {
+        digits += 1
+    }
+    if digits == 0 {
+        return 0
+    }
+    return 1 + sign + digits
+}
+
+/// **What may not follow a float's digits**: a scale, which stands on a whole
+/// number, and an exponent written `E`. The refusal's words, or `null` when
+/// neither is there.
+pub fn float_end(text: ref String) -> String? {
+    let c: Vec[scalar] = text.chars().collect()
+    let scale = scale_at(c, 0)
+    if scale != null {
+        let found = scale ?? return null
+        return f"a scale like `{slice(c, 0, found.len)}` stands on a whole number, not on a float"
+    }
+    let len = upper_exponent(c, 0)
+    if len > 0 {
+        return f"an exponent is written with a lower-case `e`: `{slice(c, 0, len).replace("E", "e")}`"
+    }
+    return null
+}
+
+/// A number's magnitude times a small factor, in decimal, so a product past
+/// every integer type can still be said.
+fn times(digits: ref String, by: u64) -> String {
+    let d: Vec[scalar] = digits.chars().collect()
+    let mut out: Vec[u64] = []
+    let mut carry: u64 = 0
+    let mut k = d.len()
+    while k > 0 {
+        k -= 1
+        let here = (digit_of(d[k], 10) as u64) * by + carry
+        out.push(here % 10)
+        carry = here / 10
+    }
+    while carry > 0 {
+        out.push(carry % 10)
+        carry = carry / 10
+    }
+    let mut text: String = ""
+    let mut at = out.len()
+    while at > 0 {
+        at -= 1
+        if text.len() == 0 && out[at] == 0 {
+            continue
+        }
+        text.push(((out[at] + ('0' as u64)) as u8) as scalar)
+    }
+    if text.len() == 0 {
+        return "0"
+    }
+    return text
+}
+
+// Whether the digits, without leading zeros, say a number past the limit's.
+fn past(digits: ref String, limit: ref String) -> bool {
+    if digits.len() != limit.len() {
+        return digits.len() > limit.len()
+    }
+    let a: Vec[scalar] = digits.chars().collect()
+    let b: Vec[scalar] = limit.chars().collect()
+    for k in 0..<a.len() {
+        if a[k] != b[k] {
+            return a[k] > b[k]
+        }
+    }
+    return false
+}
+
+fn without_leading_zeros(digits: ref String) -> String {
+    let d: Vec[scalar] = digits.chars().collect()
+    let mut at = 0
+    while at + 1 < d.len() && d[at] == '0' {
+        at += 1
+    }
+    return slice(d, at, d.len())
+}
+
+fn magnitude_of(digits: ref String) -> u64 {
+    let mut n: u64 = 0
+    for ch in digits.chars() {
+        n = n * 10 + (digit_of(ch, 10) as u64)
+    }
+    return n
+}
+
+// The text for a refusal: this number is too big for the integer types.
+fn too_big() -> String {
+    return "this number is too big: the largest integer types are `u64` and `i64`"
+}
+
+/// **Part I 2.2's number**, read from the characters in front of the caret:
+/// `255`, `1_000_000`, `0xFF`, `0b1010` and `0o17`, with its `-` where
+/// `signed` says it is written directly against the digits. The separator is
+/// not in the value (D3); the radix is a spelling (D2); a scale spells the
+/// value (ADR-322); a refusal carries the caret to the character that is wrong.
+pub fn number_at(text: ref String, signed: bool) -> Number {
+    let all: Vec[scalar] = text.chars().collect()
+    let mut c: Vec[scalar] = []
+    let mut first = 0
+    if signed {
+        if all.len() < 2 || all[0] != '-' || !an_ascii_digit(all[1]) {
+            return Number::Not
+        }
+        first = 1
+    }
+    for k in first..<all.len() {
+        c.push(all[k])
+    }
+    let mut radix = 10
+    let mut prefix = 0
+    if c.len() >= 2 && c[0] == '0' {
+        if c[1] == 'x' {
+            radix = 16
+            prefix = 2
+        } else if c[1] == 'b' {
+            radix = 2
+            prefix = 2
+        } else if c[1] == 'o' {
+            radix = 8
+            prefix = 2
+        }
+    }
+    let mut value: String = ""
+    let mut at = prefix
+    let mut after_separator = false
+    let mut wrong: String = ""
+    while at < c.len() {
+        if digit_of(c[at], radix) >= 0 {
+            value.push(c[at])
+            after_separator = false
+            at += 1
+            continue
+        }
+        if c[at] == '_' {
+            if value.len() == 0 || after_separator {
+                wrong = "an underscore in a number goes between two digits, like `1_000_000`"
+                break
+            }
+            after_separator = true
+            at += 1
+            continue
+        }
+        break
+    }
+    if wrong.len() == 0 {
+        if value.len() == 0 {
+            if prefix == 0 {
+                return Number::Not
+            }
+            wrong = "a number needs at least one digit after its prefix"
+        } else if after_separator {
+            wrong = "a number can't end in an underscore"
+        } else if prefix > 0 && at < c.len() && an_ascii_alphanumeric(c[at]) {
+            if radix == 2 {
+                wrong = "a `0b` number only has the digits `0` and `1`"
+            } else if radix == 8 {
+                wrong = "a `0o` number only has the digits `0` to `7`"
+            } else {
+                wrong = "a `0x` number only has the digits `0` to `9` and `a` to `f`"
+            }
+        }
+    }
+    // A float keeps the sign it always had.
+    if signed && radix == 10 && at < c.len() && (c[at] == '.' || c[at] == 'e' || c[at] == 'E') {
+        return Number::Not
+    }
+    let mut scale: Scale? = null
+    if wrong.len() == 0 && radix == 10 {
+        let mut fraction = 0
+        if at < c.len() && c[at] == '.' {
+            while at + 1 + fraction < c.len() && (an_ascii_digit(c[at + 1 + fraction]) || c[at + 1 + fraction] == '_') {
+                fraction += 1
+            }
+        }
+        let after = at + 1 + fraction
+        if fraction > 0 && (scale_at(c, after) != null || upper_exponent(c, after) > 0) {
+            wrong = "a float takes no scale and writes its exponent `e`"
+        } else if scale_at(c, at) != null {
+            scale = scale_at(c, at)
+        } else if upper_exponent(c, at) > 0 {
+            let len = upper_exponent(c, at)
+            let mut sign = ""
+            if signed {
+                sign = "-"
+            }
+            wrong = f"an exponent is written with a lower-case `e`: `{sign}{slice(c, 0, at)}{slice(c, at, at + len).replace("E", "e")}`"
+        }
+    }
+    let mut magnitude: u64 = 0
+    if wrong.len() == 0 {
+        // As wide as a `u64` holds, and as low as an `i64` does.
+        let mut limit = "18446744073709551615"
+        if signed {
+            limit = "9223372036854775808"
+        }
+        if radix == 10 {
+            let digits = without_leading_zeros(value)
+            let mut scale_by: u64 = 1
+            let mut scale_len = 0
+            if scale != null {
+                let found = scale ?? return Number::Not
+                scale_by = found.by
+                scale_len = found.len
+            }
+            // `i128` is the widest the message says.
+            let mut widest = "170141183460469231731687303715884105727"
+            if signed {
+                widest = "170141183460469231731687303715884105728"
+            }
+            if past(digits, widest) {
+                wrong = too_big()
+            } else {
+                let product = without_leading_zeros(times(digits, scale_by))
+                if !past(product, limit) {
+                    magnitude = magnitude_of(product)
+                } else if scale != null {
+                    let mut said = product.clone()
+                    if past(product, widest) {
+                        said = widest.clone()
+                    }
+                    let mut sign = ""
+                    if signed {
+                        sign = "-"
+                    }
+                    wrong = f"`{sign}{value}{slice(c, at, at + scale_len)}` is {sign}{said}, which is too big: the largest integer types are `u64` and `i64`"
+                } else {
+                    wrong = too_big()
+                }
+            }
+            if wrong.len() == 0 {
+                at += scale_len
+            }
+        } else {
+            let mut n: u64 = 0
+            let mut fits = true
+            for ch in value.chars() {
+                let d = digit_of(ch, radix) as u64
+                let times_radix = n.checked_mul(radix as u64)
+                if times_radix == null {
+                    fits = false
+                    break
+                }
+                let sum = (times_radix ?? 0).checked_add(d)
+                if sum == null {
+                    fits = false
+                    break
+                }
+                n = sum ?? 0
+            }
+            if fits && signed && n > 9223372036854775808 {
+                fits = false
+            }
+            if fits {
+                magnitude = n
+            } else {
+                wrong = too_big()
+            }
+        }
+    }
+    let consumed = at + first
+    if wrong.len() > 0 {
+        return Number::Refused { message: wrong, consumed: consumed }
+    }
+    return Number::Taken { magnitude: magnitude, negative: signed, consumed: consumed }
+}

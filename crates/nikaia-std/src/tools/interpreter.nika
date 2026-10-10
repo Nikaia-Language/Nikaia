@@ -1,0 +1,129 @@
+// crates/nikaia-std/src/tools/interpreter.nika
+//
+// **The Stage 0 interpreter**: `nikaia run` walks `main` and says what it
+// finds - a binding, a call to `println` or `log`, a loop walked once. Nothing
+// is evaluated. Moved from the compiler's `interpreter` (ADR-294, #125); it
+// hands back the lines it would print, and the compiler prints them. A tree
+// node's `Debug` text and an `f"…"`'s format string are the compiler's, and
+// come in as functions.
+
+/// Every line running the program's `main` prints, in order.
+pub fn run(items: ref Vec[Spanned[Item]], words: ref winnow_grammar::InternerContext, debug: fn(ref Expr) -> String sync, format_of: fn(ref Vec[FPart]) -> String sync) -> Vec[String] {
+    let mut out: Vec[String] = []
+    out.push("[Nikaia Kernel] Interpreter Init...")
+    // Entry point lookup: find 'main' function
+    for item in items {
+        match item.node {
+            Item::Fn { name, body, .. } => {
+                let called = name ?? continue
+                if words.resolve(called) == "main" {
+                    out.push("[Nikaia Kernel] Executing 'main'...")
+                    block(body, words, debug, format_of, out)
+                    return out
+                }
+            },
+            else => {},
+        }
+    }
+    out.push("[Nikaia Kernel] No main function found.")
+    return out
+}
+
+fn block(b: ref Block, words: ref winnow_grammar::InternerContext, debug: fn(ref Expr) -> String sync, format_of: fn(ref Vec[FPart]) -> String sync, mut out: Vec[String]) {
+    for stmt in b.stmts {
+        statement(stmt.node, words, debug, format_of, out)
+    }
+}
+
+fn statement(stmt: ref Stmt, words: ref winnow_grammar::InternerContext, debug: fn(ref Expr) -> String sync, format_of: fn(ref Vec[FPart]) -> String sync, mut out: Vec[String]) {
+    match stmt {
+        Stmt::Let { names, value, .. } => {
+            // In a real implementation, we would store the result in a scope map.
+            // For now, we just print the binding.
+            let mut bound: Vec[String] = []
+            for n in names {
+                bound.push(words.resolve(n).clone())
+            }
+            out.push(f"[Nikaia Runtime] Bind: {bound.join(", ")} = <evaluated>")
+            expression(value, words, debug, format_of, out)
+        },
+        Stmt::Comptime { name, value, .. } => {
+            out.push(f"[Nikaia Runtime] Bind: {words.resolve(name)} = <evaluated>")
+            expression(value, words, debug, format_of, out)
+        },
+        Stmt::Expr(e) => expression(e, words, debug, format_of, out),
+        Stmt::Assign { .. } => out.push("[Nikaia Runtime] Assignment (Skipped)"),
+        Stmt::Return(_) => out.push("[Nikaia Runtime] Return (Skipped)"),
+        Stmt::Break => out.push("[Nikaia Runtime] Break (Skipped)"),
+        Stmt::Continue => out.push("[Nikaia Runtime] Continue (Skipped)"),
+        Stmt::For { body, .. } => {
+            // No iteration yet: the loop body is walked once so that calls
+            // inside it are still visible.
+            out.push("[Nikaia Runtime] For loop (single pass)")
+            block(body, words, debug, format_of, out)
+        },
+        Stmt::While { body, .. } => {
+            // The same, and for the same reason: nothing here evaluates a
+            // condition, so repeating the body would repeat it forever.
+            out.push("[Nikaia Runtime] While loop (single pass)")
+            block(body, words, debug, format_of, out)
+        },
+    }
+}
+
+fn expression(e: ref Expr, words: ref winnow_grammar::InternerContext, debug: fn(ref Expr) -> String sync, format_of: fn(ref Vec[FPart]) -> String sync, mut out: Vec[String]) {
+    match e {
+        Expr::Call { func, args, .. } => {
+            // Simplified function resolution
+            match func {
+                Expr::Variable(name) => {
+                    if words.resolve(name) == "println" {
+                        printed(args, "", format_of, out)
+                        return
+                    }
+                    if words.resolve(name) == "log" {
+                        printed(args, "[LOG] ", format_of, out)
+                        return
+                    }
+                },
+                else => {},
+            }
+            out.push("[Nikaia Runtime] Call to unknown function")
+        },
+        Expr::Spawn { body, .. } => {
+            out.push("[Nikaia Runtime] Spawning Task (Async -> Sync Simulation)...")
+            // In Stage 1, this will use Tokio. For now, we execute inline.
+            // The body is usually an Expr::Block because of `spawn({ ... })` syntax.
+            match body {
+                Expr::Block(b) => block(b, words, debug, format_of, out),
+                else => expression(body, words, debug, format_of, out),
+            }
+        },
+        // Literals evaluate to themselves.
+        Expr::LitStr { .. } => {},
+        Expr::LitInterpolated { .. } => {},
+        // A `seq` block runs its statements in the order they were written,
+        // which is the only order this interpreter has ever had (ADR-292
+        // D7): nothing here overlaps anything, so `seq` asks for what it
+        // already does.
+        Expr::Block(b) => block(b, words, debug, format_of, out),
+        Expr::Dsl { target, .. } => out.push(f"[Nikaia Runtime] DSL Block '{words.resolve(target)}' (Skipped)"),
+        else => out.push(f"[Nikaia Runtime] Eval: {debug(e)}"),
+    }
+}
+
+// What `println` and `log` say for each argument: `lead` before a text, and
+// `println` says `<expression>` for anything else where `log` says nothing.
+fn printed(args: ref Vec[Expr], lead: ref String, format_of: fn(ref Vec[FPart]) -> String sync, mut out: Vec[String]) {
+    for arg in args {
+        match arg {
+            Expr::LitStr { text, .. } => out.push(f"{lead}{text}"),
+            Expr::LitInterpolated { parts } => out.push(f"{lead}{format_of(parts)}"),
+            else => {
+                if lead.len() == 0 {
+                    out.push("<expression>")
+                }
+            },
+        }
+    }
+}

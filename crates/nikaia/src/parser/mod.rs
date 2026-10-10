@@ -181,72 +181,42 @@ fn guarded(jump: ast::Stmt, cond: ast::Expr, span: ast::Span) -> ast::Stmt {
     })
 }
 
-/// **A scale after a decimal whole number's digits**
-/// ([ADR-322](../../../docs/specification/adr/adr-322.md)): `K M G T P` are 10³
-/// to 10¹⁵, `Ki Mi Gi Ti Pi` 2¹⁰ to 2⁵⁰. What it multiplies by and how many
-/// bytes it takes; none where a name goes on (`1Gx` is a number beside a name).
-fn scale_at(rest: &[u8]) -> Option<(i128, usize)> {
-    let power = match rest.first()? {
-        b'K' => 1,
-        b'M' => 2,
-        b'G' => 3,
-        b'T' => 4,
-        b'P' => 5,
-        _ => return None,
-    };
-    let (base, len) = match rest.get(1) {
-        Some(b'i') => (1024i128, 2),
-        _ => (1000i128, 1),
-    };
-    if rest
-        .get(len)
-        .is_some_and(|c| c.is_ascii_alphanumeric() || *c == b'_')
-    {
-        return None;
+/// The characters in front of the caret that a number, a scale or an exponent
+/// can be made of - what `tools/parse_numbers.nika` is handed.
+fn number_prefix(bytes: &[u8]) -> String {
+    let mut end = 0;
+    while end < bytes.len() {
+        let c = bytes[end];
+        let sign_of_exponent = (c == b'+' || c == b'-') && end > 0 && bytes[end - 1] == b'E';
+        let leading_sign = c == b'-' && end == 0;
+        if !(c.is_ascii_alphanumeric()
+            || c == b'_'
+            || c == b'.'
+            || sign_of_exponent
+            || leading_sign)
+        {
+            break;
+        }
+        end += 1;
     }
-    Some((base.pow(power), len))
-}
-
-/// **An exponent written `E`**, which is not one: how many bytes `E5`,
-/// `E-4` or `E+2` take.
-fn upper_exponent(rest: &[u8]) -> Option<usize> {
-    let sign = match rest {
-        [b'E', b'+' | b'-', ..] => 1,
-        [b'E', ..] => 0,
-        _ => return None,
-    };
-    let digits = rest[1 + sign..]
-        .iter()
-        .take_while(|c| c.is_ascii_digit())
-        .count();
-    (digits > 0).then_some(1 + sign + digits)
+    String::from_utf8_lossy(&bytes[..end]).into_owned()
 }
 
 /// **What may not follow a float's digits**
 /// ([ADR-322](../../../docs/specification/adr/adr-322.md)): a scale, which
 /// stands on a whole number, and an exponent written `E`. Consumes nothing
-/// when neither is there.
+/// when neither is there. The words are `tools/parse_numbers.nika`'s.
 fn float_end<'a, S>(i: &mut ParseInput<'a, S>) -> Result<(), ParseError>
 where
     S: Clone + std::fmt::Debug,
 {
-    let bytes = winnow::stream::AsBStr::as_bstr(i);
-    let message = if let Some((_, len)) = scale_at(bytes) {
-        format!(
-            "a scale like `{}` stands on a whole number, not on a float",
-            String::from_utf8_lossy(&bytes[..len])
-        )
-    } else if let Some(len) = upper_exponent(bytes) {
-        format!(
-            "an exponent is written with a lower-case `e`: `{}`",
-            String::from_utf8_lossy(&bytes[..len]).replace('E', "e")
-        )
-    } else {
-        return Ok(());
-    };
-    Err(ParseError::from_input(i)
-        .with_message(message)
-        .with_priority(winnow_grammar::error::PRIO_STRUCTURAL))
+    let text = number_prefix(winnow::stream::AsBStr::as_bstr(i));
+    match nikaia_std::tools::parse_numbers::float_end(&text) {
+        Some(message) => Err(ParseError::from_input(i)
+            .with_message(message)
+            .with_priority(winnow_grammar::error::PRIO_STRUCTURAL)),
+        None => Ok(()),
+    }
 }
 
 /// Part I 2.2's number, in the four spellings
@@ -293,173 +263,33 @@ where
     number_at(i, true)
 }
 
-/// The two above, which differ in one byte at the front.
+/// The two above, which differ in one byte at the front. What a number is,
+/// and every way it is refused, is `tools/parse_numbers.nika`; this hands it
+/// the characters and moves the caret to where it says.
 fn number_at<'a, S>(i: &mut ParseInput<'a, S>, signed: bool) -> Result<i128, ParseError>
 where
     S: Clone + std::fmt::Debug,
 {
-    let bytes = winnow::stream::AsBStr::as_bstr(i);
-    // **The sign is part of the literal or this rule does not apply**, and the
-    // second digit-check is what keeps `-x` and `- 5` out: a `-` with no digit
-    // against it is the unary operator.
-    let bytes = match signed {
-        true => match bytes {
-            [b'-', rest @ ..] if rest.first().is_some_and(|c| c.is_ascii_digit()) => rest,
-            _ => return Err(ParseError::from_input(i).add_expected("digits")),
-        },
-        false => bytes,
-    };
-    // **Lower-case, and only at the front** (D1). `0X` and `0B` are not second
-    // spellings: one form per thing is the rule this language keeps.
-    let (radix, prefix) = match bytes {
-        [b'0', b'x', ..] => (16u32, 2),
-        [b'0', b'b', ..] => (2u32, 2),
-        [b'0', b'o', ..] => (8u32, 2),
-        _ => (10u32, 0),
-    };
-    let mut value = String::new();
-    let mut at = prefix;
-    let mut after_separator = false;
-    let mut wrong = None;
-    while at < bytes.len() {
-        let c = bytes[at] as char;
-        if c.is_digit(radix) {
-            value.push(c);
-            after_separator = false;
-            at += 1;
-            continue;
+    use nikaia_std::tools::parse_numbers::Number;
+    let text = number_prefix(winnow::stream::AsBStr::as_bstr(i));
+    match nikaia_std::tools::parse_numbers::number_at(&text, signed) {
+        Number::Not => Err(ParseError::from_input(i).add_expected("digits")),
+        Number::Taken {
+            magnitude,
+            negative,
+            consumed,
+        } => {
+            let _ = winnow::stream::Stream::next_slice(i, consumed as usize);
+            Ok(ast::int_value(magnitude, negative))
         }
-        // **An underscore stands between digits and nowhere else** (D1): not
-        // beside the prefix, not doubled, not last.
-        if c == '_' {
-            if value.is_empty() || after_separator {
-                wrong = Some(
-                    "an underscore in a number goes between two digits, like `1_000_000`".into(),
-                );
-                break;
-            }
-            after_separator = true;
-            at += 1;
-            continue;
+        Number::Refused { message, consumed } => {
+            // **The caret goes on the character that is wrong**: a
+            // diagnostic is ranked by how far the parse got.
+            let _ = winnow::stream::Stream::next_slice(i, consumed as usize);
+            Err(ParseError::from_input(i)
+                .with_message(message)
+                .with_priority(winnow_grammar::error::PRIO_STRUCTURAL))
         }
-        break;
-    }
-    if wrong.is_none() {
-        if value.is_empty() {
-            // A prefix with no digits is a refusal, because `0x` is nothing
-            // else; no digits at all is simply not a number here, and the
-            // alternative that wanted one says so in the ordinary way.
-            if prefix == 0 {
-                return Err(ParseError::from_input(i).add_expected("digits"));
-            }
-            wrong = Some("a number needs at least one digit after its prefix".into());
-        } else if after_separator {
-            wrong = Some("a number can't end in an underscore".into());
-        } else if prefix > 0 && at < bytes.len() && (bytes[at] as char).is_ascii_alphanumeric() {
-            // **A digit the radix does not have** — `0b1210`, `0o19` — is the
-            // misparse this record is about, one prefix along: without this the
-            // number ends at the bad digit and what follows is a second number
-            // nobody wrote.
-            wrong = Some(
-                match radix {
-                    2 => "a `0b` number only has the digits `0` and `1`",
-                    8 => "a `0o` number only has the digits `0` to `7`",
-                    _ => "a `0x` number only has the digits `0` to `9` and `a` to `f`",
-                }
-                .into(),
-            );
-        }
-    }
-    // **A float keeps the sign it always had.** `-1.16e+00` and `-1..5` both
-    // begin with digits and are not integers, and the rules that read them are
-    // tried after this one — so a signed match here would take the `-1` and
-    // leave the rest stranded, which is what `examples/n-body/src/main.nika` said the
-    // first time this ran. Refusing hands the `-` back to the unary operator
-    // and the number to whichever rule it belongs to.
-    if signed && radix == 10 && matches!(bytes.get(at), Some(b'.' | b'e' | b'E')) {
-        return Err(ParseError::from_input(i).add_expected("digits"));
-    }
-    // **A scale spells the value** ([ADR-322](../../../docs/specification/adr/adr-322.md)):
-    // `1G` is `1000000000` and `4Gi` is `4294967296`, on a decimal whole
-    // number and nowhere else. **An exponent is written `e`**, and `1E5` is
-    // refused with the spelling it means.
-    let mut scale: Option<(i128, usize)> = None;
-    if wrong.is_none() && radix == 10 {
-        let written = &bytes[..at];
-        // **A float `float_end` stopped**: `1.5G` and `1.5E-4` are refused
-        // here too, or they would read as `1` and a field `.5`. Its message,
-        // further along, is the one shown.
-        let fraction = match bytes.get(at) {
-            Some(b'.') => bytes[at + 1..]
-                .iter()
-                .take_while(|c| c.is_ascii_digit() || **c == b'_')
-                .count(),
-            _ => 0,
-        };
-        let after = at + 1 + fraction;
-        if fraction > 0
-            && (scale_at(&bytes[after..]).is_some() || upper_exponent(&bytes[after..]).is_some())
-        {
-            wrong = Some("a float takes no scale and writes its exponent `e`".into());
-        } else if let Some((by, len)) = scale_at(&bytes[at..]) {
-            scale = Some((by, len));
-        } else if let Some(len) = upper_exponent(&bytes[at..]) {
-            wrong = Some(format!(
-                "an exponent is written with a lower-case `e`: `{}{}`",
-                if signed { "-" } else { "" },
-                String::from_utf8_lossy(written).to_string()
-                    + &String::from_utf8_lossy(&bytes[at..at + len]).replace('E', "e")
-            ));
-        }
-    }
-    // **The sign goes into the text the radix parser reads**, rather than being
-    // applied afterwards: `-9223372036854775808` parses and `-(9223372036854775808)`
-    // does not, which is the one number this rule exists for.
-    if signed {
-        value.insert(0, '-');
-    }
-    let number = match wrong {
-        Some(_) => 0,
-        // **As wide as a `u64` holds** ([ADR-285](../../../docs/specification/adr/adr-285.md)
-        // D2), and as low as an `i64` does: which of the two a number is, is
-        // asked where a type stands beside it (`NK1116`).
-        None => match i128::from_str_radix(&value, radix)
-            .map(|number| number.saturating_mul(scale.map_or(1, |(by, _)| by)))
-        {
-            Ok(number) if number <= u64::MAX as i128 && number >= i64::MIN as i128 => number,
-            Ok(number) if scale.is_some() => {
-                let (_, len) = scale.expect("just asked");
-                wrong = Some(format!(
-                    "`{value}{}` is {number}, which is too big: the largest integer types are \
-                     `u64` and `i64`",
-                    String::from_utf8_lossy(&bytes[at..at + len])
-                ));
-                0
-            }
-            _ => {
-                wrong = Some(
-                    "this number is too big: the largest integer types are `u64` and `i64`".into(),
-                );
-                0
-            }
-        },
-    };
-    if wrong.is_none()
-        && let Some((_, len)) = scale
-    {
-        at += len;
-    }
-    // **The caret goes on the character that is wrong**, and getting there
-    // means walking to it: a diagnostic is ranked by how far the parse got, so
-    // a refusal built at the start of the literal loses to the float rule's
-    // failure further along — which is a true sentence about this parser and no
-    // help at all to a reader.
-    let _ = winnow::stream::Stream::next_slice(i, at + usize::from(signed));
-    match wrong {
-        Some(message) => Err(ParseError::from_input(i)
-            .with_message(message)
-            .with_priority(winnow_grammar::error::PRIO_STRUCTURAL)),
-        None => Ok(number),
     }
 }
 

@@ -7869,6 +7869,107 @@ pub fn integer_shifted(a: &Integer, b: &Integer, left: bool) -> Option<Integer> 
 }
 
 
+// --- interpreter.nika ---
+
+pub fn run(items: &[Spanned<Item>], words: &winnow_grammar::InternerContext, debug: &impl Fn(&Expr) -> String, format_of: &impl Fn(&[FPart]) -> String) -> Vec<String> {
+    let mut out: Vec<String> = vec![];
+    out.push(String::from("[Nikaia Kernel] Interpreter Init..."));
+    for item in items.iter() {
+        match &item.node {
+            Item::Fn { name, body, .. } => {
+                let name = *name;
+                let called = match name { Some(__nikaia_value) => __nikaia_value, None => continue };
+                if words.resolve(called) == "main" {
+                    out.push(String::from("[Nikaia Kernel] Executing 'main'..."));
+                    block(body, words, debug, format_of, &mut out);
+                    return out;
+                }
+            },
+            _ => { },
+        }
+    }
+    out.push(String::from("[Nikaia Kernel] No main function found."));
+    out
+}
+
+fn block(b: &Block, words: &winnow_grammar::InternerContext, debug: &impl Fn(&Expr) -> String, format_of: &impl Fn(&[FPart]) -> String, out: &mut Vec<String>) { for stmt in b.stmts.iter() { statement(&stmt.node, words, debug, format_of, out); } }
+
+fn statement(stmt: &Stmt, words: &winnow_grammar::InternerContext, debug: &impl Fn(&Expr) -> String, format_of: &impl Fn(&[FPart]) -> String, out: &mut Vec<String>) {
+    match stmt {
+        Stmt::Let { names, value, .. } => {
+            let mut bound: Vec<String> = vec![];
+            for n in names.iter() { bound.push(words.resolve(*n).to_owned()); }
+            out.push(format!("[Nikaia Runtime] Bind: {} = <evaluated>", bound.join(", ")));
+            expression(value, words, debug, format_of, out);
+        },
+        Stmt::Comptime { name, value, .. } => {
+            let name = *name;
+            out.push(format!("[Nikaia Runtime] Bind: {} = <evaluated>", words.resolve(name)));
+            expression(value, words, debug, format_of, out);
+        },
+        Stmt::Expr(e) => expression(e, words, debug, format_of, out),
+        Stmt::Assign { .. } => out.push(String::from("[Nikaia Runtime] Assignment (Skipped)")),
+        Stmt::Return(_) => out.push(String::from("[Nikaia Runtime] Return (Skipped)")),
+        Stmt::Break => out.push(String::from("[Nikaia Runtime] Break (Skipped)")),
+        Stmt::Continue => out.push(String::from("[Nikaia Runtime] Continue (Skipped)")),
+        Stmt::For { body, .. } => {
+            out.push(String::from("[Nikaia Runtime] For loop (single pass)"));
+            block(body, words, debug, format_of, out);
+        },
+        Stmt::While { body, .. } => {
+            out.push(String::from("[Nikaia Runtime] While loop (single pass)"));
+            block(body, words, debug, format_of, out);
+        },
+    }
+}
+
+fn expression(e: &Expr, words: &winnow_grammar::InternerContext, debug: &impl Fn(&Expr) -> String, format_of: &impl Fn(&[FPart]) -> String, out: &mut Vec<String>) {
+    match e {
+        Expr::Call { func, args, .. } => {
+            let func = nikaia_std::boxed::open(func);
+            match func {
+                Expr::Variable(name) => {
+                    let name = *name;
+                    if words.resolve(name) == "println" {
+                        printed(args, "", format_of, out);
+                        return;
+                    }
+                    if words.resolve(name) == "log" {
+                        printed(args, "[LOG] ", format_of, out);
+                        return;
+                    }
+                },
+                _ => { },
+            }
+            out.push(String::from("[Nikaia Runtime] Call to unknown function"));
+        },
+        Expr::Spawn { body, .. } => {
+            let body = nikaia_std::boxed::open(body);
+            out.push(String::from("[Nikaia Runtime] Spawning Task (Async -> Sync Simulation)..."));
+            match body {
+                Expr::Block(b) => block(b, words, debug, format_of, out),
+                _ => expression(body, words, debug, format_of, out),
+            }
+        },
+        Expr::LitStr { .. } => { },
+        Expr::LitInterpolated { .. } => { },
+        Expr::Block(b) => block(b, words, debug, format_of, out),
+        Expr::Dsl { target, .. } => { let target = *target; out.push(format!("[Nikaia Runtime] DSL Block '{}' (Skipped)", words.resolve(target))) },
+        _ => out.push(format!("[Nikaia Runtime] Eval: {}", debug(e))),
+    }
+}
+
+fn printed(args: &[Expr], lead: &str, format_of: &impl Fn(&[FPart]) -> String, out: &mut Vec<String>) {
+    for arg in args.iter() {
+        match arg {
+            Expr::LitStr { text, .. } => out.push(format!("{}{}", lead, text)),
+            Expr::LitInterpolated { parts } => out.push(format!("{}{}", lead, format_of(parts))),
+            _ => { if lead.is_empty() { out.push(String::from("<expression>")); } },
+        }
+    }
+}
+
+
 // --- keep.nika ---
 
 #[derive(Debug, Clone, PartialEq)]
@@ -11710,6 +11811,251 @@ pub fn coalesce_fallback_note(found: &str, before: &str) -> Vec<String> {
 pub fn let_names_note(found: &str, before: &str) -> Vec<String> {
     if found != "(" || !(before.contains("let (") || before.contains("let mut (")) { return vec![]; }
     vec![String::from("A `let` binds one name, or a flat list of names like `let (tx, rx) = …`. A tuple inside a tuple can't be taken apart here."), String::from("Bind the outer parts to one name each, and read the inner parts from those names.")]
+}
+
+
+// --- parse_numbers.nika ---
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Number {
+    Not,
+    Refused { message: String, consumed: i64 },
+    Taken { magnitude: u64, negative: bool, consumed: i64 },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Scale {
+    pub by: u64,
+    pub len: i64,
+}
+
+fn digit_of(ch: scalar, radix: i64) -> i64 {
+    let mut d: i64 = -1;
+    if ch >= '0' && ch <= '9' { d = ch as i64 - '0' as i64; } else if ch >= 'a' && ch <= 'f' { d = ch as i64 - 'a' as i64 + 10; } else if ch >= 'A' && ch <= 'F' { d = ch as i64 - 'A' as i64 + 10; }
+    if d >= radix { return -1; }
+    d
+}
+
+fn an_ascii_digit(ch: scalar) -> bool { ch >= '0' && ch <= '9' }
+
+fn an_ascii_word(ch: scalar) -> bool { ch >= '0' && ch <= '9' || ch >= 'a' && ch <= 'z' || ch >= 'A' && ch <= 'Z' || ch == '_' }
+
+fn an_ascii_alphanumeric(ch: scalar) -> bool { an_ascii_word(ch) && ch != '_' }
+
+fn scale_power(ch: scalar) -> i64 {
+    if ch == 'K' { return 1; }
+    if ch == 'M' { return 2; }
+    if ch == 'G' { return 3; }
+    if ch == 'T' { return 4; }
+    if ch == 'P' { return 5; }
+    0
+}
+
+fn scale_at(c: &[scalar], from: i64) -> Option<Scale> {
+    if from >= c.len() as i64 { return None; }
+    let power = scale_power(*nikaia_std::index::get(&c, nikaia_std::index::at(from)));
+    if power == 0 { return None; }
+    let mut base: u64 = 1000u64;
+    let mut len: i64 = 1;
+    if from + 1 < c.len() as i64 && *nikaia_std::index::get(&c, nikaia_std::index::at(from + 1)) == 'i' {
+        base = 1024;
+        len = 2;
+    }
+    if from + len < c.len() as i64 && an_ascii_word(*nikaia_std::index::get(&c, nikaia_std::index::at(from + len))) { return None; }
+    let mut by: u64 = 1u64;
+    let mut turns: i64 = 0;
+    while turns < power {
+        by = by * base;
+        turns += 1;
+    }
+    Some(Scale { by, len })
+}
+
+fn upper_exponent(c: &[scalar], from: i64) -> i64 {
+    if from >= c.len() as i64 || *nikaia_std::index::get(&c, nikaia_std::index::at(from)) != 'E' { return 0; }
+    let mut sign: i64 = 0;
+    if from + 1 < c.len() as i64 && (*nikaia_std::index::get(&c, nikaia_std::index::at(from + 1)) == '+' || *nikaia_std::index::get(&c, nikaia_std::index::at(from + 1)) == '-') { sign = 1; }
+    let mut digits: i64 = 0;
+    while from + 1 + sign + digits < c.len() as i64 && an_ascii_digit(*nikaia_std::index::get(&c, nikaia_std::index::at(from + 1 + sign + digits))) { digits += 1; }
+    if digits == 0 { return 0; }
+    1 + sign + digits
+}
+
+pub fn float_end(text: &str) -> Option<String> {
+    let c: Vec<scalar> = nikaia_std::list::chars(text.chars());
+    let scale = scale_at(&c, 0);
+    if scale.is_some() {
+        let found = match scale { Some(__nikaia_value) => __nikaia_value, None => return None };
+        return Some(format!("a scale like `{}` stands on a whole number, not on a float", slice(&c, 0, found.len)));
+    }
+    let len = upper_exponent(&c, 0);
+    if len > 0 { return Some(format!("an exponent is written with a lower-case `e`: `{}`", slice(&c, 0, len).replace("E", "e"))); }
+    None
+}
+
+fn times(digits: &str, by: u64) -> String {
+    let d: Vec<scalar> = nikaia_std::list::chars(digits.chars());
+    let mut out: Vec<u64> = vec![];
+    let mut carry: u64 = 0u64;
+    let mut k = d.len() as i64;
+    while k > 0 {
+        k -= 1;
+        let here = u64::try_from(digit_of(*nikaia_std::index::get(&d, nikaia_std::index::at(k)), 10)).unwrap_or_else(|_| panic!("the value does not fit in an `u64`")) * by + carry;
+        out.push(here % 10u64);
+        carry = here / 10u64;
+    }
+    while carry > 0u64 {
+        out.push(carry % 10u64);
+        carry = carry / 10u64;
+    }
+    let mut text: String = String::from("");
+    let mut at = out.len() as i64;
+    while at > 0 {
+        at -= 1;
+        if text.is_empty() && *nikaia_std::index::get(&out, nikaia_std::index::at(at)) == 0u64 { continue; }
+        text.push((u8::try_from(*nikaia_std::index::get(&out, nikaia_std::index::at(at)) + '0' as u64).unwrap_or_else(|_| panic!("the value does not fit in an `u8`"))) as scalar);
+    }
+    if text.is_empty() { return String::from("0"); }
+    text
+}
+
+fn past(digits: &str, limit: &str) -> bool {
+    if (digits.len() as i64) != limit.len() as i64 { return (digits.len() as i64) > limit.len() as i64; }
+    let a: Vec<scalar> = nikaia_std::list::chars(digits.chars());
+    let b: Vec<scalar> = nikaia_std::list::chars(limit.chars());
+    for k in 0..a.len() as i64 { if *nikaia_std::index::get(&a, (k) as usize) != *nikaia_std::index::get(&b, (k) as usize) { return *nikaia_std::index::get(&a, (k) as usize) > *nikaia_std::index::get(&b, (k) as usize); } }
+    false
+}
+
+fn without_leading_zeros(digits: &str) -> String {
+    let d: Vec<scalar> = nikaia_std::list::chars(digits.chars());
+    let mut at: i64 = 0;
+    while at + 1 < d.len() as i64 && *nikaia_std::index::get(&d, nikaia_std::index::at(at)) == '0' { at += 1; }
+    slice(&d, at, d.len() as i64)
+}
+
+fn magnitude_of(digits: &str) -> u64 {
+    let mut n: u64 = 0u64;
+    for ch in digits.chars() { n = n * 10u64 + u64::try_from(digit_of(ch, 10)).unwrap_or_else(|_| panic!("the value does not fit in an `u64`")); }
+    n
+}
+
+fn too_big() -> String { String::from("this number is too big: the largest integer types are `u64` and `i64`") }
+
+pub fn number_at(text: &str, signed: bool) -> Number {
+    let all: Vec<scalar> = nikaia_std::list::chars(text.chars());
+    let mut c: Vec<scalar> = vec![];
+    let mut first: i64 = 0;
+    if signed {
+        if all.len() < 2 || *nikaia_std::index::get(&all, 0) != '-' || !an_ascii_digit(*nikaia_std::index::get(&all, 1)) { return Number::Not; }
+        first = 1;
+    }
+    for k in first..all.len() as i64 { c.push(*nikaia_std::index::get(&all, nikaia_std::index::at(k))); }
+    let mut radix: i64 = 10;
+    let mut prefix: i64 = 0;
+    if c.len() >= 2 && *nikaia_std::index::get(&c, 0) == '0' {
+        if *nikaia_std::index::get(&c, 1) == 'x' {
+            radix = 16;
+            prefix = 2;
+        } else if *nikaia_std::index::get(&c, 1) == 'b' {
+            radix = 2;
+            prefix = 2;
+        } else if *nikaia_std::index::get(&c, 1) == 'o' {
+            radix = 8;
+            prefix = 2;
+        }
+    }
+    let mut value: String = String::from("");
+    let mut at: i64 = prefix;
+    let mut after_separator = false;
+    let mut wrong: String = String::from("");
+    while at < c.len() as i64 {
+        if digit_of(*nikaia_std::index::get(&c, nikaia_std::index::at(at)), radix) >= 0 {
+            value.push(*nikaia_std::index::get(&c, nikaia_std::index::at(at)));
+            after_separator = false;
+            at += 1;
+            continue;
+        }
+        if *nikaia_std::index::get(&c, nikaia_std::index::at(at)) == '_' {
+            if value.is_empty() || after_separator {
+                wrong = String::from("an underscore in a number goes between two digits, like `1_000_000`");
+                break;
+            }
+            after_separator = true;
+            at += 1;
+            continue;
+        }
+        break;
+    }
+    if wrong.is_empty() {
+        if value.is_empty() {
+            if prefix == 0 { return Number::Not; }
+            wrong = String::from("a number needs at least one digit after its prefix");
+        } else if after_separator { wrong = String::from("a number can't end in an underscore"); } else if prefix > 0 && at < c.len() as i64 && an_ascii_alphanumeric(*nikaia_std::index::get(&c, nikaia_std::index::at(at))) { if radix == 2 { wrong = String::from("a `0b` number only has the digits `0` and `1`"); } else if radix == 8 { wrong = String::from("a `0o` number only has the digits `0` to `7`"); } else { wrong = String::from("a `0x` number only has the digits `0` to `9` and `a` to `f`"); } }
+    }
+    if signed && radix == 10 && at < c.len() as i64 && (*nikaia_std::index::get(&c, nikaia_std::index::at(at)) == '.' || *nikaia_std::index::get(&c, nikaia_std::index::at(at)) == 'e' || *nikaia_std::index::get(&c, nikaia_std::index::at(at)) == 'E') { return Number::Not; }
+    let mut scale: Option<Scale> = None;
+    if wrong.is_empty() && radix == 10 {
+        let mut fraction: i64 = 0;
+        if at < c.len() as i64 && *nikaia_std::index::get(&c, nikaia_std::index::at(at)) == '.' { while at + 1 + fraction < c.len() as i64 && (an_ascii_digit(*nikaia_std::index::get(&c, nikaia_std::index::at(at + 1 + fraction))) || *nikaia_std::index::get(&c, nikaia_std::index::at(at + 1 + fraction)) == '_') { fraction += 1; } }
+        let after: i64 = at + 1 + fraction;
+        if fraction > 0 && (scale_at(&c, after).is_some() || upper_exponent(&c, after) > 0) { wrong = String::from("a float takes no scale and writes its exponent `e`"); } else if scale_at(&c, at).is_some() { scale = scale_at(&c, at); } else if upper_exponent(&c, at) > 0 {
+            let len = upper_exponent(&c, at);
+            let mut sign = "";
+            if signed { sign = "-"; }
+            wrong = format!("an exponent is written with a lower-case `e`: `{}{}{}`", sign, slice(&c, 0, at), slice(&c, at, at + len).replace("E", "e"));
+        }
+    }
+    let mut magnitude: u64 = 0u64;
+    if wrong.is_empty() {
+        let mut limit = "18446744073709551615";
+        if signed { limit = "9223372036854775808"; }
+        if radix == 10 {
+            let digits = without_leading_zeros(&value);
+            let mut scale_by: u64 = 1u64;
+            let mut scale_len: i64 = 0;
+            if scale.is_some() {
+                let found = match scale { Some(__nikaia_value) => __nikaia_value, None => return Number::Not };
+                scale_by = found.by;
+                scale_len = found.len;
+            }
+            let mut widest = "170141183460469231731687303715884105727";
+            if signed { widest = "170141183460469231731687303715884105728"; }
+            if past(&digits, widest) { wrong = too_big(); } else {
+                let product = without_leading_zeros(&times(&digits, scale_by));
+                if !past(&product, limit) { magnitude = magnitude_of(&product); } else if scale.is_some() {
+                    let mut said = product.to_owned();
+                    if past(&product, widest) { said = widest.to_owned(); }
+                    let mut sign = "";
+                    if signed { sign = "-"; }
+                    wrong = format!("`{}{}{}` is {}{}, which is too big: the largest integer types are `u64` and `i64`", sign, value, slice(&c, at, at + scale_len), sign, said);
+                } else { wrong = too_big(); }
+            }
+            if wrong.is_empty() { at += scale_len; }
+        } else {
+            let mut n: u64 = 0u64;
+            let mut fits = true;
+            for ch in value.chars() {
+                let d = u64::try_from(digit_of(ch, radix)).unwrap_or_else(|_| panic!("the value does not fit in an `u64`"));
+                let times_radix = n.checked_mul(radix as u64);
+                if times_radix.is_none() {
+                    fits = false;
+                    break;
+                }
+                let sum = nikaia_std::index::or(times_radix, || 0).checked_add(d);
+                if sum.is_none() {
+                    fits = false;
+                    break;
+                }
+                n = nikaia_std::index::or(sum, || 0);
+            }
+            if fits && signed && n > 9223372036854775808u64 { fits = false; }
+            if fits { magnitude = n; } else { wrong = too_big(); }
+        }
+    }
+    let consumed: i64 = at + first;
+    if !wrong.is_empty() { return Number::Refused { message: wrong, consumed }; }
+    Number::Taken { magnitude, negative: signed, consumed }
 }
 
 
@@ -23336,6 +23682,10 @@ pub mod integers {
     #[allow(unused_imports)]
     pub use super::{Integer, integer, integer_of_count, integer_as_count, integer_text, integer_negated, integer_sum, integer_difference, integer_product, integer_quotient, integer_order, integer_bits, integer_shifted};
 }
+pub mod interpreter {
+    #[allow(unused_imports)]
+    pub use super::{run};
+}
 pub mod keep {
     #[allow(unused_imports)]
     pub use super::{KeepContext, DeclaredStruct, struct_in, names_a_struct_of_views, a_ledger_type_with_a_view, takes_a_keep, keeping_method_key, written_callee, root_of, taken_from, hands_back_its_own, keeps_what_it_is_given, drops_entries, hands_back_what_it_removes, capitalised};
@@ -23391,6 +23741,10 @@ pub mod order {
 pub mod parse_notes {
     #[allow(unused_imports)]
     pub use super::{previous_token, unclosed_quote, unclosed_bracket, opening_of_an_unclosed_comment, first_sentence, the_spelling_ref_replaced_note, an_effect_on_a_lambda_note, coalesce_fallback_note, let_names_note};
+}
+pub mod parse_numbers {
+    #[allow(unused_imports)]
+    pub use super::{Number, Scale, float_end, number_at};
 }
 pub mod paths {
     #[allow(unused_imports)]
