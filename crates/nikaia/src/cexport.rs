@@ -191,6 +191,35 @@ impl Out {
 struct Record {
     name: String,
     fields: Vec<(String, Part)>,
+    /// **A `pub extern enum`** (D32): its variants, as the tagged union lays
+    /// them out. Empty for a struct, whose fields are `fields`.
+    variants: Vec<Alternative>,
+}
+
+/// One variant of a `pub extern enum` (D32): its member of the union, its
+/// name in lower case, and its fields - `_0`, `_1`, … where it has no names.
+struct Alternative {
+    name: String,
+    member: String,
+    positional: bool,
+    fields: Vec<(String, Part)>,
+}
+
+impl Record {
+    fn is_enum(&self) -> bool {
+        !self.variants.is_empty()
+    }
+
+    /// Every field it holds, of every variant.
+    fn parts(&self) -> impl Iterator<Item = &Part> {
+        self.fields
+            .iter()
+            .chain(self.variants.iter().flat_map(|variant| &variant.fields))
+            .map(|(_, part)| match part {
+                Part::Array(element, _) => element.as_ref(),
+                other => other,
+            })
+    }
 }
 
 /// One field of a [`Record`].
@@ -204,7 +233,11 @@ enum Part {
 }
 
 fn records(parsed: &crate::parser::Parsed, plains: &[Plain]) -> Result<Vec<Record>> {
-    let declared: Vec<(&str, &Vec<crate::ast::FieldDef>)> = parsed
+    enum Declared<'a> {
+        Struct(&'a Vec<crate::ast::FieldDef>),
+        Enum(&'a Vec<crate::ast::EnumVariant>),
+    }
+    let declared: Vec<(&str, Declared)> = parsed
         .program
         .items
         .iter()
@@ -214,50 +247,100 @@ fn records(parsed: &crate::parser::Parsed, plains: &[Plain]) -> Result<Vec<Recor
                 fields,
                 is_extern: true,
                 ..
-            } => Some((parsed.text(*name), fields)),
+            } => Some((parsed.text(*name), Declared::Struct(fields))),
+            Item::Enum {
+                name,
+                variants,
+                is_extern: true,
+                ..
+            } => Some((parsed.text(*name), Declared::Enum(variants))),
             _ => None,
         })
         .collect();
+    // One field, or one element of an array field.
+    let one = |ty: &Type| -> Option<Part> {
+        if let Some(shape) = by_value(parsed, ty) {
+            return Some(Part::Value(shape));
+        }
+        if let Some(at) = choice(parsed, plains, ty) {
+            return Some(Part::Choice(at));
+        }
+        declared
+            .iter()
+            .position(|(other, _)| *other == parsed.text(ty.name))
+            .filter(|_| ty.generics.is_empty() && !ty.is_nullable)
+            .map(Part::Record)
+    };
+    let part = |ty: &Type, written: String| -> Result<Part> {
+        let part = match (parsed.text(ty.name), ty.generics.as_slice()) {
+            ("Array", [element, size]) => one(element)
+                .zip(size.count)
+                .map(|(element, count)| Part::Array(Box::new(element), count)),
+            _ => one(ty),
+        };
+        part.ok_or_else(|| not_yet(&written, "field of an `extern` struct or enum"))
+    };
     declared
         .iter()
-        .map(|(name, fields)| {
-            let fields = fields
-                .iter()
-                .map(|field| {
-                    let field_name = parsed.text(field.name).to_string();
-                    // One field, or one element of an array field.
-                    let one = |ty: &Type| -> Option<Part> {
-                        if let Some(shape) = by_value(parsed, ty) {
-                            return Some(Part::Value(shape));
-                        }
-                        if let Some(at) = choice(parsed, plains, ty) {
-                            return Some(Part::Choice(at));
-                        }
-                        declared
-                            .iter()
-                            .position(|(other, _)| *other == parsed.text(ty.name))
-                            .filter(|_| ty.generics.is_empty() && !ty.is_nullable)
-                            .map(Part::Record)
-                    };
-                    let part = match (parsed.text(field.ty.name), field.ty.generics.as_slice()) {
-                        ("Array", [element, size]) => one(element)
-                            .zip(size.count)
-                            .map(|(element, count)| Part::Array(Box::new(element), count)),
-                        _ => one(&field.ty),
-                    };
-                    let Some(part) = part else {
-                        return Err(not_yet(
-                            &format!("{name}.{field_name}"),
-                            "field of an `extern` struct",
-                        ));
-                    };
-                    Ok((field_name, part))
-                })
-                .collect::<Result<Vec<_>>>()?;
-            Ok(Record {
+        .map(|(name, declared)| match declared {
+            Declared::Struct(fields) => Ok(Record {
                 name: name.to_string(),
-                fields,
-            })
+                fields: fields
+                    .iter()
+                    .map(|field| {
+                        let field_name = parsed.text(field.name).to_string();
+                        let at = part(&field.ty, format!("{name}.{field_name}"))?;
+                        Ok((field_name, at))
+                    })
+                    .collect::<Result<Vec<_>>>()?,
+                variants: Vec::new(),
+            }),
+            Declared::Enum(variants) => Ok(Record {
+                name: name.to_string(),
+                fields: Vec::new(),
+                variants: variants
+                    .iter()
+                    .map(|variant| {
+                        let variant_name = parsed.text(variant.name).to_string();
+                        let (positional, fields) = match &variant.fields {
+                            VariantFields::Unit => (false, Vec::new()),
+                            VariantFields::Tuple(types) => (
+                                true,
+                                types
+                                    .iter()
+                                    .enumerate()
+                                    .map(|(at, ty)| {
+                                        Ok((
+                                            format!("_{at}"),
+                                            part(ty, format!("{name}::{variant_name}.{at}"))?,
+                                        ))
+                                    })
+                                    .collect::<Result<Vec<_>>>()?,
+                            ),
+                            VariantFields::Named(named) => (
+                                false,
+                                named
+                                    .iter()
+                                    .map(|field| {
+                                        let field_name = parsed.text(field.name).to_string();
+                                        let at = part(
+                                            &field.ty,
+                                            format!("{name}::{variant_name}.{field_name}"),
+                                        )?;
+                                        Ok((field_name, at))
+                                    })
+                                    .collect::<Result<Vec<_>>>()?,
+                            ),
+                        };
+                        Ok(Alternative {
+                            member: variant_name.to_lowercase(),
+                            name: variant_name,
+                            positional,
+                            fields,
+                        })
+                    })
+                    .collect::<Result<Vec<_>>>()?,
+            }),
         })
         .collect()
 }
@@ -279,11 +362,7 @@ fn records_in_order(records: &[Record]) -> Vec<usize> {
             return;
         }
         walking.push(at);
-        for (_, part) in &records[at].fields {
-            let part = match part {
-                Part::Array(element, _) => element.as_ref(),
-                other => other,
-            };
+        for part in records[at].parts() {
             if let Part::Record(inner) = part {
                 ordered(*inner, records, seen, walking);
             }
@@ -392,6 +471,121 @@ fn mirror(record: &Record, records: &[Record], plains: &[Plain]) -> String {
     )
 }
 
+/// **The mirror of a `pub extern enum`** (D32): the tag as a C `int` and a
+/// union with one struct per variant that has fields, as `#[repr(C)]` lays out
+/// the enum - and its conversions, `None` for a tag that names no variant.
+fn tagged_mirror(record: &Record, records: &[Record], plains: &[Plain]) -> String {
+    let ty = &record.name;
+    let mut out = String::new();
+    let mut members = Vec::new();
+    let mut into = Vec::new();
+    let mut from = Vec::new();
+    for (tag, variant) in record.variants.iter().enumerate() {
+        let path = format!("{ty}::{}", crate::emit::escaped(&variant.name));
+        if variant.fields.is_empty() {
+            into.push(format!("{tag} => Some({path}),"));
+            from.push(format!(
+                "{path} => Self {{ tag: {tag}, ..Self::zeroed() }},"
+            ));
+            continue;
+        }
+        let shape = format!("__nikaia_cv_{ty}_{}", variant.name);
+        let member = crate::emit::escaped(&variant.member).into_owned();
+        members.push(format!("{member}: {shape}"));
+        let mut fields = String::new();
+        let mut taken = Vec::new();
+        let mut made = Vec::new();
+        let mut bound = Vec::new();
+        for (field, part) in &variant.fields {
+            let local = crate::emit::escaped(field).into_owned();
+            let named = match variant.positional {
+                true => format!("__nikaia{local}"),
+                false => local.clone(),
+            };
+            let (lowered, inward, outward) = match part {
+                Part::Array(element, count) => {
+                    let (lowered, inward, outward) = converted(element, records, plains, "e");
+                    (
+                        format!("[{lowered}; {count}]"),
+                        format!(
+                            "v.{local}.iter().map(|&e| {inward}).collect::<Option<Vec<_>>>()?.try_into().ok()?"
+                        ),
+                        format!("{named}.map(|e| {outward})"),
+                    )
+                }
+                one => {
+                    let (lowered, inward, _) =
+                        converted(one, records, plains, &format!("v.{local}"));
+                    let (_, _, outward) = converted(one, records, plains, &named);
+                    (lowered, format!("({inward})?"), outward)
+                }
+            };
+            fields.push_str(&format!("    {local}: {lowered},\n"));
+            taken.push(match variant.positional {
+                true => inward,
+                false => format!("{local}: {inward}"),
+            });
+            made.push(format!("{local}: {outward}"));
+            bound.push(named);
+        }
+        out.push_str(&format!(
+            "\n#[repr(C)]\n#[derive(Clone, Copy)]\n#[allow(non_camel_case_types)]\n\
+             pub struct {shape} {{\n{fields}}}\n"
+        ));
+        let (built, pattern) = match variant.positional {
+            true => (
+                format!("{path}({})", taken.join(", ")),
+                format!("{path}({})", bound.join(", ")),
+            ),
+            false => (
+                format!("{path} {{ {} }}", taken.join(", ")),
+                format!("{path} {{ {} }}", bound.join(", ")),
+            ),
+        };
+        into.push(format!(
+            "{tag} => {{\n            \
+             // SAFETY: the tag names this variant, so C wrote this member (ADR-284 D32).\n            \
+             let v = unsafe {{ self.u.{member} }};\n            \
+             Some({built})\n        }}"
+        ));
+        from.push(format!(
+            "{pattern} => {{\n            \
+             let mut made = Self {{ tag: {tag}, ..Self::zeroed() }};\n            \
+             made.u.{member} = {shape} {{ {} }};\n            \
+             made\n        }}",
+            made.join(", ")
+        ));
+    }
+    let union = match members.is_empty() {
+        true => String::new(),
+        false => format!(
+            "\n#[repr(C)]\n#[derive(Clone, Copy)]\n#[allow(non_camel_case_types)]\n\
+             pub union __nikaia_cu_{ty} {{ {} }}\n",
+            members.join(", ")
+        ),
+    };
+    let held = match members.is_empty() {
+        true => String::new(),
+        false => format!("    u: __nikaia_cu_{ty},\n"),
+    };
+    format!(
+        "{out}{union}\n/// `{ty}` as C lays it out and hands it over: a tag and a union (ADR-284 D32).\n\
+         #[repr(C)]\n#[derive(Clone, Copy)]\n#[allow(non_camel_case_types)]\n\
+         pub struct __nikaia_c_{ty} {{\n    tag: std::ffi::c_int,\n{held}}}\n\
+         \n#[allow(dead_code, unreachable_patterns)]\nimpl __nikaia_c_{ty} {{\n    \
+         /// All zero: every member of the union is numbers, for which zero is a value.\n    \
+         fn zeroed() -> Self {{\n        \
+         // SAFETY: a C int and a union of `#[repr(C)]` structs of numbers and `bool`; all-zero bytes are a value of each.\n        \
+         unsafe {{ std::mem::zeroed() }}\n    }}\n    \
+         fn into_nikaia(self) -> Option<{ty}> {{\n        \
+         match self.tag {{\n        {}\n        _ => None,\n        }}\n    }}\n    \
+         fn from_nikaia(value: {ty}) -> Self {{\n        \
+         match value {{\n        {}\n        }}\n    }}\n}}\n",
+        into.join("\n        "),
+        from.join("\n        ")
+    )
+}
+
 /// An `enum` without payload the entry file declares (ADR-284 D5): its name
 /// and its variants, numbered in declaration order.
 struct Plain {
@@ -408,10 +602,14 @@ fn plain_enums(parsed: &crate::parser::Parsed) -> Vec<Plain> {
         .items
         .iter()
         .filter_map(|item| match &item.node {
-            Item::Enum { name, variants, .. }
-                if variants
-                    .iter()
-                    .all(|variant| matches!(variant.fields, crate::ast::VariantFields::Unit)) =>
+            Item::Enum {
+                name,
+                variants,
+                is_extern: false,
+                ..
+            } if variants
+                .iter()
+                .all(|variant| matches!(variant.fields, crate::ast::VariantFields::Unit)) =>
             {
                 Some(Plain {
                     name: parsed.text(*name).to_string(),
@@ -693,7 +891,7 @@ fn handled_structs(parsed: &crate::parser::Parsed) -> Vec<Handled<'_>> {
                 name,
                 variants,
                 is_public: true,
-                ..
+                is_extern: false,
             } if variants
                 .iter()
                 .any(|variant| !matches!(variant.fields, VariantFields::Unit)) =>
@@ -1097,16 +1295,15 @@ pub fn export(
     }
     // **Every `pub extern struct` is in the header**, as C lays it out (D14).
     for record in &records {
-        for (_, part) in &record.fields {
-            let part = match part {
-                Part::Array(element, _) => element.as_ref(),
-                other => other,
-            };
+        for part in record.parts() {
             if let Part::Choice(at) = part {
                 crossing[*at] = true;
             }
         }
-        rust.push_str(&mirror(record, &records, &plains));
+        rust.push_str(&match record.is_enum() {
+            true => tagged_mirror(record, &records, &plains),
+            false => mirror(record, &records, &plains),
+        });
     }
     let mut constants = String::new();
     for (error, variants) in &codes {
@@ -1857,26 +2054,71 @@ pub fn export(
     // A struct a field holds comes first: C wants it complete.
     let order = records_in_order(&records);
     for record in order.iter().map(|at| &records[*at]) {
+        let c_field = |field: &str, part: &Part| -> String {
+            let (c, size) = match part {
+                Part::Value(shape) => (shape.c.to_string(), String::new()),
+                Part::Choice(at) => (format!("{prefix}_{}", plains[*at].name), String::new()),
+                Part::Record(at) => (format!("{prefix}_{}", records[*at].name), String::new()),
+                Part::Array(element, count) => (
+                    match element.as_ref() {
+                        Part::Value(shape) => shape.c.to_string(),
+                        Part::Choice(at) => format!("{prefix}_{}", plains[*at].name),
+                        Part::Record(at) => format!("{prefix}_{}", records[*at].name),
+                        Part::Array(..) => unreachable!("an array's element is no array"),
+                    },
+                    format!("[{count}]"),
+                ),
+            };
+            format!("{c} {field}{size};")
+        };
+        // **A `pub extern enum`** (D32): its tag, and a union with a struct
+        // per variant that has fields, named as the variant in lower case.
+        if record.is_enum() {
+            let ty = &record.name;
+            let tags: Vec<String> = record
+                .variants
+                .iter()
+                .enumerate()
+                .map(|(tag, variant)| {
+                    format!(
+                        "    {upper}_{}_{} = {tag}",
+                        ty.to_uppercase(),
+                        variant.name.to_uppercase()
+                    )
+                })
+                .collect();
+            let members: Vec<String> = record
+                .variants
+                .iter()
+                .filter(|variant| !variant.fields.is_empty())
+                .map(|variant| {
+                    let fields: Vec<String> = variant
+                        .fields
+                        .iter()
+                        .map(|(field, part)| c_field(field, part))
+                        .collect();
+                    format!(
+                        "        struct {{ {} }} {};",
+                        fields.join(" "),
+                        variant.member
+                    )
+                })
+                .collect();
+            let union = match members.is_empty() {
+                true => String::new(),
+                false => format!("    union {{\n{}\n    }};\n", members.join("\n")),
+            };
+            types.push_str(&format!(
+                "typedef enum {{\n{}\n}} {prefix}_{ty}_Tag;\n\n\
+                 typedef struct {{\n    {prefix}_{ty}_Tag tag;\n{union}}} {prefix}_{ty};\n\n",
+                tags.join(",\n")
+            ));
+            continue;
+        }
         let fields: Vec<String> = record
             .fields
             .iter()
-            .map(|(field, part)| {
-                let (c, size) = match part {
-                    Part::Value(shape) => (shape.c.to_string(), String::new()),
-                    Part::Choice(at) => (format!("{prefix}_{}", plains[*at].name), String::new()),
-                    Part::Record(at) => (format!("{prefix}_{}", records[*at].name), String::new()),
-                    Part::Array(element, count) => (
-                        match element.as_ref() {
-                            Part::Value(shape) => shape.c.to_string(),
-                            Part::Choice(at) => format!("{prefix}_{}", plains[*at].name),
-                            Part::Record(at) => format!("{prefix}_{}", records[*at].name),
-                            Part::Array(..) => unreachable!("an array's element is no array"),
-                        },
-                        format!("[{count}]"),
-                    ),
-                };
-                format!("    {c} {field}{size};")
-            })
+            .map(|(field, part)| format!("    {}", c_field(field, part)))
             .collect();
         types.push_str(&format!(
             "typedef struct {{\n{}\n}} {prefix}_{};\n\n",
@@ -2723,32 +2965,71 @@ impl Python {
             ));
         }
         for record in records_in_order(records).iter().map(|at| &records[*at]) {
-            let fields: Vec<String> = record
-                .fields
-                .iter()
-                .map(|(field, part)| {
-                    let ty = match part {
-                        Part::Value(shape) => python_scalar(shape).to_string(),
-                        Part::Choice(_) => "ctypes.c_int".to_string(),
-                        Part::Record(at) => records[*at].name.clone(),
-                        Part::Array(element, count) => format!(
-                            "{} * {count}",
-                            match element.as_ref() {
-                                Part::Value(shape) => python_scalar(shape).to_string(),
-                                Part::Choice(_) => "ctypes.c_int".to_string(),
-                                Part::Record(at) => records[*at].name.clone(),
-                                Part::Array(..) => unreachable!("an array's element is no array"),
-                            }
-                        ),
-                    };
-                    format!("(\"{field}\", {ty})")
-                })
-                .collect();
-            out.push_str(&format!(
-                "class {}(ctypes.Structure):\n    _fields_ = [{}]\n\n",
-                record.name,
-                fields.join(", ")
-            ));
+            let laid_out = |fields: &[(String, Part)]| -> String {
+                fields
+                    .iter()
+                    .map(|(field, part)| {
+                        let ty = match part {
+                            Part::Value(shape) => python_scalar(shape).to_string(),
+                            Part::Choice(_) => "ctypes.c_int".to_string(),
+                            Part::Record(at) => records[*at].name.clone(),
+                            Part::Array(element, count) => format!(
+                                "{} * {count}",
+                                match element.as_ref() {
+                                    Part::Value(shape) => python_scalar(shape).to_string(),
+                                    Part::Choice(_) => "ctypes.c_int".to_string(),
+                                    Part::Record(at) => records[*at].name.clone(),
+                                    Part::Array(..) => {
+                                        unreachable!("an array's element is no array")
+                                    }
+                                }
+                            ),
+                        };
+                        format!("(\"{field}\", {ty})")
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            };
+            // **An `extern` enum** (D32): a structure per variant with fields,
+            // their union, and the tag beside it; the union is anonymous, so
+            // `figure.frame.w` reads as C's does, and each variant's tag is a
+            // class attribute.
+            if record.is_enum() {
+                let ty = &record.name;
+                let mut members = Vec::new();
+                for variant in record.variants.iter().filter(|v| !v.fields.is_empty()) {
+                    out.push_str(&format!(
+                        "class _{ty}_{}(ctypes.Structure):\n    _fields_ = [{}]\n\n\n",
+                        variant.name,
+                        laid_out(&variant.fields)
+                    ));
+                    members.push(format!("(\"{}\", _{ty}_{})", variant.member, variant.name));
+                }
+                let tags: String = record
+                    .variants
+                    .iter()
+                    .enumerate()
+                    .map(|(tag, variant)| format!("    {} = {tag}\n", variant.name))
+                    .collect();
+                match members.is_empty() {
+                    true => out.push_str(&format!(
+                        "class {ty}(ctypes.Structure):\n    _fields_ = [(\"tag\", ctypes.c_int)]\n{tags}\n"
+                    )),
+                    false => out.push_str(&format!(
+                        "class _{ty}_Union(ctypes.Union):\n    _fields_ = [{}]\n\n\n\
+                         class {ty}(ctypes.Structure):\n    \
+                         _anonymous_ = (\"_u\",)\n    \
+                         _fields_ = [(\"tag\", ctypes.c_int), (\"_u\", _{ty}_Union)]\n{tags}\n",
+                        members.join(", ")
+                    )),
+                }
+            } else {
+                out.push_str(&format!(
+                    "class {}(ctypes.Structure):\n    _fields_ = [{}]\n\n",
+                    record.name,
+                    laid_out(&record.fields)
+                ));
+            }
             // Its methods (ADR-284 D16): `self` is handed by address.
             for member in self.classes.get(&record.name).into_iter().flatten() {
                 out.push_str(member);

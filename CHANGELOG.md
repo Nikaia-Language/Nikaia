@@ -8,6 +8,23 @@ or the specification. A change only to the guide, the notes, the README, the
 website, the tests, the examples or the tooling around them raises nothing and
 has no heading here; `CLAUDE.md` draws the line.
 
+## [0.0.727] — 2026-10-10
+
+**`pub extern enum` is built: a tagged union, by value** (ADR-284 D32, #88).
+- The parser takes `extern` before `enum`; the tree's `Item::Enum` has
+  `is_extern`. The checker refuses one that is not `pub` (`NK1237`) and a
+  variant's field that is no C value (`NK1145`); an `extern` enum is a C value
+  itself, so it may be a field of an `extern` struct or enum. The emitter
+  writes `#[repr(C)]` on it.
+- The header writes `<prefix>_<Type>_Tag` and a `typedef struct` of the tag and
+  an anonymous union with a struct per variant that has fields, its member the
+  variant's name in lower case, a positional field `_0`, `_1`, ….
+- It crosses as an `extern` struct does: in and out by value, a run in and out,
+  a method's `self` as `const T*` or `T*`, a field. A tag that names no
+  variant is `E_ARGUMENT`.
+- `nikaia bind python` makes it a `ctypes.Structure` with the union, each tag a
+  class attribute; `nikaia bind node` an object `{ kind: "Variant", … }`.
+
 ## [0.0.726] — 2026-10-10
 
 **A handle to an `enum` with payload is read through `_kind` and a getter per

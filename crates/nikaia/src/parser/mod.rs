@@ -2180,12 +2180,16 @@ grammar! {
 
         // Kap 4.4. The three shapes the specification shows and no others: a
         // name, a name with positional types, a name with named fields.
+        //
+        // `extern` before it makes it a tagged union in C's layout (ADR-284
+        // D32); what its fields may be is the checker's to say.
         rule enum_item -> Item =
             vis:kw_pub?
+            laid_out:kw_extern?
             KW_ENUM name:NAME
             "{" variants:enum_variants "}"
             -> {
-                Item::Enum { name, variants, is_public: vis.is_some() }
+                Item::Enum { name, variants, is_public: vis.is_some(), is_extern: laid_out.is_some() }
             }
 
         rule enum_variants -> Vec<EnumVariant> =

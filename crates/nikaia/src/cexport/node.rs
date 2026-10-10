@@ -1073,8 +1073,15 @@ impl Node {
             let ty = &record.name;
             let mut reads = String::new();
             let mut writes = String::new();
-            for (field, part) in &record.fields {
-                let what = format!("{ty}.{field}");
+            // One field's read and write: `at` is where it sits in the C
+            // value, `owner` how a refusal names what holds it.
+            let field_code = |field: &str,
+                              part: &Part,
+                              owner: &str,
+                              at: &str,
+                              reads: &mut String,
+                              writes: &mut String| {
+                let what = format!("{owner}{field}");
                 let pair = |part: &Part, place: &str| -> (String, String) {
                     match part {
                         Part::Value(shape) => (
@@ -1102,7 +1109,7 @@ impl Node {
                 };
                 match part {
                     Part::Array(element, count) => {
-                        let (read, write) = pair(element, &format!("out->{field}[i]"));
+                        let (read, write) = pair(element, &format!("out->{at}{field}[i]"));
                         reads.push_str(&format!(
                             "    napi_get_named_property(env, value, \"{field}\", &field);\n    \
                              if (!nk_length(env, field, \"{what}\", &n)) return false;\n    \
@@ -1123,7 +1130,7 @@ impl Node {
                         ));
                     }
                     other => {
-                        let (read, write) = pair(other, &format!("out->{field}"));
+                        let (read, write) = pair(other, &format!("out->{at}{field}"));
                         reads.push_str(&format!(
                             "    {{\n        \
                              napi_value one;\n        \
@@ -1136,6 +1143,61 @@ impl Node {
                             "    napi_set_named_property(env, target, \"{field}\", {write});\n"
                         ));
                     }
+                }
+            };
+            // **An `extern` enum is `{ kind: "Variant", field… }`** (D32): its
+            // tag by the variant's name, its fields beside it.
+            if record.is_enum() {
+                let mut chosen = Vec::new();
+                let mut cases = Vec::new();
+                for (tag, variant) in record.variants.iter().enumerate() {
+                    let (name, member) = (&variant.name, &variant.member);
+                    let mut variant_reads = String::new();
+                    let mut variant_writes = String::new();
+                    for (field, part) in &variant.fields {
+                        field_code(
+                            field,
+                            part,
+                            &format!("{ty}::{name}."),
+                            &format!("{member}."),
+                            &mut variant_reads,
+                            &mut variant_writes,
+                        );
+                    }
+                    chosen.push(format!(
+                        "if (strcmp(kind, \"{name}\") == 0) {{\n    \
+                         out->tag = {tag};\n\
+                         {variant_reads}    \
+                         }}"
+                    ));
+                    cases.push(format!(
+                        "    case {tag}:\n    \
+                         napi_create_string_utf8(env, \"{name}\", NAPI_AUTO_LENGTH, &field);\n    \
+                         napi_set_named_property(env, target, \"kind\", field);\n\
+                         {variant_writes}    \
+                         break;\n"
+                    ));
+                }
+                let names: Vec<&str> = record.variants.iter().map(|v| v.name.as_str()).collect();
+                reads.push_str(&format!(
+                    "    char kind[64];\n    \
+                     size_t kind_len = 0;\n    \
+                     napi_get_named_property(env, value, \"kind\", &field);\n    \
+                     if (napi_get_value_string_utf8(env, field, kind, sizeof kind, &kind_len) != napi_ok)\n        \
+                     return nk_wrong(env, name, \"a {ty} with a kind\");\n    \
+                     {} else {{\n        \
+                     return nk_wrong(env, name, \"a {ty}: {}\");\n    \
+                     }}\n",
+                    chosen.join(" else "),
+                    names.join(", ")
+                ));
+                writes.push_str(&format!(
+                    "    switch (value->tag) {{\n{}    default:\n        break;\n    }}\n",
+                    cases.concat()
+                ));
+            } else {
+                for (field, part) in &record.fields {
+                    field_code(field, part, &format!("{ty}."), "", &mut reads, &mut writes);
                 }
             }
             out.push_str(&format!(

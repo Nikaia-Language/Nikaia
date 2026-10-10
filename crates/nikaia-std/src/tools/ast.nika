@@ -136,6 +136,9 @@ pub enum Item {
         name: winnow_grammar::Symbol,
         variants: Vec[EnumVariant],
         is_public: bool,
+        /// **`pub extern enum`: a tagged union, crossing by value**
+        /// ([ADR-284](../../../../docs/specification/adr/adr-284.md) D32).
+        is_extern: bool,
     },
 
     // Kap 4.1: struct User { ... }

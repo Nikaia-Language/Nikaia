@@ -3447,8 +3447,13 @@ impl<'p> Emitter<'p> {
                 name,
                 variants,
                 is_public,
+                is_extern,
             } => {
                 out.push(&self.derives(*name));
+                // **A tagged union in C's layout** (ADR-284 D32).
+                if *is_extern {
+                    out.push("#[repr(C)]\n");
+                }
                 let vis = if *is_public { "pub " } else { "" };
                 let params = if self.borrowing.contains(name) {
                     format!("<{INPUT_LIFETIME}>")

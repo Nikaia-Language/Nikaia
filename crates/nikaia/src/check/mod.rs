@@ -4779,6 +4779,7 @@ impl<'a> Checker<'a> {
                     }
                     self.an_extern_struct(&item.node, &item.span);
                 }
+                Item::Enum { .. } => self.an_extern_enum(&item.node, &item.span),
                 Item::Impl {
                     target,
                     methods,
@@ -20269,12 +20270,99 @@ impl<'a> Checker<'a> {
         }
     }
 
-    /// Whether this unit declares a `pub extern struct` by that name.
+    /// **What a `pub extern enum` may hold**
+    /// ([ADR-284](../../docs/specification/adr/adr-284.md) D32): it is `pub`,
+    /// and every field of every variant is a C value, as an `extern` struct's.
+    fn an_extern_enum(&mut self, item: &Item, span: &Span) {
+        let Item::Enum {
+            name,
+            variants,
+            is_public,
+            is_extern: true,
+        } = item
+        else {
+            return;
+        };
+        let written = self.parsed.text(*name).to_string();
+        let mut refusals: Vec<(&'static str, Span, String, String)> = Vec::new();
+        if !is_public {
+            refusals.push((
+                "NK1237",
+                *span,
+                format!("`{written}` is `extern` but not `pub`."),
+                format!(
+                    "Write `pub extern enum {written}`, or leave out `extern` for an enum only this program uses."
+                ),
+            ));
+        }
+        for variant in variants {
+            let variant_name = self.parsed.text(variant.name).to_string();
+            let fields: Vec<(String, &crate::ast::Type)> = match &variant.fields {
+                ast::VariantFields::Unit => Vec::new(),
+                ast::VariantFields::Tuple(types) => types
+                    .iter()
+                    .enumerate()
+                    .map(|(at, ty)| (at.to_string(), ty))
+                    .collect(),
+                ast::VariantFields::Named(named) => named
+                    .iter()
+                    .map(|field| (self.parsed.text(field.name).to_string(), &field.ty))
+                    .collect(),
+            };
+            for (field, ty) in fields {
+                if !self.a_c_value(ty) {
+                    let shown = self.parsed.text(ty.name).to_string();
+                    refusals.push((
+                        "NK1145",
+                        variant.span,
+                        format!(
+                            "`{written}::{variant_name}.{field}` is a `{shown}`, which is not a C value."
+                        ),
+                        "Leave out `extern`: a `pub enum` crosses to C as a handle, read through \
+                         `_kind` and a getter per field."
+                            .to_string(),
+                    ));
+                }
+            }
+        }
+        for (code, at, message, help) in refusals {
+            self.checked.findings.push(Finding {
+                severity: Severity::Error,
+                span: at,
+                code,
+                message,
+                notes: vec![
+                    "An `extern` enum is a tagged union in C's layout and crosses to C by value: \
+                     its fields are numbers, `bool`, `scalar`, enums without payload, `extern` \
+                     structs and enums, and `Array[T, N]` of these."
+                        .to_string(),
+                ],
+                help: Some(help),
+                labels: Vec::new(),
+            });
+        }
+    }
+
+    /// Whether this unit declares a `pub extern struct` or `pub extern enum`
+    /// by that name: a C value that crosses by value (ADR-284 D14, D32).
     fn an_extern_struct_named(&self, name: &str) -> bool {
-        self.parsed.program.items.iter().any(|item| {
-            matches!(&item.node, Item::Struct { name: declared, is_extern: true, .. }
-                if self.parsed.text(*declared) == name)
-        })
+        self.parsed
+            .program
+            .items
+            .iter()
+            .any(|item| match &item.node {
+                Item::Struct {
+                    name: declared,
+                    is_extern: true,
+                    ..
+                }
+                | Item::Enum {
+                    name: declared,
+                    is_extern: true,
+                    ..
+                } => self.parsed.text(*declared) == name,
+                _ => false,
+            })
     }
 
     /// A field type an `extern` struct may hold (ADR-284 D15).
@@ -20299,12 +20387,14 @@ impl<'a> Checker<'a> {
                     Item::Enum {
                         name: declared,
                         variants,
+                        is_extern,
                         ..
                     } => {
                         self.parsed.text(*declared) == name
-                            && variants.iter().all(|variant| {
-                                matches!(variant.fields, crate::ast::VariantFields::Unit)
-                            })
+                            && (*is_extern
+                                || variants.iter().all(|variant| {
+                                    matches!(variant.fields, crate::ast::VariantFields::Unit)
+                                }))
                     }
                     Item::Struct {
                         name: declared,

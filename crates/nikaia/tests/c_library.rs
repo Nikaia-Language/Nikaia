@@ -123,6 +123,57 @@ pub extern fn shape(n: i64) -> Shape sync {
     return Shape::Empty
 }
 
+pub extern enum Figure {
+    Dot(f64),
+    Frame { w: f64, h: f64 },
+    Nothing,
+}
+
+impl Figure {
+    pub extern fn area(ref self) -> f64 sync {
+        return match self {
+            Figure::Dot(r) => { r * r }
+            Figure::Frame { w, h } => { w * h }
+            Figure::Nothing => { 0.0 }
+        }
+    }
+}
+
+pub extern struct Framed {
+    figure: Figure,
+    light: Light,
+}
+
+pub extern fn turned(f: Figure) -> Figure sync {
+    return match f {
+        Figure::Dot(r) => { Figure::Frame { w: r, h: r } }
+        Figure::Frame { w, h } => { Figure::Dot(w + h) }
+        Figure::Nothing => { Figure::Nothing }
+    }
+}
+
+pub extern fn framed_area(f: Framed) -> f64 sync {
+    return f.figure.area()
+}
+
+pub extern fn total_area(figures: ref Array[Figure]) -> f64 sync {
+    let mut sum = 0.0
+    for f in figures {
+        sum = sum + f.area()
+    }
+    return sum
+}
+
+pub extern fn dots(n: i64) -> Vec[Figure] sync {
+    let mut out: Vec[Figure] = []
+    let mut i = 0
+    while i < n {
+        out.push(Figure::Dot(1.0))
+        i = i + 1
+    }
+    return out
+}
+
 pub extern fn find(key: ref String) -> i64? sync {
     if key == \"seven\" {
         return 7
@@ -350,6 +401,40 @@ int main(void) {
 
 /// A function that throws (ADR-284 D7): each variant is its own positive
 /// status, and `calc_last_error` renders the failure with its site.
+/// **A `pub extern enum` is a tagged union, by value** (ADR-284 D32): in and
+/// out, as a method's `self`, as a field of an `extern` struct, in a run in
+/// and out; a tag that names no variant is `E_ARGUMENT`.
+const FIGURE_CALLER: &str = r#"#include <stdio.h>
+#include "calc.h"
+
+int main(void) {
+    calc_Figure frame = { .tag = CALC_FIGURE_FRAME, .frame = { .w = 2.0, .h = 3.0 } };
+    calc_Figure back = { .tag = CALC_FIGURE_NOTHING };
+    int status = calc_turned(frame, &back);
+    printf("turned %d %d %.1f\n", status, back.tag == CALC_FIGURE_DOT, back.dot._0);
+    calc_turned(back, &back);
+    printf("turned again %d %.1f %.1f\n", back.tag == CALC_FIGURE_FRAME, back.frame.w, back.frame.h);
+    double area = 0.0;
+    calc_Figure_area(&frame, &area);
+    printf("area %.1f\n", area);
+    calc_Framed framed = { .figure = frame, .light = CALC_LIGHT_RED };
+    calc_framed_area(framed, &area);
+    printf("framed %.1f\n", area);
+    calc_Figure many[3] = { frame, { .tag = CALC_FIGURE_DOT, .dot = { ._0 = 2.0 } }, { .tag = CALC_FIGURE_NOTHING } };
+    calc_total_area(many, 3, &area);
+    printf("total %.1f\n", area);
+    calc_Figure out[4];
+    size_t written = 0;
+    status = calc_dots(2, out, 4, &written);
+    printf("dots %d %zu %d %.1f\n", status, written, out[1].tag == CALC_FIGURE_DOT, out[1].dot._0);
+    calc_Figure wrong = { .tag = 99 };
+    printf("no such tag %d\n", calc_turned(wrong, &back));
+    calc_Framed badly = { .figure = wrong, .light = CALC_LIGHT_RED };
+    printf("no such tag in a field %d\n", calc_framed_area(badly, &area));
+    return CALC_OK;
+}
+"#;
+
 const THROWING_CALLER: &str = r#"#include <stdio.h>
 #include "calc.h"
 
@@ -684,6 +769,11 @@ fn a_c_program_calls_the_library() {
     assert!(header.contains("ledger: "), "{header}");
     assert!(made.join("libcalc.a").is_file(), "the static library");
 
+    assert_eq!(
+        run_c(&root, &made, "figure", FIGURE_CALLER),
+        "turned 0 1 5.0\nturned again 1 5.0 5.0\narea 6.0\nframed 6.0\ntotal 10.0\ndots 0 2 1 1.0\nno such tag -1\nno such tag in a field -1\n"
+    );
+
     std::fs::write(root.join("use.c"), CALLER).expect("the caller");
     let program = root.join("use");
     let compiled = Command::new("cc")
@@ -984,6 +1074,17 @@ try:
 except calc.ArgumentError as error:
     assert "holds `Circle`" in str(error), error
 assert calc.shape(0).Circle_0 == 1.5 and calc.shape(2).kind == calc.Shape_Kind.Empty
+frame = calc.Figure(tag=calc.Figure.Frame)
+frame.frame.w, frame.frame.h = 2.0, 3.0
+dot = calc.turned(frame)
+assert dot.tag == calc.Figure.Dot and dot.dot._0 == 5.0
+assert calc.Figure.area(frame) == 6.0 and calc.total_area([frame, dot]) == 31.0
+assert [f.tag for f in calc.dots(2)] == [calc.Figure.Dot, calc.Figure.Dot]
+try:
+    calc.turned(calc.Figure(tag=99))
+    raise AssertionError("no exception")
+except calc.ArgumentError:
+    pass
 assert calc.count_up(10, lambda i: i < 3) == 3
 # A stream is a generator (ADR-284 D20, D21): read to its end, or stopped.
 import itertools
@@ -1121,6 +1222,13 @@ const rect = calc.shape(1);
 assert.deepStrictEqual([rect.kind, rect.Rect_w, rect.Rect_h], [calc.Shape_Kind.Rect, 2, 3]);
 assert.throws(() => calc.shape(0).Rect_w, (error) => error.code === "CALC_E_ARGUMENT" && error.message.includes("holds `Circle`"));
 assert.strictEqual(calc.shape(0).Circle_0, 1.5);
+assert.deepStrictEqual(calc.turned({ kind: "Frame", w: 2, h: 3 }), { kind: "Dot", _0: 5 });
+assert.deepStrictEqual(calc.turned({ kind: "Nothing" }), { kind: "Nothing" });
+assert.strictEqual(calc.Figure.area({ kind: "Frame", w: 2, h: 3 }), 6);
+assert.strictEqual(calc.framed_area({ figure: { kind: "Dot", _0: 3 }, light: calc.Light.Red }), 9);
+assert.strictEqual(calc.total_area([{ kind: "Dot", _0: 1 }, { kind: "Frame", w: 2, h: 2 }]), 5);
+assert.deepStrictEqual(calc.dots(2), [{ kind: "Dot", _0: 1 }, { kind: "Dot", _0: 1 }]);
+assert.throws(() => calc.turned({ kind: "Square" }), TypeError);
 assert.strictEqual(calc.count_up(10, (i) => i < 3), 3);
 const seen = [];
 calc.words("one two", (word, light) => seen.push([word, light]));
@@ -1213,4 +1321,28 @@ fn nikaia_with(root: &Path, args: &[&str]) -> Output {
         .env_remove("CARGO_TARGET_DIR")
         .output()
         .expect("the nikaia binary runs")
+}
+
+/// Compiles `source` against the library in `made`, runs it, and hands back
+/// what it printed.
+fn run_c(root: &Path, made: &Path, name: &str, source: &str) -> String {
+    std::fs::write(root.join(format!("{name}.c")), source).expect("the caller");
+    let program = root.join(name);
+    let compiled = Command::new("cc")
+        .arg("-I")
+        .arg(made)
+        .arg(root.join(format!("{name}.c")))
+        .arg("-L")
+        .arg(made)
+        .args(["-lcalc", "-o"])
+        .arg(&program)
+        .output()
+        .expect("cc runs");
+    assert!(compiled.status.success(), "{}", said(&compiled));
+    let ran = Command::new(&program)
+        .env("LD_LIBRARY_PATH", made)
+        .output()
+        .expect("the caller runs");
+    assert!(ran.status.success(), "{}", said(&ran));
+    String::from_utf8_lossy(&ran.stdout).into_owned()
 }

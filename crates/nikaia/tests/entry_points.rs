@@ -115,3 +115,47 @@ fn an_extern_struct_holds_c_values_only() {
     );
     assert!(codes("extern struct Hidden { x: f64 }\nfn main() { }\n").contains(&"NK1237"));
 }
+
+/// **`NK1145` for a `pub extern enum`** (ADR-284 D32): a tagged union in C's
+/// layout, so each field of each variant is a C value - another `extern` enum
+/// among them - and it is `pub` (`NK1237`).
+#[test]
+fn an_extern_enum_holds_c_values_only() {
+    assert!(
+        codes(
+            "pub enum Light { Red, Green }\n\
+             pub extern struct Point { x: f64, y: f64 }\n\
+             pub extern enum Shape { Circle(f64), Rect { corner: Point, light: Light }, Empty }\n\
+             pub extern struct Framed { shape: Shape, sides: Array[Shape, 2] }\n\
+             pub extern enum Nested { One(Shape) }\n\
+             fn main() { }\n"
+        )
+        .is_empty()
+    );
+    let refused = found(
+        "pub struct Plain { n: i64 }\n\
+         pub extern enum Bad { Named(String), Held { inner: Plain }, Fine(i64) }\n\
+         fn main() { }\n",
+    );
+    let nk1145: Vec<_> = refused.iter().filter(|f| f.code == "NK1145").collect();
+    assert_eq!(nk1145.len(), 2, "{refused:?}");
+    assert!(
+        nk1145[0].message.contains("`Bad::Named.0`"),
+        "{:?}",
+        nk1145[0]
+    );
+    assert!(
+        nk1145[1].message.contains("`Bad::Held.inner`"),
+        "{:?}",
+        nk1145[1]
+    );
+    assert!(
+        nk1145[0]
+            .help
+            .as_deref()
+            .is_some_and(|help| help.contains("`_kind`")),
+        "{:?}",
+        nk1145[0]
+    );
+    assert!(codes("extern enum Hidden { A(f64) }\nfn main() { }\n").contains(&"NK1237"));
+}
