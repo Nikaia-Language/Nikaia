@@ -1,6 +1,9 @@
 //! **A query in normal form, and an answer as text** (ADR-270 D19): what a
 //! `nikaia.proofs` entry is keyed by and holds.
 
+#[path = "common/nikaia_logic.rs"]
+mod nikaia_logic;
+
 use nikaia_logic::{
     Answer, Arena, Budget, FourierMotzkin, Normal, Query, Solver, TermId, certificate_of,
     certificate_text, model_of, model_text, verify, verify_model,

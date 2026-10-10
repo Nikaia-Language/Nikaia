@@ -1,0 +1,886 @@
+// crates/nikaia-std/src/tools/logic_lia.nika
+//
+// **The reference solver: linear integer arithmetic** (ADR-270 D1, ADR-269 D10)
+// and **the checker** (D5), moved from `nikaia-logic`'s `lia` and `certificate`
+// (ADR-294, #125). A goal is proved when every case of its negation, joined with
+// the facts, has no integer solution. Fourier-Motzkin elimination over the
+// rationals decides that from one side: where it finds a contradiction there is
+// none over the rationals, so none over the integers; each derived bound is
+// tightened to the integers on the way, which is what lets `x < 5` and `x > 4`
+// contradict. It may fail to find a contradiction that exists, and never finds
+// one that does not.
+//
+// A question is `(arena, facts, goal)`: the facts and the goal as terms of a
+// `TermArena`, a query being self-contained and the arena only read (D3). The
+// checker numbers the query's atoms and disjunctions itself, follows the
+// certificate's splits - every alternative of a disjunction the branch has not
+// split yet - and replays each refutation step by step: a few arithmetic
+// operations per step, and no search.
+
+use std::collections
+
+/// Why a solver could not tell.
+pub enum LgUnknown {
+    /// The query is outside the solver's theory: a product of two variables, a
+    /// sort it does not read.
+    OutsideTheTheory,
+    /// A coefficient left the range the solver computes in.
+    Overflow,
+    /// The search looked at more branches than the budget allows.
+    TooManyCases,
+    /// An elimination held more bounds than the budget allows.
+    TooManyBounds,
+    /// The solver searched within its budget and found no contradiction; the
+    /// goal may hold, but this solver does not show it.
+    NoContradiction,
+}
+
+/// What a function that may not know says why not.
+pub struct LgWhy {
+    pub unknown: LgUnknown,
+}
+
+/// How much work a solver may do on one query, counted in its own units
+/// (ADR-270 D14).
+pub struct LgBudget {
+    /// How many branches the search may look at, each one elimination.
+    pub cases: i64,
+    /// How many bounds one elimination may hold.
+    pub bounds: i64,
+}
+
+pub fn lg_budget() -> LgBudget {
+    return LgBudget { cases: 1024, bounds: 4096 }
+}
+
+/// One step of a refutation. Each is sound over the integers: a non-negative
+/// combination of bounds `<= 0` is one, and so is a bound divided by its
+/// coefficients' common factor with the constant rounded up.
+pub enum LgStep {
+    /// The query's `n`th atom, which the branch holds.
+    Hypothesis(i64),
+    /// An earlier step's bound tightened to the integers.
+    Tighten(i64),
+    /// `by_left · left + by_right · right`, both multipliers positive.
+    Combine { left: i64, by_left: i64, right: i64, by_right: i64 },
+}
+
+/// One branch's contradiction: steps, each making a bound `lin <= 0` from the
+/// atoms the branch holds or from earlier steps.
+pub struct LgRefutation {
+    pub steps: Vec[LgStep],
+}
+
+/// Why a goal holds, in a form a small checker can follow (ADR-270 D5).
+pub enum LgCertificate {
+    Refuted(LgRefutation),
+    Split { disjunction: i64, cases: Vec[LgCertificate] },
+}
+
+/// Values that make a query's facts true and its goal false (ADR-270 D3).
+pub struct LgModel {
+    pub values: collections::BTreeMap[String, i64],
+}
+
+/// What a solver answers (ADR-270 D3).
+pub enum LgAnswer {
+    /// The facts imply the goal, and the certificate shows why.
+    Proved { certificate: LgCertificate },
+    /// The facts do not imply the goal: here are values for every variable of
+    /// the query under which every fact holds and the goal does not.
+    Refuted { model: LgModel },
+    Unknown { why: LgUnknown },
+}
+
+/// Why a certificate does not show what it claims. `case` counts the
+/// refutations in the order the checker reaches them.
+pub enum LgRejected {
+    /// The query is outside what the checker reads.
+    NotReadable,
+    /// A split names a disjunction the branch does not have open.
+    NotOpen { disjunction: i64 },
+    /// A split has a different number of cases than its disjunction has
+    /// alternatives.
+    Cases { expected: i64, found: i64 },
+    /// A step names an atom the branch does not hold, or a step that is not
+    /// before it.
+    Reference { case: i64, step: i64 },
+    /// A combination's multiplier is not positive.
+    Multiplier { case: i64, step: i64 },
+    /// A coefficient left the range the checker computes in.
+    Overflow { case: i64, step: i64 },
+    /// The last step's bound is not a contradiction.
+    NotAContradiction { case: i64 },
+}
+
+impl LgRejected {
+    /// As Rust's `Debug` wrote it, for the sentence the compiler says.
+    pub fn debug(ref self) -> String {
+        return match self {
+            LgRejected::NotReadable => "NotReadable",
+            LgRejected::NotOpen { disjunction } => f"NotOpen {{ disjunction: {disjunction} }}",
+            LgRejected::Cases { expected, found } => f"Cases {{ expected: {expected}, found: {found} }}",
+            LgRejected::Reference { case, step } => f"Reference {{ case: {case}, step: {step} }}",
+            LgRejected::Multiplier { case, step } => f"Multiplier {{ case: {case}, step: {step} }}",
+            LgRejected::Overflow { case, step } => f"Overflow {{ case: {case}, step: {step} }}",
+            LgRejected::NotAContradiction { case } => f"NotAContradiction {{ case: {case} }}",
+        }
+    }
+}
+
+/// `Σ coefficient·name + constant`.
+pub struct LgLin {
+    pub terms: collections::BTreeMap[String, i64],
+    pub constant: i64,
+}
+
+fn lg_constant(c: i64) -> LgLin {
+    return LgLin { terms: collections::BTreeMap(), constant: c }
+}
+
+fn lg_variable(name: ref String) -> LgLin {
+    let mut terms: collections::BTreeMap[String, i64] = collections::BTreeMap()
+    terms.insert(name.clone(), 1)
+    return LgLin { terms: terms, constant: 0 }
+}
+
+pub fn lg_add(a: ref LgLin, b: ref LgLin) -> LgLin? {
+    let mut terms = a.terms.clone()
+    for (name, k) in b.terms {
+        let before = terms.get(name) ?? 0
+        let sum = before.checked_add(k) ?? return null
+        if sum == 0 {
+            terms.remove(name)
+        } else {
+            terms.insert(name.clone(), sum)
+        }
+    }
+    let constant = a.constant.checked_add(b.constant) ?? return null
+    return LgLin { terms: terms, constant: constant }
+}
+
+pub fn lg_scale(a: ref LgLin, k: i64) -> LgLin? {
+    if k == 0 {
+        return lg_constant(0)
+    }
+    let mut terms: collections::BTreeMap[String, i64] = collections::BTreeMap()
+    for (name, c) in a.terms {
+        terms.insert(name.clone(), c.checked_mul(k) ?? return null)
+    }
+    let constant = a.constant.checked_mul(k) ?? return null
+    return LgLin { terms: terms, constant: constant }
+}
+
+fn lg_sub(a: ref LgLin, b: ref LgLin) -> LgLin? {
+    let negated = lg_scale(b, -1) ?? return null
+    return lg_add(a, negated)
+}
+
+fn lg_add_constant(a: ref LgLin, c: i64) -> LgLin {
+    return LgLin { terms: a.terms.clone(), constant: a.constant.saturating_add(c) }
+}
+
+fn lg_gcd(a: i64, b: i64) -> i64 {
+    if b == 0 {
+        return a
+    }
+    return lg_gcd(b, a % b)
+}
+
+/// Divide through by the coefficients' common factor and round the bound
+/// towards the integers: `2x + 3 <= 0` is `x + 2 <= 0` over the integers.
+pub fn lg_tightened(a: ref LgLin) -> LgLin {
+    let mut g = 0
+    for (_, k) in a.terms {
+        g = lg_gcd(g, k.abs())
+    }
+    if g <= 1 {
+        return LgLin { terms: a.terms.clone(), constant: a.constant }
+    }
+    let mut terms: collections::BTreeMap[String, i64] = collections::BTreeMap()
+    for (name, k) in a.terms {
+        terms.insert(name.clone(), k / g)
+    }
+    // ceil(constant / g)
+    let mut constant = a.constant.div_euclid(g)
+    if a.constant.rem_euclid(g) != 0 {
+        constant += 1
+    }
+    return LgLin { terms: terms, constant: constant }
+}
+
+/// How two maps of terms are ordered, as `BTreeMap` orders them: pair by pair,
+/// then by length.
+pub fn lg_terms_cmp(a: ref collections::BTreeMap[String, i64], b: ref collections::BTreeMap[String, i64]) -> i64 {
+    let mut left: Vec[(String, i64)] = []
+    for (name, k) in a {
+        left.push((name.clone(), k))
+    }
+    let mut right: Vec[(String, i64)] = []
+    for (name, k) in b {
+        right.push((name.clone(), k))
+    }
+    let mut at = 0
+    while at < left.len() && at < right.len() {
+        let (lname, lk) = left[at].clone()
+        let (rname, rk) = right[at].clone()
+        if lname < rname {
+            return -1
+        }
+        if rname < lname {
+            return 1
+        }
+        if lk < rk {
+            return -1
+        }
+        if rk < lk {
+            return 1
+        }
+        at += 1
+    }
+    if left.len() < right.len() {
+        return -1
+    }
+    if left.len() > right.len() {
+        return 1
+    }
+    return 0
+}
+
+fn lg_lin_equal(a: ref LgLin, b: ref LgLin) -> bool {
+    return a.constant == b.constant && lg_terms_cmp(a.terms, b.terms) == 0
+}
+
+/// A formula over `lin <= 0` atoms, with negation already pushed inward.
+enum LgFormula {
+    True,
+    False,
+    /// `lin <= 0`.
+    Le(LgLin),
+    And(Vec[LgFormula]),
+    Or(Vec[LgFormula]),
+}
+
+/// An integer term as a linear expression.
+fn lg_linear(arena: ref TermArena, id: i64, mut why: LgWhy) -> LgLin? {
+    let node = arena.at(id)
+    return match node {
+        SolverTerm::Int(n) => lg_constant(n),
+        SolverTerm::Var(name) => lg_variable(name),
+        SolverTerm::Add(a, b) => {
+            let x = lg_linear(arena, a, why) ?? return null
+            let y = lg_linear(arena, b, why) ?? return null
+            lg_overflowed(lg_add(x, y), why)
+        },
+        SolverTerm::Sub(a, b) => {
+            let x = lg_linear(arena, a, why) ?? return null
+            let y = lg_linear(arena, b, why) ?? return null
+            lg_overflowed(lg_sub(x, y), why)
+        },
+        SolverTerm::Neg(a) => {
+            let x = lg_linear(arena, a, why) ?? return null
+            lg_overflowed(lg_scale(x, -1), why)
+        },
+        SolverTerm::Mul(a, b) => {
+            let l = lg_linear(arena, a, why) ?? return null
+            let r = lg_linear(arena, b, why) ?? return null
+            if l.terms.len() == 0 {
+                lg_overflowed(lg_scale(r, l.constant), why)
+            } else if r.terms.len() == 0 {
+                lg_overflowed(lg_scale(l, r.constant), why)
+            } else {
+                why.unknown = LgUnknown::OutsideTheTheory
+                null
+            }
+        },
+        else => {
+            why.unknown = LgUnknown::OutsideTheTheory
+            null
+        },
+    }
+}
+
+/// `made`, or the overflow it is.
+fn lg_overflowed(made: LgLin?, mut why: LgWhy) -> LgLin? {
+    if made == null {
+        why.unknown = LgUnknown::Overflow
+    }
+    return made
+}
+
+/// What a comparison says, as a formula over `<= 0` (negated where it does not
+/// hold): `a < b` is `a - b + 1 <= 0` over the integers.
+fn lg_compare(arena: ref TermArena, a: i64, b: i64, op: i64, holds: bool, mut why: LgWhy) -> LgFormula? {
+    // 0 `<`, 1 `<=`, 2 `>`, 3 `>=`, 4 `=`, 5 `!=`
+    let mut kind = op
+    if !holds {
+        kind = lg_negated(op)
+    }
+    let x = lg_linear(arena, a, why) ?? return null
+    let y = lg_linear(arena, b, why) ?? return null
+    let a_minus_b = lg_overflowed(lg_sub(x, y), why) ?? return null
+    let b_minus_a = lg_overflowed(lg_sub(y, x), why) ?? return null
+    if kind == 0 {
+        return LgFormula::Le(lg_add_constant(a_minus_b, 1))
+    }
+    if kind == 1 {
+        return LgFormula::Le(a_minus_b)
+    }
+    if kind == 2 {
+        return LgFormula::Le(lg_add_constant(b_minus_a, 1))
+    }
+    if kind == 3 {
+        return LgFormula::Le(b_minus_a)
+    }
+    if kind == 4 {
+        return LgFormula::And([LgFormula::Le(a_minus_b), LgFormula::Le(b_minus_a)])
+    }
+    return LgFormula::Or([LgFormula::Le(lg_add_constant(a_minus_b, 1)), LgFormula::Le(lg_add_constant(b_minus_a, 1))])
+}
+
+fn lg_negated(op: i64) -> i64 {
+    if op == 0 {
+        return 3
+    }
+    if op == 1 {
+        return 2
+    }
+    if op == 2 {
+        return 1
+    }
+    if op == 3 {
+        return 0
+    }
+    if op == 4 {
+        return 5
+    }
+    return 4
+}
+
+/// A Boolean term as a formula, or its negation where `holds` is false.
+fn lg_formula(arena: ref TermArena, id: i64, holds: bool, mut why: LgWhy) -> LgFormula? {
+    let node = arena.at(id)
+    return match node {
+        SolverTerm::Bool(b) => {
+            if b == holds {
+                LgFormula::True
+            } else {
+                LgFormula::False
+            }
+        },
+        SolverTerm::Not(a) => lg_formula(arena, a, !holds, why),
+        SolverTerm::And(parts) => lg_junction(arena, parts, holds, holds, why),
+        SolverTerm::Or(parts) => lg_junction(arena, parts, holds, !holds, why),
+        SolverTerm::Le(a, b) => lg_compare(arena, a, b, 1, holds, why),
+        SolverTerm::Lt(a, b) => lg_compare(arena, a, b, 0, holds, why),
+        SolverTerm::Ge(a, b) => lg_compare(arena, a, b, 3, holds, why),
+        SolverTerm::Gt(a, b) => lg_compare(arena, a, b, 2, holds, why),
+        SolverTerm::Eq(a, b) => lg_compare(arena, a, b, 4, holds, why),
+        SolverTerm::Ne(a, b) => lg_compare(arena, a, b, 5, holds, why),
+        else => {
+            why.unknown = LgUnknown::OutsideTheTheory
+            null
+        },
+    }
+}
+
+fn lg_junction(arena: ref TermArena, parts: ref Vec[i64], holds: bool, conjunction: bool, mut why: LgWhy) -> LgFormula? {
+    let mut made: Vec[LgFormula] = []
+    for part in parts {
+        made.push(lg_formula(arena, part, holds, why) ?? return null)
+    }
+    if conjunction {
+        return LgFormula::And(made)
+    }
+    return LgFormula::Or(made)
+}
+
+/// One thing a branch holds: an atom `lin <= 0`, or a disjunction still to be
+/// split.
+pub struct LgItem {
+    pub atom: bool,
+    pub n: i64,
+}
+
+/// A query's formula with its atoms and disjunctions numbered: what holds at
+/// the top, and for each disjunction what each alternative adds.
+pub struct LgIndexed {
+    pub atoms: Vec[LgLin],
+    pub ors: Vec[Vec[Vec[LgItem]]],
+    pub top: Vec[LgItem],
+}
+
+struct LgForm {
+    terms: collections::BTreeMap[String, i64],
+    constant: i64,
+}
+
+impl LgIndexed {
+    fn atom(ref mut self, lin: LgLin) -> Vec[LgItem] {
+        self.atoms.push(lin)
+        return [LgItem { atom: true, n: self.atoms.len() - 1 }]
+    }
+
+    /// The strongest bound on each form an alternative holds an atom of: `form
+    /// + c <= 0` with the largest `c`, in the order of the forms.
+    fn strongest(ref self, alternative: ref Vec[LgItem]) -> Vec[LgForm] {
+        let mut by_form: Vec[LgForm] = []
+        for item in alternative {
+            if !item.atom {
+                continue
+            }
+            let atom = self.atoms[item.n].clone()
+            let mut at = 0
+            let mut placed = false
+            while at < by_form.len() {
+                let order = lg_terms_cmp(atom.terms, by_form[at].terms)
+                if order == 0 {
+                    if atom.constant > by_form[at].constant {
+                        by_form[at].constant = atom.constant
+                    }
+                    placed = true
+                    break
+                }
+                if order < 0 {
+                    break
+                }
+                at += 1
+            }
+            if !placed {
+                by_form.insert(at, LgForm { terms: atom.terms.clone(), constant: atom.constant })
+            }
+        }
+        return by_form
+    }
+
+    /// **What every alternative says**: a bound `form + c <= 0` that each
+    /// alternative holds an atom of, with its own `c`, holds whichever is
+    /// taken - with the weakest of them. `z = y + 1 || z = y + 2` gives `y - z
+    /// + 1 <= 0` without a split. Only atoms an alternative holds itself are
+    /// read, never one inside a further disjunction.
+    fn hull(ref self, alternatives: ref Vec[Vec[LgItem]]) -> Vec[LgLin] {
+        let mut common: Vec[LgForm] = []
+        let mut first = true
+        for alternative in alternatives {
+            let each = self.strongest(alternative)
+            if first {
+                common = each
+                first = false
+                continue
+            }
+            let mut kept: Vec[LgForm] = []
+            for form in common {
+                for other in each {
+                    if lg_terms_cmp(form.terms, other.terms) == 0 {
+                        let mut c = form.constant
+                        if other.constant < c {
+                            c = other.constant
+                        }
+                        kept.push(LgForm { terms: form.terms.clone(), constant: c })
+                        break
+                    }
+                }
+            }
+            common = kept
+        }
+        let mut out: Vec[LgLin] = []
+        for form in common {
+            if form.terms.len() > 0 {
+                out.push(LgLin { terms: form.terms.clone(), constant: form.constant })
+            }
+        }
+        return out
+    }
+
+    /// What `formula` adds to a branch. `false` is the atom `1 <= 0`; a
+    /// disjunction with an alternative that adds nothing holds already, and one
+    /// with a single alternative is that alternative.
+    fn items(ref mut self, formula: ref LgFormula) -> Vec[LgItem] {
+        return match formula {
+            LgFormula::True => [],
+            LgFormula::False => self.atom(lg_constant(1)),
+            LgFormula::Le(lin) => self.atom(lin.clone()),
+            LgFormula::And(parts) => {
+                let mut out: Vec[LgItem] = []
+                for part in parts {
+                    out.extend(self.items(part))
+                }
+                out
+            },
+            LgFormula::Or(parts) => self.items_of_or(parts),
+        }
+    }
+
+    fn items_of_or(ref mut self, parts: ref Vec[LgFormula]) -> Vec[LgItem] {
+        let at = self.ors.len()
+        let empty: Vec[Vec[LgItem]] = []
+        self.ors.push(empty)
+        let mut alternatives: Vec[Vec[LgItem]] = []
+        for part in parts {
+            alternatives.push(self.items(part))
+        }
+        if alternatives.len() == 0 {
+            return self.atom(lg_constant(1))
+        }
+        if alternatives.len() == 1 {
+            return alternatives[0].clone()
+        }
+        for alternative in alternatives {
+            if alternative.len() == 0 {
+                return []
+            }
+        }
+        let mut items: Vec[LgItem] = [LgItem { atom: false, n: at }]
+        for hull in self.hull(alternatives) {
+            items.extend(self.atom(hull))
+        }
+        self.ors[at] = alternatives.clone()
+        return items
+    }
+}
+
+/// The query's facts and its goal's negation, every atom and every disjunction
+/// numbered in the order they are written. The solver and the checker both start
+/// here, so a certificate names the same atoms and disjunctions the solver saw.
+pub fn lg_indexed(arena: ref TermArena, facts: ref Vec[i64], goal: i64, mut why: LgWhy) -> LgIndexed? {
+    let mut all: Vec[LgFormula] = []
+    for fact in facts {
+        all.push(lg_formula(arena, fact, true, why) ?? return null)
+    }
+    all.push(lg_formula(arena, goal, false, why) ?? return null)
+    let mut indexed = LgIndexed { atoms: [], ors: [], top: [] }
+    let whole = LgFormula::And(all)
+    indexed.top = indexed.items(whole)
+    return indexed
+}
+
+/// A bound the elimination holds, and the step that made it.
+struct LgHeld {
+    lin: LgLin,
+    step: i64,
+}
+
+/// How a case ended.
+enum LgClosed {
+    Refuted(LgRefutation),
+    /// The elimination ran out of variables without a contradiction: the
+    /// bounds are consistent over the rationals, with integer values where
+    /// back-substitution found them.
+    Consistent { found: bool, values: collections::BTreeMap[String, i64] },
+    /// The solver could not tell.
+    Unknown(LgUnknown),
+}
+
+/// The bound the last step made, tightened to the integers - with a step of its
+/// own where tightening changed it.
+fn lg_tighten_step(bound: ref LgLin, mut steps: Vec[LgStep]) -> LgHeld {
+    let made = steps.len() - 1
+    let tight = lg_tightened(bound)
+    if lg_lin_equal(tight, bound) {
+        return LgHeld { lin: bound.clone(), step: made }
+    }
+    steps.push(LgStep::Tighten(made))
+    return LgHeld { lin: tight, step: steps.len() - 1 }
+}
+
+/// Of the bounds on one form only the strongest counts: `form + c <= 0` with the
+/// largest `c`. Sorted by form, then by constant, largest first - stably.
+fn lg_sorted(held: ref Vec[LgHeld]) -> Vec[LgHeld] {
+    if held.len() < 2 {
+        return held.clone()
+    }
+    let middle = held.len() / 2
+    let mut left: Vec[LgHeld] = []
+    let mut right: Vec[LgHeld] = []
+    let mut at = 0
+    while at < held.len() {
+        if at < middle {
+            left.push(held[at].clone())
+        } else {
+            right.push(held[at].clone())
+        }
+        at += 1
+    }
+    let a = lg_sorted(left)
+    let b = lg_sorted(right)
+    let mut out: Vec[LgHeld] = []
+    let mut i = 0
+    let mut j = 0
+    while i < a.len() && j < b.len() {
+        // `b` goes first only where it is strictly before `a`.
+        let mut order = lg_terms_cmp(b[j].lin.terms, a[i].lin.terms)
+        if order == 0 {
+            if a[i].lin.constant < b[j].lin.constant {
+                order = -1
+            } else if b[j].lin.constant < a[i].lin.constant {
+                order = 1
+            }
+        }
+        if order < 0 {
+            out.push(b[j].clone())
+            j += 1
+        } else {
+            out.push(a[i].clone())
+            i += 1
+        }
+    }
+    while i < a.len() {
+        out.push(a[i].clone())
+        i += 1
+    }
+    while j < b.len() {
+        out.push(b[j].clone())
+        j += 1
+    }
+    return out
+}
+
+/// Fourier-Motzkin with integer tightening: where the bounds, all `<= 0`, have no
+/// integer solution, the derivation of `c <= 0` with `c > 0` that shows it
+/// (ADR-270 D5); why not where it cannot tell.
+///
+/// Every bound the elimination holds remembers the step that made it, so the
+/// contradiction it ends on can be traced back to the case's own bounds, and
+/// only the steps on that trace are kept.
+fn lg_contradictory(bounds: ref Vec[LgLin], budget: ref LgBudget) -> LgClosed {
+    let mut steps: Vec[LgStep] = []
+    // Each elimination's name and the bounds that held it, for values later.
+    let mut round_names: Vec[String] = []
+    let mut round_bounds: Vec[Vec[LgLin]] = []
+    let mut held: Vec[LgHeld] = []
+    let mut index = 0
+    for bound in bounds {
+        steps.push(LgStep::Hypothesis(index))
+        held.push(lg_tighten_step(bound, steps))
+        index += 1
+    }
+    while true {
+        // A bound with no variables left is a verdict: `c <= 0`.
+        for one in held {
+            if one.lin.terms.len() == 0 && one.lin.constant > 0 {
+                return LgClosed::Refuted(lg_traced(steps, one.step))
+            }
+        }
+        let mut live: Vec[LgHeld] = []
+        for one in held {
+            if one.lin.terms.len() > 0 {
+                live.push(one.clone())
+            }
+        }
+        let ordered = lg_sorted(live)
+        let mut bounds_now: Vec[LgHeld] = []
+        for one in ordered {
+            let last = bounds_now.len()
+            if last > 0 && lg_terms_cmp(bounds_now[last - 1].lin.terms, one.lin.terms) == 0 {
+                continue
+            }
+            bounds_now.push(one.clone())
+        }
+        let mut names: collections::BTreeSet[String] = collections::BTreeSet()
+        for one in bounds_now {
+            for (name, _) in one.lin.terms {
+                names.insert(name.clone())
+            }
+        }
+        // Eliminate the name whose elimination makes the fewest new bounds.
+        let mut chosen: String = ""
+        let mut have = false
+        let mut fewest = 0
+        for name in names {
+            let mut up = 0
+            let mut down = 0
+            for one in bounds_now {
+                let k = one.lin.terms.get(name) ?? 0
+                if k > 0 {
+                    up += 1
+                }
+                if k < 0 {
+                    down += 1
+                }
+            }
+            if !have || up * down < fewest {
+                have = true
+                chosen = name.clone()
+                fewest = up * down
+            }
+        }
+        if !have {
+            return lg_consistent(round_names, round_bounds)
+        }
+        let eliminated = lg_eliminate(bounds_now, chosen, budget, steps, round_names, round_bounds)
+        match eliminated {
+            LgEliminated::Next(next) => {
+                held = next.clone()
+            },
+            LgEliminated::Stop(closed) => {
+                return closed.clone()
+            },
+        }
+    }
+}
+
+/// How an elimination went on.
+enum LgEliminated {
+    Next(Vec[LgHeld]),
+    Stop(LgClosed),
+}
+
+/// The bounds that hold once `name` is eliminated: those without it, and each
+/// pair of an upper and a lower bound on it, combined.
+fn lg_eliminate(bounds_now: ref Vec[LgHeld], name: ref String, budget: ref LgBudget, mut steps: Vec[LgStep], mut round_names: Vec[String], mut round_bounds: Vec[Vec[LgLin]]) -> LgEliminated {
+    let mut without: Vec[LgHeld] = []
+    let mut up: Vec[LgHeld] = []
+    let mut down: Vec[LgHeld] = []
+    let mut with_lins: Vec[LgLin] = []
+    for one in bounds_now {
+        let k = one.lin.terms.get(name)
+        if k == null {
+            without.push(one.clone())
+            continue
+        }
+        with_lins.push(one.lin.clone())
+        if (k ?? 0) > 0 {
+            up.push(one.clone())
+        } else {
+            down.push(one.clone())
+        }
+    }
+    round_names.push(name.clone())
+    round_bounds.push(with_lins)
+    let mut next = without
+    for u in up {
+        for d in down {
+            let a = u.lin.terms.get(name) ?? 0
+            let b = -(d.lin.terms.get(name) ?? 0)
+            // b·u + a·d cancels `name`; both are `<= 0`, so is the sum.
+            let left = lg_scale(u.lin, b)
+            let right = lg_scale(d.lin, a)
+            if left == null || right == null {
+                return LgEliminated::Stop(LgClosed::Unknown(LgUnknown::Overflow))
+            }
+            let sum = lg_add(left ?? return LgEliminated::Stop(LgClosed::Unknown(LgUnknown::Overflow)), right ?? return LgEliminated::Stop(LgClosed::Unknown(LgUnknown::Overflow)))
+            if sum == null {
+                return LgEliminated::Stop(LgClosed::Unknown(LgUnknown::Overflow))
+            }
+            steps.push(LgStep::Combine { left: u.step, by_left: b, right: d.step, by_right: a })
+            next.push(lg_tighten_step(sum ?? return LgEliminated::Stop(LgClosed::Unknown(LgUnknown::Overflow)), steps))
+            if next.len() > budget.bounds {
+                return LgEliminated::Stop(LgClosed::Unknown(LgUnknown::TooManyBounds))
+            }
+        }
+    }
+    return LgEliminated::Next(next)
+}
+
+
+fn lg_consistent(names: ref Vec[String], bounds: ref Vec[Vec[LgLin]]) -> LgClosed {
+    let mut values: collections::BTreeMap[String, i64] = collections::BTreeMap()
+    let mut round = names.len()
+    while round > 0 {
+        round -= 1
+        let name = names[round].clone()
+        let mut low: i64? = null
+        let mut high: i64? = null
+        for bound in bounds[round] {
+            // k·name + rest <= 0
+            let k = bound.terms.get(name) ?? 0
+            let mut rest = bound.constant
+            for (other, c) in bound.terms {
+                if other != name {
+                    let value = values.get(other)
+                    if value == null {
+                        return LgClosed::Consistent { found: false, values: collections::BTreeMap() }
+                    }
+                    let product = c.checked_mul(value ?? 0)
+                    if product == null {
+                        return LgClosed::Consistent { found: false, values: collections::BTreeMap() }
+                    }
+                    let total = rest.checked_add(product ?? 0)
+                    if total == null {
+                        return LgClosed::Consistent { found: false, values: collections::BTreeMap() }
+                    }
+                    rest = total ?? 0
+                }
+            }
+            let negated = rest.checked_neg()
+            if negated == null {
+                return LgClosed::Consistent { found: false, values: collections::BTreeMap() }
+            }
+            if k > 0 {
+                // name <= floor(-rest / k)
+                let limit = (negated ?? 0).div_euclid(k)
+                if high == null || limit < (high ?? limit) {
+                    high = limit
+                }
+            } else {
+                // name >= ceil(rest / -k)
+                let flipped = k.checked_neg()
+                if flipped == null {
+                    return LgClosed::Consistent { found: false, values: collections::BTreeMap() }
+                }
+                let quotient = (negated ?? 0).div_euclid(flipped ?? 1)
+                let limit = quotient.checked_neg()
+                if limit == null {
+                    return LgClosed::Consistent { found: false, values: collections::BTreeMap() }
+                }
+                if low == null || (low ?? 0) < (limit ?? 0) {
+                    low = limit
+                }
+            }
+        }
+        let mut value = 0
+        if low != null && high != null && (low ?? 0) > (high ?? 0) {
+            return LgClosed::Consistent { found: false, values: collections::BTreeMap() }
+        }
+        if low != null && (low ?? 0) > 0 {
+            value = low ?? 0
+        } else if high != null && (high ?? 0) < 0 {
+            value = high ?? 0
+        }
+        values.insert(name.clone(), value)
+    }
+    return LgClosed::Consistent { found: true, values: values }
+}
+
+/// Only the steps `last` was derived from, in their order, renumbered.
+fn lg_traced(steps: ref Vec[LgStep], last: i64) -> LgRefutation {
+    let mut needed: Vec[bool] = []
+    for _ in steps {
+        needed.push(false)
+    }
+    needed[last] = true
+    let mut at = last
+    while at >= 0 {
+        if needed[at] {
+            match steps[at].clone() {
+                LgStep::Hypothesis(_) => {},
+                LgStep::Tighten(from) => {
+                    needed[from] = true
+                },
+                LgStep::Combine { left, right, .. } => {
+                    needed[left] = true
+                    needed[right] = true
+                },
+            }
+        }
+        at -= 1
+    }
+    let mut renumbered: Vec[i64] = []
+    for _ in steps {
+        renumbered.push(-1)
+    }
+    let mut kept: Vec[LgStep] = []
+    at = 0
+    while at <= last {
+        if needed[at] {
+            renumbered[at] = kept.len()
+            match steps[at].clone() {
+                LgStep::Hypothesis(i) => kept.push(LgStep::Hypothesis(i)),
+                LgStep::Tighten(from) => kept.push(LgStep::Tighten(renumbered[from])),
+                LgStep::Combine { left, by_left, right, by_right } => kept.push(LgStep::Combine { left: renumbered[left], by_left: by_left, right: renumbered[right], by_right: by_right }),
+            }
+        }
+        at += 1
+    }
+    return LgRefutation { steps: kept }
+}

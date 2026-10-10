@@ -1,0 +1,419 @@
+// crates/nikaia-std/src/tools/logic_normal.nika
+//
+// **A query in normal form, and an answer as text** (ADR-270 D19): what a
+// `nikaia.proofs` entry is keyed by and what it holds. Moved from
+// `nikaia-logic`'s `normal` (ADR-294, #125).
+//
+// The key has to be the same for the same question, wherever it was asked and
+// whatever the program called its values, so the query is rewritten before it
+// is hashed: `>=` and `>` turned round into `<=` and `<`, the facts in a
+// canonical order with duplicates dropped, and the variables renamed `v0`,
+// `v1`, … by first occurrence. **The certificate is about the normal form**
+// (D19): the solver is asked the normal query, and a recorded entry is checked
+// against it (D20), so the order the frontend wrote its facts in is never part
+// of what is trusted.
+//
+// The order of facts is by their shape, the fact written with every variable as
+// `?`. Two facts of one shape keep the order they were asked in, so a query
+// whose only difference from another is the order of two facts of one shape
+// gets a key of its own. That costs one search, never a wrong answer.
+
+use std::collections
+use std::text
+
+/// A query rewritten into normal form, with the way back to its names.
+pub struct LgNormal {
+    pub arena: TermArena,
+    pub facts: Vec[i64],
+    pub goal: i64,
+    /// The program's name of `v{i}`, at `i`.
+    pub names: Vec[String],
+}
+
+/// A fact as it is sorted and kept: its shape, its text, and the term.
+struct LgOrdered {
+    shape: String,
+    named: String,
+    fact: i64,
+}
+
+/// `query` in normal form.
+pub fn lg_normal_of(arena: ref TermArena, facts: ref Vec[i64], goal: i64) -> LgNormal {
+    // Turned round first, so that the shape a fact is sorted by is the shape it
+    // is written in.
+    let mut turned = TermArena { nodes: arena.nodes.clone() }
+    let mut turned_facts: Vec[i64] = []
+    for fact in facts {
+        turned_facts.push(lg_turn(turned, fact))
+    }
+    let turned_goal = lg_turn(turned, goal)
+    let mut ordered: Vec[LgOrdered] = []
+    for fact in turned_facts {
+        let shape = lg_written(turned, fact, true)
+        let named = lg_written(turned, fact, false)
+        let mut seen = false
+        for one in ordered {
+            if one.named == named {
+                seen = true
+            }
+        }
+        if !seen {
+            // Sorted by shape, stably: after every fact whose shape is not greater.
+            let mut at = ordered.len()
+            while at > 0 && shape < ordered[at - 1].shape {
+                at -= 1
+            }
+            ordered.insert(at, LgOrdered { shape: shape, named: named, fact: fact })
+        }
+    }
+    let mut normal = LgNormal { arena: TermArena::empty(), facts: [], goal: 0, names: [] }
+    let mut renamed: collections::BTreeMap[String, String] = collections::BTreeMap()
+    for one in ordered {
+        let copied = lg_copy(normal, turned, one.fact, renamed)
+        normal.facts.push(copied)
+    }
+    normal.goal = lg_copy(normal, turned, turned_goal, renamed)
+    return normal
+}
+
+/// `a >= b` as `b <= a` and `a > b` as `b < a`, all the way down: one way of
+/// writing each comparison, so that the two spellings share a key.
+fn lg_turn(mut arena: TermArena, id: i64) -> i64 {
+    let node = arena.at(id)
+    return match node {
+        SolverTerm::Ge(a, b) => arena.le(b, a),
+        SolverTerm::Gt(a, b) => arena.lt(b, a),
+        SolverTerm::Not(a) => {
+            let turned = lg_turn(arena, a)
+            arena.not(turned)
+        },
+        SolverTerm::And(parts) => {
+            let mut made: Vec[i64] = []
+            for part in parts {
+                made.push(lg_turn(arena, part))
+            }
+            arena.and(made)
+        },
+        SolverTerm::Or(parts) => {
+            let mut made: Vec[i64] = []
+            for part in parts {
+                made.push(lg_turn(arena, part))
+            }
+            arena.or(made)
+        },
+        else => id,
+    }
+}
+
+/// A term in prefix form, each variable written by its name, or as `?` where
+/// `shape` is asked for.
+fn lg_written(arena: ref TermArena, id: i64, shape: bool) -> String {
+    let node = arena.at(id)
+    return match node {
+        SolverTerm::Bool(b) => if b { "true" } else { "false" },
+        SolverTerm::Int(n) => f"{n}",
+        SolverTerm::Var(name) => if shape { "?" } else { name.clone() },
+        SolverTerm::Neg(a) => f"(- {lg_written(arena, a, shape)})",
+        SolverTerm::Not(a) => f"(not {lg_written(arena, a, shape)})",
+        SolverTerm::Add(a, b) => lg_binary("+", arena, a, b, shape),
+        SolverTerm::Sub(a, b) => lg_binary("-", arena, a, b, shape),
+        SolverTerm::Mul(a, b) => lg_binary("*", arena, a, b, shape),
+        SolverTerm::Le(a, b) => lg_binary("<=", arena, a, b, shape),
+        SolverTerm::Lt(a, b) => lg_binary("<", arena, a, b, shape),
+        SolverTerm::Ge(a, b) => lg_binary(">=", arena, a, b, shape),
+        SolverTerm::Gt(a, b) => lg_binary(">", arena, a, b, shape),
+        SolverTerm::Eq(a, b) => lg_binary("=", arena, a, b, shape),
+        SolverTerm::Ne(a, b) => lg_binary("distinct", arena, a, b, shape),
+        SolverTerm::And(parts) => lg_joined("and", arena, parts, shape),
+        SolverTerm::Or(parts) => lg_joined("or", arena, parts, shape),
+        SolverTerm::Other => "false",
+    }
+}
+
+fn lg_binary(op: ref String, arena: ref TermArena, a: i64, b: i64, shape: bool) -> String {
+    return f"({op} {lg_written(arena, a, shape)} {lg_written(arena, b, shape)})"
+}
+
+fn lg_joined(op: ref String, arena: ref TermArena, parts: ref Vec[i64], shape: bool) -> String {
+    let mut written: Vec[String] = []
+    for part in parts {
+        written.push(lg_written(arena, part, shape))
+    }
+    return f"({op} {written.join(" ")})"
+}
+
+/// A term of `from`, copied into the normal form with its variables renamed by
+/// first occurrence.
+fn lg_copy(mut normal: LgNormal, from: ref TermArena, id: i64, mut renamed: collections::BTreeMap[String, String]) -> i64 {
+    let node = from.at(id)
+    return match node {
+        SolverTerm::Bool(b) => normal.arena.boolean(b),
+        SolverTerm::Int(n) => normal.arena.int(n),
+        SolverTerm::Other => normal.arena.boolean(false),
+        SolverTerm::Var(name) => {
+            let known = renamed.get(name)
+            let mut fresh = f"v{renamed.len()}"
+            if known != null {
+                fresh = known?.clone() ?? fresh
+            } else {
+                normal.names.push(name.clone())
+                renamed.insert(name.clone(), fresh.clone())
+            }
+            normal.arena.var(fresh)
+        },
+        SolverTerm::Neg(a) => {
+            let x = lg_copy(normal, from, a, renamed)
+            normal.arena.neg(x)
+        },
+        SolverTerm::Not(a) => {
+            let x = lg_copy(normal, from, a, renamed)
+            normal.arena.not(x)
+        },
+        SolverTerm::Add(a, b) => {
+            let x = lg_copy(normal, from, a, renamed)
+            let y = lg_copy(normal, from, b, renamed)
+            normal.arena.add(x, y)
+        },
+        SolverTerm::Sub(a, b) => {
+            let x = lg_copy(normal, from, a, renamed)
+            let y = lg_copy(normal, from, b, renamed)
+            normal.arena.sub(x, y)
+        },
+        SolverTerm::Mul(a, b) => {
+            let x = lg_copy(normal, from, a, renamed)
+            let y = lg_copy(normal, from, b, renamed)
+            normal.arena.mul(x, y)
+        },
+        SolverTerm::Le(a, b) => {
+            let x = lg_copy(normal, from, a, renamed)
+            let y = lg_copy(normal, from, b, renamed)
+            normal.arena.le(x, y)
+        },
+        SolverTerm::Lt(a, b) => {
+            let x = lg_copy(normal, from, a, renamed)
+            let y = lg_copy(normal, from, b, renamed)
+            normal.arena.lt(x, y)
+        },
+        SolverTerm::Ge(a, b) => {
+            let x = lg_copy(normal, from, a, renamed)
+            let y = lg_copy(normal, from, b, renamed)
+            normal.arena.ge(x, y)
+        },
+        SolverTerm::Gt(a, b) => {
+            let x = lg_copy(normal, from, a, renamed)
+            let y = lg_copy(normal, from, b, renamed)
+            normal.arena.gt(x, y)
+        },
+        SolverTerm::Eq(a, b) => {
+            let x = lg_copy(normal, from, a, renamed)
+            let y = lg_copy(normal, from, b, renamed)
+            normal.arena.equal(x, y)
+        },
+        SolverTerm::Ne(a, b) => {
+            let x = lg_copy(normal, from, a, renamed)
+            let y = lg_copy(normal, from, b, renamed)
+            normal.arena.unequal(x, y)
+        },
+        SolverTerm::And(parts) => {
+            let mut made: Vec[i64] = []
+            for part in parts {
+                made.push(lg_copy(normal, from, part, renamed))
+            }
+            normal.arena.and(made)
+        },
+        SolverTerm::Or(parts) => {
+            let mut made: Vec[i64] = []
+            for part in parts {
+                made.push(lg_copy(normal, from, part, renamed))
+            }
+            normal.arena.or(made)
+        },
+    }
+}
+
+impl LgNormal {
+    /// The normal form written out: what the key is the hash of.
+    pub fn text(ref self) -> String {
+        let mut out: String = ""
+        for fact in self.facts {
+            out.push_str(lg_written(self.arena, fact, false))
+            out.push_str("\n")
+        }
+        out.push_str("|- ")
+        out.push_str(lg_written(self.arena, self.goal, false))
+        return out
+    }
+
+    /// A model of the normal form, in the program's names.
+    pub fn named(ref self, model: ref LgModel) -> LgModel {
+        let mut values: collections::BTreeMap[String, i64] = collections::BTreeMap()
+        for (name, value) in model.values {
+            values.insert(self.original(name), value)
+        }
+        return LgModel { values: values }
+    }
+
+    fn original(ref self, name: ref String) -> String {
+        if name.starts_with("v") {
+            let digits = name[1..<name.len()].clone()
+            let mut plain = digits.len() > 0
+            for c in digits.chars() {
+                if c < '0' || c > '9' {
+                    plain = false
+                }
+            }
+            if plain {
+                let n = text::parse_i64(digits) ?? -1
+                if n >= 0 && n < self.names.len() {
+                    return self.names[n].clone()
+                }
+            }
+        }
+        return name.clone()
+    }
+}
+
+/// A certificate as one word of text: `R(h0,h2,c0:1:1:2,t3)` for a refutation,
+/// `S1[…|…]` for a split of the second disjunction.
+pub fn lg_certificate_text(certificate: ref LgCertificate) -> String {
+    return match certificate {
+        LgCertificate::Refuted(refutation) => {
+            let mut steps: Vec[String] = []
+            for step in refutation.steps {
+                steps.push(lg_step_text(step))
+            }
+            f"R({steps.join(",")})"
+        },
+        LgCertificate::Split { disjunction, cases } => {
+            let mut parts: Vec[String] = []
+            for one in cases {
+                parts.push(lg_certificate_text(one))
+            }
+            f"S{disjunction}[{parts.join("|")}]"
+        },
+    }
+}
+
+fn lg_step_text(step: ref LgStep) -> String {
+    return match step.clone() {
+        LgStep::Hypothesis(n) => f"h{n}",
+        LgStep::Tighten(n) => f"t{n}",
+        LgStep::Combine { left, by_left, right, by_right } => f"c{left}:{by_left}:{right}:{by_right}",
+    }
+}
+
+/// A certificate read and what is left of the text.
+struct LgParsed {
+    certificate: LgCertificate,
+    rest: String,
+}
+
+/// `lg_certificate_text` read back, or nothing for text it did not write.
+pub fn lg_certificate_of(text: ref String) -> LgCertificate? {
+    let parsed = lg_certificate_from(text) ?? return null
+    if parsed.rest.len() == 0 {
+        return parsed.certificate.clone()
+    }
+    return null
+}
+
+fn lg_certificate_from(text: ref String) -> LgParsed? {
+    if text.starts_with("R(") {
+        let rest = text[2..<text.len()].clone()
+        let end = rest.find(")") ?? return null
+        let mut steps: Vec[LgStep] = []
+        let inside = rest[0..<end].clone()
+        for word in inside.split(",") {
+            if word.len() == 0 {
+                continue
+            }
+            steps.push(lg_step_of(word) ?? return null)
+        }
+        return LgParsed { certificate: LgCertificate::Refuted(LgRefutation { steps: steps }), rest: rest[end + 1..<rest.len()].clone() }
+    }
+    if !text.starts_with("S") {
+        return null
+    }
+    let rest = text[1..<text.len()].clone()
+    let open = rest.find("[") ?? return null
+    let disjunction = lg_number(rest[0..<open].clone()) ?? return null
+    let mut after = rest[open + 1..<rest.len()].clone()
+    let mut cases: Vec[LgCertificate] = []
+    while true {
+        let case = lg_certificate_from(after) ?? return null
+        cases.push(case.certificate.clone())
+        if case.rest.starts_with("|") {
+            after = case.rest[1..<case.rest.len()].clone()
+        } else {
+            if !case.rest.starts_with("]") {
+                return null
+            }
+            return LgParsed { certificate: LgCertificate::Split { disjunction: disjunction, cases: cases }, rest: case.rest[1..<case.rest.len()].clone() }
+        }
+    }
+}
+
+/// A number of `usize`'s kind: digits.
+fn lg_number(word: ref String) -> i64? {
+    let n = text::parse_i64(word) ?? return null
+    if n < 0 {
+        return null
+    }
+    return n
+}
+
+fn lg_step_of(word: ref String) -> LgStep? {
+    if word.starts_with("h") {
+        return LgStep::Hypothesis(lg_number(word[1..<word.len()].clone()) ?? return null)
+    }
+    if word.starts_with("t") {
+        return LgStep::Tighten(lg_number(word[1..<word.len()].clone()) ?? return null)
+    }
+    if !word.starts_with("c") {
+        return null
+    }
+    let body = word[1..<word.len()].clone()
+    let parts: Vec[ref String] = body.split(":").collect()
+    if parts.len() != 4 {
+        return null
+    }
+    let left = lg_number(parts[0]) ?? return null
+    let by_left = text::parse_i64(parts[1]) ?? return null
+    let right = lg_number(parts[2]) ?? return null
+    let by_right = text::parse_i64(parts[3]) ?? return null
+    return LgStep::Combine { left: left, by_left: by_left, right: right, by_right: by_right }
+}
+
+/// A model as one word of text, `v0=3,v1=-2`, or `-` for one with no variables.
+pub fn lg_model_text(model: ref LgModel) -> String {
+    if model.values.len() == 0 {
+        return "-"
+    }
+    let mut values: Vec[String] = []
+    for (name, value) in model.values {
+        values.push(f"{name}={value}")
+    }
+    return values.join(",")
+}
+
+/// `lg_model_text` read back.
+pub fn lg_model_of(text: ref String) -> LgModel? {
+    let mut values: collections::BTreeMap[String, i64] = collections::BTreeMap()
+    if text != "-" {
+        for pair in text.split(",") {
+            let at = pair.find("=") ?? return null
+            let name = pair[0..<at].clone()
+            if name.len() == 0 {
+                return null
+            }
+            for c in name.chars() {
+                if c.is_whitespace() {
+                    return null
+                }
+            }
+            let value = text::parse_i64(pair[at + 1..<pair.len()].clone()) ?? return null
+            values.insert(name, value)
+        }
+    }
+    return LgModel { values: values }
+}

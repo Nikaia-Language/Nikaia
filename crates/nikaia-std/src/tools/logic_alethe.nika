@@ -1,0 +1,681 @@
+// crates/nikaia-std/src/tools/logic_alethe.nika
+//
+// **A proof as Alethe** (ADR-270 D5, D6): an export, so that a checker this
+// layer does not trust - Carcara, cvc5's - can check what the reference solver
+// claims. It is not on the prover's path; `lg_verify` is. Moved from
+// `nikaia-logic`'s `alethe` (ADR-294, #125).
+//
+// The proof has three parts.
+//
+// 1. **Clauses.** Each assertion is taken apart into clauses of comparison
+//    literals with Alethe's Boolean rules: `and` and `not_or` for what holds of
+//    every part, and a resolution with a tautology - `and_pos`, `and_neg`,
+//    `or_pos`, `or_neg`, `not_not` - for what is nested inside a clause. A
+//    negated equality is split by `la_disequality` into the two strict
+//    inequalities it means.
+// 2. **A refutation per choice.** Literals are chosen clause by clause, a
+//    clause of one literal first, and what is chosen so far is handed to the
+//    reference solver: where it contradicts itself, its certificate becomes
+//    `la_generic` lemmas - a bound read off a literal, a combination, an
+//    integer tightening, the final `c <= 0` with `c > 0` - resolved into the
+//    clause `(cl ¬l₁ … ¬lₖ)` of the literals it used. Only where it does not is
+//    the next clause split.
+// 3. **A resolution tree.** A split clause is resolved with the clauses of its
+//    literals' branches, which leaves the clause of what was chosen before it,
+//    until nothing is left - `(cl)`. A branch that did not need the literal it
+//    picked is the answer for the whole clause, and the clause's other literals
+//    are not tried.
+
+use std::collections
+
+/// A part of a clause: a term, and whether it stands as itself or negated.
+struct LgPart {
+    id: i64,
+    positive: bool,
+}
+
+/// A clause and the step that proves it.
+struct LgClause {
+    step: String,
+    parts: Vec[LgPart],
+}
+
+struct LgProof {
+    text: String,
+    count: i64,
+}
+
+impl LgProof {
+    fn assume(ref mut self, term: ref String) -> String {
+        let name = f"h{self.count}"
+        self.count += 1
+        self.text.push_str(f"(assume {name} {term})\n")
+        return name
+    }
+
+    fn step(ref mut self, body: ref String) -> String {
+        let name = f"t{self.count}"
+        self.count += 1
+        self.text.push_str(f"(step {name} {body})\n")
+        return name
+    }
+}
+
+/// How many refutations a proof may try before it is not written.
+comptime LG_CHOICES: i64 = 1024
+
+/// Whether a part is a literal the solver reads as bounds: a comparison, or an
+/// equality that holds. A negated equality is two inequalities first.
+fn lg_is_literal(arena: ref TermArena, part: ref LgPart) -> bool {
+    return match arena.at(part.id) {
+        SolverTerm::Le(_, _) => true,
+        SolverTerm::Lt(_, _) => true,
+        SolverTerm::Ge(_, _) => true,
+        SolverTerm::Gt(_, _) => true,
+        SolverTerm::Eq(_, _) => part.positive,
+        else => false,
+    }
+}
+
+/// A part as the clause writes it.
+fn lg_literal(arena: ref TermArena, part: ref LgPart) -> String {
+    if part.positive {
+        return lg_term(arena, part.id)
+    }
+    return f"(not {lg_term(arena, part.id)})"
+}
+
+/// The literal's negation as a clause writes it.
+fn lg_negation(literal: ref String) -> String {
+    if literal.starts_with("(not ") && literal.ends_with(")") {
+        return literal[5..<literal.len() - 1].clone()
+    }
+    return f"(not {literal})"
+}
+
+fn lg_spaced(lits: ref Vec[String]) -> String {
+    let mut out: String = ""
+    for lit in lits {
+        out.push_str(f" {lit}")
+    }
+    return out
+}
+
+fn lg_has(list: ref Vec[String], text: ref String) -> bool {
+    for one in list {
+        if one == text {
+            return true
+        }
+    }
+    return false
+}
+
+/// Resolve the clause with a tautology on the part taken out, leaving `rest`
+/// and `instead`.
+fn lg_resolved(arena: ref TermArena, mut proof: LgProof, clause: ref LgClause, rest: ref Vec[LgPart], tautology: ref String, instead: ref Vec[LgPart]) -> LgClause {
+    let mut parts: Vec[LgPart] = []
+    for part in rest {
+        parts.push(LgPart { id: part.id, positive: part.positive })
+    }
+    for part in instead {
+        parts.push(LgPart { id: part.id, positive: part.positive })
+    }
+    let mut text: Vec[String] = []
+    for part in parts {
+        text.push(lg_literal(arena, part))
+    }
+    let step = proof.step(f"(cl{lg_spaced(text)}) :rule resolution :premises ({clause.step} {tautology})")
+    return LgClause { step: step, parts: parts }
+}
+
+/// The clause with its part inserted at `at` (or at the end, if there are not that many).
+fn lg_inserted(rest: ref Vec[LgPart], at: i64, part: LgPart) -> Vec[LgPart] {
+    let mut parts: Vec[LgPart] = []
+    let mut place = at
+    if place > rest.len() {
+        place = rest.len()
+    }
+    let mut index = 0
+    for one in rest {
+        if index == place {
+            parts.push(LgPart { id: part.id, positive: part.positive })
+        }
+        parts.push(LgPart { id: one.id, positive: one.positive })
+        index += 1
+    }
+    if place >= rest.len() {
+        parts.push(part)
+    }
+    return parts
+}
+
+/// The clause with its `at`th part taken apart: the clauses it comes to, each
+/// with the resolution step that proves it. Nothing for a part Alethe's rules
+/// here do not take apart.
+fn lg_opened(mut arena: TermArena, mut proof: LgProof, clause: ref LgClause, at: i64) -> Vec[LgClause]? {
+    let id = clause.parts[at].id
+    let positive = clause.parts[at].positive
+    let mut rest: Vec[LgPart] = []
+    let mut index = 0
+    for one in clause.parts {
+        if index != at {
+            rest.push(LgPart { id: one.id, positive: one.positive })
+        }
+        index += 1
+    }
+    let written = lg_literal(arena, LgPart { id: id, positive: positive })
+    let node = arena.at(id)
+    let none: Vec[LgPart] = []
+    return match node {
+        // `true`, or `not false`: the clause holds, and says nothing.
+        SolverTerm::Bool(b) => {
+            if b == positive {
+                let nothing: Vec[LgClause] = []
+                nothing
+            } else if positive {
+                let tautology = proof.step("(cl (not false)) :rule false")
+                [lg_resolved(arena, proof, clause, rest, tautology, none)]
+            } else {
+                let tautology = proof.step("(cl true) :rule true")
+                [lg_resolved(arena, proof, clause, rest, tautology, none)]
+            }
+        },
+        SolverTerm::Not(a) => {
+            if positive {
+                // `(not a)` standing as itself is `a` negated: the same text.
+                [LgClause { step: clause.step.clone(), parts: lg_inserted(rest, at, LgPart { id: a, positive: false }) }]
+            } else {
+                let tautology = proof.step(f"(cl (not {written}) {lg_term(arena, a)}) :rule not_not")
+                [lg_resolved(arena, proof, clause, rest, tautology, [LgPart { id: a, positive: true }])]
+            }
+        },
+        SolverTerm::And(parts) => {
+            if positive {
+                let mut out: Vec[LgClause] = []
+                let mut i = 0
+                for part in parts {
+                    let tautology = proof.step(f"(cl (not {written}) {lg_term(arena, part)}) :rule and_pos :args ({i})")
+                    out.push(lg_resolved(arena, proof, clause, rest, tautology, [LgPart { id: part, positive: true }]))
+                    i += 1
+                }
+                out
+            } else {
+                let mut negations: Vec[String] = []
+                let mut instead: Vec[LgPart] = []
+                for part in parts {
+                    negations.push(f"(not {lg_term(arena, part)})")
+                    instead.push(LgPart { id: part, positive: false })
+                }
+                let tautology = proof.step(f"(cl {lg_term(arena, id)}{lg_spaced(negations)}) :rule and_neg")
+                [lg_resolved(arena, proof, clause, rest, tautology, instead)]
+            }
+        },
+        SolverTerm::Or(parts) => {
+            if positive {
+                let mut texts: Vec[String] = []
+                let mut instead: Vec[LgPart] = []
+                for part in parts {
+                    texts.push(lg_term(arena, part))
+                    instead.push(LgPart { id: part, positive: true })
+                }
+                let tautology = proof.step(f"(cl (not {written}){lg_spaced(texts)}) :rule or_pos")
+                [lg_resolved(arena, proof, clause, rest, tautology, instead)]
+            } else {
+                let mut out: Vec[LgClause] = []
+                let mut i = 0
+                for part in parts {
+                    let tautology = proof.step(f"(cl {lg_term(arena, id)} (not {lg_term(arena, part)})) :rule or_neg :args ({i})")
+                    out.push(lg_resolved(arena, proof, clause, rest, tautology, [LgPart { id: part, positive: false }]))
+                    i += 1
+                }
+                out
+            }
+        },
+        // `a != b` is written `(not (= a b))`: the equality, negated.
+        SolverTerm::Ne(a, b) => {
+            let equal = arena.equal(a, b)
+            [LgClause { step: clause.step.clone(), parts: lg_inserted(rest, at, LgPart { id: equal, positive: !positive }) }]
+        },
+        // A negated equality is one of two strict inequalities.
+        SolverTerm::Eq(a, b) => {
+            if positive {
+                return null
+            }
+            let a_text = lg_term(arena, a)
+            let b_text = lg_term(arena, b)
+            let total = proof.step(f"(cl (or (= {a_text} {b_text}) (not (<= {a_text} {b_text})) (not (<= {b_text} {a_text})))) :rule la_disequality")
+            let below = arena.le(a, b)
+            let above = arena.le(b, a)
+            let split = proof.step(f"(cl (= {a_text} {b_text}) (not (<= {a_text} {b_text})) (not (<= {b_text} {a_text}))) :rule or :premises ({total})")
+            [lg_resolved(arena, proof, clause, rest, split, [LgPart { id: below, positive: false }, LgPart { id: above, positive: false }])]
+        },
+        else => {
+            return null
+        },
+    }
+}
+
+/// The refutation a proof of a conjunction is, where it is not a split.
+fn lg_refutation_of(answer: ref LgAnswer) -> LgRefutation? {
+    return match answer {
+        LgAnswer::Proved { certificate } => lg_unsplit(certificate),
+        else => null,
+    }
+}
+
+fn lg_unsplit(certificate: ref LgCertificate) -> LgRefutation? {
+    return match certificate {
+        LgCertificate::Refuted(found) => found.clone(),
+        else => null,
+    }
+}
+
+/// A bound `lin <= 0` as a term.
+fn lg_bound_term(mut arena: TermArena, lin: ref LgLin) -> i64 {
+    let mut sum: i64 = -1
+    let mut have = false
+    for (name, k) in lin.terms {
+        let v = arena.var(name)
+        let mut part = v
+        if k != 1 {
+            let factor = arena.int(k)
+            part = arena.mul(factor, v)
+        }
+        if have {
+            sum = arena.add(sum, part)
+        } else {
+            sum = part
+            have = true
+        }
+    }
+    let constant = arena.int(lin.constant)
+    let mut whole = constant
+    if have {
+        whole = sum
+        if lin.constant != 0 {
+            whole = arena.add(sum, constant)
+        }
+    }
+    let zero = arena.int(0)
+    return arena.le(whole, zero)
+}
+
+/// A whole number as SMT-LIB writes it.
+fn lg_alethe_number(n: i64) -> String {
+    if n < 0 {
+        return lg_smt_int(n)
+    }
+    return f"{n}"
+}
+
+/// A bound `lin <= 0` as an SMT-LIB atom.
+fn lg_atom(lin: ref LgLin) -> String {
+    let mut items: Vec[String] = []
+    for (name, k) in lin.terms {
+        if k == 1 {
+            items.push(lg_symbol(name))
+        } else {
+            items.push(f"(* {lg_alethe_number(k)} {lg_symbol(name)})")
+        }
+    }
+    if lin.constant != 0 || items.len() == 0 {
+        items.push(lg_alethe_number(lin.constant))
+    }
+    if items.len() == 1 {
+        return f"(<= {items[0]} 0)"
+    }
+    return f"(<= (+ {items.join(" ")}) 0)"
+}
+
+/// A step that proves a clause, and the literals that clause holds.
+struct LgBelow {
+    step: String,
+    lits: Vec[String],
+}
+
+/// **One choice refuted**: the reference solver's certificate for the
+/// conjunction of `chosen`, as lemmas resolved into the clause of the negations
+/// of the literals it used. Its step and that clause.
+fn lg_choice(mut arena: TermArena, mut proof: LgProof, chosen: ref Vec[LgPart]) -> LgBelow? {
+    let mut facts: Vec[i64] = []
+    let mut seen: Vec[String] = []
+    for part in chosen {
+        let text = lg_literal(arena, part)
+        if lg_has(seen, text) {
+            continue
+        }
+        seen.push(text)
+        if part.positive {
+            facts.push(part.id)
+        } else {
+            facts.push(arena.not(part.id))
+        }
+    }
+    let falsum = arena.boolean(false)
+    let answer = lg_check(arena, facts, falsum, lg_budget())
+    let refutation = lg_refutation_of(answer)
+    // A conjunction of literals: no disjunction, and the atoms are its bounds in
+    // order.
+    let mut why = LgWhy { unknown: LgUnknown::NoContradiction }
+    let read = lg_indexed(arena, facts, falsum, why)
+    if read == null || refutation == null {
+        return null
+    }
+    let indexed = read ?? return null
+    if indexed.ors.len() > 0 {
+        return null
+    }
+    let steps = (refutation ?? return null).steps.clone()
+    let bounds = indexed.atoms.clone()
+    // Each bound of the case: the literal it was read off, negated as the lemma
+    // writes it, and the multiplier that turns one into the other.
+    let mut source_text: Vec[String] = []
+    let mut source_weight: Vec[i64] = []
+    for fact in facts {
+        let mut id = fact
+        let mut positive = true
+        match arena.at(fact) {
+            SolverTerm::Not(inner) => {
+                id = inner
+                positive = false
+            },
+            else => {},
+        }
+        let negation = lg_negation(lg_literal(arena, LgPart { id: id, positive: positive }))
+        let mut equal = false
+        match arena.at(id) {
+            SolverTerm::Eq(_, _) => {
+                equal = true
+            },
+            else => {},
+        }
+        if equal && positive {
+            source_text.push(negation.clone())
+            source_weight.push(-1)
+            source_text.push(negation)
+            source_weight.push(1)
+        } else {
+            source_text.push(negation)
+            source_weight.push(1)
+        }
+    }
+    if source_text.len() != bounds.len() {
+        return null
+    }
+    let mut lemmas: Vec[String] = []
+    let mut used: Vec[String] = []
+    let mut made_lin: Vec[LgLin] = []
+    let mut made_atom: Vec[String] = []
+    for step in steps {
+        let made = lg_lemma_of(step, bounds, source_text, source_weight, made_lin, made_atom, used) ?? return null
+        lemmas.push(proof.step(made.lemma))
+        made_atom.push(lg_atom(made.bound))
+        made_lin.push(made.bound.clone())
+    }
+    if made_lin.len() == 0 {
+        return null
+    }
+    let last = made_lin[made_lin.len() - 1].clone()
+    let last_atom = made_atom[made_atom.len() - 1].clone()
+    if last.terms.len() > 0 || last.constant <= 0 {
+        return null
+    }
+    lemmas.push(proof.step(f"(cl (not {last_atom})) :rule la_generic :args (1)"))
+    let step = proof.step(f"(cl{lg_spaced(used)}) :rule resolution :premises ({lemmas.join(" ")})")
+    return LgBelow { step: step, lits: used }
+}
+
+/// A bound a step makes, and the lemma that says so.
+struct LgMade {
+    bound: LgLin,
+    lemma: String,
+}
+
+/// One step of the solver's refutation, as a bound and an `la_generic` lemma.
+fn lg_lemma_of(step: ref LgStep, bounds: ref Vec[LgLin], source_text: ref Vec[String], source_weight: ref Vec[i64], made_lin: ref Vec[LgLin], made_atom: ref Vec[String], mut used: Vec[String]) -> LgMade? {
+    return match step.clone() {
+        LgStep::Hypothesis(i) => {
+            if i < 0 || i >= bounds.len() {
+                return null
+            }
+            let bound = bounds[i].clone()
+            let negation = source_text[i].clone()
+            let weight = source_weight[i]
+            if !lg_has(used, negation) {
+                used.push(negation.clone())
+            }
+            LgMade { bound: bound.clone(), lemma: f"(cl {negation} {lg_atom(bound)}) :rule la_generic :args ({weight} 1)" }
+        },
+        LgStep::Tighten(from) => {
+            if from < 0 || from >= made_lin.len() {
+                return null
+            }
+            let before = made_lin[from].clone()
+            let before_atom = made_atom[from].clone()
+            let mut factor = 0
+            for (_, k) in before.terms {
+                factor = lg_gcd(factor, k.abs())
+            }
+            let bound = lg_tightened(before)
+            LgMade { bound: bound.clone(), lemma: f"(cl (not {before_atom}) {lg_atom(bound)}) :rule la_generic :args (1 {factor})" }
+        },
+        LgStep::Combine { left, by_left, right, by_right } => {
+            if left < 0 || left >= made_lin.len() || right < 0 || right >= made_lin.len() {
+                return null
+            }
+            let l = made_lin[left].clone()
+            let l_atom = made_atom[left].clone()
+            let r = made_lin[right].clone()
+            let r_atom = made_atom[right].clone()
+            let scaled_left = lg_scale(l, by_left) ?? return null
+            let scaled_right = lg_scale(r, by_right) ?? return null
+            let bound = lg_add(scaled_left, scaled_right) ?? return null
+            LgMade { bound: bound.clone(), lemma: f"(cl (not {l_atom}) (not {r_atom}) {lg_atom(bound)}) :rule la_generic :args ({by_left} {by_right} 1)" }
+        },
+    }
+}
+
+/// The bounds every literal of `clause` implies, each proved as a clause of its
+/// own: `(cl ¬lᵢ h)` for each literal by the solver, resolved with the clause
+/// into `(cl h)`. A bound one literal's lemma cannot be written for is left out.
+fn lg_hulled(mut arena: TermArena, mut proof: LgProof, clause: ref LgClause) -> Vec[LgClause] {
+    let mut parts: Vec[i64] = []
+    for part in clause.parts {
+        if part.positive {
+            parts.push(part.id)
+        } else {
+            parts.push(arena.not(part.id))
+        }
+    }
+    let either = arena.or(parts)
+    let falsum = arena.boolean(false)
+    let facts: Vec[i64] = [either]
+    let mut why = LgWhy { unknown: LgUnknown::NoContradiction }
+    let read = lg_indexed(arena, facts, falsum, why)
+    let mut out: Vec[LgClause] = []
+    if read == null {
+        return out
+    }
+    let indexed = read ?? return out
+    let mut bounds: Vec[LgLin] = []
+    for item in indexed.top {
+        if item.atom {
+            bounds.push(indexed.atoms[item.n].clone())
+        }
+    }
+    for bound in bounds {
+        let hull = lg_bound_term(arena, bound)
+        let mut lemmas: Vec[String] = []
+        let mut lits: Vec[String] = []
+        let mut complete = true
+        for part in clause.parts {
+            let found = lg_choice(arena, proof, [LgPart { id: part.id, positive: part.positive }, LgPart { id: hull, positive: false }])
+            if found == null {
+                complete = false
+                break
+            }
+            let below = found ?? return out
+            let pivot = lg_negation(lg_literal(arena, part))
+            for lit in below.lits {
+                if lit != pivot && !lg_has(lits, lit) {
+                    lits.push(lit.clone())
+                }
+            }
+            lemmas.push(below.step.clone())
+        }
+        if !complete {
+            continue
+        }
+        if lemmas.len() != clause.parts.len() {
+            continue
+        }
+        let mut premises: Vec[String] = [clause.step.clone()]
+        for lemma in lemmas {
+            premises.push(lemma.clone())
+        }
+        let step = proof.step(f"(cl{lg_spaced(lits)}) :rule resolution :premises ({premises.join(" ")})")
+        if lits.len() == 1 && lits[0] == lg_term(arena, hull) {
+            out.push(LgClause { step: step, parts: [LgPart { id: hull, positive: true }] })
+        }
+    }
+    return out
+}
+
+/// The depth-first search for a proof, and what it has written.
+struct LgSearch {
+    arena: TermArena,
+    proof: LgProof,
+    clauses: Vec[LgClause],
+    /// How many refutations were tried, against `LG_CHOICES`.
+    work: i64,
+}
+
+/// A step proving the clause of the negated literals chosen so far, or of
+/// fewer of them, and that clause.
+fn lg_below(mut search: LgSearch, depth: i64, mut chosen: Vec[LgPart]) -> LgBelow? {
+    search.work += 1
+    if search.work > LG_CHOICES {
+        return null
+    }
+    let refuted = lg_choice(search.arena, search.proof, chosen)
+    if refuted != null {
+        return refuted
+    }
+    if depth >= search.clauses.len() {
+        return null
+    }
+    let clause = LgClause { step: search.clauses[depth].step.clone(), parts: search.clauses[depth].parts.clone() }
+    let mut steps: Vec[String] = []
+    let mut all_lits: Vec[Vec[String]] = []
+    for part in clause.parts {
+        chosen.push(LgPart { id: part.id, positive: part.positive })
+        let found = lg_below(search, depth + 1, chosen)
+        chosen.pop()
+        let here = found ?? return null
+        // A refutation that did not need this literal is the answer
+        // already, for every literal of the clause.
+        let pivot = lg_negation(lg_literal(search.arena, part))
+        if !lg_has(here.lits, pivot) {
+            return here
+        }
+        steps.push(here.step.clone())
+        all_lits.push(here.lits.clone())
+    }
+    let mut lits: Vec[String] = []
+    let mut at = 0
+    for part in clause.parts {
+        let pivot = lg_negation(lg_literal(search.arena, part))
+        for lit in all_lits[at] {
+            if lit != pivot && !lg_has(lits, lit) {
+                lits.push(lit.clone())
+            }
+        }
+        at += 1
+    }
+    let mut premises: Vec[String] = [clause.step.clone()]
+    for one in steps {
+        premises.push(one.clone())
+    }
+    let step = search.proof.step(f"(cl{lg_spaced(lits)}) :rule resolution :premises ({premises.join(" ")})")
+    return LgBelow { step: step, lits: lits }
+}
+
+/// The query's proof in Alethe, to be checked against `lg_smtlib_write`'s script
+/// of the same query: where the reference solver proves it, its Boolean
+/// structure is one Alethe can take apart, and it has no more than a fixed
+/// number of choices. Nothing otherwise.
+pub fn lg_alethe_write(source: ref TermArena, facts: ref Vec[i64], goal: i64) -> String? {
+    let mut arena = TermArena { nodes: source.nodes.clone() }
+    let mut proof = LgProof { text: "", count: 0 }
+    // 1. The assumptions, exactly as the script asserts them, and the clauses of
+    //    literals they come to.
+    let mut pending: Vec[LgClause] = []
+    for fact in facts {
+        let step = proof.assume(lg_term(arena, fact))
+        pending.push(LgClause { step: step, parts: [LgPart { id: fact, positive: true }] })
+    }
+    let step = proof.assume(f"(not {lg_term(arena, goal)})")
+    pending.push(LgClause { step: step, parts: [LgPart { id: goal, positive: false }] })
+    let mut clauses: Vec[LgClause] = []
+    while pending.len() > 0 {
+        let clause = pending[pending.len() - 1].clone()
+        pending.pop()
+        let mut open: i64 = -1
+        let mut index = 0
+        for part in clause.parts {
+            if open < 0 && !lg_is_literal(arena, part) {
+                open = index
+            }
+            index += 1
+        }
+        if open < 0 {
+            clauses.push(clause)
+        } else {
+            let more = lg_opened(arena, proof, clause, open) ?? return null
+            for one in more {
+                pending.push(one.clone())
+            }
+        }
+    }
+    // An empty clause is the refutation already: its step concludes `(cl)`.
+    for clause in clauses {
+        if clause.parts.len() == 0 {
+            return proof.text.clone()
+        }
+    }
+    let mut reversed: Vec[LgClause] = []
+    let mut back = clauses.len()
+    while back > 0 {
+        back -= 1
+        reversed.push(clauses[back].clone())
+    }
+    // What every literal of a clause says is a clause of its own, as the solver
+    // reads it (its hull): one lemma per literal, resolved with the clause.
+    let mut hulls: Vec[LgClause] = []
+    for clause in reversed {
+        if clause.parts.len() > 1 {
+            hulls.extend(lg_hulled(arena, proof, clause))
+        }
+    }
+    for hull in hulls {
+        reversed.push(hull.clone())
+    }
+    // A clause of one literal is chosen first: it is no choice.
+    let mut ordered: Vec[LgClause] = []
+    for clause in reversed {
+        let mut at = ordered.len()
+        while at > 0 && clause.parts.len() < ordered[at - 1].parts.len() {
+            at -= 1
+        }
+        ordered.insert(at, clause.clone())
+    }
+    // 2 and 3. Depth first: what is chosen so far is refuted where it can be, and
+    // only otherwise is the next clause split.
+    let mut search = LgSearch { arena: arena, proof: proof, clauses: ordered, work: 0 }
+    let mut none: Vec[LgPart] = []
+    let last = lg_below(search, 0, none) ?? return null
+    if last.lits.len() == 0 {
+        return search.proof.text.clone()
+    }
+    return null
+}

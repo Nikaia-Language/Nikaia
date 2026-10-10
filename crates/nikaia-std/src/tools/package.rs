@@ -14319,6 +14319,2133 @@ fn published(own: &Ledger, field: &str) -> bool {
 }
 
 
+// --- logic_alethe.nika ---
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct LgPart {
+    id: i64,
+    positive: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct LgClause {
+    step: String,
+    parts: Vec<LgPart>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct LgProof {
+    text: String,
+    count: i64,
+}
+
+impl LgProof {
+    fn assume(&mut self, term: &str) -> String {
+        let name = format!("h{}", self.count);
+        self.count += 1;
+        self.text.push_str(&format!("(assume {} {})\n", name, term));
+        name
+    }
+    fn step(&mut self, body: &str) -> String {
+        let name = format!("t{}", self.count);
+        self.count += 1;
+        self.text.push_str(&format!("(step {} {})\n", name, body));
+        name
+    }
+}
+
+const LG_CHOICES: i64 = 1024;
+
+fn lg_is_literal(arena: &TermArena, part: &LgPart) -> bool {
+    match arena.at(part.id) {
+        SolverTerm::Le(_, _) => true,
+        SolverTerm::Lt(_, _) => true,
+        SolverTerm::Ge(_, _) => true,
+        SolverTerm::Gt(_, _) => true,
+        SolverTerm::Eq(_, _) => part.positive,
+        _ => false,
+    }
+}
+
+fn lg_literal(arena: &TermArena, part: &LgPart) -> String {
+    if part.positive { return lg_term(arena, part.id); }
+    format!("(not {})", lg_term(arena, part.id))
+}
+
+fn lg_negation(literal: &str) -> String {
+    if literal.starts_with("(not ") && literal.ends_with(")") { return nikaia_std::index::get(&literal, nikaia_std::index::at(5..literal.len() as i64 - 1)).to_owned(); }
+    format!("(not {})", literal)
+}
+
+fn lg_spaced(lits: &[String]) -> String {
+    let mut out: String = String::from("");
+    for lit in lits.iter() { out.push_str(&format!(" {}", lit)); }
+    out
+}
+
+fn lg_has(list: &[String], text: &str) -> bool {
+    for one in list.iter() { if one == text { return true; } }
+    false
+}
+
+fn lg_resolved(arena: &TermArena, proof: &mut LgProof, clause: &LgClause, rest: &[LgPart], tautology: &str, instead: &[LgPart]) -> LgClause {
+    let mut parts: Vec<LgPart> = vec![];
+    for part in rest.iter() { parts.push(LgPart { id: part.id, positive: part.positive }); }
+    for part in instead.iter() { parts.push(LgPart { id: part.id, positive: part.positive }); }
+    let mut text: Vec<String> = vec![];
+    for part in parts.iter() { text.push(lg_literal(arena, part)); }
+    let step = proof.step(&format!("(cl{}) :rule resolution :premises ({} {})", lg_spaced(&text), clause.step, tautology));
+    LgClause { step, parts }
+}
+
+fn lg_inserted(rest: &[LgPart], at: i64, part: LgPart) -> Vec<LgPart> {
+    let mut parts: Vec<LgPart> = vec![];
+    let mut place = at;
+    if place > rest.len() as i64 { place = rest.len() as i64; }
+    let mut index: i64 = 0;
+    for one in rest.iter() {
+        if index == place { parts.push(LgPart { id: part.id, positive: part.positive }); }
+        parts.push(LgPart { id: one.id, positive: one.positive });
+        index += 1;
+    }
+    if place >= rest.len() as i64 { parts.push(part); }
+    parts
+}
+
+fn lg_opened(arena: &mut TermArena, proof: &mut LgProof, clause: &LgClause, at: i64) -> Option<Vec<LgClause>> {
+    let id = nikaia_std::index::get(&clause.parts, nikaia_std::index::at(at)).id;
+    let positive = nikaia_std::index::get(&clause.parts, nikaia_std::index::at(at)).positive;
+    let mut rest: Vec<LgPart> = vec![];
+    let mut index: i64 = 0;
+    for one in clause.parts.iter() {
+        if index != at { rest.push(LgPart { id: one.id, positive: one.positive }); }
+        index += 1;
+    }
+    let written = lg_literal(&arena, &LgPart { id, positive });
+    let node = arena.at(id);
+    let none: Vec<LgPart> = vec![];
+    Some(match node {
+        SolverTerm::Bool(b) => {
+            if b == positive {
+                let nothing: Vec<LgClause> = vec![];
+                nothing
+            } else if positive {
+                let tautology = proof.step("(cl (not false)) :rule false");
+                vec![lg_resolved(&arena, proof, clause, &rest, &tautology, &none)]
+            } else {
+                let tautology = proof.step("(cl true) :rule true");
+                vec![lg_resolved(&arena, proof, clause, &rest, &tautology, &none)]
+            }
+        },
+        SolverTerm::Not(a) => {
+            if positive { vec![LgClause { step: clause.step.to_owned(), parts: lg_inserted(&rest, at, LgPart { id: a, positive: false }) }] } else {
+                let tautology = proof.step(&format!("(cl (not {}) {}) :rule not_not", written, lg_term(&arena, a)));
+                vec![lg_resolved(&arena, proof, clause, &rest, &tautology, &vec![LgPart { id: a, positive: true }])]
+            }
+        },
+        SolverTerm::And(ref parts) => {
+            if positive {
+                let mut out: Vec<LgClause> = vec![];
+                let mut i = 0;
+                for part in parts.iter() {
+                    let part = nikaia_std::num::value(part);
+                    let tautology = proof.step(&format!("(cl (not {}) {}) :rule and_pos :args ({})", written, lg_term(&arena, part), i));
+                    out.push(lg_resolved(&arena, proof, clause, &rest, &tautology, &vec![LgPart { id: part, positive: true }]));
+                    i += 1;
+                }
+                out
+            } else {
+                let mut negations: Vec<String> = vec![];
+                let mut instead: Vec<LgPart> = vec![];
+                for part in parts.iter() {
+                    let part = nikaia_std::num::value(part);
+                    negations.push(format!("(not {})", lg_term(&arena, part)));
+                    instead.push(LgPart { id: part, positive: false });
+                }
+                let tautology = proof.step(&format!("(cl {}{}) :rule and_neg", lg_term(&arena, id), lg_spaced(&negations)));
+                vec![lg_resolved(&arena, proof, clause, &rest, &tautology, &instead)]
+            }
+        },
+        SolverTerm::Or(ref parts) => {
+            if positive {
+                let mut texts: Vec<String> = vec![];
+                let mut instead: Vec<LgPart> = vec![];
+                for part in parts.iter() {
+                    let part = nikaia_std::num::value(part);
+                    texts.push(lg_term(&arena, part));
+                    instead.push(LgPart { id: part, positive: true });
+                }
+                let tautology = proof.step(&format!("(cl (not {}){}) :rule or_pos", written, lg_spaced(&texts)));
+                vec![lg_resolved(&arena, proof, clause, &rest, &tautology, &instead)]
+            } else {
+                let mut out: Vec<LgClause> = vec![];
+                let mut i = 0;
+                for part in parts.iter() {
+                    let part = nikaia_std::num::value(part);
+                    let tautology = proof.step(&format!("(cl {} (not {})) :rule or_neg :args ({})", lg_term(&arena, id), lg_term(&arena, part), i));
+                    out.push(lg_resolved(&arena, proof, clause, &rest, &tautology, &vec![LgPart { id: part, positive: false }]));
+                    i += 1;
+                }
+                out
+            }
+        },
+        SolverTerm::Ne(a, b) => {
+            let equal = arena.equal(a, b);
+            vec![LgClause { step: clause.step.to_owned(), parts: lg_inserted(&rest, at, LgPart { id: equal, positive: !positive }) }]
+        },
+        SolverTerm::Eq(a, b) => {
+            if positive { return None; }
+            let a_text = lg_term(&arena, a);
+            let b_text = lg_term(&arena, b);
+            let total = proof.step(&format!("(cl (or (= {} {}) (not (<= {} {})) (not (<= {} {})))) :rule la_disequality", a_text, b_text, a_text, b_text, b_text, a_text));
+            let below = arena.le(a, b);
+            let above = arena.le(b, a);
+            let split = proof.step(&format!("(cl (= {} {}) (not (<= {} {})) (not (<= {} {}))) :rule or :premises ({})", a_text, b_text, a_text, b_text, b_text, a_text, total));
+            vec![lg_resolved(&arena, proof, clause, &rest, &split, &vec![LgPart { id: below, positive: false }, LgPart { id: above, positive: false }])]
+        },
+        _ => { return None; },
+    })
+}
+
+fn lg_refutation_of(answer: &LgAnswer) -> Option<LgRefutation> {
+    match answer {
+        LgAnswer::Proved { certificate } => lg_unsplit(certificate),
+        _ => None,
+    }
+}
+
+fn lg_unsplit(certificate: &LgCertificate) -> Option<LgRefutation> {
+    match certificate {
+        LgCertificate::Refuted(found) => Some(found.clone()),
+        _ => None,
+    }
+}
+
+fn lg_bound_term(arena: &mut TermArena, lin: &LgLin) -> i64 {
+    let mut sum: i64 = -1;
+    let mut have = false;
+    for (name, k) in lin.terms.iter() {
+        let k = nikaia_std::num::value(k);
+        let v = arena.var(name);
+        let mut part = v;
+        if k != 1 {
+            let factor = arena.int(k);
+            part = arena.mul(factor, v);
+        }
+        if have { sum = arena.add(sum, part); } else {
+            sum = part;
+            have = true;
+        }
+    }
+    let constant = arena.int(lin.constant);
+    let mut whole = constant;
+    if have {
+        whole = sum;
+        if lin.constant != 0 { whole = arena.add(sum, constant); }
+    }
+    let zero = arena.int(0);
+    arena.le(whole, zero)
+}
+
+fn lg_alethe_number(n: i64) -> String {
+    if n < 0 { return lg_smt_int(n); }
+    format!("{}", n)
+}
+
+fn lg_atom(lin: &LgLin) -> String {
+    let mut items: Vec<String> = vec![];
+    for (name, k) in lin.terms.iter() {
+        let k = nikaia_std::num::value(k);
+        if k == 1 { items.push(lg_symbol(name)); } else { items.push(format!("(* {} {})", lg_alethe_number(k), lg_symbol(name))); }
+    }
+    if lin.constant != 0 || items.is_empty() { items.push(lg_alethe_number(lin.constant)); }
+    if items.len() == 1 { return format!("(<= {} 0)", *nikaia_std::index::get(&items, 0)); }
+    format!("(<= (+ {}) 0)", items.join(" "))
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct LgBelow {
+    step: String,
+    lits: Vec<String>,
+}
+
+fn lg_choice(arena: &mut TermArena, proof: &mut LgProof, chosen: &[LgPart]) -> Option<LgBelow> {
+    let mut facts: Vec<i64> = vec![];
+    let mut seen: Vec<String> = vec![];
+    for part in chosen.iter() {
+        let text = lg_literal(&arena, part);
+        if lg_has(&seen, &text) { continue; }
+        seen.push(text);
+        if part.positive { facts.push(part.id); } else { facts.push(arena.not(part.id)); }
+    }
+    let falsum = arena.boolean(false);
+    let answer = lg_check(&arena, &facts, falsum, &lg_budget());
+    let refutation = lg_refutation_of(&answer);
+    let mut why = LgWhy { unknown: LgUnknown::NoContradiction };
+    let read = lg_indexed(&arena, &facts, falsum, &mut why);
+    if read.is_none() || refutation.is_none() { return None; }
+    let indexed = match read { Some(__nikaia_value) => __nikaia_value, None => return None };
+    if !indexed.ors.is_empty() { return None; }
+    let steps = match refutation { Some(__nikaia_value) => __nikaia_value, None => return None }.steps.to_owned();
+    let bounds = indexed.atoms.to_owned();
+    let mut source_text: Vec<String> = vec![];
+    let mut source_weight: Vec<i64> = vec![];
+    for fact in facts.iter() {
+        let fact = nikaia_std::num::value(fact);
+        let mut id = fact;
+        let mut positive = true;
+        match arena.at(fact) {
+            SolverTerm::Not(inner) => {
+                id = inner;
+                positive = false;
+            },
+            _ => { },
+        }
+        let negation = lg_negation(&lg_literal(&arena, &LgPart { id, positive }));
+        let mut equal = false;
+        match arena.at(id) {
+            SolverTerm::Eq(_, _) => { equal = true; },
+            _ => { },
+        }
+        if equal && positive {
+            source_text.push(negation.to_owned());
+            source_weight.push(-1);
+            source_text.push(negation);
+            source_weight.push(1);
+        } else {
+            source_text.push(negation);
+            source_weight.push(1);
+        }
+    }
+    if (source_text.len() as i64) != bounds.len() as i64 { return None; }
+    let mut lemmas: Vec<String> = vec![];
+    let mut used: Vec<String> = vec![];
+    let mut made_lin: Vec<LgLin> = vec![];
+    let mut made_atom: Vec<String> = vec![];
+    for step in steps.iter() {
+        let made = match lg_lemma_of(step, &bounds, &source_text, &source_weight, &made_lin, &made_atom, &mut used) { Some(__nikaia_value) => __nikaia_value, None => return None };
+        lemmas.push(proof.step(&made.lemma));
+        made_atom.push(lg_atom(&made.bound));
+        made_lin.push(made.bound.clone());
+    }
+    if made_lin.is_empty() { return None; }
+    let last = (*nikaia_std::index::get(&made_lin, nikaia_std::index::at(made_lin.len() as i64 - 1))).clone();
+    let last_atom = (*nikaia_std::index::get(&made_atom, nikaia_std::index::at(made_atom.len() as i64 - 1))).to_owned();
+    if !last.terms.is_empty() || last.constant <= 0 { return None; }
+    lemmas.push(proof.step(&format!("(cl (not {})) :rule la_generic :args (1)", last_atom)));
+    let step = proof.step(&format!("(cl{}) :rule resolution :premises ({})", lg_spaced(&used), lemmas.join(" ")));
+    Some(LgBelow { step, lits: used })
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct LgMade {
+    bound: LgLin,
+    lemma: String,
+}
+
+fn lg_lemma_of(step: &LgStep, bounds: &[LgLin], source_text: &[String], source_weight: &[i64], made_lin: &[LgLin], made_atom: &[String], used: &mut Vec<String>) -> Option<LgMade> {
+    Some(match step.clone() {
+        LgStep::Hypothesis(i) => {
+            if i < 0 || i >= bounds.len() as i64 { return None; }
+            let bound = (*nikaia_std::index::get(&bounds, nikaia_std::index::at(i))).clone();
+            let negation = (*nikaia_std::index::get(&source_text, nikaia_std::index::at(i))).to_owned();
+            let weight = *nikaia_std::index::get(&source_weight, nikaia_std::index::at(i));
+            if !lg_has(&used, &negation) { used.push(negation.to_owned()); }
+            LgMade { bound: bound.clone(), lemma: format!("(cl {} {}) :rule la_generic :args ({} 1)", negation, lg_atom(&bound), weight) }
+        },
+        LgStep::Tighten(from) => {
+            if from < 0 || from >= made_lin.len() as i64 { return None; }
+            let before = (*nikaia_std::index::get(&made_lin, nikaia_std::index::at(from))).clone();
+            let before_atom = (*nikaia_std::index::get(&made_atom, nikaia_std::index::at(from))).to_owned();
+            let mut factor: i64 = 0;
+            for (_, k) in before.terms.iter() {
+                let k = nikaia_std::num::value(k);
+                factor = lg_gcd(factor, k.abs());
+            }
+            let bound = lg_tightened(&before);
+            LgMade { bound: bound.clone(), lemma: format!("(cl (not {}) {}) :rule la_generic :args (1 {})", before_atom, lg_atom(&bound), factor) }
+        },
+        LgStep::Combine { left, by_left, right, by_right } => {
+            if left < 0 || left >= made_lin.len() as i64 || right < 0 || right >= made_lin.len() as i64 { return None; }
+            let l = (*nikaia_std::index::get(&made_lin, nikaia_std::index::at(left))).clone();
+            let l_atom = (*nikaia_std::index::get(&made_atom, nikaia_std::index::at(left))).to_owned();
+            let r = (*nikaia_std::index::get(&made_lin, nikaia_std::index::at(right))).clone();
+            let r_atom = (*nikaia_std::index::get(&made_atom, nikaia_std::index::at(right))).to_owned();
+            let scaled_left = match lg_scale(&l, by_left) { Some(__nikaia_value) => __nikaia_value, None => return None };
+            let scaled_right = match lg_scale(&r, by_right) { Some(__nikaia_value) => __nikaia_value, None => return None };
+            let bound = match lg_add(&scaled_left, &scaled_right) { Some(__nikaia_value) => __nikaia_value, None => return None };
+            LgMade { bound: bound.clone(), lemma: format!("(cl (not {}) (not {}) {}) :rule la_generic :args ({} {} 1)", l_atom, r_atom, lg_atom(&bound), by_left, by_right) }
+        },
+    })
+}
+
+fn lg_hulled(arena: &mut TermArena, proof: &mut LgProof, clause: &LgClause) -> Vec<LgClause> {
+    let mut parts: Vec<i64> = vec![];
+    for part in clause.parts.iter() { if part.positive { parts.push(part.id); } else { parts.push(arena.not(part.id)); } }
+    let either = arena.or(parts);
+    let falsum = arena.boolean(false);
+    let facts: Vec<i64> = vec![either];
+    let mut why = LgWhy { unknown: LgUnknown::NoContradiction };
+    let read = lg_indexed(&arena, &facts, falsum, &mut why);
+    let mut out: Vec<LgClause> = vec![];
+    if read.is_none() { return out; }
+    let indexed = match read { Some(__nikaia_value) => __nikaia_value, None => return out };
+    let mut bounds: Vec<LgLin> = vec![];
+    for item in indexed.top.iter() { if item.atom { bounds.push((*nikaia_std::index::get(&indexed.atoms, nikaia_std::index::at(item.n))).clone()); } }
+    for bound in bounds.iter() {
+        let hull = lg_bound_term(arena, bound);
+        let mut lemmas: Vec<String> = vec![];
+        let mut lits: Vec<String> = vec![];
+        let mut complete = true;
+        for part in clause.parts.iter() {
+            let found = lg_choice(arena, proof, &vec![LgPart { id: part.id, positive: part.positive }, LgPart { id: hull, positive: false }]);
+            if found.is_none() {
+                complete = false;
+                break;
+            }
+            let below = match found { Some(__nikaia_value) => __nikaia_value, None => return out };
+            let pivot = lg_negation(&lg_literal(&arena, part));
+            for lit in below.lits.iter() { if *lit != pivot && !lg_has(&lits, lit) { lits.push(lit.to_owned()); } }
+            lemmas.push(below.step.to_owned());
+        }
+        if !complete { continue; }
+        if (lemmas.len() as i64) != clause.parts.len() as i64 { continue; }
+        let mut premises: Vec<String> = vec![clause.step.to_owned()];
+        for lemma in lemmas.iter() { premises.push(lemma.to_owned()); }
+        let step = proof.step(&format!("(cl{}) :rule resolution :premises ({})", lg_spaced(&lits), premises.join(" ")));
+        if lits.len() == 1 && *nikaia_std::index::get(&lits, 0) == lg_term(&arena, hull) { out.push(LgClause { step, parts: vec![LgPart { id: hull, positive: true }] }); }
+    }
+    out
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct LgSearch {
+    arena: TermArena,
+    proof: LgProof,
+    clauses: Vec<LgClause>,
+    work: i64,
+}
+
+fn lg_below(search: &mut LgSearch, depth: i64, chosen: &mut Vec<LgPart>) -> Option<LgBelow> {
+    search.work += 1;
+    if search.work > LG_CHOICES { return None; }
+    let refuted = lg_choice(&mut search.arena, &mut search.proof, &chosen);
+    if refuted.is_some() { return refuted; }
+    if depth >= search.clauses.len() as i64 { return None; }
+    let clause = LgClause { step: nikaia_std::index::get(&search.clauses, nikaia_std::index::at(depth)).step.to_owned(), parts: nikaia_std::index::get(&search.clauses, nikaia_std::index::at(depth)).parts.to_owned() };
+    let mut steps: Vec<String> = vec![];
+    let mut all_lits: Vec<Vec<String>> = vec![];
+    for part in clause.parts.iter() {
+        chosen.push(LgPart { id: part.id, positive: part.positive });
+        let found = lg_below(search, depth + 1, chosen);
+        chosen.pop();
+        let here = match found { Some(__nikaia_value) => __nikaia_value, None => return None };
+        let pivot = lg_negation(&lg_literal(&search.arena, part));
+        if !lg_has(&here.lits, &pivot) { return Some(here); }
+        steps.push(here.step.to_owned());
+        all_lits.push(here.lits.to_owned());
+    }
+    let mut lits: Vec<String> = vec![];
+    let mut at: i64 = 0;
+    for part in clause.parts.iter() {
+        let pivot = lg_negation(&lg_literal(&search.arena, part));
+        for lit in (*nikaia_std::index::get(&all_lits, (at) as usize)).iter() { if *lit != pivot && !lg_has(&lits, lit) { lits.push(lit.to_owned()); } }
+        at += 1;
+    }
+    let mut premises: Vec<String> = vec![clause.step.to_owned()];
+    for one in steps.iter() { premises.push(one.to_owned()); }
+    let step = search.proof.step(&format!("(cl{}) :rule resolution :premises ({})", lg_spaced(&lits), premises.join(" ")));
+    Some(LgBelow { step, lits })
+}
+
+pub fn lg_alethe_write(source: &TermArena, facts: &[i64], goal: i64) -> Option<String> {
+    let mut arena = TermArena { nodes: source.nodes.to_owned() };
+    let mut proof = LgProof { text: String::from(""), count: 0 };
+    let mut pending: Vec<LgClause> = vec![];
+    for fact in facts.iter() {
+        let fact = nikaia_std::num::value(fact);
+        let step = proof.assume(&lg_term(&arena, fact));
+        pending.push(LgClause { step, parts: vec![LgPart { id: fact, positive: true }] });
+    }
+    let step = proof.assume(&format!("(not {})", lg_term(&arena, goal)));
+    pending.push(LgClause { step, parts: vec![LgPart { id: goal, positive: false }] });
+    let mut clauses: Vec<LgClause> = vec![];
+    while !pending.is_empty() {
+        let clause = (*nikaia_std::index::get(&pending, nikaia_std::index::at(pending.len() as i64 - 1))).clone();
+        pending.pop();
+        let mut open: i64 = -1;
+        let mut index: i64 = 0;
+        for part in clause.parts.iter() {
+            if open < 0 && !lg_is_literal(&arena, part) { open = index; }
+            index += 1;
+        }
+        if open < 0 { clauses.push(clause); } else {
+            let more = match lg_opened(&mut arena, &mut proof, &clause, open) { Some(__nikaia_value) => __nikaia_value, None => return None };
+            for one in more.iter() { pending.push(one.clone()); }
+        }
+    }
+    for clause in clauses.iter() { if clause.parts.is_empty() { return Some(proof.text.to_owned()); } }
+    let mut reversed: Vec<LgClause> = vec![];
+    let mut back = clauses.len() as i64;
+    while back > 0 {
+        back -= 1;
+        reversed.push((*nikaia_std::index::get(&clauses, nikaia_std::index::at(back))).clone());
+    }
+    let mut hulls: Vec<LgClause> = vec![];
+    for clause in reversed.iter() { if clause.parts.len() > 1 { hulls.extend(lg_hulled(&mut arena, &mut proof, clause)); } }
+    for hull in hulls.iter() { reversed.push(hull.clone()); }
+    let mut ordered: Vec<LgClause> = vec![];
+    for clause in reversed.iter() {
+        let mut at = ordered.len() as i64;
+        while at > 0 && (clause.parts.len() as i64) < nikaia_std::index::get(&ordered, nikaia_std::index::at(at - 1)).parts.len() as i64 { at -= 1; }
+        ordered.insert(nikaia_std::count::of(at), clause.clone());
+    }
+    let mut search = LgSearch { arena, proof, clauses: ordered, work: 0 };
+    let mut none: Vec<LgPart> = vec![];
+    let last = match lg_below(&mut search, 0, &mut none) { Some(__nikaia_value) => __nikaia_value, None => return None };
+    if last.lits.is_empty() { return Some(search.proof.text.to_owned()); }
+    None
+}
+
+
+// --- logic_lia.nika ---
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LgUnknown {
+    OutsideTheTheory,
+    Overflow,
+    TooManyCases,
+    TooManyBounds,
+    NoContradiction,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LgWhy {
+    pub unknown: LgUnknown,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LgBudget {
+    pub cases: i64,
+    pub bounds: i64,
+}
+
+pub fn lg_budget() -> LgBudget { LgBudget { cases: 1024, bounds: 4096 } }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LgStep {
+    Hypothesis(i64),
+    Tighten(i64),
+    Combine { left: i64, by_left: i64, right: i64, by_right: i64 },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LgRefutation {
+    pub steps: Vec<LgStep>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LgCertificate {
+    Refuted(LgRefutation),
+    Split { disjunction: i64, cases: Vec<LgCertificate> },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LgModel {
+    pub values: collections::BTreeMap<String, i64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LgAnswer {
+    Proved { certificate: LgCertificate },
+    Refuted { model: LgModel },
+    Unknown { why: LgUnknown },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LgRejected {
+    NotReadable,
+    NotOpen { disjunction: i64 },
+    Cases { expected: i64, found: i64 },
+    Reference { case: i64, step: i64 },
+    Multiplier { case: i64, step: i64 },
+    Overflow { case: i64, step: i64 },
+    NotAContradiction { case: i64 },
+}
+
+impl LgRejected {
+    pub fn debug(&self) -> String {
+        match self {
+            LgRejected::NotReadable => String::from("NotReadable"),
+            LgRejected::NotOpen { disjunction } => { let disjunction = *disjunction; format!("NotOpen {{ disjunction: {} }}", disjunction) },
+            LgRejected::Cases { expected, found } => { let expected = *expected; let found = *found; format!("Cases {{ expected: {}, found: {} }}", expected, found) },
+            LgRejected::Reference { case, step } => { let case = *case; let step = *step; format!("Reference {{ case: {}, step: {} }}", case, step) },
+            LgRejected::Multiplier { case, step } => { let case = *case; let step = *step; format!("Multiplier {{ case: {}, step: {} }}", case, step) },
+            LgRejected::Overflow { case, step } => { let case = *case; let step = *step; format!("Overflow {{ case: {}, step: {} }}", case, step) },
+            LgRejected::NotAContradiction { case } => { let case = *case; format!("NotAContradiction {{ case: {} }}", case) },
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LgLin {
+    pub terms: collections::BTreeMap<String, i64>,
+    pub constant: i64,
+}
+
+fn lg_constant(c: i64) -> LgLin { LgLin { terms: collections::BTreeMap::new(), constant: c } }
+
+fn lg_variable(name: &str) -> LgLin {
+    let mut terms: collections::BTreeMap<String, i64> = collections::BTreeMap::new();
+    terms.insert(name.to_owned(), 1);
+    LgLin { terms, constant: 0 }
+}
+
+pub fn lg_add(a: &LgLin, b: &LgLin) -> Option<LgLin> {
+    let mut terms = a.terms.to_owned();
+    for (name, k) in b.terms.iter() {
+        let k = nikaia_std::num::value(k);
+        let before = nikaia_std::index::or(terms.get(name), || 0);
+        let sum = match before.checked_add(k) { Some(__nikaia_value) => __nikaia_value, None => return None };
+        if sum == 0 { terms.remove(name); } else { terms.insert(name.to_owned(), sum); }
+    }
+    let constant = match a.constant.checked_add(b.constant) { Some(__nikaia_value) => __nikaia_value, None => return None };
+    Some(LgLin { terms, constant })
+}
+
+pub fn lg_scale(a: &LgLin, k: i64) -> Option<LgLin> {
+    if k == 0 { return Some(lg_constant(0)); }
+    let mut terms: collections::BTreeMap<String, i64> = collections::BTreeMap::new();
+    for (name, c) in a.terms.iter() {
+        let c = nikaia_std::num::value(c);
+        terms.insert(name.to_owned(), match c.checked_mul(k) { Some(__nikaia_value) => __nikaia_value, None => return None });
+    }
+    let constant = match a.constant.checked_mul(k) { Some(__nikaia_value) => __nikaia_value, None => return None };
+    Some(LgLin { terms, constant })
+}
+
+fn lg_sub(a: &LgLin, b: &LgLin) -> Option<LgLin> {
+    let negated = match lg_scale(b, -1) { Some(__nikaia_value) => __nikaia_value, None => return None };
+    lg_add(a, &negated)
+}
+
+fn lg_add_constant(a: &LgLin, c: i64) -> LgLin { LgLin { terms: a.terms.to_owned(), constant: a.constant.saturating_add(c) } }
+
+fn lg_gcd(a: i64, b: i64) -> i64 {
+    if b == 0 { return a; }
+    lg_gcd(b, a % b)
+}
+
+pub fn lg_tightened(a: &LgLin) -> LgLin {
+    let mut g: i64 = 0;
+    for (_, k) in a.terms.iter() {
+        let k = nikaia_std::num::value(k);
+        g = lg_gcd(g, k.abs());
+    }
+    if g <= 1 { return LgLin { terms: a.terms.to_owned(), constant: a.constant }; }
+    let mut terms: collections::BTreeMap<String, i64> = collections::BTreeMap::new();
+    for (name, k) in a.terms.iter() {
+        let k = nikaia_std::num::value(k);
+        terms.insert(name.to_owned(), k / g);
+    }
+    let mut constant = a.constant.div_euclid(g);
+    if a.constant.rem_euclid(g) != 0 { constant += 1; }
+    LgLin { terms, constant }
+}
+
+pub fn lg_terms_cmp(a: &collections::BTreeMap<String, i64>, b: &collections::BTreeMap<String, i64>) -> i64 {
+    let mut left: Vec<(String, i64)> = vec![];
+    for (name, k) in a.iter() {
+        let k = nikaia_std::num::value(k);
+        left.push((name.to_owned(), k));
+    }
+    let mut right: Vec<(String, i64)> = vec![];
+    for (name, k) in b.iter() {
+        let k = nikaia_std::num::value(k);
+        right.push((name.to_owned(), k));
+    }
+    let mut at: i64 = 0;
+    while ((at) as usize) < left.len() && ((at) as usize) < right.len() {
+        let (lname, lk) = (*nikaia_std::index::get(&left, (at) as usize)).clone();
+        let (rname, rk) = (*nikaia_std::index::get(&right, (at) as usize)).clone();
+        if lname < rname { return -1; }
+        if rname < lname { return 1; }
+        if lk < rk { return -1; }
+        if rk < lk { return 1; }
+        at += 1;
+    }
+    if (left.len() as i64) < right.len() as i64 { return -1; }
+    if (left.len() as i64) > right.len() as i64 { return 1; }
+    0
+}
+
+fn lg_lin_equal(a: &LgLin, b: &LgLin) -> bool { a.constant == b.constant && lg_terms_cmp(&a.terms, &b.terms) == 0 }
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum LgFormula {
+    True,
+    False,
+    Le(LgLin),
+    And(Vec<LgFormula>),
+    Or(Vec<LgFormula>),
+}
+
+fn lg_linear(arena: &TermArena, id: i64, why: &mut LgWhy) -> Option<LgLin> {
+    let node = arena.at(id);
+    match node {
+        SolverTerm::Int(n) => Some(lg_constant(n)),
+        SolverTerm::Var(ref name) => Some(lg_variable(name)),
+        SolverTerm::Add(a, b) => {
+            let x = match lg_linear(arena, a, why) { Some(__nikaia_value) => __nikaia_value, None => return None };
+            let y = match lg_linear(arena, b, why) { Some(__nikaia_value) => __nikaia_value, None => return None };
+            lg_overflowed(lg_add(&x, &y), why)
+        },
+        SolverTerm::Sub(a, b) => {
+            let x = match lg_linear(arena, a, why) { Some(__nikaia_value) => __nikaia_value, None => return None };
+            let y = match lg_linear(arena, b, why) { Some(__nikaia_value) => __nikaia_value, None => return None };
+            lg_overflowed(lg_sub(&x, &y), why)
+        },
+        SolverTerm::Neg(a) => {
+            let x = match lg_linear(arena, a, why) { Some(__nikaia_value) => __nikaia_value, None => return None };
+            lg_overflowed(lg_scale(&x, -1), why)
+        },
+        SolverTerm::Mul(a, b) => {
+            let l = match lg_linear(arena, a, why) { Some(__nikaia_value) => __nikaia_value, None => return None };
+            let r = match lg_linear(arena, b, why) { Some(__nikaia_value) => __nikaia_value, None => return None };
+            if l.terms.is_empty() { lg_overflowed(lg_scale(&r, l.constant), why) } else if r.terms.is_empty() { lg_overflowed(lg_scale(&l, r.constant), why) } else {
+                why.unknown = LgUnknown::OutsideTheTheory;
+                None
+            }
+        },
+        _ => {
+            why.unknown = LgUnknown::OutsideTheTheory;
+            None
+        },
+    }
+}
+
+fn lg_overflowed(made: Option<LgLin>, why: &mut LgWhy) -> Option<LgLin> {
+    if made.is_none() { why.unknown = LgUnknown::Overflow; }
+    made
+}
+
+fn lg_compare(arena: &TermArena, a: i64, b: i64, op: i64, holds: bool, why: &mut LgWhy) -> Option<LgFormula> {
+    let mut kind = op;
+    if !holds { kind = lg_negated(op); }
+    let x = match lg_linear(arena, a, why) { Some(__nikaia_value) => __nikaia_value, None => return None };
+    let y = match lg_linear(arena, b, why) { Some(__nikaia_value) => __nikaia_value, None => return None };
+    let a_minus_b = match lg_overflowed(lg_sub(&x, &y), why) { Some(__nikaia_value) => __nikaia_value, None => return None };
+    let b_minus_a = match lg_overflowed(lg_sub(&y, &x), why) { Some(__nikaia_value) => __nikaia_value, None => return None };
+    if kind == 0 { return Some(LgFormula::Le(lg_add_constant(&a_minus_b, 1))); }
+    if kind == 1 { return Some(LgFormula::Le(a_minus_b)); }
+    if kind == 2 { return Some(LgFormula::Le(lg_add_constant(&b_minus_a, 1))); }
+    if kind == 3 { return Some(LgFormula::Le(b_minus_a)); }
+    if kind == 4 { return Some(LgFormula::And(vec![LgFormula::Le(a_minus_b), LgFormula::Le(b_minus_a)])); }
+    Some(LgFormula::Or(vec![LgFormula::Le(lg_add_constant(&a_minus_b, 1)), LgFormula::Le(lg_add_constant(&b_minus_a, 1))]))
+}
+
+fn lg_negated(op: i64) -> i64 {
+    if op == 0 { return 3; }
+    if op == 1 { return 2; }
+    if op == 2 { return 1; }
+    if op == 3 { return 0; }
+    if op == 4 { return 5; }
+    4
+}
+
+fn lg_formula(arena: &TermArena, id: i64, holds: bool, why: &mut LgWhy) -> Option<LgFormula> {
+    let node = arena.at(id);
+    match node {
+        SolverTerm::Bool(b) => { if b == holds { Some(LgFormula::True) } else { Some(LgFormula::False) } },
+        SolverTerm::Not(a) => lg_formula(arena, a, !holds, why),
+        SolverTerm::And(ref parts) => lg_junction(arena, parts, holds, holds, why),
+        SolverTerm::Or(ref parts) => lg_junction(arena, parts, holds, !holds, why),
+        SolverTerm::Le(a, b) => lg_compare(arena, a, b, 1, holds, why),
+        SolverTerm::Lt(a, b) => lg_compare(arena, a, b, 0, holds, why),
+        SolverTerm::Ge(a, b) => lg_compare(arena, a, b, 3, holds, why),
+        SolverTerm::Gt(a, b) => lg_compare(arena, a, b, 2, holds, why),
+        SolverTerm::Eq(a, b) => lg_compare(arena, a, b, 4, holds, why),
+        SolverTerm::Ne(a, b) => lg_compare(arena, a, b, 5, holds, why),
+        _ => {
+            why.unknown = LgUnknown::OutsideTheTheory;
+            None
+        },
+    }
+}
+
+fn lg_junction(arena: &TermArena, parts: &[i64], holds: bool, conjunction: bool, why: &mut LgWhy) -> Option<LgFormula> {
+    let mut made: Vec<LgFormula> = vec![];
+    for part in parts.iter() {
+        let part = nikaia_std::num::value(part);
+        made.push(match lg_formula(arena, part, holds, why) { Some(__nikaia_value) => __nikaia_value, None => return None });
+    }
+    if conjunction { return Some(LgFormula::And(made)); }
+    Some(LgFormula::Or(made))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LgItem {
+    pub atom: bool,
+    pub n: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LgIndexed {
+    pub atoms: Vec<LgLin>,
+    pub ors: Vec<Vec<Vec<LgItem>>>,
+    pub top: Vec<LgItem>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct LgForm {
+    terms: collections::BTreeMap<String, i64>,
+    constant: i64,
+}
+
+impl LgIndexed {
+    fn atom(&mut self, lin: LgLin) -> Vec<LgItem> {
+        self.atoms.push(lin);
+        vec![LgItem { atom: true, n: self.atoms.len() as i64 - 1 }]
+    }
+    fn strongest(&self, alternative: &[LgItem]) -> Vec<LgForm> {
+        let mut by_form: Vec<LgForm> = vec![];
+        for item in alternative.iter() {
+            if !item.atom { continue; }
+            let atom = (*nikaia_std::index::get(&self.atoms, nikaia_std::index::at(item.n))).clone();
+            let mut at: i64 = 0;
+            let mut placed = false;
+            while at < by_form.len() as i64 {
+                let order = lg_terms_cmp(&atom.terms, &nikaia_std::index::get(&by_form, nikaia_std::index::at(at)).terms);
+                if order == 0 {
+                    if atom.constant > nikaia_std::index::get(&by_form, nikaia_std::index::at(at)).constant { by_form[nikaia_std::index::at(at)].constant = atom.constant; }
+                    placed = true;
+                    break;
+                }
+                if order < 0 { break; }
+                at += 1;
+            }
+            if !placed { by_form.insert(nikaia_std::count::of(at), LgForm { terms: atom.terms.to_owned(), constant: atom.constant }); }
+        }
+        by_form
+    }
+    fn hull(&self, alternatives: &[Vec<LgItem>]) -> Vec<LgLin> {
+        let mut common: Vec<LgForm> = vec![];
+        let mut first = true;
+        for alternative in alternatives.iter() {
+            let each = self.strongest(alternative);
+            if first {
+                common = each;
+                first = false;
+                continue;
+            }
+            let mut kept: Vec<LgForm> = vec![];
+            for form in common.iter() {
+                for other in each.iter() {
+                    if lg_terms_cmp(&form.terms, &other.terms) == 0 {
+                        let mut c = form.constant;
+                        if other.constant < c { c = other.constant; }
+                        kept.push(LgForm { terms: form.terms.to_owned(), constant: c });
+                        break;
+                    }
+                }
+            }
+            common = kept;
+        }
+        let mut out: Vec<LgLin> = vec![];
+        for form in common.iter() { if !form.terms.is_empty() { out.push(LgLin { terms: form.terms.to_owned(), constant: form.constant }); } }
+        out
+    }
+    fn items(&mut self, formula: &LgFormula) -> Vec<LgItem> {
+        match formula {
+            LgFormula::True => vec![],
+            LgFormula::False => self.atom(lg_constant(1)),
+            LgFormula::Le(lin) => self.atom(lin.clone()),
+            LgFormula::And(parts) => {
+                let mut out: Vec<LgItem> = vec![];
+                for part in parts.iter() { out.extend(self.items(part)); }
+                out
+            },
+            LgFormula::Or(parts) => self.items_of_or(parts),
+        }
+    }
+    fn items_of_or(&mut self, parts: &[LgFormula]) -> Vec<LgItem> {
+        let at = self.ors.len() as i64;
+        let empty: Vec<Vec<LgItem>> = vec![];
+        self.ors.push(empty);
+        let mut alternatives: Vec<Vec<LgItem>> = vec![];
+        for part in parts.iter() { alternatives.push(self.items(part)); }
+        if alternatives.is_empty() { return self.atom(lg_constant(1)); }
+        if alternatives.len() == 1 { return (*nikaia_std::index::get(&alternatives, 0)).to_owned(); }
+        for alternative in alternatives.iter() { if alternative.is_empty() { return vec![]; } }
+        let mut items: Vec<LgItem> = vec![LgItem { atom: false, n: at }];
+        for hull in self.hull(&alternatives) { items.extend(self.atom(hull)); }
+        { let __nikaia_stored = alternatives.to_owned(); nikaia_std::index::set(&mut self.ors, nikaia_std::index::at(at), __nikaia_stored); }
+        items
+    }
+}
+
+pub fn lg_indexed(arena: &TermArena, facts: &[i64], goal: i64, why: &mut LgWhy) -> Option<LgIndexed> {
+    let mut all: Vec<LgFormula> = vec![];
+    for fact in facts.iter() {
+        let fact = nikaia_std::num::value(fact);
+        all.push(match lg_formula(arena, fact, true, why) { Some(__nikaia_value) => __nikaia_value, None => return None });
+    }
+    all.push(match lg_formula(arena, goal, false, why) { Some(__nikaia_value) => __nikaia_value, None => return None });
+    let mut indexed = LgIndexed { atoms: vec![], ors: vec![], top: vec![] };
+    let whole = LgFormula::And(all);
+    indexed.top = indexed.items(&whole);
+    Some(indexed)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct LgHeld {
+    lin: LgLin,
+    step: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum LgClosed {
+    Refuted(LgRefutation),
+    Consistent { found: bool, values: collections::BTreeMap<String, i64> },
+    Unknown(LgUnknown),
+}
+
+fn lg_tighten_step(bound: &LgLin, steps: &mut Vec<LgStep>) -> LgHeld {
+    let made = steps.len() as i64 - 1;
+    let tight = lg_tightened(bound);
+    if lg_lin_equal(&tight, bound) { return LgHeld { lin: bound.clone(), step: made }; }
+    steps.push(LgStep::Tighten(made));
+    LgHeld { lin: tight, step: steps.len() as i64 - 1 }
+}
+
+fn lg_sorted(held: &[LgHeld]) -> Vec<LgHeld> {
+    if held.len() < 2 { return held.to_owned(); }
+    let middle = held.len() as i64 / 2;
+    let mut left: Vec<LgHeld> = vec![];
+    let mut right: Vec<LgHeld> = vec![];
+    let mut at: i64 = 0;
+    while ((at) as usize) < held.len() {
+        if at < middle { left.push((*nikaia_std::index::get(&held, (at) as usize)).clone()); } else { right.push((*nikaia_std::index::get(&held, (at) as usize)).clone()); }
+        at += 1;
+    }
+    let a = lg_sorted(&left);
+    let b = lg_sorted(&right);
+    let mut out: Vec<LgHeld> = vec![];
+    let mut i: i64 = 0;
+    let mut j: i64 = 0;
+    while ((i) as usize) < a.len() && ((j) as usize) < b.len() {
+        let mut order = lg_terms_cmp(&nikaia_std::index::get(&b, (j) as usize).lin.terms, &nikaia_std::index::get(&a, (i) as usize).lin.terms);
+        if order == 0 { if nikaia_std::index::get(&a, (i) as usize).lin.constant < nikaia_std::index::get(&b, (j) as usize).lin.constant { order = -1; } else if nikaia_std::index::get(&b, (j) as usize).lin.constant < nikaia_std::index::get(&a, (i) as usize).lin.constant { order = 1; } }
+        if order < 0 {
+            out.push((*nikaia_std::index::get(&b, (j) as usize)).clone());
+            j += 1;
+        } else {
+            out.push((*nikaia_std::index::get(&a, (i) as usize)).clone());
+            i += 1;
+        }
+    }
+    while ((i) as usize) < a.len() {
+        out.push((*nikaia_std::index::get(&a, (i) as usize)).clone());
+        i += 1;
+    }
+    while ((j) as usize) < b.len() {
+        out.push((*nikaia_std::index::get(&b, (j) as usize)).clone());
+        j += 1;
+    }
+    out
+}
+
+fn lg_contradictory(bounds: &[LgLin], budget: &LgBudget) -> LgClosed {
+    let mut steps: Vec<LgStep> = vec![];
+    let mut round_names: Vec<String> = vec![];
+    let mut round_bounds: Vec<Vec<LgLin>> = vec![];
+    let mut held: Vec<LgHeld> = vec![];
+    let mut index = 0;
+    for bound in bounds.iter() {
+        steps.push(LgStep::Hypothesis(index));
+        held.push(lg_tighten_step(bound, &mut steps));
+        index += 1;
+    }
+    loop {
+        for one in held.iter() { if one.lin.terms.is_empty() && one.lin.constant > 0 { return LgClosed::Refuted(lg_traced(&steps, one.step)); } }
+        let mut live: Vec<LgHeld> = vec![];
+        for one in held.iter() { if !one.lin.terms.is_empty() { live.push(one.clone()); } }
+        let ordered = lg_sorted(&live);
+        let mut bounds_now: Vec<LgHeld> = vec![];
+        for one in ordered.iter() {
+            let last = bounds_now.len() as i64;
+            if last > 0 && lg_terms_cmp(&nikaia_std::index::get(&bounds_now, nikaia_std::index::at(last - 1)).lin.terms, &one.lin.terms) == 0 { continue; }
+            bounds_now.push(one.clone());
+        }
+        let mut names: collections::BTreeSet<String> = collections::BTreeSet::new();
+        for one in bounds_now.iter() { for (name, _) in one.lin.terms.iter() { names.insert(name.to_owned()); } }
+        let mut chosen: String = String::from("");
+        let mut have = false;
+        let mut fewest = 0;
+        for name in names.iter() {
+            let mut up = 0;
+            let mut down = 0;
+            for one in bounds_now.iter() {
+                let k = nikaia_std::index::or(one.lin.terms.get(name), || 0);
+                if k > 0 { up += 1; }
+                if k < 0 { down += 1; }
+            }
+            if !have || up * down < fewest {
+                have = true;
+                chosen = name.to_owned();
+                fewest = up * down;
+            }
+        }
+        if !have { return lg_consistent(&round_names, &round_bounds); }
+        let eliminated = lg_eliminate(&bounds_now, &chosen, budget, &mut steps, &mut round_names, &mut round_bounds);
+        match eliminated {
+            LgEliminated::Next(ref next) => { held = next.to_owned(); },
+            LgEliminated::Stop(ref closed) => { return closed.clone(); },
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum LgEliminated {
+    Next(Vec<LgHeld>),
+    Stop(LgClosed),
+}
+
+fn lg_eliminate(bounds_now: &[LgHeld], name: &str, budget: &LgBudget, steps: &mut Vec<LgStep>, round_names: &mut Vec<String>, round_bounds: &mut Vec<Vec<LgLin>>) -> LgEliminated {
+    let mut without: Vec<LgHeld> = vec![];
+    let mut up: Vec<LgHeld> = vec![];
+    let mut down: Vec<LgHeld> = vec![];
+    let mut with_lins: Vec<LgLin> = vec![];
+    for one in bounds_now.iter() {
+        let k = one.lin.terms.get(name);
+        if k.is_none() {
+            without.push(one.clone());
+            continue;
+        }
+        with_lins.push(one.lin.clone());
+        if nikaia_std::index::or(k, || 0) > 0 { up.push(one.clone()); } else { down.push(one.clone()); }
+    }
+    round_names.push(name.to_owned());
+    round_bounds.push(with_lins);
+    let mut next = without;
+    for u in up.iter() {
+        for d in down.iter() {
+            let a = nikaia_std::index::or(u.lin.terms.get(name), || 0);
+            let b = -nikaia_std::index::or(d.lin.terms.get(name), || 0);
+            let left = lg_scale(&u.lin, b);
+            let right = lg_scale(&d.lin, a);
+            if left.is_none() || right.is_none() { return LgEliminated::Stop(LgClosed::Unknown(LgUnknown::Overflow)); }
+            let sum = lg_add(&match left { Some(__nikaia_value) => __nikaia_value, None => return LgEliminated::Stop(LgClosed::Unknown(LgUnknown::Overflow)) }, &match right { Some(__nikaia_value) => __nikaia_value, None => return LgEliminated::Stop(LgClosed::Unknown(LgUnknown::Overflow)) });
+            if sum.is_none() { return LgEliminated::Stop(LgClosed::Unknown(LgUnknown::Overflow)); }
+            steps.push(LgStep::Combine { left: u.step, by_left: b, right: d.step, by_right: a });
+            next.push(lg_tighten_step(&match sum { Some(__nikaia_value) => __nikaia_value, None => return LgEliminated::Stop(LgClosed::Unknown(LgUnknown::Overflow)) }, steps));
+            if (next.len() as i64) > budget.bounds { return LgEliminated::Stop(LgClosed::Unknown(LgUnknown::TooManyBounds)); }
+        }
+    }
+    LgEliminated::Next(next)
+}
+
+fn lg_consistent(names: &[String], bounds: &[Vec<LgLin>]) -> LgClosed {
+    let mut values: collections::BTreeMap<String, i64> = collections::BTreeMap::new();
+    let mut round = names.len() as i64;
+    while round > 0 {
+        round -= 1;
+        let name = (*nikaia_std::index::get(&names, nikaia_std::index::at(round))).to_owned();
+        let mut low: Option<i64> = None;
+        let mut high: Option<i64> = None;
+        for bound in (*nikaia_std::index::get(&bounds, nikaia_std::index::at(round))).iter() {
+            let k = nikaia_std::index::or(bound.terms.get(&name), || 0);
+            let mut rest = bound.constant;
+            for (other, c) in bound.terms.iter() {
+                let c = nikaia_std::num::value(c);
+                if *other != name {
+                    let value = values.get(other);
+                    if value.is_none() { return LgClosed::Consistent { found: false, values: collections::BTreeMap::new() }; }
+                    let product = c.checked_mul(nikaia_std::index::or(value, || 0));
+                    if product.is_none() { return LgClosed::Consistent { found: false, values: collections::BTreeMap::new() }; }
+                    let total = rest.checked_add(nikaia_std::index::or(product, || 0));
+                    if total.is_none() { return LgClosed::Consistent { found: false, values: collections::BTreeMap::new() }; }
+                    rest = nikaia_std::index::or(total, || 0);
+                }
+            }
+            let negated = rest.checked_neg();
+            if negated.is_none() { return LgClosed::Consistent { found: false, values: collections::BTreeMap::new() }; }
+            if k > 0 {
+                let limit = nikaia_std::index::or(negated, || 0).div_euclid(k);
+                if high.is_none() || limit < nikaia_std::index::or(high, || limit.into()) { high = Some(limit); }
+            } else {
+                let flipped = k.checked_neg();
+                if flipped.is_none() { return LgClosed::Consistent { found: false, values: collections::BTreeMap::new() }; }
+                let quotient = nikaia_std::index::or(negated, || 0).div_euclid(nikaia_std::index::or(flipped, || 1));
+                let limit = quotient.checked_neg();
+                if limit.is_none() { return LgClosed::Consistent { found: false, values: collections::BTreeMap::new() }; }
+                if low.is_none() || nikaia_std::index::or(low, || 0) < nikaia_std::index::or(limit, || 0) { low = limit; }
+            }
+        }
+        let mut value: i64 = 0;
+        if low.is_some() && high.is_some() && nikaia_std::index::or(low, || 0) > nikaia_std::index::or(high, || 0) { return LgClosed::Consistent { found: false, values: collections::BTreeMap::new() }; }
+        if low.is_some() && nikaia_std::index::or(low, || 0) > 0 { value = nikaia_std::index::or(low, || 0); } else if high.is_some() && nikaia_std::index::or(high, || 0) < 0 { value = nikaia_std::index::or(high, || 0); }
+        values.insert(name.to_owned(), value);
+    }
+    LgClosed::Consistent { found: true, values }
+}
+
+fn lg_traced(steps: &[LgStep], last: i64) -> LgRefutation {
+    let mut needed: Vec<bool> = vec![];
+    for _ in steps.iter() { needed.push(false); }
+    { let __nikaia_stored = true; nikaia_std::index::set(&mut needed, nikaia_std::index::at(last), __nikaia_stored); }
+    let mut at = last;
+    while at >= 0 {
+        if *nikaia_std::index::get(&needed, nikaia_std::index::at(at)) {
+            match (*nikaia_std::index::get(&steps, nikaia_std::index::at(at))).clone() {
+                LgStep::Hypothesis(_) => { },
+                LgStep::Tighten(from) => { { let __nikaia_stored = true; nikaia_std::index::set(&mut needed, nikaia_std::index::at(from), __nikaia_stored); } },
+                LgStep::Combine { left, right, .. } => {
+                    { let __nikaia_stored = true; nikaia_std::index::set(&mut needed, nikaia_std::index::at(left), __nikaia_stored); }
+                    { let __nikaia_stored = true; nikaia_std::index::set(&mut needed, nikaia_std::index::at(right), __nikaia_stored); }
+                },
+            }
+        }
+        at -= 1;
+    }
+    let mut renumbered: Vec<i64> = vec![];
+    for _ in steps.iter() { renumbered.push(-1); }
+    let mut kept: Vec<LgStep> = vec![];
+    at = 0;
+    while at <= last {
+        if *nikaia_std::index::get(&needed, nikaia_std::index::at(at)) {
+            { let __nikaia_stored = kept.len() as i64; nikaia_std::index::set(&mut renumbered, nikaia_std::index::at(at), __nikaia_stored); }
+            match (*nikaia_std::index::get(&steps, nikaia_std::index::at(at))).clone() {
+                LgStep::Hypothesis(i) => kept.push(LgStep::Hypothesis(i)),
+                LgStep::Tighten(from) => kept.push(LgStep::Tighten(*nikaia_std::index::get(&renumbered, nikaia_std::index::at(from)))),
+                LgStep::Combine { left, by_left, right, by_right } => kept.push(LgStep::Combine { left: *nikaia_std::index::get(&renumbered, nikaia_std::index::at(left)), by_left, right: *nikaia_std::index::get(&renumbered, nikaia_std::index::at(right)), by_right }),
+            }
+        }
+        at += 1;
+    }
+    LgRefutation { steps: kept }
+}
+
+
+// --- logic_normal.nika ---
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LgNormal {
+    pub arena: TermArena,
+    pub facts: Vec<i64>,
+    pub goal: i64,
+    pub names: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct LgOrdered {
+    shape: String,
+    named: String,
+    fact: i64,
+}
+
+pub fn lg_normal_of(arena: &TermArena, facts: &[i64], goal: i64) -> LgNormal {
+    let mut turned = TermArena { nodes: arena.nodes.to_owned() };
+    let mut turned_facts: Vec<i64> = vec![];
+    for fact in facts.iter() {
+        let fact = nikaia_std::num::value(fact);
+        turned_facts.push(lg_turn(&mut turned, fact));
+    }
+    let turned_goal = lg_turn(&mut turned, goal);
+    let mut ordered: Vec<LgOrdered> = vec![];
+    for fact in turned_facts.iter() {
+        let fact = nikaia_std::num::value(fact);
+        let shape = lg_written(&turned, fact, true);
+        let named = lg_written(&turned, fact, false);
+        let mut seen = false;
+        for one in ordered.iter() { if one.named == named { seen = true; } }
+        if !seen {
+            let mut at = ordered.len() as i64;
+            while at > 0 && shape < nikaia_std::index::get(&ordered, nikaia_std::index::at(at - 1)).shape { at -= 1; }
+            ordered.insert(nikaia_std::count::of(at), LgOrdered { shape, named, fact });
+        }
+    }
+    let mut normal = LgNormal { arena: TermArena::empty(), facts: vec![], goal: 0, names: vec![] };
+    let mut renamed: collections::BTreeMap<String, String> = collections::BTreeMap::new();
+    for one in ordered.iter() {
+        let copied = lg_copy(&mut normal, &turned, one.fact, &mut renamed);
+        normal.facts.push(copied);
+    }
+    normal.goal = lg_copy(&mut normal, &turned, turned_goal, &mut renamed);
+    normal
+}
+
+fn lg_turn(arena: &mut TermArena, id: i64) -> i64 {
+    let node = arena.at(id);
+    match node {
+        SolverTerm::Ge(a, b) => arena.le(b, a),
+        SolverTerm::Gt(a, b) => arena.lt(b, a),
+        SolverTerm::Not(a) => {
+            let turned = lg_turn(arena, a);
+            arena.not(turned)
+        },
+        SolverTerm::And(ref parts) => {
+            let mut made: Vec<i64> = vec![];
+            for part in parts.iter() {
+                let part = nikaia_std::num::value(part);
+                made.push(lg_turn(arena, part));
+            }
+            arena.and(made)
+        },
+        SolverTerm::Or(ref parts) => {
+            let mut made: Vec<i64> = vec![];
+            for part in parts.iter() {
+                let part = nikaia_std::num::value(part);
+                made.push(lg_turn(arena, part));
+            }
+            arena.or(made)
+        },
+        _ => id,
+    }
+}
+
+fn lg_written(arena: &TermArena, id: i64, shape: bool) -> String {
+    let node = arena.at(id);
+    match node {
+        SolverTerm::Bool(b) => if b { String::from("true") } else { String::from("false") },
+        SolverTerm::Int(n) => format!("{}", n),
+        SolverTerm::Var(ref name) => if shape { String::from("?") } else { name.to_owned() },
+        SolverTerm::Neg(a) => format!("(- {})", lg_written(arena, a, shape)),
+        SolverTerm::Not(a) => format!("(not {})", lg_written(arena, a, shape)),
+        SolverTerm::Add(a, b) => lg_binary("+", arena, a, b, shape),
+        SolverTerm::Sub(a, b) => lg_binary("-", arena, a, b, shape),
+        SolverTerm::Mul(a, b) => lg_binary("*", arena, a, b, shape),
+        SolverTerm::Le(a, b) => lg_binary("<=", arena, a, b, shape),
+        SolverTerm::Lt(a, b) => lg_binary("<", arena, a, b, shape),
+        SolverTerm::Ge(a, b) => lg_binary(">=", arena, a, b, shape),
+        SolverTerm::Gt(a, b) => lg_binary(">", arena, a, b, shape),
+        SolverTerm::Eq(a, b) => lg_binary("=", arena, a, b, shape),
+        SolverTerm::Ne(a, b) => lg_binary("distinct", arena, a, b, shape),
+        SolverTerm::And(ref parts) => lg_joined("and", arena, parts, shape),
+        SolverTerm::Or(ref parts) => lg_joined("or", arena, parts, shape),
+        SolverTerm::Other => String::from("false"),
+    }
+}
+
+fn lg_binary(op: &str, arena: &TermArena, a: i64, b: i64, shape: bool) -> String { format!("({} {} {})", op, lg_written(arena, a, shape), lg_written(arena, b, shape)) }
+
+fn lg_joined(op: &str, arena: &TermArena, parts: &[i64], shape: bool) -> String {
+    let mut written: Vec<String> = vec![];
+    for part in parts.iter() {
+        let part = nikaia_std::num::value(part);
+        written.push(lg_written(arena, part, shape));
+    }
+    format!("({} {})", op, written.join(" "))
+}
+
+fn lg_copy(normal: &mut LgNormal, from: &TermArena, id: i64, renamed: &mut collections::BTreeMap<String, String>) -> i64 {
+    let node = from.at(id);
+    match node {
+        SolverTerm::Bool(b) => normal.arena.boolean(b),
+        SolverTerm::Int(n) => normal.arena.int(n),
+        SolverTerm::Other => normal.arena.boolean(false),
+        SolverTerm::Var(ref name) => {
+            let known = renamed.get(name);
+            let mut fresh = format!("v{}", renamed.len() as i64);
+            if known.is_some() {
+                fresh = nikaia_std::index::or(match known {
+                    Some(__nikaia_it) => Some(__nikaia_it.to_owned()),
+                    None => None,
+                }, || fresh.into());
+            } else {
+                normal.names.push(name.to_owned());
+                renamed.insert(name.to_owned(), fresh.to_owned());
+            }
+            normal.arena.var(&fresh)
+        },
+        SolverTerm::Neg(a) => {
+            let x = lg_copy(normal, from, a, renamed);
+            normal.arena.neg(x)
+        },
+        SolverTerm::Not(a) => {
+            let x = lg_copy(normal, from, a, renamed);
+            normal.arena.not(x)
+        },
+        SolverTerm::Add(a, b) => {
+            let x = lg_copy(normal, from, a, renamed);
+            let y = lg_copy(normal, from, b, renamed);
+            normal.arena.add(x, y)
+        },
+        SolverTerm::Sub(a, b) => {
+            let x = lg_copy(normal, from, a, renamed);
+            let y = lg_copy(normal, from, b, renamed);
+            normal.arena.sub(x, y)
+        },
+        SolverTerm::Mul(a, b) => {
+            let x = lg_copy(normal, from, a, renamed);
+            let y = lg_copy(normal, from, b, renamed);
+            normal.arena.mul(x, y)
+        },
+        SolverTerm::Le(a, b) => {
+            let x = lg_copy(normal, from, a, renamed);
+            let y = lg_copy(normal, from, b, renamed);
+            normal.arena.le(x, y)
+        },
+        SolverTerm::Lt(a, b) => {
+            let x = lg_copy(normal, from, a, renamed);
+            let y = lg_copy(normal, from, b, renamed);
+            normal.arena.lt(x, y)
+        },
+        SolverTerm::Ge(a, b) => {
+            let x = lg_copy(normal, from, a, renamed);
+            let y = lg_copy(normal, from, b, renamed);
+            normal.arena.ge(x, y)
+        },
+        SolverTerm::Gt(a, b) => {
+            let x = lg_copy(normal, from, a, renamed);
+            let y = lg_copy(normal, from, b, renamed);
+            normal.arena.gt(x, y)
+        },
+        SolverTerm::Eq(a, b) => {
+            let x = lg_copy(normal, from, a, renamed);
+            let y = lg_copy(normal, from, b, renamed);
+            normal.arena.equal(x, y)
+        },
+        SolverTerm::Ne(a, b) => {
+            let x = lg_copy(normal, from, a, renamed);
+            let y = lg_copy(normal, from, b, renamed);
+            normal.arena.unequal(x, y)
+        },
+        SolverTerm::And(ref parts) => {
+            let mut made: Vec<i64> = vec![];
+            for part in parts.iter() {
+                let part = nikaia_std::num::value(part);
+                made.push(lg_copy(normal, from, part, renamed));
+            }
+            normal.arena.and(made)
+        },
+        SolverTerm::Or(ref parts) => {
+            let mut made: Vec<i64> = vec![];
+            for part in parts.iter() {
+                let part = nikaia_std::num::value(part);
+                made.push(lg_copy(normal, from, part, renamed));
+            }
+            normal.arena.or(made)
+        },
+    }
+}
+
+impl LgNormal {
+    pub fn text(&self) -> String {
+        let mut out: String = String::from("");
+        for fact in self.facts.iter() {
+            let fact = nikaia_std::num::value(fact);
+            out.push_str(&lg_written(&self.arena, fact, false));
+            out.push_str("\n");
+        }
+        out.push_str("|- ");
+        out.push_str(&lg_written(&self.arena, self.goal, false));
+        out
+    }
+    pub fn named(&self, model: &LgModel) -> LgModel {
+        let mut values: collections::BTreeMap<String, i64> = collections::BTreeMap::new();
+        for (name, value) in model.values.iter() {
+            let value = nikaia_std::num::value(value);
+            values.insert(self.original(name), value);
+        }
+        LgModel { values }
+    }
+    fn original(&self, name: &str) -> String {
+        if name.starts_with("v") {
+            let digits = nikaia_std::index::get(&name, 1..).to_owned();
+            let mut plain = !digits.is_empty();
+            for c in digits.chars() { if c < '0' || c > '9' { plain = false; } }
+            if plain {
+                let n = nikaia_std::index::or(text::parse_i64(&digits), || -1);
+                if n >= 0 && n < self.names.len() as i64 { return (*nikaia_std::index::get(&self.names, nikaia_std::index::at(n))).to_owned(); }
+            }
+        }
+        name.to_owned()
+    }
+}
+
+pub fn lg_certificate_text(certificate: &LgCertificate) -> String {
+    match certificate {
+        LgCertificate::Refuted(refutation) => {
+            let mut steps: Vec<String> = vec![];
+            for step in refutation.steps.iter() { steps.push(lg_step_text(step)); }
+            format!("R({})", steps.join(","))
+        },
+        LgCertificate::Split { disjunction, cases } => {
+            let disjunction = *disjunction;
+            let mut parts: Vec<String> = vec![];
+            for one in cases.iter() { parts.push(lg_certificate_text(one)); }
+            format!("S{}[{}]", disjunction, parts.join("|"))
+        },
+    }
+}
+
+fn lg_step_text(step: &LgStep) -> String {
+    match step.clone() {
+        LgStep::Hypothesis(n) => format!("h{}", n),
+        LgStep::Tighten(n) => format!("t{}", n),
+        LgStep::Combine { left, by_left, right, by_right } => format!("c{}:{}:{}:{}", left, by_left, right, by_right),
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct LgParsed {
+    certificate: LgCertificate,
+    rest: String,
+}
+
+pub fn lg_certificate_of(text: &str) -> Option<LgCertificate> {
+    let parsed = match lg_certificate_from(text) { Some(__nikaia_value) => __nikaia_value, None => return None };
+    if parsed.rest.is_empty() { return Some(parsed.certificate.clone()); }
+    None
+}
+
+fn lg_certificate_from(text: &str) -> Option<LgParsed> {
+    if text.starts_with("R(") {
+        let rest = nikaia_std::index::get(&text, 2..).to_owned();
+        let end = match nikaia_std::search::find(&rest, &")", 0) { Some(__nikaia_value) => __nikaia_value, None => return None };
+        let mut steps: Vec<LgStep> = vec![];
+        let inside = nikaia_std::index::get(&rest, nikaia_std::index::at(0..end)).to_owned();
+        for word in inside.split(",") {
+            if word.is_empty() { continue; }
+            steps.push(match lg_step_of(word) { Some(__nikaia_value) => __nikaia_value, None => return None });
+        }
+        return Some(LgParsed { certificate: LgCertificate::Refuted(LgRefutation { steps }), rest: nikaia_std::index::get(&rest, nikaia_std::index::at(end + 1..)).to_owned() });
+    }
+    if !text.starts_with("S") { return None; }
+    let rest = nikaia_std::index::get(&text, 1..).to_owned();
+    let open = match nikaia_std::search::find(&rest, &"[", 0) { Some(__nikaia_value) => __nikaia_value, None => return None };
+    let disjunction = match lg_number(&nikaia_std::index::get(&rest, nikaia_std::index::at(0..open)).to_owned()) { Some(__nikaia_value) => __nikaia_value, None => return None };
+    let mut after = nikaia_std::index::get(&rest, nikaia_std::index::at(open + 1..)).to_owned();
+    let mut cases: Vec<LgCertificate> = vec![];
+    loop {
+        let case = match lg_certificate_from(&after) { Some(__nikaia_value) => __nikaia_value, None => return None };
+        cases.push(case.certificate.clone());
+        if case.rest.starts_with("|") { after = nikaia_std::index::get(&case.rest, 1..).to_owned(); } else {
+            if !case.rest.starts_with("]") { return None; }
+            return Some(LgParsed { certificate: LgCertificate::Split { disjunction, cases }, rest: nikaia_std::index::get(&case.rest, 1..).to_owned() });
+        }
+    }
+}
+
+fn lg_number(word: &str) -> Option<i64> {
+    let n = match text::parse_i64(word) { Some(__nikaia_value) => __nikaia_value, None => return None };
+    if n < 0 { return None; }
+    Some(n)
+}
+
+fn lg_step_of(word: &str) -> Option<LgStep> {
+    if word.starts_with("h") { return Some(LgStep::Hypothesis(match lg_number(&nikaia_std::index::get(&word, 1..).to_owned()) { Some(__nikaia_value) => __nikaia_value, None => return None })); }
+    if word.starts_with("t") { return Some(LgStep::Tighten(match lg_number(&nikaia_std::index::get(&word, 1..).to_owned()) { Some(__nikaia_value) => __nikaia_value, None => return None })); }
+    if !word.starts_with("c") { return None; }
+    let body = nikaia_std::index::get(&word, 1..).to_owned();
+    let parts: Vec<&str> = body.split(":").collect::<Vec<_>>();
+    if parts.len() != 4 { return None; }
+    let left = match lg_number(*nikaia_std::index::get(&parts, 0)) { Some(__nikaia_value) => __nikaia_value, None => return None };
+    let by_left = match text::parse_i64(*nikaia_std::index::get(&parts, 1)) { Some(__nikaia_value) => __nikaia_value, None => return None };
+    let right = match lg_number(*nikaia_std::index::get(&parts, 2)) { Some(__nikaia_value) => __nikaia_value, None => return None };
+    let by_right = match text::parse_i64(*nikaia_std::index::get(&parts, 3)) { Some(__nikaia_value) => __nikaia_value, None => return None };
+    Some(LgStep::Combine { left, by_left, right, by_right })
+}
+
+pub fn lg_model_text(model: &LgModel) -> String {
+    if model.values.is_empty() { return String::from("-"); }
+    let mut values: Vec<String> = vec![];
+    for (name, value) in model.values.iter() {
+        let value = nikaia_std::num::value(value);
+        values.push(format!("{}={}", name, value));
+    }
+    values.join(",")
+}
+
+pub fn lg_model_of(text: &str) -> Option<LgModel> {
+    let mut values: collections::BTreeMap<String, i64> = collections::BTreeMap::new();
+    if text != "-" {
+        for pair in text.split(",") {
+            let at = match nikaia_std::search::find(&pair, &"=", 0) { Some(__nikaia_value) => __nikaia_value, None => return None };
+            let name = nikaia_std::index::get(&pair, nikaia_std::index::at(0..at)).to_owned();
+            if name.is_empty() { return None; }
+            for c in name.chars() { if c.is_whitespace() { return None; } }
+            let value = match text::parse_i64(&nikaia_std::index::get(&pair, nikaia_std::index::at(at + 1..)).to_owned()) { Some(__nikaia_value) => __nikaia_value, None => return None };
+            values.insert(name, value);
+        }
+    }
+    Some(LgModel { values })
+}
+
+
+// --- logic_search.nika ---
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct LgBranch {
+    held_atoms: Vec<i64>,
+    held_why: Vec<collections::BTreeSet<i64>>,
+    open_ors: Vec<i64>,
+    open_why: Vec<collections::BTreeSet<i64>>,
+}
+
+impl LgBranch {
+    fn absorb(&mut self, items: &[LgItem], why: &collections::BTreeSet<i64>) {
+        for item in items.iter() {
+            if item.atom {
+                if !self.held_atoms.contains(&item.n) {
+                    self.held_atoms.push(item.n);
+                    self.held_why.push(why.to_owned());
+                }
+            } else {
+                self.open_ors.push(item.n);
+                self.open_why.push(why.to_owned());
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct LgWork {
+    n: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum LgSearched {
+    Done { certificate: LgCertificate, relies: collections::BTreeSet<i64> },
+    Consistent { found: bool, values: collections::BTreeMap<String, i64> },
+    Unknown(LgUnknown),
+}
+
+fn lg_search(indexed: &LgIndexed, state: &LgBranch, budget: &LgBudget, work: &mut LgWork) -> LgSearched {
+    work.n += 1;
+    if work.n > budget.cases { return LgSearched::Unknown(LgUnknown::TooManyCases); }
+    let mut bounds: Vec<LgLin> = vec![];
+    for atom in state.held_atoms.iter() {
+        let atom = nikaia_std::num::value(atom);
+        bounds.push((*nikaia_std::index::get(&indexed.atoms, nikaia_std::index::at(atom))).clone());
+    }
+    let closed = lg_contradictory(&bounds, budget);
+    match closed {
+        LgClosed::Refuted(ref refutation) => {
+            let mut relies: collections::BTreeSet<i64> = collections::BTreeSet::new();
+            let mut steps: Vec<LgStep> = vec![];
+            for step in refutation.steps.iter() {
+                match step {
+                    LgStep::Hypothesis(i) => {
+                        let i = *i;
+                        for one in (*nikaia_std::index::get(&state.held_why, nikaia_std::index::at(i))).iter() {
+                            let one = nikaia_std::num::value(one);
+                            relies.insert(one);
+                        }
+                        steps.push(LgStep::Hypothesis(*nikaia_std::index::get(&state.held_atoms, nikaia_std::index::at(i))));
+                    },
+                    _ => steps.push(step.clone()),
+                }
+            }
+            return LgSearched::Done { certificate: LgCertificate::Refuted(LgRefutation { steps }), relies };
+        },
+        LgClosed::Consistent { found, ref values } => { if state.open_ors.is_empty() { return LgSearched::Consistent { found, values: values.to_owned() }; } },
+        LgClosed::Unknown(why) => { return LgSearched::Unknown(why.clone()); },
+    }
+    let mut at: i64 = 0;
+    let mut index: i64 = 1;
+    while ((index) as usize) < state.open_ors.len() {
+        let here = *nikaia_std::index::get(&state.open_ors, (index) as usize);
+        let best = *nikaia_std::index::get(&state.open_ors, nikaia_std::index::at(at));
+        let fewer = ((*nikaia_std::index::get(&indexed.ors, nikaia_std::index::at(here))).len() as i64) < (*nikaia_std::index::get(&indexed.ors, nikaia_std::index::at(best))).len() as i64;
+        let same = ((*nikaia_std::index::get(&indexed.ors, nikaia_std::index::at(here))).len() as i64) == (*nikaia_std::index::get(&indexed.ors, nikaia_std::index::at(best))).len() as i64;
+        if fewer || same && here < best { at = index; }
+        index += 1;
+    }
+    let mut rest = LgBranch { held_atoms: state.held_atoms.to_owned(), held_why: state.held_why.to_owned(), open_ors: vec![], open_why: vec![] };
+    let mut position: i64 = 0;
+    let mut disjunction: i64 = 0;
+    let mut brought: collections::BTreeSet<i64> = collections::BTreeSet::new();
+    while ((position) as usize) < state.open_ors.len() {
+        if position == at {
+            disjunction = *nikaia_std::index::get(&state.open_ors, (position) as usize);
+            brought = (*nikaia_std::index::get(&state.open_why, (position) as usize)).to_owned();
+        } else {
+            rest.open_ors.push(*nikaia_std::index::get(&state.open_ors, (position) as usize));
+            rest.open_why.push((*nikaia_std::index::get(&state.open_why, (position) as usize)).to_owned());
+        }
+        position += 1;
+    }
+    let mut why = brought.to_owned();
+    why.insert(disjunction);
+    let mut cases: Vec<LgCertificate> = vec![];
+    let mut reliance = brought.to_owned();
+    for alternative in (*nikaia_std::index::get(&indexed.ors, nikaia_std::index::at(disjunction))).iter() {
+        let mut branch = LgBranch { held_atoms: rest.held_atoms.to_owned(), held_why: rest.held_why.to_owned(), open_ors: rest.open_ors.to_owned(), open_why: rest.open_why.to_owned() };
+        branch.absorb(alternative, &why);
+        let found = lg_search(indexed, &branch, budget, work);
+        match found {
+            LgSearched::Done { ref certificate, ref relies } => {
+                if !relies.contains(nikaia_std::index::AsKey::as_key(&disjunction)) { return LgSearched::Done { certificate: certificate.clone(), relies: relies.to_owned() }; }
+                for one in relies.iter() {
+                    let one = nikaia_std::num::value(one);
+                    if one != disjunction { reliance.insert(one); }
+                }
+                cases.push(certificate.clone());
+            },
+            LgSearched::Consistent { found, ref values } => { return LgSearched::Consistent { found, values: values.to_owned() }; },
+            LgSearched::Unknown(why_not) => { return LgSearched::Unknown(why_not.clone()); },
+        }
+    }
+    LgSearched::Done { certificate: LgCertificate::Split { disjunction, cases }, relies: reliance }
+}
+
+fn lg_refuted(arena: &TermArena, facts: &[i64], goal: i64, values: &collections::BTreeMap<String, i64>) -> Option<LgModel> {
+    let mut names: collections::BTreeSet<String> = collections::BTreeSet::new();
+    for fact in facts.iter() {
+        let fact = nikaia_std::num::value(fact);
+        arena.variables(fact, &mut names);
+    }
+    arena.variables(goal, &mut names);
+    let mut given = values.to_owned();
+    for name in names.iter() { if given.get(name).is_none() { given.insert(name.to_owned(), 0); } }
+    let model = LgModel { values: given };
+    if lg_verify_model(arena, facts, goal, &model) { return Some(model); }
+    None
+}
+
+pub fn lg_check(arena: &TermArena, facts: &[i64], goal: i64, budget: &LgBudget) -> LgAnswer {
+    let mut why = LgWhy { unknown: LgUnknown::NoContradiction };
+    let read = lg_indexed(arena, facts, goal, &mut why);
+    if read.is_none() { return LgAnswer::Unknown { why: why.unknown.clone() }; }
+    let indexed = match read { Some(__nikaia_value) => __nikaia_value, None => return LgAnswer::Unknown { why: LgUnknown::NoContradiction } };
+    let mut state = LgBranch { held_atoms: vec![], held_why: vec![], open_ors: vec![], open_why: vec![] };
+    let none: collections::BTreeSet<i64> = collections::BTreeSet::new();
+    state.absorb((indexed.top).as_ref(), &none);
+    let mut work = LgWork { n: 0 };
+    let found = lg_search(&indexed, &state, budget, &mut work);
+    match found {
+        LgSearched::Done { ref certificate, .. } => LgAnswer::Proved { certificate: certificate.clone() },
+        LgSearched::Consistent { found, ref values } => lg_consistent_answer(arena, facts, goal, found, values),
+        LgSearched::Unknown(why_not) => LgAnswer::Unknown { why: why_not.clone() },
+    }
+}
+
+fn lg_consistent_answer(arena: &TermArena, facts: &[i64], goal: i64, found: bool, values: &collections::BTreeMap<String, i64>) -> LgAnswer {
+    if !found { return LgAnswer::Unknown { why: LgUnknown::NoContradiction }; }
+    let model = lg_refuted(arena, facts, goal, values);
+    if model.is_none() { return LgAnswer::Unknown { why: LgUnknown::NoContradiction }; }
+    LgAnswer::Refuted { model: nikaia_std::index::or(model, || LgModel { values: collections::BTreeMap::new() }) }
+}
+
+pub fn lg_bool_value(arena: &TermArena, id: i64, values: &collections::BTreeMap<String, i64>) -> Option<bool> {
+    let node = arena.at(id);
+    match node {
+        SolverTerm::Bool(x) => Some(x),
+        SolverTerm::Not(a) => {
+            let x = match lg_bool_value(arena, a, values) { Some(__nikaia_value) => __nikaia_value, None => return None };
+            Some(!x)
+        },
+        SolverTerm::And(ref parts) => {
+            let mut all = true;
+            for part in parts.iter() {
+                let part = nikaia_std::num::value(part);
+                let x = match lg_bool_value(arena, part, values) { Some(__nikaia_value) => __nikaia_value, None => return None };
+                all = all && x;
+            }
+            Some(all)
+        },
+        SolverTerm::Or(ref parts) => {
+            let mut any = false;
+            for part in parts.iter() {
+                let part = nikaia_std::num::value(part);
+                let x = match lg_bool_value(arena, part, values) { Some(__nikaia_value) => __nikaia_value, None => return None };
+                any = any || x;
+            }
+            Some(any)
+        },
+        SolverTerm::Le(a, b) => lg_compared(arena, a, b, 1, values),
+        SolverTerm::Lt(a, b) => lg_compared(arena, a, b, 0, values),
+        SolverTerm::Ge(a, b) => lg_compared(arena, a, b, 3, values),
+        SolverTerm::Gt(a, b) => lg_compared(arena, a, b, 2, values),
+        SolverTerm::Eq(a, b) => lg_compared(arena, a, b, 4, values),
+        SolverTerm::Ne(a, b) => lg_compared(arena, a, b, 5, values),
+        _ => None,
+    }
+}
+
+fn lg_compared(arena: &TermArena, a: i64, b: i64, op: i64, values: &collections::BTreeMap<String, i64>) -> Option<bool> {
+    let x = match arena.int_value(a, values) { Some(__nikaia_value) => __nikaia_value, None => return None };
+    let y = match arena.int_value(b, values) { Some(__nikaia_value) => __nikaia_value, None => return None };
+    if op == 0 { return Some(x < y); }
+    if op == 1 { return Some(x <= y); }
+    if op == 2 { return Some(x > y); }
+    if op == 3 { return Some(x >= y); }
+    if op == 4 { return Some(x == y); }
+    Some(x != y)
+}
+
+pub fn lg_verify_model(arena: &TermArena, facts: &[i64], goal: i64, model: &LgModel) -> bool {
+    for fact in facts.iter() {
+        let fact = nikaia_std::num::value(fact);
+        let held = lg_bool_value(arena, fact, &model.values);
+        if held.is_none() || !nikaia_std::index::or(held, || false) { return false; }
+    }
+    let goal_value = lg_bool_value(arena, goal, &model.values);
+    goal_value.is_some() && !nikaia_std::index::or(goal_value, || true)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct LgChecking {
+    held: collections::BTreeSet<i64>,
+    open: collections::BTreeSet<i64>,
+}
+
+impl LgChecking {
+    fn absorb(&mut self, items: &[LgItem]) { for item in items.iter() { if item.atom { self.held.insert(item.n); } else { self.open.insert(item.n); } } }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct LgVerdict {
+    rejected: Option<LgRejected>,
+    case: i64,
+}
+
+pub fn lg_verify(arena: &TermArena, facts: &[i64], goal: i64, certificate: &LgCertificate) -> Option<LgRejected> {
+    let mut why = LgWhy { unknown: LgUnknown::NoContradiction };
+    let read = lg_indexed(arena, facts, goal, &mut why);
+    if read.is_none() { return Some(LgRejected::NotReadable); }
+    let indexed = match read { Some(__nikaia_value) => __nikaia_value, None => return Some(LgRejected::NotReadable) };
+    let mut branch = LgChecking { held: collections::BTreeSet::new(), open: collections::BTreeSet::new() };
+    branch.absorb((indexed.top).as_ref());
+    let mut verdict = LgVerdict { rejected: None, case: 0 };
+    lg_follow(&indexed, &branch, certificate, &mut verdict);
+    match verdict.rejected.as_ref() {
+        Some(__nikaia_it) => Some(__nikaia_it.clone()),
+        None => None,
+    }
+}
+
+fn lg_follow(indexed: &LgIndexed, branch: &LgChecking, certificate: &LgCertificate, verdict: &mut LgVerdict) {
+    if verdict.rejected.is_some() { return; }
+    match certificate {
+        LgCertificate::Refuted(refutation) => {
+            let at = verdict.case;
+            verdict.case += 1;
+            verdict.rejected = lg_replay(indexed, branch, refutation, at);
+        },
+        LgCertificate::Split { disjunction, cases } => {
+            let disjunction = *disjunction;
+            let which = disjunction;
+            if !branch.open.contains(&which) {
+                verdict.rejected = Some(LgRejected::NotOpen { disjunction: which });
+                return;
+            }
+            let alternatives = (*nikaia_std::index::get(&indexed.ors, nikaia_std::index::at(which))).to_owned();
+            if (alternatives.len() as i64) != cases.len() as i64 {
+                verdict.rejected = Some(LgRejected::Cases { expected: alternatives.len() as i64, found: cases.len() as i64 });
+                return;
+            }
+            let mut at: i64 = 0;
+            while at < alternatives.len() as i64 {
+                let mut next = LgChecking { held: branch.held.to_owned(), open: branch.open.to_owned() };
+                next.open.remove(&which);
+                next.absorb((*nikaia_std::index::get(&alternatives, nikaia_std::index::at(at))).as_ref());
+                lg_follow(indexed, &next, nikaia_std::index::get(&cases, nikaia_std::index::at(at)), verdict);
+                if verdict.rejected.is_some() { return; }
+                at += 1;
+            }
+        },
+    }
+}
+
+fn lg_replay(indexed: &LgIndexed, branch: &LgChecking, refutation: &LgRefutation, case: i64) -> Option<LgRejected> {
+    let mut made: Vec<LgLin> = vec![];
+    let mut at: i64 = 0;
+    for step in refutation.steps.iter() {
+        let bound = lg_replayed(indexed, branch, step, &made, at, case);
+        if bound.rejected.is_some() {
+            return match bound.rejected.as_ref() {
+                Some(__nikaia_it) => Some(__nikaia_it.clone()),
+                None => None,
+            };
+        }
+        made.push(nikaia_std::index::or(bound.lin, || lg_constant(0).into()));
+        at += 1;
+    }
+    if !made.is_empty() {
+        let last = (*nikaia_std::index::get(&made, nikaia_std::index::at(made.len() as i64 - 1))).clone();
+        if last.terms.is_empty() && last.constant > 0 { return None; }
+    }
+    Some(LgRejected::NotAContradiction { case })
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct LgReplayed {
+    lin: Option<LgLin>,
+    rejected: Option<LgRejected>,
+}
+
+fn lg_replayed(indexed: &LgIndexed, branch: &LgChecking, step: &LgStep, made: &[LgLin], at: i64, case: i64) -> LgReplayed {
+    let reference = LgRejected::Reference { case, step: at };
+    match step.clone() {
+        LgStep::Hypothesis(a) => {
+            if branch.held.contains(&a) { return LgReplayed { lin: Some((*nikaia_std::index::get(&indexed.atoms, nikaia_std::index::at(a))).clone()), rejected: None }; }
+            return LgReplayed { lin: None, rejected: Some(reference) };
+        },
+        LgStep::Tighten(from) => {
+            if from < 0 || from >= at { return LgReplayed { lin: None, rejected: Some(reference) }; }
+            return LgReplayed { lin: Some(lg_tightened(nikaia_std::index::get(&made, nikaia_std::index::at(from)))), rejected: None };
+        },
+        LgStep::Combine { left, by_left, right, by_right } => {
+            if by_left <= 0 || by_right <= 0 { return LgReplayed { lin: None, rejected: Some(LgRejected::Multiplier { case, step: at }) }; }
+            let overflow = LgRejected::Overflow { case, step: at };
+            if left < 0 || left >= at { return LgReplayed { lin: None, rejected: Some(reference) }; }
+            let l = lg_scale(nikaia_std::index::get(&made, nikaia_std::index::at(left)), by_left);
+            if l.is_none() { return LgReplayed { lin: None, rejected: Some(overflow) }; }
+            if right < 0 || right >= at { return LgReplayed { lin: None, rejected: Some(reference) }; }
+            let r = lg_scale(nikaia_std::index::get(&made, nikaia_std::index::at(right)), by_right);
+            if r.is_none() { return LgReplayed { lin: None, rejected: Some(overflow) }; }
+            let sum = lg_add(&nikaia_std::index::or(l, || lg_constant(0).into()), &nikaia_std::index::or(r, || lg_constant(0).into()));
+            if sum.is_none() { return LgReplayed { lin: None, rejected: Some(overflow) }; }
+            return LgReplayed { lin: sum, rejected: None };
+        },
+    }
+}
+
+
+// --- logic_smtlib.nika ---
+
+pub fn lg_smtlib_write(arena: &TermArena, facts: &[i64], goal: i64) -> String {
+    let mut names: collections::BTreeSet<String> = collections::BTreeSet::new();
+    for fact in facts.iter() {
+        let fact = nikaia_std::num::value(fact);
+        arena.variables(fact, &mut names);
+    }
+    arena.variables(goal, &mut names);
+    let mut out: String = String::from("(set-logic QF_LIA)\n");
+    for name in names.iter() { out.push_str(&format!("(declare-const {} Int)\n", lg_symbol(name))); }
+    for fact in facts.iter() {
+        let fact = nikaia_std::num::value(fact);
+        out.push_str(&format!("(assert {})\n", lg_term(arena, fact)));
+    }
+    out.push_str(&format!("(assert (not {}))\n", lg_term(arena, goal)));
+    out.push_str("(check-sat)\n");
+    out
+}
+
+pub fn lg_symbol(name: &str) -> String {
+    let mut simple = !name.is_empty();
+    let mut first = true;
+    for c in name.chars() {
+        if first && c >= '0' && c <= '9' { simple = false; }
+        first = false;
+        let letter = c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9';
+        let one = format!("{}", c);
+        if !letter && !"~!@$%^&*_-+=<>.?/".contains(&one) { simple = false; }
+    }
+    if simple { return name.to_owned(); }
+    format!("|{}|", name)
+}
+
+fn lg_smt_binary(op: &str, arena: &TermArena, a: i64, b: i64) -> String { format!("({} {} {})", op, lg_term(arena, a), lg_term(arena, b)) }
+
+fn lg_smt_list(op: &str, arena: &TermArena, parts: &[i64], empty: &str) -> String {
+    if parts.is_empty() { return empty.to_owned(); }
+    if parts.len() == 1 { return lg_term(arena, *nikaia_std::index::get(&parts, 0)); }
+    let mut written: Vec<String> = vec![];
+    for part in parts.iter() {
+        let part = nikaia_std::num::value(part);
+        written.push(lg_term(arena, part));
+    }
+    format!("({} {})", op, written.join(" "))
+}
+
+pub fn lg_term(arena: &TermArena, id: i64) -> String {
+    let node = arena.at(id);
+    match node {
+        SolverTerm::Bool(b) => if b { String::from("true") } else { String::from("false") },
+        SolverTerm::Int(n) => lg_smt_int(n),
+        SolverTerm::Var(ref name) => lg_symbol(name),
+        SolverTerm::Add(a, b) => lg_smt_binary("+", arena, a, b),
+        SolverTerm::Sub(a, b) => lg_smt_binary("-", arena, a, b),
+        SolverTerm::Neg(a) => format!("(- {})", lg_term(arena, a)),
+        SolverTerm::Mul(a, b) => lg_smt_binary("*", arena, a, b),
+        SolverTerm::Le(a, b) => lg_smt_binary("<=", arena, a, b),
+        SolverTerm::Lt(a, b) => lg_smt_binary("<", arena, a, b),
+        SolverTerm::Ge(a, b) => lg_smt_binary(">=", arena, a, b),
+        SolverTerm::Gt(a, b) => lg_smt_binary(">", arena, a, b),
+        SolverTerm::Eq(a, b) => lg_smt_binary("=", arena, a, b),
+        SolverTerm::Ne(a, b) => format!("(not {})", lg_smt_binary("=", arena, a, b)),
+        SolverTerm::And(ref parts) => lg_smt_list("and", arena, parts, "true"),
+        SolverTerm::Or(ref parts) => lg_smt_list("or", arena, parts, "false"),
+        SolverTerm::Not(a) => format!("(not {})", lg_term(arena, a)),
+        SolverTerm::Other => String::from("false"),
+    }
+}
+
+fn lg_smt_int(n: i64) -> String {
+    if n >= 0 { return format!("{}", n); }
+    if n == -9223372036854775807i64 - 1i64 { return String::from("(- 9223372036854775808)"); }
+    format!("(- {})", -n)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LgScript {
+    pub arena: TermArena,
+    pub assertions: Vec<i64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LgReadError {
+    Syntax(String),
+    Unsupported(String),
+    Undeclared(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LgRead {
+    Script(LgScript),
+    Failed(LgReadError),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum LgSexp {
+    Atom(String),
+    List(Vec<LgSexp>),
+}
+
+fn lg_show(sexp: &LgSexp) -> String {
+    match sexp {
+        LgSexp::Atom(a) => a.to_owned(),
+        LgSexp::List(items) => {
+            let mut shown: Vec<String> = vec![];
+            for item in items.iter() { shown.push(lg_show(item)); }
+            format!("({})", shown.join(" "))
+        },
+    }
+}
+
+fn lg_unquoted(name: &str) -> String {
+    if name.len() >= 2 && name.starts_with("|") && name.ends_with("|") { return nikaia_std::index::get(&name, nikaia_std::index::at(1..name.len() as i64 - 1)).to_owned(); }
+    name.to_owned()
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum LgParsedSexps {
+    Done(Vec<LgSexp>),
+    Failed(LgReadError),
+}
+
+fn lg_parse(source: &str) -> LgParsedSexps {
+    let chars: Vec<scalar> = nikaia_std::list::chars(source.chars());
+    let mut stack: Vec<Vec<LgSexp>> = vec![vec![]];
+    let mut at: i64 = 0;
+    while ((at) as usize) < chars.len() {
+        let c = *nikaia_std::index::get(&chars, (at) as usize);
+        at += 1;
+        if c == ';' {
+            while ((at) as usize) < chars.len() {
+                let next = *nikaia_std::index::get(&chars, (at) as usize);
+                at += 1;
+                if next == '\n' { break; }
+            }
+        } else if c == '(' { stack.push(vec![]); } else if c == ')' {
+            if stack.len() < 2 { return LgParsedSexps::Failed(LgReadError::Syntax(String::from("a `)` with no `(`"))); }
+            let list = (*nikaia_std::index::get(&stack, nikaia_std::index::at(stack.len() as i64 - 1))).to_owned();
+            stack.pop();
+            let last = stack.len() as i64 - 1;
+            stack[nikaia_std::index::at(last)].push(LgSexp::List(list));
+        } else if c.is_whitespace() { at += 0; } else if c == '|' {
+            let mut atom: String = String::from("|");
+            let mut closed = false;
+            while ((at) as usize) < chars.len() {
+                let next = *nikaia_std::index::get(&chars, (at) as usize);
+                at += 1;
+                if next == '|' {
+                    closed = true;
+                    break;
+                }
+                atom.push(next);
+            }
+            if !closed { return LgParsedSexps::Failed(LgReadError::Syntax(String::from("an unclosed `|`"))); }
+            atom.push('|');
+            let last = stack.len() as i64 - 1;
+            stack[nikaia_std::index::at(last)].push(LgSexp::Atom(atom));
+        } else if c == '"' {
+            let mut atom: String = String::from("\"");
+            let mut closed = false;
+            while ((at) as usize) < chars.len() {
+                let next = *nikaia_std::index::get(&chars, (at) as usize);
+                at += 1;
+                if next == '"' {
+                    if ((at) as usize) < chars.len() && *nikaia_std::index::get(&chars, (at) as usize) == '"' {
+                        at += 1;
+                        atom.push_str("\"\"");
+                    } else {
+                        closed = true;
+                        break;
+                    }
+                } else { atom.push(next); }
+            }
+            if !closed { return LgParsedSexps::Failed(LgReadError::Syntax(String::from("an unclosed string"))); }
+            atom.push('"');
+            let last = stack.len() as i64 - 1;
+            stack[nikaia_std::index::at(last)].push(LgSexp::Atom(atom));
+        } else {
+            let mut atom: String = String::from("");
+            atom.push(c);
+            while ((at) as usize) < chars.len() {
+                let next = *nikaia_std::index::get(&chars, (at) as usize);
+                if next.is_whitespace() || next == '(' || next == ')' { break; }
+                atom.push(next);
+                at += 1;
+            }
+            let last = stack.len() as i64 - 1;
+            stack[nikaia_std::index::at(last)].push(LgSexp::Atom(atom));
+        }
+    }
+    if stack.len() != 1 { return LgParsedSexps::Failed(LgReadError::Syntax(String::from("a `(` with no `)`"))); }
+    LgParsedSexps::Done((*nikaia_std::index::get(&stack, 0)).to_owned())
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum LgTermRead {
+    Term(i64),
+    Failed(LgReadError),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct LgReader {
+    arena: TermArena,
+    declared: collections::BTreeSet<String>,
+}
+
+impl LgReader {
+    fn term(&mut self, sexp: &LgSexp) -> LgTermRead {
+        match sexp {
+            LgSexp::Atom(a) => self.atom(a),
+            LgSexp::List(items) => self.application(sexp, items),
+        }
+    }
+    fn atom(&mut self, a: &str) -> LgTermRead {
+        if a == "true" { return LgTermRead::Term(self.arena.boolean(true)); }
+        if a == "false" { return LgTermRead::Term(self.arena.boolean(false)); }
+        let mut digits = !a.is_empty();
+        for c in a.chars() { if c < '0' || c > '9' { digits = false; } }
+        if digits {
+            let n = text::parse_i64(a);
+            if n.is_none() { return LgTermRead::Failed(LgReadError::Unsupported(format!("the numeral {}", a))); }
+            return LgTermRead::Term(self.arena.int(nikaia_std::index::or(n, || 0)));
+        }
+        let name = lg_unquoted(a);
+        if self.declared.contains(&name) { return LgTermRead::Term(self.arena.var(&name)); }
+        LgTermRead::Failed(LgReadError::Undeclared(name))
+    }
+    fn application(&mut self, sexp: &LgSexp, items: &[LgSexp]) -> LgTermRead {
+        if items.is_empty() { return LgTermRead::Failed(LgReadError::Unsupported(lg_show(sexp))); }
+        if !lg_is_atom(items, 0) { return LgTermRead::Failed(LgReadError::Unsupported(lg_show(sexp))); }
+        let op = lg_atom_at(items, 0);
+        let mut args: Vec<i64> = vec![];
+        let mut at: i64 = 1;
+        while ((at) as usize) < items.len() {
+            match self.term(nikaia_std::index::get(&items, (at) as usize)) {
+                LgTermRead::Term(id) => args.push(id),
+                LgTermRead::Failed(ref why) => { return LgTermRead::Failed(why.clone()); },
+            }
+            at += 1;
+        }
+        let n = args.len() as i64;
+        if op == "not" && n == 1 { return LgTermRead::Term(self.arena.not(*nikaia_std::index::get(&args, 0))); }
+        if op == "and" { return LgTermRead::Term(self.arena.and(args)); }
+        if op == "or" { return LgTermRead::Term(self.arena.or(args)); }
+        if op == "=>" && n == 2 {
+            let not_x = self.arena.not(*nikaia_std::index::get(&args, 0));
+            return LgTermRead::Term(self.arena.or(vec![not_x, *nikaia_std::index::get(&args, 1)]));
+        }
+        if op == "-" && n == 1 { return LgTermRead::Term(self.arena.neg(*nikaia_std::index::get(&args, 0))); }
+        if n >= 2 {
+            if op == "+" || op == "-" || op == "*" {
+                let mut acc = *nikaia_std::index::get(&args, 0);
+                let mut next: i64 = 1;
+                while next < n {
+                    if op == "+" { acc = self.arena.add(acc, *nikaia_std::index::get(&args, nikaia_std::index::at(next))); } else if op == "-" { acc = self.arena.sub(acc, *nikaia_std::index::get(&args, nikaia_std::index::at(next))); } else { acc = self.arena.mul(acc, *nikaia_std::index::get(&args, nikaia_std::index::at(next))); }
+                    next += 1;
+                }
+                return LgTermRead::Term(acc);
+            }
+            if op == "<=" || op == "<" || op == ">=" || op == ">" || op == "=" {
+                let mut links: Vec<i64> = vec![];
+                let mut next: i64 = 0;
+                while next + 1 < n {
+                    let a = *nikaia_std::index::get(&args, nikaia_std::index::at(next));
+                    let b = *nikaia_std::index::get(&args, nikaia_std::index::at(next + 1));
+                    if op == "<=" { links.push(self.arena.le(a, b)); } else if op == "<" { links.push(self.arena.lt(a, b)); } else if op == ">=" { links.push(self.arena.ge(a, b)); } else if op == ">" { links.push(self.arena.gt(a, b)); } else { links.push(self.arena.equal(a, b)); }
+                    next += 1;
+                }
+                if links.len() == 1 { return LgTermRead::Term(*nikaia_std::index::get(&links, 0)); }
+                return LgTermRead::Term(self.arena.and(links));
+            }
+        }
+        if op == "distinct" && n == 2 { return LgTermRead::Term(self.arena.unequal(*nikaia_std::index::get(&args, 0), *nikaia_std::index::get(&args, 1))); }
+        LgTermRead::Failed(LgReadError::Unsupported(lg_show(sexp)))
+    }
+}
+
+pub fn lg_smtlib_read(source: &str) -> LgRead {
+    let mut reader = LgReader { arena: TermArena::empty(), declared: collections::BTreeSet::new() };
+    let mut assertions: Vec<i64> = vec![];
+    let commands = match lg_parse(source) {
+        LgParsedSexps::Done(ref read) => read.to_owned(),
+        LgParsedSexps::Failed(ref why) => { return LgRead::Failed(why.clone()); },
+    };
+    for command in commands.iter() {
+        match command.clone() {
+            LgSexp::Atom(_) => { return LgRead::Failed(LgReadError::Syntax(String::from("a command is a list"))); },
+            LgSexp::List(ref items) => {
+                let head = lg_head(items);
+                let n = items.len() as i64;
+                if n >= 1 && (head == "set-logic" || head == "set-info" || head == "set-option" || head == "check-sat" || head == "exit") { continue; }
+                if n == 3 && head == "declare-const" && lg_atom_at(items, 2) == "Int" && lg_is_atom(items, 1) {
+                    reader.declared.insert(lg_unquoted(&lg_atom_at(items, 1)));
+                    continue;
+                }
+                if n == 4 && head == "declare-fun" && lg_is_atom(items, 1) && lg_is_empty_list(items, 2) && lg_atom_at(items, 3) == "Int" && lg_is_atom(items, 3) {
+                    reader.declared.insert(lg_unquoted(&lg_atom_at(items, 1)));
+                    continue;
+                }
+                if n == 2 && head == "assert" {
+                    match reader.term(nikaia_std::index::get(&items, 1)) {
+                        LgTermRead::Term(id) => assertions.push(id),
+                        LgTermRead::Failed(ref why) => { return LgRead::Failed(why.clone()); },
+                    }
+                    continue;
+                }
+                return LgRead::Failed(LgReadError::Unsupported(lg_show(command)));
+            },
+        }
+    }
+    LgRead::Script(LgScript { arena: reader.arena, assertions })
+}
+
+fn lg_head(items: &[LgSexp]) -> String {
+    if items.is_empty() { return String::from(""); }
+    lg_atom_at(items, 0)
+}
+
+fn lg_atom_at(items: &[LgSexp], at: i64) -> String {
+    match (*nikaia_std::index::get(&items, nikaia_std::index::at(at))).clone() {
+        LgSexp::Atom(a) => a,
+        LgSexp::List(_) => String::from(""),
+    }
+}
+
+fn lg_is_atom(items: &[LgSexp], at: i64) -> bool {
+    match (*nikaia_std::index::get(&items, nikaia_std::index::at(at))).clone() {
+        LgSexp::Atom(_) => true,
+        LgSexp::List(_) => false,
+    }
+}
+
+fn lg_is_empty_list(items: &[LgSexp], at: i64) -> bool {
+    match (*nikaia_std::index::get(&items, nikaia_std::index::at(at))).clone() {
+        LgSexp::Atom(_) => false,
+        LgSexp::List(ref inside) => inside.is_empty(),
+    }
+}
+
+
 // --- manifest.nika ---
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -27944,6 +30071,26 @@ pub mod libraries {
 pub mod locks {
     #[allow(unused_imports)]
     pub use super::{BodyCalls, Reaches, stored_reaches, unit_reaches, free_calls, declared_types, locking_of, Locking, locking};
+}
+pub mod logic_alethe {
+    #[allow(unused_imports)]
+    pub use super::{lg_alethe_write};
+}
+pub mod logic_lia {
+    #[allow(unused_imports)]
+    pub use super::{LgUnknown, LgWhy, LgBudget, lg_budget, LgStep, LgRefutation, LgCertificate, LgModel, LgAnswer, LgRejected, LgLin, lg_add, lg_scale, lg_tightened, lg_terms_cmp, LgItem, LgIndexed, lg_indexed};
+}
+pub mod logic_normal {
+    #[allow(unused_imports)]
+    pub use super::{LgNormal, lg_normal_of, lg_certificate_text, lg_certificate_of, lg_model_text, lg_model_of};
+}
+pub mod logic_search {
+    #[allow(unused_imports)]
+    pub use super::{lg_check, lg_bool_value, lg_verify_model, lg_verify};
+}
+pub mod logic_smtlib {
+    #[allow(unused_imports)]
+    pub use super::{lg_smtlib_write, lg_symbol, lg_term, LgScript, LgReadError, LgRead, lg_smtlib_read};
 }
 pub mod manifest {
     #[allow(unused_imports)]

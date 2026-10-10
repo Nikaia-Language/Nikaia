@@ -1,0 +1,419 @@
+// crates/nikaia-std/src/tools/logic_search.nika
+//
+// **The search, and the checker that trusts nothing of it** (ADR-270 D5):
+// `logic_lia.nika`'s bounds, searched with a split on demand, and a
+// certificate replayed against the query. Moved from `nikaia-logic` (ADR-294,
+// #125).
+
+use std::collections
+
+/// What one branch of the search holds: the atoms that hold in it, in the order
+/// they arrived, and the disjunctions not yet split - each with the choices
+/// that brought it in.
+struct LgBranch {
+    held_atoms: Vec[i64],
+    held_why: Vec[collections::BTreeSet[i64]],
+    open_ors: Vec[i64],
+    open_why: Vec[collections::BTreeSet[i64]],
+}
+
+impl LgBranch {
+    fn absorb(ref mut self, items: ref Vec[LgItem], why: ref collections::BTreeSet[i64]) {
+        for item in items {
+            if item.atom {
+                if !self.held_atoms.contains(item.n) {
+                    self.held_atoms.push(item.n)
+                    self.held_why.push(why.clone())
+                }
+            } else {
+                self.open_ors.push(item.n)
+                self.open_why.push(why.clone())
+            }
+        }
+    }
+}
+
+/// How many branches the search has looked at.
+struct LgWork {
+    n: i64,
+}
+
+/// How the search of a branch ended.
+enum LgSearched {
+    /// A certificate, and the disjunctions it relies on.
+    Done { certificate: LgCertificate, relies: collections::BTreeSet[i64] },
+    /// Consistent over the rationals, with integer values where there are some.
+    Consistent { found: bool, values: collections::BTreeMap[String, i64] },
+    Unknown(LgUnknown),
+}
+
+/// **Splitting on demand** (ADR-270 D5): refute what the branch holds; where it
+/// is consistent, split the open disjunction with the fewest alternatives and
+/// refute each. A case that did not rely on the alternative it was given
+/// refutes the branch as it stands, so the disjunction's other alternatives are
+/// not looked at - the search jumps back to the last choice it relied on. The
+/// certificate is the tree that is left, and the choices it relies on come with
+/// it.
+fn lg_search(indexed: ref LgIndexed, state: ref LgBranch, budget: ref LgBudget, mut work: LgWork) -> LgSearched {
+    work.n += 1
+    if work.n > budget.cases {
+        return LgSearched::Unknown(LgUnknown::TooManyCases)
+    }
+    let mut bounds: Vec[LgLin] = []
+    for atom in state.held_atoms {
+        bounds.push(indexed.atoms[atom].clone())
+    }
+    let closed = lg_contradictory(bounds, budget)
+    match closed {
+        LgClosed::Refuted(refutation) => {
+            let mut relies: collections::BTreeSet[i64] = collections::BTreeSet()
+            let mut steps: Vec[LgStep] = []
+            for step in refutation.steps {
+                match step {
+                    LgStep::Hypothesis(i) => {
+                        for one in state.held_why[i] {
+                            relies.insert(one)
+                        }
+                        steps.push(LgStep::Hypothesis(state.held_atoms[i]))
+                    },
+                    else => steps.push(step.clone()),
+                }
+            }
+            return LgSearched::Done { certificate: LgCertificate::Refuted(LgRefutation { steps: steps }), relies: relies }
+        },
+        LgClosed::Consistent { found, values } => {
+            if state.open_ors.len() == 0 {
+                return LgSearched::Consistent { found: found, values: values.clone() }
+            }
+        },
+        LgClosed::Unknown(why) => {
+            return LgSearched::Unknown(why.clone())
+        },
+    }
+    // The open disjunction with the fewest alternatives, the lowest on a tie.
+    let mut at = 0
+    let mut index = 1
+    while index < state.open_ors.len() {
+        let here = state.open_ors[index]
+        let best = state.open_ors[at]
+        let fewer = indexed.ors[here].len() < indexed.ors[best].len()
+        let same = indexed.ors[here].len() == indexed.ors[best].len()
+        if fewer || (same && here < best) {
+            at = index
+        }
+        index += 1
+    }
+    let mut rest = LgBranch { held_atoms: state.held_atoms.clone(), held_why: state.held_why.clone(), open_ors: [], open_why: [] }
+    let mut position = 0
+    let mut disjunction = 0
+    let mut brought: collections::BTreeSet[i64] = collections::BTreeSet()
+    while position < state.open_ors.len() {
+        if position == at {
+            disjunction = state.open_ors[position]
+            brought = state.open_why[position].clone()
+        } else {
+            rest.open_ors.push(state.open_ors[position])
+            rest.open_why.push(state.open_why[position].clone())
+        }
+        position += 1
+    }
+    let mut why = brought.clone()
+    why.insert(disjunction)
+    let mut cases: Vec[LgCertificate] = []
+    let mut reliance = brought.clone()
+    for alternative in indexed.ors[disjunction] {
+        let mut branch = LgBranch { held_atoms: rest.held_atoms.clone(), held_why: rest.held_why.clone(), open_ors: rest.open_ors.clone(), open_why: rest.open_why.clone() }
+        branch.absorb(alternative, why)
+        let found = lg_search(indexed, branch, budget, work)
+        match found {
+            LgSearched::Done { certificate, relies } => {
+                if !relies.contains(disjunction) {
+                    return LgSearched::Done { certificate: certificate.clone(), relies: relies.clone() }
+                }
+                for one in relies {
+                    if one != disjunction {
+                        reliance.insert(one)
+                    }
+                }
+                cases.push(certificate.clone())
+            },
+            LgSearched::Consistent { found, values } => {
+                return LgSearched::Consistent { found: found, values: values.clone() }
+            },
+            LgSearched::Unknown(why_not) => {
+                return LgSearched::Unknown(why_not.clone())
+            },
+        }
+    }
+    return LgSearched::Done { certificate: LgCertificate::Split { disjunction: disjunction, cases: cases }, relies: reliance }
+}
+
+/// A case's values made a model of the whole query: every variable the query
+/// reads is given - zero where the case did not mention it - and the model is
+/// checked by evaluating the query, so a fault in the back-substitution is an
+/// *unknown*, never a wrong model.
+fn lg_refuted(arena: ref TermArena, facts: ref Vec[i64], goal: i64, values: ref collections::BTreeMap[String, i64]) -> LgModel? {
+    let mut names: collections::BTreeSet[String] = collections::BTreeSet()
+    for fact in facts {
+        arena.variables(fact, names)
+    }
+    arena.variables(goal, names)
+    let mut given = values.clone()
+    for name in names {
+        if given.get(name) == null {
+            given.insert(name.clone(), 0)
+        }
+    }
+    let model = LgModel { values: given }
+    if lg_verify_model(arena, facts, goal, model) {
+        return model
+    }
+    return null
+}
+
+/// Fourier-Motzkin elimination with integer tightening (ADR-270 D1): the
+/// reference solver's answer to whether `facts` imply `goal`.
+pub fn lg_check(arena: ref TermArena, facts: ref Vec[i64], goal: i64, budget: ref LgBudget) -> LgAnswer {
+    let mut why = LgWhy { unknown: LgUnknown::NoContradiction }
+    let read = lg_indexed(arena, facts, goal, why)
+    if read == null {
+        return LgAnswer::Unknown { why: why.unknown.clone() }
+    }
+    let indexed = read ?? return LgAnswer::Unknown { why: LgUnknown::NoContradiction }
+    let mut state = LgBranch { held_atoms: [], held_why: [], open_ors: [], open_why: [] }
+    let none: collections::BTreeSet[i64] = collections::BTreeSet()
+    state.absorb(indexed.top, none)
+    let mut work = LgWork { n: 0 }
+    let found = lg_search(indexed, state, budget, work)
+    return match found {
+        LgSearched::Done { certificate, .. } => LgAnswer::Proved { certificate: certificate.clone() },
+        LgSearched::Consistent { found, values } => lg_consistent_answer(arena, facts, goal, found, values),
+        LgSearched::Unknown(why_not) => LgAnswer::Unknown { why: why_not.clone() },
+    }
+}
+
+fn lg_consistent_answer(arena: ref TermArena, facts: ref Vec[i64], goal: i64, found: bool, values: ref collections::BTreeMap[String, i64]) -> LgAnswer {
+    if !found {
+        return LgAnswer::Unknown { why: LgUnknown::NoContradiction }
+    }
+    let model = lg_refuted(arena, facts, goal, values)
+    if model == null {
+        return LgAnswer::Unknown { why: LgUnknown::NoContradiction }
+    }
+    return LgAnswer::Refuted { model: model ?? LgModel { values: collections::BTreeMap() } }
+}
+
+// --- The checker ---
+
+/// A Boolean term's value under `values`, where it has one.
+pub fn lg_bool_value(arena: ref TermArena, id: i64, values: ref collections::BTreeMap[String, i64]) -> bool? {
+    let node = arena.at(id)
+    return match node {
+        SolverTerm::Bool(x) => x,
+        SolverTerm::Not(a) => {
+            let x = lg_bool_value(arena, a, values) ?? return null
+            !x
+        },
+        SolverTerm::And(parts) => {
+            let mut all = true
+            for part in parts {
+                let x = lg_bool_value(arena, part, values) ?? return null
+                all = all && x
+            }
+            all
+        },
+        SolverTerm::Or(parts) => {
+            let mut any = false
+            for part in parts {
+                let x = lg_bool_value(arena, part, values) ?? return null
+                any = any || x
+            }
+            any
+        },
+        SolverTerm::Le(a, b) => lg_compared(arena, a, b, 1, values),
+        SolverTerm::Lt(a, b) => lg_compared(arena, a, b, 0, values),
+        SolverTerm::Ge(a, b) => lg_compared(arena, a, b, 3, values),
+        SolverTerm::Gt(a, b) => lg_compared(arena, a, b, 2, values),
+        SolverTerm::Eq(a, b) => lg_compared(arena, a, b, 4, values),
+        SolverTerm::Ne(a, b) => lg_compared(arena, a, b, 5, values),
+        else => null,
+    }
+}
+
+fn lg_compared(arena: ref TermArena, a: i64, b: i64, op: i64, values: ref collections::BTreeMap[String, i64]) -> bool? {
+    let x = arena.int_value(a, values) ?? return null
+    let y = arena.int_value(b, values) ?? return null
+    if op == 0 {
+        return x < y
+    }
+    if op == 1 {
+        return x <= y
+    }
+    if op == 2 {
+        return x > y
+    }
+    if op == 3 {
+        return x >= y
+    }
+    if op == 4 {
+        return x == y
+    }
+    return x != y
+}
+
+/// Whether `model` makes every fact of the query true and its goal false.
+pub fn lg_verify_model(arena: ref TermArena, facts: ref Vec[i64], goal: i64, model: ref LgModel) -> bool {
+    for fact in facts {
+        let held = lg_bool_value(arena, fact, model.values)
+        if held == null || !(held ?? false) {
+            return false
+        }
+    }
+    let goal_value = lg_bool_value(arena, goal, model.values)
+    return goal_value != null && !(goal_value ?? true)
+}
+
+/// The atoms a branch holds and the disjunctions it has not split.
+struct LgChecking {
+    held: collections::BTreeSet[i64],
+    open: collections::BTreeSet[i64],
+}
+
+impl LgChecking {
+    fn absorb(ref mut self, items: ref Vec[LgItem]) {
+        for item in items {
+            if item.atom {
+                self.held.insert(item.n)
+            } else {
+                self.open.insert(item.n)
+            }
+        }
+    }
+}
+
+/// How the checker has got on: nothing wrong yet, or why the certificate is
+/// rejected.
+struct LgVerdict {
+    rejected: LgRejected?,
+    case: i64,
+}
+
+/// Whether `certificate` shows that the query's facts imply its goal: nothing
+/// where it does, why not otherwise.
+pub fn lg_verify(arena: ref TermArena, facts: ref Vec[i64], goal: i64, certificate: ref LgCertificate) -> LgRejected? {
+    let mut why = LgWhy { unknown: LgUnknown::NoContradiction }
+    let read = lg_indexed(arena, facts, goal, why)
+    if read == null {
+        return LgRejected::NotReadable
+    }
+    let indexed = read ?? return LgRejected::NotReadable
+    let mut branch = LgChecking { held: collections::BTreeSet(), open: collections::BTreeSet() }
+    branch.absorb(indexed.top)
+    let mut verdict = LgVerdict { rejected: null, case: 0 }
+    lg_follow(indexed, branch, certificate, verdict)
+    return verdict.rejected?.clone()
+}
+
+fn lg_follow(indexed: ref LgIndexed, branch: ref LgChecking, certificate: ref LgCertificate, mut verdict: LgVerdict) {
+    if verdict.rejected != null {
+        return
+    }
+    match certificate {
+        LgCertificate::Refuted(refutation) => {
+            let at = verdict.case
+            verdict.case += 1
+            verdict.rejected = lg_replay(indexed, branch, refutation, at)
+        },
+        LgCertificate::Split { disjunction, cases } => {
+            let which = disjunction
+            if !branch.open.contains(which) {
+                verdict.rejected = LgRejected::NotOpen { disjunction: which }
+                return
+            }
+            let alternatives = indexed.ors[which].clone()
+            if alternatives.len() != cases.len() {
+                verdict.rejected = LgRejected::Cases { expected: alternatives.len(), found: cases.len() }
+                return
+            }
+            let mut at = 0
+            while at < alternatives.len() {
+                let mut next = LgChecking { held: branch.held.clone(), open: branch.open.clone() }
+                next.open.remove(which)
+                next.absorb(alternatives[at])
+                lg_follow(indexed, next, cases[at], verdict)
+                if verdict.rejected != null {
+                    return
+                }
+                at += 1
+            }
+        },
+    }
+}
+
+fn lg_replay(indexed: ref LgIndexed, branch: ref LgChecking, refutation: ref LgRefutation, case: i64) -> LgRejected? {
+    let mut made: Vec[LgLin] = []
+    let mut at = 0
+    for step in refutation.steps {
+        let bound = lg_replayed(indexed, branch, step, made, at, case)
+        if bound.rejected != null {
+            return bound.rejected?.clone()
+        }
+        made.push(bound.lin ?? lg_constant(0))
+        at += 1
+    }
+    if made.len() > 0 {
+        let last = made[made.len() - 1].clone()
+        if last.terms.len() == 0 && last.constant > 0 {
+            return null
+        }
+    }
+    return LgRejected::NotAContradiction { case: case }
+}
+
+struct LgReplayed {
+    lin: LgLin?,
+    rejected: LgRejected?,
+}
+
+fn lg_replayed(indexed: ref LgIndexed, branch: ref LgChecking, step: ref LgStep, made: ref Vec[LgLin], at: i64, case: i64) -> LgReplayed {
+    let reference = LgRejected::Reference { case: case, step: at }
+    match step.clone() {
+        LgStep::Hypothesis(a) => {
+            if branch.held.contains(a) {
+                return LgReplayed { lin: indexed.atoms[a].clone(), rejected: null }
+            }
+            return LgReplayed { lin: null, rejected: reference }
+        },
+        LgStep::Tighten(from) => {
+            if from < 0 || from >= at {
+                return LgReplayed { lin: null, rejected: reference }
+            }
+            return LgReplayed { lin: lg_tightened(made[from]), rejected: null }
+        },
+        LgStep::Combine { left, by_left, right, by_right } => {
+            if by_left <= 0 || by_right <= 0 {
+                return LgReplayed { lin: null, rejected: LgRejected::Multiplier { case: case, step: at } }
+            }
+            let overflow = LgRejected::Overflow { case: case, step: at }
+            if left < 0 || left >= at {
+                return LgReplayed { lin: null, rejected: reference }
+            }
+            let l = lg_scale(made[left], by_left)
+            if l == null {
+                return LgReplayed { lin: null, rejected: overflow }
+            }
+            if right < 0 || right >= at {
+                return LgReplayed { lin: null, rejected: reference }
+            }
+            let r = lg_scale(made[right], by_right)
+            if r == null {
+                return LgReplayed { lin: null, rejected: overflow }
+            }
+            let sum = lg_add(l ?? lg_constant(0), r ?? lg_constant(0))
+            if sum == null {
+                return LgReplayed { lin: null, rejected: overflow }
+            }
+            return LgReplayed { lin: sum, rejected: null }
+        },
+    }
+}

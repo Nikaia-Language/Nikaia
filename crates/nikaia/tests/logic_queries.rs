@@ -1,6 +1,9 @@
 //! **Queries through the interface** (ADR-270 D3, D14): facts and a goal as
 //! terms, and the reference solver's answer. Nothing here knows Nikaia.
 
+#[path = "common/nikaia_logic.rs"]
+mod nikaia_logic;
+
 use nikaia_logic::{
     Answer, Arena, Budget, Certificate, FourierMotzkin, Model, Query, Refutation, Rejected, Solver,
     Step, TermId, Unknown, smtlib, verify, verify_model,
@@ -16,7 +19,7 @@ fn check(arena: &Arena, facts: &[TermId], goal: TermId) -> Answer {
             assert_eq!(verify(&query, certificate), Ok(()), "{certificate:#?}");
         }
         Answer::Refuted { model } => assert!(verify_model(&query, model), "{model:#?}"),
-        Answer::Unknown(_) => {}
+        Answer::Unknown { .. } => {}
     }
     answer
 }
@@ -82,7 +85,9 @@ fn a_product_of_variables_is_outside_the_theory() {
     let goal = a.ge(product, zero);
     assert_eq!(
         check(&a, &[], goal),
-        Answer::Unknown(Unknown::OutsideTheTheory)
+        Answer::Unknown {
+            why: Unknown::OutsideTheTheory
+        }
     );
 }
 
@@ -114,7 +119,9 @@ fn the_budget_bounds_the_work() {
     };
     assert_eq!(
         FourierMotzkin.check(&query, &tight),
-        Answer::Unknown(Unknown::TooManyCases)
+        Answer::Unknown {
+            why: Unknown::TooManyCases
+        }
     );
     assert_eq!(
         FourierMotzkin.check(&query, &tight),
@@ -416,7 +423,13 @@ fn a_step_that_leaves_i64_is_unknown_and_never_wrong() {
     let falsum = a.bool(false);
     let answer = check(&a, &[first, second], falsum);
     assert!(!proved(&answer), "{answer:?}");
-    assert_eq!(answer, Answer::Unknown(Unknown::Overflow), "{answer:?}");
+    assert_eq!(
+        answer,
+        Answer::Unknown {
+            why: Unknown::Overflow
+        },
+        "{answer:?}"
+    );
 }
 
 /// How many refutations a certificate holds, and whether it splits at all.

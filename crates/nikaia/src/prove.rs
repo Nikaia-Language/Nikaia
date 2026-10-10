@@ -28,7 +28,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use nikaia_logic::{Arena, Query, TermId, verify_model};
+use nikaia_std::tools::logic_search::lg_verify_model;
 use nikaia_std::tools::prover_arena::TermArena;
 use nikaia_std::tools::solver_terms::SolverTerm;
 
@@ -90,7 +90,6 @@ pub fn prove(
             .map(|(at, shape)| (*at as i64, shape.clone()))
             .collect(),
     };
-    let copy = std::cell::RefCell::new(SolverCopy::default());
     // **The passes, and what they make** (`tools/prover_passes.nika`): the
     // walk repeated until the preconditions, then the postconditions, stop
     // changing (ADR-269 D15, D17); the checked entries (D20), what the ledger
@@ -101,8 +100,8 @@ pub fn prove(
         &parsed.interner,
         own,
         library,
-        &|arena, facts, goal| answer_of(&copy, arena, facts, goal),
-        &|arena, facts, goal| model_of(&copy, arena, facts, goal),
+        &|arena, facts, goal| answer_of(arena, facts, goal),
+        &|arena, facts, goal| model_of(arena, facts, goal),
         &|name| crate::emit::escaped(name).into_owned(),
         &|e| crate::emit::literal_expressions(parsed, e),
         &|name| parsed.unaliased(name),
@@ -178,8 +177,7 @@ fn implies(from: &[String], to: &[String], names: &BTreeSet<String>) -> bool {
         return false;
     };
     let goal = arena.and(goals);
-    let copy = std::cell::RefCell::new(SolverCopy::default());
-    asked_of(&copy, &arena, &facts, goal, crate::proofs::ask) == crate::proofs::Asked::Proved
+    crate::proofs::ask(&arena, &facts, goal) == crate::proofs::Asked::Proved
 }
 
 /// **A condition the ledger states, read back** (ADR-269 D18): the text is
@@ -223,65 +221,9 @@ pub(crate) fn condition_nodes(text: &str, names: &BTreeSet<String>) -> Vec<Solve
     }
 }
 
-/// `nikaia-logic`'s copy of the terms, as far as it has been made.
-#[derive(Debug, Clone, Default)]
-pub(crate) struct SolverCopy {
-    logic: Arena,
-    /// The copy's `TermId` of each node of `held`, by place.
-    ids: Vec<TermId>,
-}
-
-/// The solver's question whether `facts` imply `goal`, handed to `ask`,
-/// once `copy` has every node of `held`.
-pub(crate) fn asked_of<R>(
-    copy: &std::cell::RefCell<SolverCopy>,
-    held: &TermArena,
-    facts: &[i64],
-    goal: i64,
-    ask: impl FnOnce(&Query) -> R,
-) -> R {
-    let mut copy = copy.borrow_mut();
-    let SolverCopy { logic, ids } = &mut *copy;
-    for node in &held.nodes[ids.len()..] {
-        let at = |i: &i64| ids[*i as usize];
-        let id = match node {
-            SolverTerm::Bool(b) => logic.bool(*b),
-            SolverTerm::Int(n) => logic.int(*n),
-            SolverTerm::Var(name) => logic.var(name),
-            SolverTerm::Add(a, b) => logic.add(at(a), at(b)),
-            SolverTerm::Sub(a, b) => logic.sub(at(a), at(b)),
-            SolverTerm::Neg(a) => logic.neg(at(a)),
-            SolverTerm::Mul(a, b) => logic.mul(at(a), at(b)),
-            SolverTerm::Le(a, b) => logic.le(at(a), at(b)),
-            SolverTerm::Lt(a, b) => logic.lt(at(a), at(b)),
-            SolverTerm::Ge(a, b) => logic.ge(at(a), at(b)),
-            SolverTerm::Gt(a, b) => logic.gt(at(a), at(b)),
-            SolverTerm::Eq(a, b) => logic.eq(at(a), at(b)),
-            SolverTerm::Ne(a, b) => logic.ne(at(a), at(b)),
-            SolverTerm::And(parts) => logic.and(parts.iter().map(at).collect()),
-            SolverTerm::Or(parts) => logic.or(parts.iter().map(at).collect()),
-            SolverTerm::Not(a) => logic.not(at(a)),
-            SolverTerm::Other => logic.bool(false),
-        };
-        ids.push(id);
-    }
-    let id = |at: &i64| ids[*at as usize];
-    let facts: Vec<TermId> = facts.iter().map(id).collect();
-    ask(&Query {
-        arena: logic,
-        facts: &facts,
-        goal: id(&goal),
-    })
-}
-
 /// What the solver says to `facts` and `goal`, as `prover_solver` reads it.
-fn answer_of(
-    copy: &std::cell::RefCell<SolverCopy>,
-    held: &TermArena,
-    facts: &[i64],
-    goal: i64,
-) -> SolverAnswer {
-    match asked_of(copy, held, facts, goal, crate::proofs::ask) {
+fn answer_of(held: &TermArena, facts: &[i64], goal: i64) -> SolverAnswer {
+    match crate::proofs::ask(held, facts, goal) {
         crate::proofs::Asked::Proved => SolverAnswer::Proved,
         crate::proofs::Asked::Rejected(why) => SolverAnswer::Rejected(why),
         crate::proofs::Asked::Refuted(_) | crate::proofs::Asked::Unknown => SolverAnswer::NotProved,
@@ -289,19 +231,9 @@ fn answer_of(
 }
 
 /// A checked model of `facts` and `goal`'s negation: the values it gives.
-fn model_of(
-    copy: &std::cell::RefCell<SolverCopy>,
-    held: &TermArena,
-    facts: &[i64],
-    goal: i64,
-) -> Option<BTreeMap<String, i64>> {
-    asked_of(copy, held, facts, goal, refuted).map(|model| model.values)
-}
-
-/// A model of a question the solver refutes, checked by evaluating it.
-fn refuted(query: &Query) -> Option<nikaia_logic::Model> {
-    let crate::proofs::Asked::Refuted(model) = crate::proofs::ask(query) else {
+fn model_of(held: &TermArena, facts: &[i64], goal: i64) -> Option<BTreeMap<String, i64>> {
+    let crate::proofs::Asked::Refuted(model) = crate::proofs::ask(held, facts, goal) else {
         return None;
     };
-    verify_model(query, &model).then_some(model)
+    lg_verify_model(held, facts, goal, &model).then_some(model.values)
 }

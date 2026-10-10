@@ -33,7 +33,6 @@ use std::collections::{BTreeMap, BTreeSet, HashSet};
 use crate::ast::{Expr, Item, Spanned};
 use crate::check::value_node;
 use crate::parser::Parsed;
-use crate::prove::{SolverCopy, asked_of};
 use nikaia_std::tools::bounds_basic as nika;
 use nikaia_std::tools::bounds_shape::Around;
 use nikaia_std::tools::bounds_walk::{self as walk, BoundsContext, Ensured};
@@ -405,8 +404,7 @@ pub fn proven(
                 .map(|n| n as usize),
         );
         // **The aggressive walk** (`tools/bounds_walk.nika`), with the
-        // solver behind a copy of its arena that grows with it.
-        let copy = std::cell::RefCell::new(SolverCopy::default());
+        // solver asked about the arena it grows.
         let function = name.map(|n| parsed.text(n).to_string()).unwrap_or_default();
         let walked = crate::proofs::in_function(&function, item.span.start as usize, || {
             walk::bounds_aggressive(
@@ -421,8 +419,7 @@ pub fn proven(
                 &parsed.interner,
                 &node_of,
                 &|arena, facts, goal| {
-                    asked_of(&copy, arena, facts, goal, crate::proofs::ask)
-                        == crate::proofs::Asked::Proved
+                    crate::proofs::ask(arena, facts, goal) == crate::proofs::Asked::Proved
                 },
             )
         });
@@ -457,7 +454,6 @@ pub fn proven(
                     text_classes: found.text_classes,
                     ..context.clone()
                 };
-                let copy = std::cell::RefCell::new(SolverCopy::default());
                 let walked = crate::proofs::in_function(
                     parsed.text(rule.name),
                     rule.span.start as usize,
@@ -474,7 +470,7 @@ pub fn proven(
                             &parsed.interner,
                             &node_of,
                             &|arena, facts, goal| {
-                                asked_of(&copy, arena, facts, goal, crate::proofs::ask)
+                                crate::proofs::ask(arena, facts, goal)
                                     == crate::proofs::Asked::Proved
                             },
                         )

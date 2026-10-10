@@ -21,10 +21,6 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 RUST = ROOT / "crates" / "nikaia" / "src"
-# The prover's logic layer is toolchain Rust too (ADR-270 D1): moved out of
-# `crates/nikaia/src`, it would otherwise leave the count without anything
-# having become Nikaia.
-LOGIC = ROOT / "crates" / "nikaia-logic" / "src"
 TOOLS = ROOT / "crates" / "nikaia-std" / "src" / "tools"
 
 # The toolchain's Nikaia, and the Rust module each one took the place of or
@@ -105,6 +101,11 @@ COMPILER_NIKA = {
     "cexport_python.nika": "cexport: `nikaia bind python`'s ctypes module (0.0.746)",
     "cexport_node.nika": "cexport: `nikaia bind node`'s entries, module and binding.gyp (0.0.746)",
     "cexport_node_text.nika": "cexport: the fixed C of the N-API module (0.0.746)",
+    "logic_lia.nika": "logic: the reference solver's types, the bounds of a query, the elimination and the certificate it ends on (0.0.754)",
+    "logic_search.nika": "logic: the search with a split on demand, the checker, and models (0.0.754)",
+    "logic_normal.nika": "logic: a query in normal form, certificates and models as text (0.0.754)",
+    "logic_smtlib.nika": "logic: a query as SMT-LIB 2, and a script read back (0.0.754)",
+    "logic_alethe.nika": "logic: a proof as Alethe (0.0.754)",
 }
 
 
@@ -127,7 +128,7 @@ def code_lines(path):
 
 
 def measure():
-    rust = sum(code_lines(p) for p in sorted([*RUST.rglob("*.rs"), *LOGIC.rglob("*.rs")]))
+    rust = sum(code_lines(p) for p in sorted(RUST.rglob("*.rs")))
     nika = {name: code_lines(TOOLS / name) for name in COMPILER_NIKA}
     total = rust + sum(nika.values())
     share = 100.0 * sum(nika.values()) / total if total else 0.0
@@ -143,7 +144,7 @@ def main():
     if "--share" in sys.argv[1:]:
         print(f"{share:.1f} %")
         return
-    print(f"{'Rust, crates/nikaia{,-logic}/src':<44} {rust:>7}")
+    print(f"{'Rust, crates/nikaia/src':<44} {rust:>7}")
     for name, what in COMPILER_NIKA.items():
         print(f"{'Nikaia, ' + name:<44} {nika[name]:>7}   {what}")
     print(f"{'Nikaia in all':<44} {sum(nika.values()):>7}   {share:.1f} % of the toolchain")

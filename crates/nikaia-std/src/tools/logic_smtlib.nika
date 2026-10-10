@@ -1,0 +1,458 @@
+// crates/nikaia-std/src/tools/logic_smtlib.nika
+//
+// **SMT-LIB 2 at the edge** (ADR-270 D6): a query written so that another
+// solver can be asked the same question, and the part of SMT-LIB 2 this
+// layer's sorts cover read back - for comparing answers and for running public
+// benchmark sets against the solver. It is not the interface: a solver is
+// handed a query, never text. Moved from `nikaia-logic`'s `smtlib` (ADR-294,
+// #125).
+//
+// A query asks whether its facts imply its goal, which SMT-LIB asks the other
+// way round: the facts and the goal's negation are asserted, and *unsat* means
+// proved.
+
+use std::collections
+use std::text
+
+/// The query as an SMT-LIB 2 script: `unsat` where the facts imply the goal.
+pub fn lg_smtlib_write(arena: ref TermArena, facts: ref Vec[i64], goal: i64) -> String {
+    let mut names: collections::BTreeSet[String] = collections::BTreeSet()
+    for fact in facts {
+        arena.variables(fact, names)
+    }
+    arena.variables(goal, names)
+    let mut out: String = "(set-logic QF_LIA)\n"
+    for name in names {
+        out.push_str(f"(declare-const {lg_symbol(name)} Int)\n")
+    }
+    for fact in facts {
+        out.push_str(f"(assert {lg_term(arena, fact)})\n")
+    }
+    out.push_str(f"(assert (not {lg_term(arena, goal)}))\n")
+    out.push_str("(check-sat)\n")
+    return out
+}
+
+/// A name as an SMT-LIB symbol: bare where it may be, quoted otherwise -
+/// `xs.len()` is `|xs.len()|`.
+pub fn lg_symbol(name: ref String) -> String {
+    let mut simple = name.len() > 0
+    let mut first = true
+    for c in name.chars() {
+        if first && c >= '0' && c <= '9' {
+            simple = false
+        }
+        first = false
+        let letter = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
+        let one = f"{c}"
+        if !letter && !"~!@$%^&*_-+=<>.?/".contains(ref one) {
+            simple = false
+        }
+    }
+    if simple {
+        return name.clone()
+    }
+    return f"|{name}|"
+}
+
+fn lg_smt_binary(op: ref String, arena: ref TermArena, a: i64, b: i64) -> String {
+    return f"({op} {lg_term(arena, a)} {lg_term(arena, b)})"
+}
+
+fn lg_smt_list(op: ref String, arena: ref TermArena, parts: ref Vec[i64], empty: ref String) -> String {
+    if parts.len() == 0 {
+        return empty.clone()
+    }
+    if parts.len() == 1 {
+        return lg_term(arena, parts[0])
+    }
+    let mut written: Vec[String] = []
+    for part in parts {
+        written.push(lg_term(arena, part))
+    }
+    return f"({op} {written.join(" ")})"
+}
+
+pub fn lg_term(arena: ref TermArena, id: i64) -> String {
+    let node = arena.at(id)
+    return match node {
+        SolverTerm::Bool(b) => if b { "true" } else { "false" },
+        SolverTerm::Int(n) => lg_smt_int(n),
+        SolverTerm::Var(name) => lg_symbol(name),
+        SolverTerm::Add(a, b) => lg_smt_binary("+", arena, a, b),
+        SolverTerm::Sub(a, b) => lg_smt_binary("-", arena, a, b),
+        SolverTerm::Neg(a) => f"(- {lg_term(arena, a)})",
+        SolverTerm::Mul(a, b) => lg_smt_binary("*", arena, a, b),
+        SolverTerm::Le(a, b) => lg_smt_binary("<=", arena, a, b),
+        SolverTerm::Lt(a, b) => lg_smt_binary("<", arena, a, b),
+        SolverTerm::Ge(a, b) => lg_smt_binary(">=", arena, a, b),
+        SolverTerm::Gt(a, b) => lg_smt_binary(">", arena, a, b),
+        SolverTerm::Eq(a, b) => lg_smt_binary("=", arena, a, b),
+        SolverTerm::Ne(a, b) => f"(not {lg_smt_binary("=", arena, a, b)})",
+        SolverTerm::And(parts) => lg_smt_list("and", arena, parts, "true"),
+        SolverTerm::Or(parts) => lg_smt_list("or", arena, parts, "false"),
+        SolverTerm::Not(a) => f"(not {lg_term(arena, a)})",
+        SolverTerm::Other => "false",
+    }
+}
+
+/// A whole number as SMT-LIB writes it: a negative one is `(- n)`.
+fn lg_smt_int(n: i64) -> String {
+    if n >= 0 {
+        return f"{n}"
+    }
+    if n == -9223372036854775807 - 1 {
+        return "(- 9223372036854775808)"
+    }
+    return f"(- {-n})"
+}
+
+/// A script read back: its assertions, as terms. Asking whether they imply
+/// `false` is asking whether the script is `unsat`.
+pub struct LgScript {
+    pub arena: TermArena,
+    pub assertions: Vec[i64],
+}
+
+/// Why a script could not be read.
+pub enum LgReadError {
+    /// The text is not balanced s-expressions.
+    Syntax(String),
+    /// A command, sort or operator outside what this layer's sorts cover.
+    Unsupported(String),
+    /// A name used without a `declare-const` or `declare-fun` of no arguments.
+    Undeclared(String),
+}
+
+/// A script, or why not.
+pub enum LgRead {
+    Script(LgScript),
+    Failed(LgReadError),
+}
+
+enum LgSexp {
+    Atom(String),
+    List(Vec[LgSexp]),
+}
+
+fn lg_show(sexp: ref LgSexp) -> String {
+    return match sexp {
+        LgSexp::Atom(a) => a.clone(),
+        LgSexp::List(items) => {
+            let mut shown: Vec[String] = []
+            for item in items {
+                shown.push(lg_show(item))
+            }
+            f"({shown.join(" ")})"
+        },
+    }
+}
+
+fn lg_unquoted(name: ref String) -> String {
+    if name.len() >= 2 && name.starts_with("|") && name.ends_with("|") {
+        return name[1..<name.len() - 1].clone()
+    }
+    return name.clone()
+}
+
+/// What reading the text of a script came to.
+enum LgParsedSexps {
+    Done(Vec[LgSexp]),
+    Failed(LgReadError),
+}
+
+fn lg_parse(source: ref String) -> LgParsedSexps {
+    let chars: Vec[scalar] = source.chars().collect()
+    let mut stack: Vec[Vec[LgSexp]] = [[]]
+    let mut at = 0
+    while at < chars.len() {
+        let c = chars[at]
+        at += 1
+        if c == ';' {
+            while at < chars.len() {
+                let next = chars[at]
+                at += 1
+                if next == '\n' {
+                    break
+                }
+            }
+        } else if c == '(' {
+            stack.push([])
+        } else if c == ')' {
+            if stack.len() < 2 {
+                return LgParsedSexps::Failed(LgReadError::Syntax("a `)` with no `(`"))
+            }
+            let list = stack[stack.len() - 1].clone()
+            stack.pop()
+            let last = stack.len() - 1
+            stack[last].push(LgSexp::List(list))
+        } else if c.is_whitespace() {
+            at += 0
+        } else if c == '|' {
+            let mut atom: String = "|"
+            let mut closed = false
+            while at < chars.len() {
+                let next = chars[at]
+                at += 1
+                if next == '|' {
+                    closed = true
+                    break
+                }
+                atom.push(next)
+            }
+            if !closed {
+                return LgParsedSexps::Failed(LgReadError::Syntax("an unclosed `|`"))
+            }
+            atom.push('|')
+            let last = stack.len() - 1
+            stack[last].push(LgSexp::Atom(atom))
+        } else if c == '"' {
+            let mut atom: String = "\""
+            let mut closed = false
+            while at < chars.len() {
+                let next = chars[at]
+                at += 1
+                if next == '"' {
+                    if at < chars.len() && chars[at] == '"' {
+                        at += 1
+                        atom.push_str("\"\"")
+                    } else {
+                        closed = true
+                        break
+                    }
+                } else {
+                    atom.push(next)
+                }
+            }
+            if !closed {
+                return LgParsedSexps::Failed(LgReadError::Syntax("an unclosed string"))
+            }
+            atom.push('"')
+            let last = stack.len() - 1
+            stack[last].push(LgSexp::Atom(atom))
+        } else {
+            let mut atom: String = ""
+            atom.push(c)
+            while at < chars.len() {
+                let next = chars[at]
+                if next.is_whitespace() || next == '(' || next == ')' {
+                    break
+                }
+                atom.push(next)
+                at += 1
+            }
+            let last = stack.len() - 1
+            stack[last].push(LgSexp::Atom(atom))
+        }
+    }
+    if stack.len() != 1 {
+        return LgParsedSexps::Failed(LgReadError::Syntax("a `(` with no `)`"))
+    }
+    return LgParsedSexps::Done(stack[0].clone())
+}
+
+/// A term read, or why not.
+enum LgTermRead {
+    Term(i64),
+    Failed(LgReadError),
+}
+
+struct LgReader {
+    arena: TermArena,
+    declared: collections::BTreeSet[String],
+}
+
+impl LgReader {
+    fn term(ref mut self, sexp: ref LgSexp) -> LgTermRead {
+        return match sexp {
+            LgSexp::Atom(a) => self.atom(a),
+            LgSexp::List(items) => self.application(sexp, items),
+        }
+    }
+
+    fn atom(ref mut self, a: ref String) -> LgTermRead {
+        if a == "true" {
+            return LgTermRead::Term(self.arena.boolean(true))
+        }
+        if a == "false" {
+            return LgTermRead::Term(self.arena.boolean(false))
+        }
+        let mut digits = a.len() > 0
+        for c in a.chars() {
+            if c < '0' || c > '9' {
+                digits = false
+            }
+        }
+        if digits {
+            let n = text::parse_i64(a)
+            if n == null {
+                return LgTermRead::Failed(LgReadError::Unsupported(f"the numeral {a}"))
+            }
+            return LgTermRead::Term(self.arena.int(n ?? 0))
+        }
+        let name = lg_unquoted(a)
+        if self.declared.contains(name) {
+            return LgTermRead::Term(self.arena.var(name))
+        }
+        return LgTermRead::Failed(LgReadError::Undeclared(name))
+    }
+
+    fn application(ref mut self, sexp: ref LgSexp, items: ref Vec[LgSexp]) -> LgTermRead {
+        if items.len() == 0 {
+            return LgTermRead::Failed(LgReadError::Unsupported(lg_show(sexp)))
+        }
+        if !lg_is_atom(items, 0) {
+            return LgTermRead::Failed(LgReadError::Unsupported(lg_show(sexp)))
+        }
+        let op = lg_atom_at(items, 0)
+        let mut args: Vec[i64] = []
+        let mut at = 1
+        while at < items.len() {
+            match self.term(items[at]) {
+                LgTermRead::Term(id) => args.push(id),
+                LgTermRead::Failed(why) => {
+                    return LgTermRead::Failed(why.clone())
+                },
+            }
+            at += 1
+        }
+        let n = args.len()
+        if op == "not" && n == 1 {
+            return LgTermRead::Term(self.arena.not(args[0]))
+        }
+        if op == "and" {
+            return LgTermRead::Term(self.arena.and(args))
+        }
+        if op == "or" {
+            return LgTermRead::Term(self.arena.or(args))
+        }
+        if op == "=>" && n == 2 {
+            let not_x = self.arena.not(args[0])
+            return LgTermRead::Term(self.arena.or([not_x, args[1]]))
+        }
+        if op == "-" && n == 1 {
+            return LgTermRead::Term(self.arena.neg(args[0]))
+        }
+        if n >= 2 {
+            if op == "+" || op == "-" || op == "*" {
+                let mut acc = args[0]
+                let mut next = 1
+                while next < n {
+                    if op == "+" {
+                        acc = self.arena.add(acc, args[next])
+                    } else if op == "-" {
+                        acc = self.arena.sub(acc, args[next])
+                    } else {
+                        acc = self.arena.mul(acc, args[next])
+                    }
+                    next += 1
+                }
+                return LgTermRead::Term(acc)
+            }
+            if op == "<=" || op == "<" || op == ">=" || op == ">" || op == "=" {
+                let mut links: Vec[i64] = []
+                let mut next = 0
+                while next + 1 < n {
+                    let a = args[next]
+                    let b = args[next + 1]
+                    if op == "<=" {
+                        links.push(self.arena.le(a, b))
+                    } else if op == "<" {
+                        links.push(self.arena.lt(a, b))
+                    } else if op == ">=" {
+                        links.push(self.arena.ge(a, b))
+                    } else if op == ">" {
+                        links.push(self.arena.gt(a, b))
+                    } else {
+                        links.push(self.arena.equal(a, b))
+                    }
+                    next += 1
+                }
+                if links.len() == 1 {
+                    return LgTermRead::Term(links[0])
+                }
+                return LgTermRead::Term(self.arena.and(links))
+            }
+        }
+        if op == "distinct" && n == 2 {
+            return LgTermRead::Term(self.arena.unequal(args[0], args[1]))
+        }
+        return LgTermRead::Failed(LgReadError::Unsupported(lg_show(sexp)))
+    }
+}
+
+/// Read a script in the part of SMT-LIB 2 this layer covers: `set-logic`,
+/// `set-info`, `set-option`, `declare-const` and nullary `declare-fun` of sort
+/// `Int`, `assert`, `check-sat` and `exit`; the core and integer operators.
+pub fn lg_smtlib_read(source: ref String) -> LgRead {
+    let mut reader = LgReader { arena: TermArena::empty(), declared: collections::BTreeSet() }
+    let mut assertions: Vec[i64] = []
+    let commands = match lg_parse(source) {
+        LgParsedSexps::Done(read) => read.clone(),
+        LgParsedSexps::Failed(why) => {
+            return LgRead::Failed(why.clone())
+        },
+    }
+    for command in commands {
+        match command.clone() {
+            LgSexp::Atom(_) => {
+                return LgRead::Failed(LgReadError::Syntax("a command is a list"))
+            },
+            LgSexp::List(items) => {
+                let head = lg_head(items)
+                let n = items.len()
+                if n >= 1 && (head == "set-logic" || head == "set-info" || head == "set-option" || head == "check-sat" || head == "exit") {
+                    continue
+                }
+                if n == 3 && head == "declare-const" && lg_atom_at(items, 2) == "Int" && lg_is_atom(items, 1) {
+                    reader.declared.insert(lg_unquoted(lg_atom_at(items, 1)))
+                    continue
+                }
+                if n == 4 && head == "declare-fun" && lg_is_atom(items, 1) && lg_is_empty_list(items, 2) && lg_atom_at(items, 3) == "Int" && lg_is_atom(items, 3) {
+                    reader.declared.insert(lg_unquoted(lg_atom_at(items, 1)))
+                    continue
+                }
+                if n == 2 && head == "assert" {
+                    match reader.term(items[1]) {
+                        LgTermRead::Term(id) => assertions.push(id),
+                        LgTermRead::Failed(why) => {
+                            return LgRead::Failed(why.clone())
+                        },
+                    }
+                    continue
+                }
+                return LgRead::Failed(LgReadError::Unsupported(lg_show(command)))
+            },
+        }
+    }
+    return LgRead::Script(LgScript { arena: reader.arena, assertions: assertions })
+}
+
+/// The first item of a list, where it is an atom.
+fn lg_head(items: ref Vec[LgSexp]) -> String {
+    if items.len() == 0 {
+        return ""
+    }
+    return lg_atom_at(items, 0)
+}
+
+fn lg_atom_at(items: ref Vec[LgSexp], at: i64) -> String {
+    return match items[at].clone() {
+        LgSexp::Atom(a) => a,
+        LgSexp::List(_) => "",
+    }
+}
+
+fn lg_is_atom(items: ref Vec[LgSexp], at: i64) -> bool {
+    return match items[at].clone() {
+        LgSexp::Atom(_) => true,
+        LgSexp::List(_) => false,
+    }
+}
+
+fn lg_is_empty_list(items: ref Vec[LgSexp], at: i64) -> bool {
+    return match items[at].clone() {
+        LgSexp::Atom(_) => false,
+        LgSexp::List(inside) => inside.len() == 0,
+    }
+}

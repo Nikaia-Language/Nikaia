@@ -8,6 +8,16 @@ or the specification. A change only to the guide, the notes, the README, the
 website, the tests, the examples or the tooling around them raises nothing and
 has no heading here; `CLAUDE.md` draws the line.
 
+## [0.0.754] — 2026-10-10
+
+**More of the toolchain is Nikaia** (ADR-294, #125).
+- The prover's logic layer (ADR-270) is `tools/logic_*.nika`: the linear
+  solver and the checker, the normal form and the text of certificates and
+  models, SMT-LIB 2 and Alethe. The `nikaia-logic` crate is gone; the solver
+  is asked about the prover's own `TermArena`, so the copy of the terms it
+  needed is gone with it. What it answers is what it answered, certificate for
+  certificate.
+
 ## [0.0.753] — 2026-10-10
 
 **More of the toolchain is Nikaia** (ADR-294, #125).

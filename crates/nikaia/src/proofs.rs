@@ -20,10 +20,12 @@ use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
-use nikaia_logic::{
-    Answer, Budget, FourierMotzkin, Model, Normal, Query, Solver, certificate_of, certificate_text,
-    model_of, model_text, verify, verify_model,
+use nikaia_std::tools::logic_lia::{LgAnswer, LgModel as Model, lg_budget};
+use nikaia_std::tools::logic_normal::{
+    LgNormal, lg_certificate_of, lg_certificate_text, lg_model_of, lg_model_text, lg_normal_of,
 };
+use nikaia_std::tools::logic_search::{lg_check, lg_verify, lg_verify_model};
+use nikaia_std::tools::prover_arena::TermArena;
 
 /// The file, beside `nikaia.contracts`.
 pub const FILE: &str = "nikaia.proofs";
@@ -180,8 +182,8 @@ pub fn with_book<R>(book: Book, run: impl FnOnce() -> R) -> (R, Book) {
 }
 
 /// Whether the facts imply the goal, and if not, why not.
-pub fn ask(query: &Query<'_>) -> Asked {
-    let normal = Normal::of(query);
+pub fn ask(arena: &TermArena, facts: &[i64], goal: i64) -> Asked {
+    let normal = lg_normal_of(arena, facts, goal);
     let text = normal.text();
     let key = orchestrator::cache::sha256_hex(text.as_bytes());
     let recorded = BOOK.with(|held| {
@@ -211,17 +213,19 @@ pub fn ask(query: &Query<'_>) -> Asked {
 
 /// A recorded entry, where it checks (D20) - and an `unknown` only from the
 /// solver this compiler has, since a newer one is searched again (D21).
-fn read(normal: &Normal, entry: &Entry) -> Option<Asked> {
-    let query = normal.query();
+fn read(normal: &LgNormal, entry: &Entry) -> Option<Asked> {
+    let (arena, facts, goal) = (&normal.arena, &normal.facts, normal.goal);
     match entry {
         Entry::Proved(text) => {
-            let certificate = certificate_of(text)?;
-            verify(&query, &certificate).ok()?;
-            Some(Asked::Proved)
+            let certificate = lg_certificate_of(text)?;
+            lg_verify(arena, facts, goal, &certificate)
+                .is_none()
+                .then_some(Asked::Proved)
         }
         Entry::Refuted(text) => {
-            let model = model_of(text)?;
-            verify_model(&query, &model).then(|| Asked::Refuted(normal.named(&model)))
+            let model = lg_model_of(text)?;
+            lg_verify_model(arena, facts, goal, &model)
+                .then(|| Asked::Refuted(normal.named(&model)))
         }
         Entry::Unknown(solver) => (solver == SOLVER).then_some(Asked::Unknown),
     }
@@ -229,27 +233,28 @@ fn read(normal: &Normal, entry: &Entry) -> Option<Asked> {
 
 /// The reference solver's answer to the normal form, and what to record of
 /// it. A proof that does not check is not recorded.
-fn search(normal: &Normal) -> (Asked, Option<Entry>) {
-    let query = normal.query();
-    match FourierMotzkin.check(&query, &Budget::default()) {
-        Answer::Proved { certificate } => match verify(&query, &certificate) {
-            Ok(()) => (
+fn search(normal: &LgNormal) -> (Asked, Option<Entry>) {
+    let (arena, facts, goal) = (&normal.arena, &normal.facts, normal.goal);
+    match lg_check(arena, facts, goal, &lg_budget()) {
+        LgAnswer::Proved { certificate } => match lg_verify(arena, facts, goal, &certificate) {
+            None => (
                 Asked::Proved,
-                Some(Entry::Proved(certificate_text(&certificate))),
+                Some(Entry::Proved(lg_certificate_text(&certificate))),
             ),
-            Err(why) => (
+            Some(why) => (
                 Asked::Rejected(format!(
-                    "the solver's proof did not check ({why:?}), which is a fault of the compiler"
+                    "the solver's proof did not check ({}), which is a fault of the compiler",
+                    why.debug()
                 )),
                 None,
             ),
         },
-        Answer::Refuted { model } if verify_model(&query, &model) => (
+        LgAnswer::Refuted { model } if lg_verify_model(arena, facts, goal, &model) => (
             Asked::Refuted(normal.named(&model)),
-            Some(Entry::Refuted(model_text(&model))),
+            Some(Entry::Refuted(lg_model_text(&model))),
         ),
-        Answer::Refuted { .. } => (Asked::Unknown, None),
-        Answer::Unknown(_) => (Asked::Unknown, Some(Entry::Unknown(SOLVER.to_string()))),
+        LgAnswer::Refuted { .. } => (Asked::Unknown, None),
+        LgAnswer::Unknown { .. } => (Asked::Unknown, Some(Entry::Unknown(SOLVER.to_string()))),
     }
 }
 
@@ -383,30 +388,18 @@ impl Book {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nikaia_logic::Arena;
 
     /// `0 <= i < n <= len` ⊢ `i < len`, and `x >= 3` ⊢ `x > 10`.
     fn ask_two() {
-        let mut a = Arena::new();
+        let mut a = TermArena::empty();
         let (i, n, len, zero) = (a.var("i"), a.var("n"), a.var("len"), a.int(0));
         let facts = vec![a.ge(i, zero), a.lt(i, n), a.le(n, len)];
         let goal = a.lt(i, len);
-        assert_eq!(
-            ask(&Query {
-                arena: &a,
-                facts: &facts,
-                goal
-            }),
-            Asked::Proved
-        );
+        assert_eq!(ask(&a, &facts, goal), Asked::Proved);
         let (x, three, ten) = (a.var("x"), a.int(3), a.int(10));
         let low = vec![a.ge(x, three)];
         let high = a.gt(x, ten);
-        let Asked::Refuted(model) = ask(&Query {
-            arena: &a,
-            facts: &low,
-            goal: high,
-        }) else {
+        let Asked::Refuted(model) = ask(&a, &low, high) else {
             panic!("x = 3 is a model");
         };
         assert_eq!(model.values.get("x"), Some(&3), "named back: {model:?}");
