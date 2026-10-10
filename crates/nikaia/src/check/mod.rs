@@ -5407,6 +5407,17 @@ impl<'a> Checker<'a> {
                 },
             },
             ast::Pattern::Group(pat) => self.pattern_type(&pat.node, rules),
+            // **A choice whose alternatives agree is of their type**: `s:(ONE |
+            // TWO)` over two rules that hand back a `Shade`.
+            ast::Pattern::Choice(alternatives) => {
+                let mut types = alternatives
+                    .iter()
+                    .map(|alternative| self.pattern_type(&alternative.node, rules));
+                match types.next() {
+                    Some(first) if !first.is_unknown() && types.all(|ty| ty == first) => first,
+                    _ => Ty::Unknown,
+                }
+            }
             ast::Pattern::Ref {
                 name: called,
                 generics,
@@ -5421,9 +5432,10 @@ impl<'a> Checker<'a> {
                         .unwrap_or(Ty::Unknown);
                 }
                 match (called, generics.as_slice(), args.as_slice()) {
+                    // **Any number type** (Part II 10.8), `f64` too.
                     ("dec", [ty], _)
                         if ty.generics.is_empty()
-                            && INTEGERS.contains(&self.parsed.text(ty.name)) =>
+                            && OFFERED_NUMBERS.contains(&self.parsed.text(ty.name)) =>
                     {
                         Ty::named(self.parsed.text(ty.name))
                     }
@@ -12774,6 +12786,12 @@ impl<'a> Checker<'a> {
                             then
                         } else if leaves(then_branch) && !leaves(otherwise) {
                             other
+                        } else if let Some(typed) = self.a_number_beside_a_number(
+                            (tail_of(then_branch), &then),
+                            (tail_of(otherwise), &other),
+                            span,
+                        ) {
+                            typed
                         } else {
                             let arms = [(tail_of(then_branch), then), (tail_of(otherwise), other)];
                             self.arms_meet_at_text(&arms, span)
@@ -13816,6 +13834,15 @@ impl<'a> Checker<'a> {
                         .and_then(|at| parts.get(at).cloned())
                         .unwrap_or(Ty::Unknown);
                 }
+                // **A type that is seen through answers with what it holds**
+                // (#497): `db.host` on a `Shared[Connection]` is the
+                // connection's field, as a method on it already is.
+                let on = match &on {
+                    Ty::Named { name, .. } if self.fields_of(name).is_none() => {
+                        self.seen_through(&on).unwrap_or(on)
+                    }
+                    _ => on,
+                };
                 let Ty::Named { name: ty, .. } = &on else {
                     return Ty::Unknown;
                 };
@@ -14253,8 +14280,11 @@ impl<'a> Checker<'a> {
             } => {
                 // **Its parameters are what the place it stands in says**
                 // (#497), as a callee's signature says for an argument.
-                let given = match self.lambda_expected.take() {
-                    Some(Ty::Fn { params: given, .. }) if given.len() == params.len() => given,
+                let declared = self.lambda_expected.take();
+                let given = match &declared {
+                    Some(Ty::Fn { params: given, .. }) if given.len() == params.len() => {
+                        given.clone()
+                    }
                     _ => Vec::new(),
                 };
                 let frame: Vec<Local> = params
@@ -14275,7 +14305,13 @@ impl<'a> Checker<'a> {
                 self.past_a_boundary("lambda", |me| me.block(body));
                 self.scope.pop();
                 self.repeats.pop();
-                Ty::Unknown
+                // And it is of the type the place declares.
+                match declared {
+                    Some(fn_type @ Ty::Fn { .. }) if !given.is_empty() || params.is_empty() => {
+                        fn_type
+                    }
+                    _ => Ty::Unknown,
+                }
             }
 
             whole @ Expr::Unary { op, expr } => {
@@ -17633,6 +17669,40 @@ impl<'a> Checker<'a> {
     /// refusal. One step only: a container inside a container is two questions,
     /// and nothing in the language has asked the second yet
     /// ([ADR-288](../../../docs/specification/adr/adr-288.md) D11).
+    /// **One arm a number of a type and the other a number nothing typed**
+    /// (#497): `if at >= 2 { at - 2 } else { 0 }` is the typed arm's type, and
+    /// the other arm is a use of it (ADR-285 D24).
+    fn a_number_beside_a_number(
+        &mut self,
+        (a_tail, a): (Option<&Expr>, &Ty),
+        (b_tail, b): (Option<&Expr>, &Ty),
+        span: &Span,
+    ) -> Option<Ty> {
+        let (typed, open) = match (a.is_unknown(), b.is_unknown()) {
+            (false, true) => (a, b_tail?),
+            (true, false) => (b, a_tail?),
+            _ => return None,
+        };
+        let number = value_of_a_copy(typed.unseen());
+        if integer_named(&number).is_none() || !self.number_shaped(open) {
+            return None;
+        }
+        self.number_asked(open, &number, span, true);
+        Some(number)
+    }
+
+    /// What a type seen through (`deref` in its ledger) hands out, with the
+    /// receiver's own arguments bound: `&$T` of a `Shared[$T]`.
+    fn seen_through(&self, ty: &Ty) -> Option<Ty> {
+        let Ty::Named { name, .. } = ty else {
+            return None;
+        };
+        let (_, contract) = self.method(&format!("{name}::deref"))?;
+        let result = contract.signature.as_ref()?.result.as_ref()?;
+        let bound = bindings(contract, ty);
+        Some(ty::substitute(result, &bound))
+    }
+
     fn fits_through_deref(&self, found: &Ty, want: &Ty) -> bool {
         if found.fits(want) {
             return true;

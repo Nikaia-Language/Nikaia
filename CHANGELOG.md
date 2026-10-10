@@ -8,6 +8,20 @@ or the specification. A change only to the guide, the notes, the README, the
 website, the tests, the examples or the tooling around them raises nothing and
 has no heading here; `CLAUDE.md` draws the line.
 
+## [0.0.737] — 2026-10-10
+
+**A lambda of a declared type, a field through `Shared`, `dec[f64]`, a choice
+of rules and an `if` beside a literal are typed** (#497).
+- A lambda that stands where a `fn` type is declared is of that type, not
+  only its parameters.
+- A field read through a type that is seen through (`deref`, as `Shared`)
+  is the field of what it holds: `db.host` on a `Shared[C]` is `C`'s.
+- A grammar binds `dec[f64](…)` as an `f64` (Part II 10.8 reads into any
+  number type), and a choice whose alternatives agree, `s:(ONE | TWO)`, as
+  their type.
+- `if at >= 2 { at - 2 } else { 0 }` is the typed arm's type, and the literal
+  arm is a use of it.
+
 ## [0.0.736] — 2026-10-10
 
 **Four more names the checker can type** (#497).
