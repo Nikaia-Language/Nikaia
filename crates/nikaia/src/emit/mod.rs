@@ -7448,7 +7448,36 @@ impl<'p> Emitter<'p> {
                     out.push(&format!("{}.{put}(", Self::keep_expr(keep, false)));
                 }
                 out.push(before);
-                self.expr(out, value, depth, flow)?;
+                // **A view of the place being assigned is copied first**
+                // (#563): `rest = rest.strip_prefix(">") ?? ""` into a mixed
+                // `String` hands `EitherText` a borrow of the very buffer the
+                // assignment replaces (E0506). The text is made its own, and
+                // the value that goes in is the owned kind.
+                let mut own_view = false;
+                if op.is_none()
+                    && let Expr::Variable(assigned) = target
+                    && let Expr::MethodCall {
+                        receiver,
+                        method,
+                        args,
+                        ..
+                    } = value
+                    && args.is_empty()
+                    && self.text(*method) == "into_either"
+                {
+                    let mut mentions = false;
+                    visit_expr(receiver, &mut |inner| {
+                        mentions |= matches!(inner, Expr::Variable(name) if name == assigned);
+                    });
+                    if mentions {
+                        self.postfix_base(out, receiver, depth, flow)?;
+                        out.push(".to_owned().into_either()");
+                        own_view = true;
+                    }
+                }
+                if !own_view {
+                    self.expr(out, value, depth, flow)?;
+                }
                 out.push(after);
                 if reput.is_some() {
                     out.push(")");

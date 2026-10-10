@@ -193,6 +193,12 @@ pub mod tools {
     // file's module.
     include!("tools/package.rs");
 
+    /// The text tiers' conversions, which a lowered `String` local reassigned
+    /// from a view calls (`rest = rest.strip_prefix(..).into_either()`): a
+    /// program gets them from its own prelude, a tool has none (#563).
+    #[allow(unused_imports)]
+    use crate::either_text::{IntoEither, IntoEitherMaybe};
+
     /// `scalar`, which the lowered files write for one character (ADR-320).
     #[allow(unused_imports)]
     use crate::prelude::scalar;

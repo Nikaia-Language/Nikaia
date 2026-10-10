@@ -110,6 +110,46 @@ fn the_tools_package_allows_what_valid_nikaia_trips() {
     }
 }
 
+/// #563: a `String` local reassigned from a view of itself, in a loop, is a
+/// mixed text; the view is copied before it replaces the buffer it points
+/// into. The tools package also needs `IntoEither` in scope for it, which
+/// `nikaia-std`'s `tools` module brings (measured with a probe in a tools
+/// file: E0599 without the import, none with it).
+#[test]
+fn a_string_reassigned_from_a_view_of_itself_in_a_loop() {
+    let said = printed(
+        "string-from-its-own-view",
+        r#"
+fn bare(lines: ref Vec[String]) -> Vec[String] {
+    let mut out: Vec[String] = []
+    for line in lines {
+        let mut rest: String = line.clone()
+        let mut again = true
+        while again {
+            again = false
+            if rest.starts_with(">") {
+                rest = rest.strip_prefix(">") ?? ""
+                again = true
+            }
+        }
+        out.push(rest.clone())
+    }
+    return out
+}
+fn main() {
+    let v: Vec[String] = [">>a", "b"]
+    println(f"{bare(v).join(",")}")
+}
+"#,
+    );
+    assert_eq!(said.trim(), "a,b");
+    let lib = include_str!("../../nikaia-std/src/lib.rs");
+    assert!(
+        lib.contains("use crate::either_text::{IntoEither, IntoEitherMaybe};"),
+        "the tools module has the conversions in scope"
+    );
+}
+
 /// #564: `drain()` over a `mut` parameter takes the elements out of the
 /// caller's list as owned values.
 #[test]

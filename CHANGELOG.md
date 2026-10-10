@@ -8,6 +8,11 @@ or the specification. A change only to the guide, the notes, the README, the
 website, the tests, the examples or the tooling around them raises nothing and
 has no heading here; `CLAUDE.md` draws the line.
 
+## [0.0.765] — 2026-10-10
+
+**A mixed `String` reassigned from a view of itself lowers (#563).**
+- `rest = rest.strip_prefix(">") ?? ""` into a `String` that text tiers made `EitherText` borrowed from the buffer being replaced (`rustc` E0506); the value is now copied first. The lowered `tools` package also lacked `IntoEither` in scope (E0599); `nikaia-std` imports it. Test: `selfhosting_defects.rs`.
+
 ## [0.0.764] — 2026-10-10
 
 **More of the toolchain is Nikaia** (ADR-294, #125).
