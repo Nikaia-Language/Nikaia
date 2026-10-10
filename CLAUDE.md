@@ -130,3 +130,65 @@ What the owner expects from such a round:
 * **Understand a result before publishing it**: if a number moves, find out why
   (callgrind_annotate) before anything quotes it. `benches/brc/brc.sh` is the
   pattern: it builds, compares the outputs, counts and prints the table.
+
+## Moving Rust into Nikaia (self-hosting, ADR-294, #125)
+
+Rules from the sessions that moved the most; they save tokens, not just time.
+
+* **Pick the slice by what is pure.** A stateful struct (`Checker`) cannot move
+  whole: what moves is message-building, small decisions and walks that need no
+  state. `grep 'Finding {'` and `format!(` first (about 15 Rust lines become 4
+  Nikaia). A walk that needs state takes a callback
+  (`fn(ref Expr) -> i64 sync`; see `bounds_basic.nika`). Code keyed on
+  expression addresses, or mutating the tree, does not move yet.
+* **Copy a pattern, do not invent one.** `libraries.nika` + `libraries.rs`
+  (small), `assets.nika`, `parse_numbers.nika` (callbacks), `interpreter.nika`.
+  The Rust module stays as the adapter that calls `nikaia_std::tools::<m>::f`.
+* **Builds are the cost.** A first release build is 10-30 minutes on these
+  shared machines, later ones 2-7. `nikaia lower-std` needs a built
+  `target/release/nikaia` and takes seconds. Keep the Rust compiling until the
+  binary exists. Loop on `cargo check --release -p nikaia --message-format
+  short` (under a minute); build once at the end. Run the touched tests as one
+  `cargo test --release -p nikaia --test a --test b` (grep the NK codes you
+  touched in `crates/nikaia/tests/*.rs`), in the background. No foreground
+  `sleep`; poll with a bounded loop.
+* **One namespace for all `tools/*.nika`.** Type and function names are global
+  (`Decision` clashed): prefix them with the module.
+* **Syntax gaps** (each cost a build cycle):
+  * no `if let`: use `x ?? default`, or `starts_with` then `strip_prefix(..) ?? ""`;
+  * no `*x`; loop variables over a `ref Vec` are values;
+  * `.to_owned()` is `NK1189`: write `.clone()`;
+  * a literal is a `ref String`: `let mut s: String = "lit"` before assigning
+    an f-string (`NK1105`); a list mixing `f"..."` and a plain literal is
+    `NK1154`, so write `f"..."` or `.clone()`;
+  * `opt ?? ""` moves the option: `(opt ?? "").clone()` for a second use;
+    no method call on a `String?` directly;
+  * f-string braces are `{{` `}}`; a plain string takes braces literally;
+  * a function parameter is `fn(ref X) -> T sync`; a `Span` that arrives by
+    reference is copied as `Span { start: s.start, end: s.end }`.
+* **Lowered types:** `ref String` is `&str`, `ref T` is `&T`, `Vec[String]` is
+  `Vec<String>` (a `ref` one a slice), `String?` is `Option<String>`. Most Rust
+  errors after a move are `&` against owned. Check that `Display` equals
+  `Ty::text()` before replacing `{ty}` with it.
+* **Delete the dead locals** a replaced block leaves behind (`cargo check` lists
+  them as unused), and re-grep function names instead of trusting line numbers
+  from an earlier listing: every commit shifts them.
+* **Versions and badges:** compute the next version after the rebase. On a
+  conflict in the version lines, `CHANGELOG.md` or `assets/badges/*.svg`, take
+  the next free number and re-run `python3 scripts/badges.py`; never merge an
+  SVG by hand. Add each new `.nika` to the table in `scripts/self_hosting.py`.
+  The share counts code lines, not comments.
+* **Tooling traps:** complex shell (computed `sed` ranges, `awk -v`, heredocs
+  chained with `&&`) is refused in a worktree: write a small Python script and
+  run it. Replace blocks bottom-up with exact-string asserts.
+* **Known compiler defects, to fix in the compiler** (ADR-294 D3), meanwhile
+  bind to a `let` first: `let v = f().trim_start()` drops a temporary (E0716);
+  `??` with an index read as fallback emits an ambiguous `.into()`; a `match`
+  in a `T?` function mixing optional and plain arms; a `String` reassigned from
+  a `strip_prefix` view in a loop lowers as `EitherText`; `mut` parameter plus
+  `.drain()`; `Spanned(x, span)` lowers to invalid Rust; "never read" and
+  unreachable-code warnings in the generated package.
+* **Agents: few, one per large module, none on a file another one edits.**
+  Splitting one file into slices costs more in conflicts and repeated context
+  than it saves. Leaves first: a consumer moved before its dependencies finds
+  its errors late. Record the state in the commit message after each chunk.
