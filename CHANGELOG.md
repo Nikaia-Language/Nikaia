@@ -8,6 +8,11 @@ or the specification. A change only to the guide, the notes, the README, the
 website, the tests, the examples or the tooling around them raises nothing and
 has no heading here; `CLAUDE.md` draws the line.
 
+## [0.0.752] — 2026-10-10
+
+**More of the toolchain is Nikaia** (ADR-294, #125).
+- `contracts::tether`: `--tethers` - the report of what the analysis solved and where each buffer lives - is `tools/tether.nika`.
+
 ## [0.0.751] — 2026-10-10
 
 **More of the toolchain is Nikaia** (ADR-294, #125).

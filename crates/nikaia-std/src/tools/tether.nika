@@ -13,6 +13,7 @@
 // wrong thing.
 
 use std::collections
+use std::text
 
 /// The position a function's result occupies in the column - the spelling
 /// `sharing` uses for the same position.
@@ -251,4 +252,194 @@ fn names_u8(ty: ref Ty) -> bool {
         Ty::Named { name, .. } => base_name(name) == "u8",
         else => false,
     }
+}
+
+// ---------------------------------------------------------------------------
+// `--tethers`: what the analysis solved, per function (ADR-283 D4), moved from
+// the compiler's `contracts::tether` (ADR-294, #125).
+//
+// *The inverse tool is inspection, not assertion*: it shows what was chosen
+// without being asked, read off the ledger the build produced rather than
+// computed again, so that what a person reads is what the file records.
+// ---------------------------------------------------------------------------
+
+/// The words `--tethers` uses for a keep.
+fn keep_words(keep: ref KeepAt) -> String {
+    return match keep {
+        KeepAt::Param => "in the caller's keep, because views of it leave this function",
+        KeepAt::Frame => "in a keep of this function until it returns, because something outside the loop or block keeps views of it",
+        KeepAt::Local(_) => "in a keep beside the call, as long as what the call hands back",
+        KeepAt::Task => "in a keep the task carries with it (one count per task, not per view)",
+        KeepAt::Element(_) => "in a keep of its own, held by each view kept of it, because what keeps the views drops entries while the loop goes on",
+    }
+}
+
+fn goes_in_the_callers_keep(keep: ref KeepAt) -> bool {
+    return match keep {
+        KeepAt::Param => true,
+        else => false,
+    }
+}
+
+fn lives_in_a_local_keep(keep: ref KeepAt) -> bool {
+    return match keep {
+        KeepAt::Local(_) => true,
+        else => false,
+    }
+}
+
+/// How `--tethers` names an argument made in a call (ADR-283 D24), from the
+/// key the keep plan files it under: `e#0` is *the argument made for `e`*.
+fn an_argument(key: ref String) -> String {
+    let parts: Vec[ref String] = key.split("#").collect()
+    if parts.len() < 2 {
+        return f"what `{key}` reads"
+    }
+    let place = (text::parse_i64(parts[1]) ?? 0) + 1
+    return f"argument {place} made in the call to `{parts[0]}`"
+}
+
+/// The name a buffer put at statement `wanted` is bound to, which is what a reader
+/// looks for in the source.
+fn buffer_named(plan: ref BufferPlan, wanted: i64) -> String? {
+    for (source, _) in plan.escapes {
+        match source {
+            Source::Buffer { at, name, .. } => {
+                if at == wanted {
+                    return f"`{name}`"
+                }
+            },
+            else => {}
+        }
+    }
+    return null
+}
+
+fn padded(word: ref String, width: i64) -> String {
+    let mut out = word.clone()
+    let mut n = word.chars().collect().len()
+    while n < width {
+        out.push(' ')
+        n = n + 1
+    }
+    return out
+}
+
+/// What the analysis solved, in the words a reader asks the question in:
+/// first what a `String` field or result is below (`texts`, ADR-282 D26), then
+/// each function of this file that holds a view, and where each buffer lives
+/// (ADR-283 D13). `here` is this file's own entries, because a report is about
+/// one file and the ledger is the package's.
+pub fn tethers_report(texts: ref Vec[String], ledger: ref Ledger, here: ref collections::BTreeSet[String], plans: ref Vec[BufferPlan], library: ref Ledger) -> String {
+    let mut lines: Vec[String] = []
+    if texts.len() > 0 {
+        lines.push("text (declared `String`):\n")
+        for line in texts {
+            lines.push(f"    {line}\n")
+        }
+    }
+    let copying: Vec[ref Ledger] = [library]
+    for (key, contract) in ledger.functions {
+        if contract.views.len() == 0 || !here.contains(key) {
+            continue
+        }
+        lines.push(f"{key}:\n")
+        // **What a borrowed result borrows from** (ADR-283 D24): the
+        // parameters lowered as views, each the caller's argument.
+        let mut lent: Vec[String] = []
+        if contract.signature != null {
+            let signature = contract.signature ?? continue
+            let mut at = 0
+            for (name, ty) in signature.params {
+                if ty.is_a_view() || lends_in(contract, at, copying) {
+                    lent.push(f"`{name}`")
+                }
+                at = at + 1
+            }
+        }
+        for held in contract.views {
+            let state = held.state.as_str()
+            let mut from = ""
+            if state == "borrowed" && held.position == "<result>" && lent.len() > 0 {
+                from = f" - from the caller's argument for {lent.join(", ")}"
+            }
+            lines.push(f"    {padded(state, 9)} `{held.position}`{from}\n")
+        }
+    }
+    // **What a callee hands back in its caller's keep**, by callee: the
+    // buffers it puts there (D9, D23).
+    let mut handed: collections::BTreeMap[String, Vec[String]] = collections::BTreeMap()
+    for plan in plans {
+        let mut names: Vec[String] = []
+        for (at, keep) in plan.puts {
+            if goes_in_the_callers_keep(keep) {
+                let found = buffer_named(plan, at) ?? continue
+                names.push(found)
+            }
+        }
+        // **An argument it made in a call** (D24) is there too.
+        for (id, keep) in plan.calls {
+            let (_, callee) = id
+            if callee.contains("#") && goes_in_the_callers_keep(keep) {
+                names.push(an_argument(callee))
+            }
+        }
+        handed.insert(plan.key.clone(), names)
+    }
+    for plan in plans {
+        let mut said: Vec[String] = []
+        for (at, keep) in plan.puts {
+            let name = buffer_named(plan, at) ?? "a buffer"
+            said.push(f"    {name} lives {keep_words(keep)}\n")
+        }
+        for (id, keep) in plan.calls {
+            let (_, callee) = id
+            if callee.contains("#") {
+                said.push(f"    {an_argument(callee)} lives {keep_words(keep)}\n")
+                continue
+            }
+            // **Named, where the callee says what it puts there** (D23): `s`
+            // lives in `main`'s keep, handed back by `d`.
+            let mut names: Vec[String] = []
+            let found = handed.get(callee)
+            if found != null {
+                let list = found ?? return ""
+                for one in list {
+                    names.push(one.clone())
+                }
+            }
+            if lives_in_a_local_keep(keep) && names.len() > 0 {
+                said.push(f"    {names.join(", ")} lives in `{plan.key}`'s keep: handed back by `{callee}`\n")
+            } else {
+                said.push(f"    what `{callee}` reads lives {keep_words(keep)}\n")
+            }
+        }
+        for keeper in plan.element_keepers {
+            // ADR-283: a struct of views carries a handle on each buffer it
+            // points into, and the report says how many that is.
+            if plan.struct_keepers.contains(keeper) {
+                let width = plan.widths.get(keeper) ?? 1
+                let mut handles = "a handle on the buffer it points into"
+                if width != 1 {
+                    handles = f"a handle on each of the {width} buffers it points into"
+                }
+                said.push(f"    `{keeper}` holds each struct with {handles}\n")
+            } else {
+                said.push(f"    `{keeper}` holds each view with its own handle\n")
+            }
+        }
+        if said.len() == 0 {
+            continue
+        }
+        lines.push(f"{plan.key} (keeps):\n")
+        for line in said {
+            lines.push(line.clone())
+        }
+    }
+    // "here" and not "in this program", for the reason `sharing`'s report
+    // gives: a report is about one file.
+    if lines.len() == 0 {
+        return "no view in a signature here, so there is no state to solve.\n"
+    }
+    return lines.join("")
 }

@@ -65,7 +65,7 @@ COMPILER_NIKA = {
     "boundaries.nika": "diagnostics: a backend mismatch at a boundary said as the stale ledger it is (0.0.358)",
     "threads.nika": "contracts::send: whether a value may cross a thread, to our own code or to code nothing describes (0.0.361)",
     "order.nika": "contracts::order: a statement reduced to an operation or the reason it cannot be, and whether two statements, or a run of them, keep their order, and the `--overlaps` report (0.0.362-0.0.364)",
-    "tether.nika": "contracts::tether: the states a signature's views solve to, a parse that views its input, a body that makes a buffer of its own (0.0.374)",
+    "tether.nika": "contracts::tether: the states a signature's views solve to, a parse that views its input, a body that makes a buffer of its own (0.0.374), the --tethers report (0.0.752)",
     "sharing.nika": "contracts::sharing: the reasons a count stays atomic, the decisions and their report, the slot keys, what holds a `Shared` and what a hull lowers to, the classes the handles join and what each one gets, and what the walk asks of one expression (0.0.375, 0.0.377, 0.0.387), and the walk that joins every handle into its allocation class (0.0.401)",
     "keep.nika": "contracts::keep: which types hold a view and why one cannot go into a handle, the methods that keep, drop, take or own, the keeping method's key, a callee's and a local's name (0.0.376)",
     "modules.nika": "modules: the names a file declares, and the refusal for a `use` that names a path, a name twice, or a package the file cannot reach (0.0.379); what a build says about its `pub` functions' pausing, and a test build's dispatcher (0.0.409)",

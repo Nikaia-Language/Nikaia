@@ -83,23 +83,6 @@ pub enum KeepAt {
     Element(usize),
 }
 
-/// The words `--tethers` uses for a keep.
-pub fn describe(keep: KeepAt) -> &'static str {
-    match keep {
-        KeepAt::Param => "in the caller's keep, because views of it leave this function",
-        KeepAt::Frame => {
-            "in a keep of this function until it returns, because something outside the \
-             loop or block keeps views of it"
-        }
-        KeepAt::Local(_) => "in a keep beside the call, as long as what the call hands back",
-        KeepAt::Task => "in a keep the task carries with it (one count per task, not per view)",
-        KeepAt::Element(_) => {
-            "in a keep of its own, held by each view kept of it, because what keeps the \
-             views drops entries while the loop goes on"
-        }
-    }
-}
-
 /// Where a view leaves the scope that made it.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Escape {
@@ -291,6 +274,18 @@ fn keeping_positions(plan: &Plan) -> BTreeSet<String> {
 /// the keep each buffer goes into. What is left here is the plan in the types
 /// the emitter reads.
 pub fn plans(parsed: &Parsed, ledger: &Ledger, library: &Ledger) -> Vec<Plan> {
+    buffer_plans(parsed, ledger, library)
+        .into_iter()
+        .map(from_nikaia)
+        .collect()
+}
+
+/// The same, as Nikaia hands them back.
+pub(super) fn buffer_plans(
+    parsed: &Parsed,
+    ledger: &Ledger,
+    library: &Ledger,
+) -> Vec<nikaia_std::tools::buffers::BufferPlan> {
     use nikaia_std::tools::buffers::{self as nika, BufferAsk};
     let context = Context::of(&parsed.interner, &parsed.program.items);
     let ask = BufferAsk {
@@ -306,9 +301,6 @@ pub fn plans(parsed: &Parsed, ledger: &Ledger, library: &Ledger) -> Vec<Plan> {
         &|expr: &Expr| crate::emit::literal_expressions(parsed, expr),
         &|path: &str| parsed.unaliased(path),
     )
-    .into_iter()
-    .map(from_nikaia)
-    .collect()
 }
 
 /// A statement's place, as the walk counts it.

@@ -22151,6 +22151,129 @@ fn names_u8(ty: &Ty) -> bool {
     }
 }
 
+fn keep_words(keep: &KeepAt) -> String {
+    match keep {
+        KeepAt::Param => String::from("in the caller's keep, because views of it leave this function"),
+        KeepAt::Frame => String::from("in a keep of this function until it returns, because something outside the loop or block keeps views of it"),
+        KeepAt::Local(_) => String::from("in a keep beside the call, as long as what the call hands back"),
+        KeepAt::Task => String::from("in a keep the task carries with it (one count per task, not per view)"),
+        KeepAt::Element(_) => String::from("in a keep of its own, held by each view kept of it, because what keeps the views drops entries while the loop goes on"),
+    }
+}
+
+fn goes_in_the_callers_keep(keep: &KeepAt) -> bool { matches!(keep, KeepAt::Param) }
+
+fn lives_in_a_local_keep(keep: &KeepAt) -> bool { matches!(keep, KeepAt::Local(_)) }
+
+fn an_argument(key: &str) -> String {
+    let parts: Vec<&str> = key.split("#").collect::<Vec<_>>();
+    if parts.len() < 2 { return format!("what `{}` reads", key); }
+    let place = nikaia_std::index::or(text::parse_i64(*nikaia_std::index::get(&parts, 1)), || 0) + 1;
+    format!("argument {} made in the call to `{}`", place, *nikaia_std::index::get(&parts, 0))
+}
+
+fn buffer_named(plan: &BufferPlan, wanted: i64) -> Option<String> {
+    for (source, _) in plan.escapes.iter() {
+        match source {
+            Source::Buffer { at, name, .. } => {
+                let at = *at;
+                if at == wanted { return Some(format!("`{}`", name)); }
+            },
+            _ => { },
+        }
+    }
+    None
+}
+
+fn padded(word: &str, width: i64) -> String {
+    let mut out = word.to_owned();
+    let mut n = nikaia_std::list::chars(word.chars()).len() as i64;
+    while n < width {
+        out.push(' ');
+        n = n + 1;
+    }
+    out
+}
+
+pub fn tethers_report(texts: &[String], ledger: &Ledger, here: &collections::BTreeSet<String>, plans: &[BufferPlan], library: &Ledger) -> String {
+    let mut lines: Vec<String> = vec![];
+    if !texts.is_empty() {
+        lines.push(String::from("text (declared `String`):\n"));
+        for line in texts.iter() { lines.push(format!("    {}\n", line)); }
+    }
+    let copying: Vec<&Ledger> = vec![library];
+    for (key, contract) in ledger.functions.iter() {
+        if contract.views.is_empty() || !here.contains(key) { continue; }
+        lines.push(format!("{}:\n", key));
+        let mut lent: Vec<String> = vec![];
+        if contract.signature.is_some() {
+            let signature = match contract.signature.as_ref() { Some(__nikaia_value) => __nikaia_value, None => continue };
+            let mut at: i64 = 0;
+            for (name, ty) in signature.params.iter() {
+                if ty.is_a_view() || lends_in(contract, at, &copying) { lent.push(format!("`{}`", name)); }
+                at = at + 1;
+            }
+        }
+        for held in contract.views.iter() {
+            let state = held.state.as_str();
+            let mut from = String::from("");
+            if state == "borrowed" && held.position == "<result>" && !lent.is_empty() { from = format!(" - from the caller's argument for {}", lent.join(", ")); }
+            lines.push(format!("    {} `{}`{}\n", padded(&state, 9), held.position, from));
+        }
+    }
+    let mut handed: collections::BTreeMap<String, Vec<String>> = collections::BTreeMap::new();
+    for plan in plans.iter() {
+        let mut names: Vec<String> = vec![];
+        for (at, keep) in plan.puts.iter() {
+            let at = nikaia_std::num::value(at);
+            if goes_in_the_callers_keep(keep) {
+                let found = match buffer_named(plan, at) { Some(__nikaia_value) => __nikaia_value, None => continue };
+                names.push(found);
+            }
+        }
+        for (id, keep) in plan.calls.iter() {
+            let (_, callee) = id;
+            if callee.contains("#") && goes_in_the_callers_keep(keep) { names.push(an_argument(&callee)); }
+        }
+        handed.insert(plan.key.to_owned(), names);
+    }
+    for plan in plans.iter() {
+        let mut said: Vec<String> = vec![];
+        for (at, keep) in plan.puts.iter() {
+            let at = nikaia_std::num::value(at);
+            let name = nikaia_std::index::or(buffer_named(plan, at), || "a buffer".into());
+            said.push(format!("    {} lives {}\n", name, keep_words(keep)));
+        }
+        for (id, keep) in plan.calls.iter() {
+            let (_, callee) = id;
+            if callee.contains("#") {
+                said.push(format!("    {} lives {}\n", an_argument(&callee), keep_words(keep)));
+                continue;
+            }
+            let mut names: Vec<String> = vec![];
+            let found = handed.get(callee);
+            if found.is_some() {
+                let list = match found { Some(__nikaia_value) => __nikaia_value, None => return String::from("") };
+                for one in list.iter() { names.push(one.to_owned()); }
+            }
+            if lives_in_a_local_keep(keep) && !names.is_empty() { said.push(format!("    {} lives in `{}`'s keep: handed back by `{}`\n", names.join(", "), plan.key, callee)); } else { said.push(format!("    what `{}` reads lives {}\n", callee, keep_words(keep))); }
+        }
+        for keeper in plan.element_keepers.iter() {
+            if plan.struct_keepers.contains(keeper) {
+                let width = nikaia_std::index::or(plan.widths.get(keeper), || 1);
+                let mut handles = String::from("a handle on the buffer it points into");
+                if width != 1 { handles = format!("a handle on each of the {} buffers it points into", width); }
+                said.push(format!("    `{}` holds each struct with {}\n", keeper, handles));
+            } else { said.push(format!("    `{}` holds each view with its own handle\n", keeper)); }
+        }
+        if said.is_empty() { continue; }
+        lines.push(format!("{} (keeps):\n", plan.key));
+        for line in said.iter() { lines.push(line.to_owned()); }
+    }
+    if lines.is_empty() { return String::from("no view in a signature here, so there is no state to solve.\n"); }
+    lines.join("")
+}
+
 
 // --- text_tiers.nika ---
 
@@ -27904,7 +28027,7 @@ pub mod template {
 }
 pub mod tether {
     #[allow(unused_imports)]
-    pub use super::{RESULT_POSITION, INPUT_POSITION, Buffer, PackageTypes, declare_unit, a_parse_that_views, function_views, carries_a_view, declares_text, makes_a_buffer};
+    pub use super::{RESULT_POSITION, INPUT_POSITION, Buffer, PackageTypes, declare_unit, a_parse_that_views, function_views, carries_a_view, declares_text, makes_a_buffer, tethers_report};
 }
 pub mod text_tiers {
     #[allow(unused_imports)]
