@@ -416,35 +416,28 @@ pub struct Checked {
     /// ([ADR-285](../../docs/specification/adr/adr-285.md) D27). The emitter
     /// writes it, so the language below infers nothing this compiler decided.
     pub number_lets: BTreeMap<usize, String>,
-    /// **A list element a method call changes**, by statement and the
-    /// receiver's shape: the emitter writes it as the place it is,
+    /// **A list element a method call changes**, by the id of the receiver: the emitter writes it as the place it is,
     /// `xs[at(i)].push(…)`, and not as a read.
     pub changed_elements: BTreeSet<usize>,
-    /// **`s.find(needle; from:)` on text** (ADR-320 D6), by statement and the
-    /// receiver's shape: the emitter writes it as `std`'s search, since the
+    /// **`s.find(needle; from:)` on text** (ADR-320 D6), by the id of the receiver: the emitter writes it as `std`'s search, since the
     /// language below's `str::find` has another shape.
     pub text_finds: BTreeSet<usize>,
     /// The arguments that are a **count the language below takes in `usize`**,
-    /// by the byte the statement starts at, the method as written and the
-    /// position ([ADR-293](../../docs/specification/adr/adr-293.md) D20).
-    pub count_args: BTreeSet<(usize, String, usize)>,
+    /// by the id of the argument ([ADR-293](../../docs/specification/adr/adr-293.md) D20).
+    pub count_args: BTreeSet<usize>,
     /// **A method of a file's name** ([ADR-319](../../docs/specification/adr/adr-319.md)
-    /// D3), by the byte the statement starts at, the method as written and
-    /// the shape of its arguments: `std`'s own function lowers it, because
+    /// D3), by the id of the receiver (`true` where the name is made from text): `std`'s own function lowers it, because
     /// Rust's `Path` has methods of the same names that mean something else
     /// (`ends_with` compares whole components).
-    pub path_methods: BTreeSet<(usize, String, String)>,
-    /// How each key goes into the brackets of a map whose keys are owned, by
-    /// the byte the statement starts at, the key's shape and whether it is
-    /// written ([ADR-293](../../docs/specification/adr/adr-293.md) D27).
+    pub path_methods: BTreeMap<usize, bool>,
+    /// How each key goes into the brackets of a map whose keys are owned, by the key's id and whether it is written ([ADR-293](../../docs/specification/adr/adr-293.md) D27).
     ///
     /// **Whether it is written is part of the key** (0.0.245): `m[k.clone()]
     /// = (m[k.clone()] ?? 0) + 1` spells one key twice in one statement, once
     /// read and once written, and the read's lent form was the write's too -
     /// `index::set(&mut m, &(k.to_owned()), …)`, which `rustc` refused.
     pub map_keys: BTreeMap<(usize, bool), KeyForm>,
-    /// Indexes that are a **range kept in a name**, by the byte the statement
-    /// starts at and the index's shape: a slice, like a range written in the
+    /// Indexes that are a **range kept in a name**, by the id of the index: a slice, like a range written in the
     /// brackets ([ADR-293](../../docs/specification/adr/adr-293.md) D23).
     pub slice_indices: BTreeSet<usize>,
     /// **Indexes of a list**, by the node of the indexed expression
@@ -488,16 +481,14 @@ pub struct Checked {
     /// (#387): the element is a copy, so where the index is proved the slot
     /// is read once and written back without either check.
     pub copied_slots: BTreeSet<usize>,
-    /// `clone` calls that went to a `std` entry, by statement and receiver
-    /// shape: written `to_owned` below, which is a copy whether the receiver
+    /// `clone` calls that went to a `std` entry, by the id of the receiver: written `to_owned` below, which is a copy whether the receiver
     /// is a value or a view of one (ADR-293 D24).
     pub owned_copies: BTreeSet<usize>,
-    /// `.to_string()` on **text**, by statement and receiver shape: the text
+    /// `.to_string()` on **text**, by the id of the receiver: the text
     /// form of text is the text itself, so the call is written as its receiver
     /// ([ADR-282](../../docs/specification/adr/adr-282.md) D8).
     pub text_as_is: BTreeSet<usize>,
-    /// **`??`s that lend their left side** (ADR-279 D5), by statement and
-    /// shape, with how the option is opened below: `.as_deref()` for text and
+    /// **`??`s that lend their left side** (ADR-279 D5), by the id of the expression, with how the option is opened below: `.as_deref()` for text and
     /// `.as_ref()` for anything else.
     pub lent_coalesces: BTreeMap<usize, &'static str>,
     /// **A `??` or a `?.` after a value that cannot be absent**
@@ -506,38 +497,35 @@ pub struct Checked {
     /// plain `.`.
     pub plain_reaches: BTreeSet<usize>,
     /// **A number, a `bool` or a `char` a `let` reads out of a container past
-    /// a jump** (#456), by statement and the value's shape: `let v = m[k] ??
+    /// a jump** (#456), by the id of the value: `let v = m[k] ??
     /// return null` binds the value, read out of the view as a loop binding's
     /// is ([`Checked::copied_loop_bindings`]).
     pub copied_jump_reads: BTreeSet<usize>,
     /// **A `??` over a map's text whose fallback is a view of text** (#297),
-    /// by statement and shape: the answer is a view, and the fallback is
+    /// by the id of the expression: the answer is a view, and the fallback is
     /// written as it is - `m.get(k) ?? name` for a `name: ref String`.
     pub view_coalesces: BTreeSet<usize>,
     /// **A `??` over what a map holds whose fallback is a name of that type**
-    /// (ADR-279 D7), by statement and shape: `m[k] ?? spare` for a map of
+    /// (ADR-279 D7), by the id of the expression: `m[k] ?? spare` for a map of
     /// lists is a view whichever side answers, and the name is lent - written
     /// `|| &spare` - as `r ?? spare` lends it over a `ref T?`.
     pub lent_map_fallbacks: BTreeSet<usize>,
-    /// **A `??` whose fallback may be `null` too**, by statement and shape:
+    /// **A `??` whose fallback may be `null` too**, by the id of the expression:
     /// the answer is the first side that has a value, or `null`, so it is a
     /// `T?` and the fallback is written as the option it is (Part I 3.5).
     pub optional_fallbacks: BTreeSet<usize>,
-    /// **A read of a map whose values are `T?`**, by statement and shape: it
+    /// **A read of a map whose values are `T?`**, by the id of the expression: it
     /// is one `T?` and not a `T?` of a `T?` - a stored `null` and an absent key
     /// both answer `null` ([ADR-293](../../docs/specification/adr/adr-293.md)
     /// D1), and the read is written through `index::flat` (D3).
     pub flat_reads: BTreeSet<usize>,
-    /// **A map's read copied out where a `T?` of its own is kept**, by
-    /// statement and shape ([ADR-293](../../docs/specification/adr/adr-293.md)
+    /// **A map's read copied out where a `T?` of its own is kept**, by the id of the expression ([ADR-293](../../docs/specification/adr/adr-293.md)
     /// D4): the value copies, and the emitter writes `.copied()`.
     pub copied_reads: BTreeSet<usize>,
-    /// **A list of text asked whether it holds a view of text**, by statement
-    /// and receiver: `xs.contains(name)` for a `name: ref String`, which is a
+    /// **A list of text asked whether it holds a view of text**, by the id of the receiver: `xs.contains(name)` for a `name: ref String`, which is a
     /// `&str` below, where a `Vec<String>`'s own `contains` takes a `&String`.
     pub text_in_lists: BTreeSet<usize>,
-    /// **`count()` calls that are `std`'s count of a sequence**, by statement
-    /// and receiver shape: the language below counts in `usize`, and a count
+    /// **`count()` calls that are `std`'s count of a sequence**, by the id of the receiver: the language below counts in `usize`, and a count
     /// is an `i64` here, as a length is (Part I 2.2, ADR-285 D1).
     pub counted: BTreeSet<usize>,
     /// **The names a `match` arm binds as a view of its scrutinee**, by the
@@ -572,23 +560,22 @@ pub struct Checked {
     /// those out.
     pub guards_inside_boxes: BTreeMap<usize, BTreeSet<String>>,
     /// `collect()` calls whose target declares what they build - a map, a
-    /// set, text - by statement and receiver shape
+    /// set, text - by the id of the receiver
     /// ([ADR-293](../../docs/specification/adr/adr-293.md) D25): written
     /// without `::<Vec<_>>`, so the declared type is what the language below
     /// builds.
     pub collected_into: BTreeSet<usize>,
     /// Method calls that hand back a sequence of **views of values that copy**,
-    /// numbers, truth values and characters, by statement and the call's shape
+    /// numbers, truth values and characters, by the id of the call
     /// ([ADR-231](../../docs/specification/adr/adr-231.md) D1): written with
     /// `.copied()`, so each item is the value.
     pub copied_walks: BTreeSet<usize>,
-    /// `filter` lambdas whose item copies, by statement and the lambda's shape
+    /// `filter` lambdas whose item copies, by the id of the lambda
     /// (ADR-231 D2): the language below hands the lambda a reference to the
     /// item, and the parameter is written `|&x|` so it is the item.
     pub filter_patterns: BTreeSet<usize>,
     /// **Lambdas put where a function value is kept** - a field, a result, an
-    /// annotated `let`, an assignment, a parameter the callee keeps - by
-    /// statement and shape, and whether the function type may pause. Written
+    /// annotated `let`, an assignment, a parameter the callee keeps - by the id of the expression, and whether the function type may pause. Written
     /// below as one shared closure, `nikaia_std::func::Kept`.
     pub kept_lambdas: BTreeMap<usize, (bool, bool)>,
     /// The names a kept lambda captures that are **hulls** - a `Shared`, a
@@ -599,14 +586,12 @@ pub struct Checked {
     /// **What a pausing kept lambda takes**, by name: owned once behind an
     /// `Arc`, and lent to each call (#95 step 6).
     pub kept_owned: BTreeMap<usize, Vec<String>>,
-    /// **Calls of a field that holds a function**, `button.on_click(4)`, by
-    /// statement and `receiver.field`, and whether the call may pause.
-    pub field_calls: BTreeMap<(usize, String), bool>,
+    /// **Calls of a field that holds a function**, `button.on_click(4)`, by the id of the receiver, and whether the call may pause.
+    pub field_calls: BTreeMap<usize, bool>,
     /// **Calls of a kept function value by name**, `step(5)` where `step` is
     /// a `let`, by statement and name: whether it may pause, and fail.
     pub kept_calls: BTreeMap<(usize, String), (bool, bool)>,
-    /// **A kept value handed to a parameter the callee only runs**, by
-    /// statement and shape: lent to it as the closure it holds.
+    /// **A kept value handed to a parameter the callee only runs**, by the id of the expression: lent to it as the closure it holds.
     pub kept_args: BTreeSet<usize>,
     /// **A named function put where a function value is kept**, by statement
     /// and name: whether the type may pause, may fail, and how many parameters
@@ -674,14 +659,12 @@ pub struct Checked {
     /// never pauses is not, so the emitter - which knows which functions pause
     /// - hands such a one over inside an `async` closure.
     pub sync_functions_run_async: BTreeMap<(usize, usize), usize>,
-    /// **The lambdas that pause, handed to a `std` entry**, by the byte the
-    /// statement starts at and the lambda's shape, with what the call is
+    /// **The lambdas that pause, handed to a `std` entry**, by the id of the lambda, with what the call is
     /// lowered to ([ADR-233](../../docs/specification/adr/adr-233.md) D1, D2).
     /// The lambda is written as an `async` closure and the call as the
     /// entry's counterpart; the emitter has no types to tell which one.
     pub pausing_lambdas: BTreeMap<usize, PausingEntry>,
-    /// **The `task::scope` calls with a task that pauses**, by the byte the
-    /// statement starts at and the scope's lambda's shape
+    /// **The `task::scope` calls with a task that pauses**, by the id of the scope's lambda
     /// ([ADR-328](../../docs/specification/adr/adr-328.md) D10): the scope
     /// polls that task itself, so its lambda is an `async` closure and the
     /// call is `scope_paused`, awaited.
@@ -744,8 +727,7 @@ pub struct Checked {
     /// have no common type, so the comparison is a sign test and a compare.
     pub mixed_comparisons: BTreeMap<usize, bool>,
     /// **An `f"…"` with a file's name in a hole**
-    /// ([ADR-319](../../docs/specification/adr/adr-319.md) D4), by the
-    /// statement and the literal's shape, with which holes are names: it is
+    /// ([ADR-319](../../docs/specification/adr/adr-319.md) D4), by the id of the literal, with which holes are names: it is
     /// joined in the platform's encoding into an `fs::Path`.
     pub path_holes: BTreeMap<usize, Vec<bool>>,
     /// The `?.` reaches whose field is **itself** nullable, as the byte the
@@ -819,39 +801,28 @@ pub struct Checked {
     /// something to point into past the `;`.
     pub held_reaches: BTreeSet<(usize, String)>,
     /// The **struct-literal fields** where a plain value stands in a nullable
-    /// slot, as the byte the statement starts at and the field's name
-    /// (Part I 2.3).
+    /// slot, by the id of the literal and the field's name (Part I 2.3,
+    /// [ADR-340](../../docs/specification/adr/adr-340.md)).
     ///
     /// `nullable_sites` covers the three positions a statement *is* - an
     /// annotated `let`, an assignment, a `return` - and a struct literal has
-    /// one position per field, so it needs the name too.
-    ///
-    /// **And the type, and [`argument_shape`]**, for `nullable_args`' reason and
-    /// found by the same probe: a statement may build two literals.
-    /// `f(P { x: 1 }, P { x: null })` had one key for two fields and came out
-    /// `P { x: Some(1) }, P { x: Some(None) }`; `f(P { x }, Q { x })` would have
-    /// had one for two *structs*. The type is `unaliased` on both sides, so the
-    /// two passes spell it the same.
-    pub nullable_fields: BTreeMap<(usize, String, String), BTreeMap<String, Wrap>>,
+    /// one position per field. The literal's id and the name say which:
+    /// `f(P { x: 1 }, P { x: null })` is two literals and two answers, `P { x:
+    /// Some(1) }, P { x: Some(None) }`, and `f(P { x }, Q { x })` is two fields
+    /// of two structs - a field written as a bare name has no value of its own
+    /// to carry an id.
+    pub nullable_fields: BTreeMap<(usize, String), Wrap>,
     /// The **call arguments** where a plain value stands in a nullable
-    /// parameter, as the byte the statement starts at, the callee as the source
-    /// wrote it, and the argument's position (Part I 2.3).
+    /// parameter, by the id of the argument (Part I 2.3,
+    /// [ADR-340](../../docs/specification/adr/adr-340.md)).
     ///
-    /// The third position D4's wrap needs a key for. An expression carries no
-    /// span, so the key is built out of what both sides can see: the statement,
-    /// the callee's **written** name - the emitter has only what the source
-    /// says, and a method's key is `Type::method` while a constructor's is
-    /// `Type::new`, neither of which stands at the call - the argument's
-    /// position, and [`argument_shape`].
-    ///
-    /// **The shape is what says which *call***, and leaving it out was a
-    /// defect rather than a simplification. The three outer parts name a
-    /// *parameter*; a statement may call the same function twice, and then
-    /// `let r = pick(1) + pick(null)` had one key for two arguments. The last
-    /// one walked won, so one of them was emitted with the other's answer -
-    /// `pick(Some(1)) + pick(Some(None))`, which `rustc` refuses about a file
-    /// nobody wrote (Part III, C.1).
-    pub nullable_args: BTreeMap<(usize, String, usize), BTreeMap<String, Wrap>>,
+    /// **The id is what says which *call* and which *parameter***: a statement
+    /// may call the same function twice, and `let r = pick(1) + pick(null)` has
+    /// two arguments that are two answers - `pick(Some(1)) + pick(Some(None))`
+    /// is the program `rustc` refuses about a file nobody wrote (Part III,
+    /// C.1). The statement, the callee's written name and the position it was
+    /// keyed by before are not needed to tell them apart.
+    pub nullable_args: BTreeMap<usize, Wrap>,
     /// The **narrowing conversions**, as the byte the statement they stand in
     /// starts at and the type converted to (ADR-285 D12).
     ///
@@ -877,10 +848,9 @@ pub struct Checked {
     /// `fallible_methods` and the rest use.
     pub task_handles: BTreeSet<(usize, String)>,
     /// The **call arguments the compiler writes a `&` for**
-    /// ([ADR-094](../../docs/specification/adr/adr-094.md) D1), keyed the way
-    /// [`Checked::nullable_args`] is: the byte the statement starts at, the
-    /// callee as the source wrote it, the argument's position, and
-    /// [`argument_shape`].
+    /// ([ADR-094](../../docs/specification/adr/adr-094.md) D1), by the id of the
+    /// argument ([ADR-340](../../docs/specification/adr/adr-340.md)), as
+    /// [`Checked::nullable_args`] is.
     ///
     /// Whether an argument is lent or handed over is the **callee's** answer
     /// (`contracts::keeps::lends`), and the emitter reads it for the
@@ -888,10 +858,6 @@ pub struct Checked {
     /// is a `&&T` or a moved value in the language below. What the emitter
     /// cannot decide on its own is the other half: whether *this* argument is
     /// already a view, which is a question about its type (ADR-288).
-    ///
-    /// The four-part key is `nullable_args`' and is there for the same reason:
-    /// a statement may call one function twice, and `f(a) + f(b)` has two
-    /// arguments in one position.
     /// The **options a method call has**, in the order the declaration gives,
     /// by the byte the statement starts at and the method's written name
     /// (Part I 5.1, [ADR-133](../../docs/specification/adr/adr-133.md) D1).
@@ -910,19 +876,19 @@ pub struct Checked {
     /// Older than the spelling that makes it easy to hit, because the `;` form
     /// went down the same path.
     pub method_options: BTreeMap<(usize, String), Vec<(String, String)>>,
-    pub lent_args: BTreeMap<(usize, String, usize), BTreeSet<String>>,
+    pub lent_args: BTreeSet<usize>,
     /// **A lookup's key whose type this checker could not work out**
-    /// (0.0.235), by statement, method as written and the argument's shape:
+    /// (0.0.235), by the key's id:
     /// the emitter writes `index::AsKey::as_key(&k)`, which is the reference
     /// the language below wants whether `k` turns out a number, owned text or
     /// a view ([`Checker::a_lookup_key_lent`]).
-    pub lookup_keys: BTreeSet<(usize, String, String)>,
+    pub lookup_keys: BTreeSet<usize>,
     /// **The members that go behind a `Box` below**
     /// ([ADR-246](../../docs/specification/adr/adr-246.md) D1), by type and
     /// member ([`boxed_member`]): the fields on a ring of types that hold each
     /// other inline.
     pub boxed_members: BTreeMap<String, BTreeSet<String>>,
-    /// **The reads of a boxed field**, by statement and the read's shape: the
+    /// **The reads of a boxed field**, by the read's id: the
     /// emitter writes `(*base.field)`, the place that behaves as the unboxed
     /// field would ([ADR-246](../../docs/specification/adr/adr-246.md) D2).
     pub boxed_reads: BTreeSet<usize>,
@@ -965,7 +931,7 @@ pub struct Checked {
     /// ([ADR-269](../../docs/specification/adr/adr-269.md) D2), by statement
     /// and the shape of its condition, and how each is held
     /// ([ADR-269](../../docs/specification/adr/adr-269.md) D4).
-    pub claims: BTreeMap<(usize, String), Claim>,
+    pub claims: BTreeMap<(usize, usize), Claim>,
     /// **The functions with a checked entry, and what it checks**
     /// ([ADR-269](../../docs/specification/adr/adr-269.md) D20).
     pub entries: BTreeMap<String, Vec<crate::prove::Check>>,
@@ -988,12 +954,12 @@ pub struct Checked {
     /// write `let mut xs`. The call itself shows nothing, which is D3's whole
     /// sentence — a language that hides mutation through a receiver and shows
     /// it through an argument has two rules for one thing.
-    pub mut_args: BTreeMap<(usize, String, usize), BTreeSet<String>>,
+    pub mut_args: BTreeSet<usize>,
     /// **The arguments that are a view of a value that copies, handed where
     /// the value is wanted**, keyed as [`Checked::mut_args`] is
     /// ([ADR-233](../../docs/specification/adr/adr-233.md) D4). The emitter
     /// writes the `*` that copies it out.
-    pub copied_args: BTreeMap<(usize, String, usize), BTreeSet<String>>,
+    pub copied_args: BTreeSet<usize>,
     /// **The functions in which a value with a cleanup may die**, by key, and
     /// whether their settle point can fail them - a cleanup that can fail, in
     /// a function that says `throws`
@@ -1136,8 +1102,7 @@ pub struct Checked {
     /// `String?` is a `String` - and on a `ref String?` that conversion is the
     /// one thing the language below cannot resolve: *type annotations needed*
     /// about `m["host"] ?? "-"` over a map of views.
-    /// **`ys[i] ?? "…"` over a list of `String?`** (#342), by statement and
-    /// shape: the read is lent - the list keeps its text - and the answer is a
+    /// **`ys[i] ?? "…"` over a list of `String?`** (#342), by the id of the expression: the read is lent - the list keeps its text - and the answer is a
     /// view, as a map's is (ADR-293 D28).
     pub lent_list_reads: BTreeSet<usize>,
     pub view_fallbacks: BTreeSet<usize>,
@@ -1546,7 +1511,7 @@ fn walked<'a>(
     // ([ADR-269](../../docs/specification/adr/adr-269.md) D4), and checked
     // when the program runs where it cannot. After the walk,
     // because the checker is what decided which calls are the prelude's.
-    let keys: BTreeSet<(usize, String)> = checker.checked.claims.keys().cloned().collect();
+    let keys: BTreeSet<(usize, usize)> = checker.checked.claims.keys().cloned().collect();
     let proved = crate::prove::prove(parsed, own, library, &keys);
     checker.s.findings.extend(proved.findings);
     checker.checked.entries = proved.entries;
@@ -1729,24 +1694,11 @@ pub enum Narrowing {
 /// arm written `=> { throw NotFound }` still has.
 impl Checker<'_> {}
 
-/// **The call a named function stands for where a function value is kept**:
-/// `double` put in a field is `fn(__nikaia_arg0) { double(__nikaia_arg0) }`.
-/// One construction for the checker, which types it, and the emitter, which
-/// writes it, so the two agree about every key the call is looked up by.
+/// **The call a named function stands for where a function value is kept**
+/// ([`Parsed::kept_function_call`]): one construction for the checker, which
+/// types it, and the emitter, which writes it.
 pub(crate) fn kept_function_call(parsed: &Parsed, name: Ident, arity: usize) -> (Vec<Ident>, Expr) {
-    let names: Vec<Ident> = (0..arity)
-        .map(|at| parsed.interner.intern_string(&format!("__nikaia_arg{at}")))
-        .collect();
-    let call = Expr::Call {
-        func: Box::new(Expr::Variable(name, crate::ast::NodeId::fresh())),
-        args: names
-            .iter()
-            .map(|n| Expr::Variable(*n, crate::ast::NodeId::fresh()))
-            .collect(),
-        config: Vec::new(),
-        id: crate::ast::NodeId::fresh(),
-    };
-    (names, call)
+    parsed.kept_function_call(name, arity)
 }
 
 /// What a computed build-time value stands for, which its refusal names.
@@ -1765,10 +1717,6 @@ fn default_written(default: &ast::FieldDefault) -> String {
         true => nikaia_std::tools::declared::default_text(&default.value),
         false => "computed".to_string(),
     }
-}
-
-pub fn argument_shape(expr: &Expr) -> String {
-    format!("{expr:?}")
 }
 
 /// A view of text going into text of its own, present or absent.
@@ -2033,9 +1981,9 @@ pub struct Propagation {
     /// [`Checked::text_finds`].
     pub text_finds: BTreeSet<usize>,
     /// [`Checked::count_args`].
-    pub count_args: BTreeSet<(usize, String, usize)>,
+    pub count_args: BTreeSet<usize>,
     /// [`Checked::path_methods`].
-    pub path_methods: BTreeSet<(usize, String, String)>,
+    pub path_methods: BTreeMap<usize, bool>,
     /// [`Checked::map_keys`].
     pub map_keys: BTreeMap<(usize, bool), KeyForm>,
     /// [`Checked::slice_indices`].
@@ -2106,7 +2054,7 @@ pub struct Propagation {
     /// `Arc`, and lent to each call (#95 step 6).
     pub kept_owned: BTreeMap<usize, Vec<String>>,
     /// [`Checked::field_calls`].
-    pub field_calls: BTreeMap<(usize, String), bool>,
+    pub field_calls: BTreeMap<usize, bool>,
     /// [`Checked::kept_calls`].
     pub kept_calls: BTreeMap<(usize, String), (bool, bool)>,
     /// [`Checked::kept_args`].
@@ -2146,9 +2094,9 @@ pub struct Propagation {
     /// [`Checked::held_reaches`].
     pub held_reaches: BTreeSet<(usize, String)>,
     /// [`Checked::nullable_fields`].
-    pub nullable_in_fields: BTreeMap<(usize, String, String), BTreeMap<String, Wrap>>,
+    pub nullable_in_fields: BTreeMap<(usize, String), Wrap>,
     /// [`Checked::nullable_args`].
-    pub nullable_in_args: BTreeMap<(usize, String, usize), BTreeMap<String, Wrap>>,
+    pub nullable_in_args: BTreeMap<usize, Wrap>,
     /// [`Checked::task_handles`].
     pub task_handles: BTreeSet<(usize, String)>,
     /// [`Checked::comptime_values`].
@@ -2207,9 +2155,9 @@ pub struct Propagation {
     /// [`Checked::view_fallbacks`].
     pub view_fallbacks: BTreeSet<usize>,
     /// [`Checked::lent_args`].
-    pub lent_args: BTreeMap<(usize, String, usize), BTreeSet<String>>,
+    pub lent_args: BTreeSet<usize>,
     /// [`Checked::lookup_keys`].
-    pub lookup_keys: BTreeSet<(usize, String, String)>,
+    pub lookup_keys: BTreeSet<usize>,
     /// [`Checked::boxed_members`].
     pub boxed_members: BTreeMap<String, BTreeSet<String>>,
     /// [`Checked::boxed_reads`].
@@ -2230,7 +2178,7 @@ pub struct Propagation {
     /// [`Checked::compared_numbers`].
     pub compared_numbers: BTreeSet<(usize, String)>,
     /// [`Checked::claims`].
-    pub claims: BTreeMap<(usize, String), Claim>,
+    pub claims: BTreeMap<(usize, usize), Claim>,
     /// [`Checked::entries`].
     pub entries: BTreeMap<String, Vec<crate::prove::Check>>,
     /// [`Checked::reaches`].
@@ -2238,9 +2186,9 @@ pub struct Propagation {
     /// [`Checked::published`].
     pub published: BTreeMap<String, crate::prove::Published>,
     /// [`Checked::mut_args`].
-    pub mut_args: BTreeMap<(usize, String, usize), BTreeSet<String>>,
+    pub mut_args: BTreeSet<usize>,
     /// [`Checked::copied_args`].
-    pub copied_args: BTreeMap<(usize, String, usize), BTreeSet<String>>,
+    pub copied_args: BTreeSet<usize>,
     /// [`Checked::settle_fns`].
     pub settle_fns: BTreeMap<String, bool>,
     /// [`Checked::settle_lets`].
@@ -2895,7 +2843,7 @@ struct Checker<'a> {
     /// `std` entry, by their shape
     /// ([ADR-233](../../docs/specification/adr/adr-233.md) D1). Filled by
     /// [`Self::arguments_given`] and emptied by the call that asked.
-    paused_args: Vec<String>,
+    paused_args: Vec<usize>,
     /// **What a task took with it** (`NK2101`): the name, its type, and the byte
     /// the `spawn`'s statement starts at.
     ///
@@ -4594,14 +4542,7 @@ impl<'a> Checker<'a> {
     /// reason does not reach them: the `&` is recorded here, for exactly these
     /// entries, where the key is a known value that is not already a view.
     /// `m.get(k)` over a map keyed by numbers was `rustc`'s *mismatched types*.
-    fn a_lookup_key_lent(
-        &mut self,
-        key: &str,
-        written: &str,
-        args: &[Expr],
-        found: &[Ty],
-        span: &Span,
-    ) {
+    fn a_lookup_key_lent(&mut self, key: &str, args: &[Expr], found: &[Ty]) {
         if !is_a_lookup(key) || !self.world.library.functions.contains_key(key) {
             return;
         }
@@ -4635,18 +4576,10 @@ impl<'a> Checker<'a> {
         // passes a view through, since the `&` alone would be wrong for the
         // second.
         if ty.is_unknown() && !a_number {
-            self.checked.lookup_keys.insert((
-                span.at(),
-                written.to_string(),
-                argument_shape(given),
-            ));
+            self.checked.lookup_keys.insert(value_node(given));
             return;
         }
-        self.checked
-            .lent_args
-            .entry((span.at(), written.to_string(), 0))
-            .or_default()
-            .insert(argument_shape(given));
+        self.checked.lent_args.insert(value_node(given));
     }
 
     /// **Owned text assigned to a `let mut` that began as a literal**
@@ -5353,7 +5286,7 @@ impl<'a> Checker<'a> {
         }
         claimed.push(')');
         self.checked.claims.insert(
-            (span.at(), argument_shape(condition)),
+            (span.at(), value_node(condition)),
             Claim {
                 held: None,
                 written: claimed,
@@ -5853,7 +5786,7 @@ impl<'a> Checker<'a> {
         let inside = self.s.inside_a_door;
         let reached = match self.a_called_field(&inner, receiver, *method, args, inside, span) {
             Some(result) => result,
-            None => self.call_on(*inner, *method, args, &written, span),
+            None => self.call_on(*inner, receiver, *method, args, &written, span),
         };
         // **A view out of a temporary needs something to point into**
         // (ADR-278 D21): the receiver is held for the rest of the block.
@@ -6433,11 +6366,7 @@ impl<'a> Checker<'a> {
             {
                 return true;
             }
-            self.checked
-                .mut_args
-                .entry((span.at(), written.to_string(), at))
-                .or_default()
-                .insert(argument_shape(given));
+            self.checked.mut_args.insert(value_node(given));
             return true;
         }
         if !crate::contracts::keeps::lends_in(contract, position, &[self.world.library]) {
@@ -6617,15 +6546,9 @@ impl<'a> Checker<'a> {
         {
             self.checked
                 .nullable_args
-                .entry((span.at(), written.to_string(), at))
-                .or_default()
-                .insert(argument_shape(given), Wrap::Constructor);
+                .insert(value_node(given), Wrap::Constructor);
         }
-        self.checked
-            .lent_args
-            .entry((span.at(), written.to_string(), at))
-            .or_default()
-            .insert(argument_shape(given));
+        self.checked.lent_args.insert(value_node(given));
         true
     }
 
@@ -7169,7 +7092,15 @@ impl<'a> Checker<'a> {
     /// wrote, and everything the **emitter** is handed stays keyed by that —
     /// an argument it has to put a `&` in front of is found under `set`,
     /// because `set` is what is written on the line.
-    fn call_on(&mut self, on: Ty, method: Ident, args: &[Expr], entry: &str, span: &Span) -> Ty {
+    fn call_on(
+        &mut self,
+        on: Ty,
+        receiver: &Expr,
+        method: Ident,
+        args: &[Expr],
+        entry: &str,
+        span: &Span,
+    ) -> Ty {
         // **`full()` is `Error`'s own, on every type that implements it**
         // (Part I 7.1, #497): the `impl` writes `message` and the trait
         // provides the long form, which no entry of the type's names.
@@ -7345,7 +7276,7 @@ impl<'a> Checker<'a> {
             // argument types, `sync`, `throws` - is answered from the
             // declaration, exactly as it would be from a written-down receiver.
             if let Some(bound) = self.s.bound_that_answers(&self.world, name, entry) {
-                return self.call_on(bound, method, args, entry, span);
+                return self.call_on(bound, receiver, method, args, entry, span);
             }
             // **A `Seen[T]` is the `T` it stamps** (ADR-281 D26, #497): the
             // stamp is erased below, so `seen.len()` is the list's `len`.
@@ -7355,7 +7286,7 @@ impl<'a> Checker<'a> {
                 && name == "Seen"
                 && let [held] = held.as_slice()
             {
-                return self.call_on(held.clone(), method, args, entry, span);
+                return self.call_on(held.clone(), receiver, method, args, entry, span);
             }
             // **And a type seen through answers with what it holds** (#497),
             // as a field read on one does: `data.lines()` on an `fs::Mapped`
@@ -7364,7 +7295,7 @@ impl<'a> Checker<'a> {
                 .seen_through(&on)
                 .filter(|held| held.unseen() != on.unseen())
             {
-                return self.call_on(held, method, args, entry, span);
+                return self.call_on(held, receiver, method, args, entry, span);
             }
             // Unless the type is a **parameter**, where nothing will ever
             // describe it and saying so now is the whole of `NK1126`.
@@ -7385,11 +7316,7 @@ impl<'a> Checker<'a> {
         // it reaches the entry that throws nothing, and the emitter writes it.
         let known_text = key == "fs::Path::to_text" && std::mem::take(&mut self.receiver_from_text);
         if known_text {
-            self.checked.path_methods.insert((
-                span.at(),
-                "text_of".to_string(),
-                format!("{args:?}"),
-            ));
+            self.checked.path_methods.insert(value_node(receiver), true);
         }
         self.reached_method(Some(match known_text {
             true => "fs::Path::text_of",
@@ -7657,7 +7584,7 @@ impl<'a> Checker<'a> {
         }
         let paused_here = std::mem::replace(&mut self.paused_args, outer_paused);
         let pausing_lambda = args.iter().find(|arg| {
-            matches!(arg, Expr::Closure { .. }) && paused_here.contains(&argument_shape(arg))
+            matches!(arg, Expr::Closure { .. }) && paused_here.contains(&value_node(arg))
         });
         self.s
             .a_set_that_reads_what_it_writes(&on, entry, &found, span);
@@ -7671,13 +7598,12 @@ impl<'a> Checker<'a> {
             }
         }
         self.a_sequence_that_cannot_do_this(&on, method, &contract, &found, span);
-        self.counts_in_usize(&key, method, span);
+        self.counts_in_usize(&key, args);
         if key.starts_with(PATH_METHODS) {
-            self.checked.path_methods.insert((
-                span.at(),
-                self.parsed.text(method).to_string(),
-                format!("{args:?}"),
-            ));
+            self.checked
+                .path_methods
+                .entry(value_node(receiver))
+                .or_insert(false);
         }
         // **The source's own name and not the ledger's**, because what
         // `arguments` records is read back by the emitter off the line as it is
@@ -7685,7 +7611,7 @@ impl<'a> Checker<'a> {
         // `set`, which is the word on the page.
         let written = self.parsed.text(method).to_string();
         let result = self.arguments(&key, &written, &contract, args, &found, &[], span);
-        self.a_lookup_key_lent(&key, &written, args, &found, span);
+        self.a_lookup_key_lent(&key, args, &found);
         self.a_view_kept_where_the_receiver_says_text(
             &key, &contract, args, &found, &expected, span,
         );
@@ -7700,11 +7626,7 @@ impl<'a> Checker<'a> {
             };
             self.a_map_read_kept(found, want, given, span);
             if let Some(how) = self.widened_slot(found, want, Some(given), span) {
-                self.checked
-                    .nullable_args
-                    .entry((span.at(), written.clone(), at))
-                    .or_default()
-                    .insert(argument_shape(given), how);
+                self.checked.nullable_args.insert(value_node(given), how);
                 continue;
             }
             // **An integer the receiver's type does not hold without loss**
@@ -7920,14 +7842,12 @@ impl<'a> Checker<'a> {
     /// ([ADR-293](../../docs/specification/adr/adr-293.md) D20), recorded for
     /// the emitter by the **entry** the call resolved to - so a method of the
     /// program's own that happens to be called `take` is not converted.
-    fn counts_in_usize(&mut self, key: &str, method: Ident, span: &Span) {
+    fn counts_in_usize(&mut self, key: &str, args: &[Expr]) {
         for (entry, at) in COUNTS {
-            if *entry == key {
-                self.checked.count_args.insert((
-                    span.at(),
-                    self.parsed.text(method).to_string(),
-                    *at,
-                ));
+            if *entry == key
+                && let Some(arg) = args.get(*at)
+            {
+                self.checked.count_args.insert(value_node(arg));
             }
         }
     }
@@ -11481,7 +11401,7 @@ impl<'a> Checker<'a> {
                 }
                 self.last_resolved = None;
                 self.receiver_from_text = self.made_from_text(receiver);
-                let value = self.call_on(on, *method, args, &written, span);
+                let value = self.call_on(on, receiver, *method, args, &written, span);
                 self.receiver_from_text = false;
                 // **A copy of `std`'s is a copy whatever the receiver is**
                 // (ADR-293 D24): below, `.clone()` of a view is the view.
@@ -11932,9 +11852,7 @@ impl<'a> Checker<'a> {
                             if let Some(how) = self.widened_slot(&found, &want, value, span) {
                                 self.checked
                                     .nullable_fields
-                                    .entry((span.at(), owner.clone(), field.clone()))
-                                    .or_default()
-                                    .insert(value.map(argument_shape).unwrap_or_default(), how);
+                                    .insert((value_node(expr), field.clone()), how);
                                 // A view into a `String?` is still a view kept
                                 // (ADR-282 D12): asked as it would be without
                                 // the `?`.
@@ -14694,7 +14612,7 @@ impl<'a> Checker<'a> {
             .is_some_and(|(key, _)| key == "task::scope")
             && let Some(body) = args
                 .first()
-                .filter(|arg| paused_here.contains(&argument_shape(arg)))
+                .filter(|arg| paused_here.contains(&value_node(arg)))
         {
             self.checked.paused_scopes.insert(value_node(body));
             self.s
@@ -14792,11 +14710,7 @@ impl<'a> Checker<'a> {
                         && !had.is_a_view()
                         && !matches!(had, Ty::Unknown | Ty::Fn { .. })
                     {
-                        self.checked
-                            .lent_args
-                            .entry((span.at(), name.clone(), at))
-                            .or_default()
-                            .insert(argument_shape(given));
+                        self.checked.lent_args.insert(value_node(given));
                     }
                 }
                 return (*result).unwrap_or_else(|| Ty::named("()"));
@@ -15212,11 +15126,9 @@ impl<'a> Checker<'a> {
                 self.a_map_read_kept(found, want, value, span);
             }
             if let Some(how) = self.widened_slot(found, want, given.get(at), span) {
-                self.checked
-                    .nullable_args
-                    .entry((span.at(), written.to_string(), at))
-                    .or_default()
-                    .insert(given.get(at).map(argument_shape).unwrap_or_default(), how);
+                if let Some(value) = given.get(at) {
+                    self.checked.nullable_args.insert(value_node(value), how);
+                }
                 continue;
             }
             if self.fits_through_deref(found, want) {
@@ -15232,11 +15144,9 @@ impl<'a> Checker<'a> {
                 && unviewed(found) == *want
                 && matches!(given.get(at), Some(Expr::Variable(_, _)))
             {
-                self.checked
-                    .copied_args
-                    .entry((span.at(), written.to_string(), at))
-                    .or_default()
-                    .insert(given.get(at).map(argument_shape).unwrap_or_default());
+                if let Some(value) = given.get(at) {
+                    self.checked.copied_args.insert(value_node(value));
+                }
                 continue;
             }
             // A plain value where a hull is wanted. It is refused by a code of
@@ -19407,7 +19317,7 @@ impl<'a> Checker<'a> {
             } = count
                 && self.parsed.text(*method) == "len"
                 && args.is_empty()
-                && argument_shape(receiver) == argument_shape(buffer)
+                && **receiver == *buffer
             {
                 continue;
             }
@@ -19809,13 +19719,9 @@ impl<'a> Checker<'a> {
                 self.s.inside_a_door = own;
             }
         }
-        self.checked.field_calls.insert(
-            (
-                span.at(),
-                format!("{}.{}", argument_shape(receiver), self.parsed.text(method)),
-            ),
-            !is_sync,
-        );
+        self.checked
+            .field_calls
+            .insert(value_node(receiver), !is_sync);
         if let Some(current) = &self.current {
             let entry = self.checked.methods.entry(current.clone()).or_default();
             entry.code_pauses |= !is_sync;
@@ -21480,7 +21386,7 @@ impl<'a> Checker<'a> {
                     // kept for the call to lower to the entry's pausing
                     // counterpart, which only the call knows.
                     if paused && !declared_here {
-                        self.paused_args.push(argument_shape(arg));
+                        self.paused_args.push(value_node(arg));
                     }
                     // **The lambda as the type it was handed to, with what its
                     // body comes to where that type does not say** (ADR-293
@@ -22831,26 +22737,24 @@ impl<'a> Checker<'a> {
     /// code below, and a `&` the language below's lint points at.
     ///
     /// Decided here, after the arm, because whether a part is lent is known
-    /// only once the arm is walked; the arguments recorded meanwhile are the
-    /// arm's statements', by where they start. Only for an arm that is a
-    /// block, whose statements are its own, and only where nothing in it binds
-    /// the name again.
+    /// only once the arm is walked; the arguments recorded meanwhile are
+    /// found again by their ids. Only where nothing in the arm binds the name
+    /// again.
     fn a_lent_part_is_handed_on_as_it_is(&mut self, body: &Expr, lent: &BTreeSet<String>) {
         let Expr::Block(block, _) = body else {
             self.a_lent_part_in_an_expression_arm(body, lent);
             return;
         };
-        let (Some(first), Some(last)) = (block.stmts.first(), block.stmts.last()) else {
+        if block.stmts.is_empty() {
             return;
-        };
-        let (from, to) = (first.span.start, last.span.end);
-        let mut shapes: BTreeSet<String> = BTreeSet::new();
+        }
+        let mut named: BTreeSet<usize> = BTreeSet::new();
         let mut bound_again = false;
         let holes: std::cell::RefCell<Vec<Expr>> = std::cell::RefCell::new(Vec::new());
         let parsed = self.parsed;
         let mut look = |expr: &Expr| match expr {
             Expr::Variable(name, _) if lent.contains(parsed.text(*name)) => {
-                shapes.insert(argument_shape(expr));
+                named.insert(value_node(expr));
             }
             Expr::Block(inner, _) => {
                 bound_again |= inner.stmts.iter().any(|stmt| {
@@ -22874,14 +22778,10 @@ impl<'a> Checker<'a> {
             };
             crate::emit::visit_expr(&hole, &mut look);
         }
-        if bound_again || shapes.is_empty() {
+        if bound_again || named.is_empty() {
             return;
         }
-        for ((at, _, _), given) in self.checked.lent_args.iter_mut() {
-            if (from..to).contains(&(*at as u32)) {
-                given.retain(|shape| !shapes.contains(shape));
-            }
-        }
+        self.checked.lent_args.retain(|id| !named.contains(id));
     }
 
     /// **The same for an arm that is an expression** (#456): it has no

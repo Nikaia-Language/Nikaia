@@ -8,6 +8,14 @@ or the specification. A change only to the guide, the notes, the README, the
 website, the tests, the examples or the tooling around them raises nothing and
 has no heading here; `CLAUDE.md` draws the line.
 
+## [0.0.783] — 2026-10-10
+
+**`argument_shape` is gone: the call arguments, the struct-literal fields, the asserts and the tier pass's hole wraps are keyed on the id (ADR-340 D4, #558, step 4).**
+- `lent_args`, `mut_args`, `copied_args`, `nullable_args`, `nullable_fields`, `lookup_keys`, `count_args`, `path_methods` and `field_calls` were keyed on a statement, a callee and a position and held the `{:?}` text of the argument; they are sets and maps of ids. `a_lent_part_is_handed_on_as_it_is` removes the ids of the lent part's reads instead of the shapes in a statement range.
+- `claims` and the prover's `held` are keyed on the statement and the id of the condition; `tools/prover_*.nika` lose the `shape_of` callback and use `node_key`.
+- `Parsed::hole_wraps` and `wrap_hole` name the value by its id, so wrapping a hole is one walk. `check::argument_shape` is deleted: no table is keyed on the text of an expression any more.
+- `call_on` takes the receiver; `counts_in_usize` the arguments.
+
 ## [0.0.782] — 2026-10-10
 
 **The checker's tables about an expression, kept by statement and the text of its shape, are keyed on its id (ADR-340 D4, #558, step 4).**

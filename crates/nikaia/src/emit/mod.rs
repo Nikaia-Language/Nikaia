@@ -1314,9 +1314,9 @@ struct Emitter<'p> {
     text_finds: std::collections::BTreeSet<usize>,
     /// The arguments that are a count in `usize` below, by the entry the checker
     /// resolved ([ADR-293](../../docs/specification/adr/adr-293.md) D20).
-    count_args: std::collections::BTreeSet<(usize, String, usize)>,
+    count_args: std::collections::BTreeSet<usize>,
     /// `check::Checked::path_methods`.
-    path_methods: std::collections::BTreeSet<(usize, String, String)>,
+    path_methods: std::collections::BTreeMap<usize, bool>,
     /// How a key goes into a map's brackets where the map's keys are owned
     /// ([ADR-293](../../docs/specification/adr/adr-293.md) D27).
     map_keys: std::collections::BTreeMap<(usize, bool), crate::check::KeyForm>,
@@ -1394,7 +1394,7 @@ struct Emitter<'p> {
     /// callee is that same name.
     in_a_kept_call: std::cell::RefCell<bool>,
     /// `check::Checked::field_calls`.
-    field_calls: std::collections::BTreeMap<(usize, String), bool>,
+    field_calls: std::collections::BTreeMap<usize, bool>,
     /// Set while a parameter's type is written, where a function type the
     /// callee only runs is a closure argument rather than a kept value.
     in_parameter: std::cell::RefCell<bool>,
@@ -1669,10 +1669,7 @@ struct Emitter<'p> {
     held: std::cell::RefCell<HashMap<usize, String>>,
     /// Part I 2.3: the struct-literal fields where a plain value stands in a
     /// nullable slot (`check::Checked::nullable_fields`).
-    nullable_fields: std::collections::BTreeMap<
-        (usize, String, String),
-        std::collections::BTreeMap<String, crate::check::Wrap>,
-    >,
+    nullable_fields: std::collections::BTreeMap<(usize, String), crate::check::Wrap>,
     /// **The arguments the compiler writes a `&` for**
     /// ([ADR-094](../../docs/specification/adr/adr-094.md) D1), keyed exactly
     /// as `nullable_args` is and for the same reason: a statement may call one
@@ -1682,10 +1679,9 @@ struct Emitter<'p> {
     /// (`contracts::keeps::lends`), because that half is a question about the
     /// callee alone. This half needed the checker, because it also asks whether
     /// this argument is already a view.
-    lent_args:
-        std::collections::BTreeMap<(usize, String, usize), std::collections::BTreeSet<String>>,
+    lent_args: std::collections::BTreeSet<usize>,
     /// `check::Checked::lookup_keys` (0.0.235).
-    lookup_keys: std::collections::BTreeSet<(usize, String, String)>,
+    lookup_keys: std::collections::BTreeSet<usize>,
     /// `check::Checked::boxed_members`
     /// ([ADR-246](../../docs/specification/adr/adr-246.md)).
     boxed_members: std::collections::BTreeMap<String, std::collections::BTreeSet<String>>,
@@ -1705,7 +1701,7 @@ struct Emitter<'p> {
     /// `check::Checked::compared_numbers` (#531).
     compared_numbers: std::collections::BTreeSet<(usize, String)>,
     /// `check::Checked::claims` ([ADR-269](../../docs/specification/adr/adr-269.md) D2).
-    claims: std::collections::BTreeMap<(usize, String), crate::check::Claim>,
+    claims: std::collections::BTreeMap<(usize, usize), crate::check::Claim>,
     /// `check::Checked::entries` ([ADR-269](../../docs/specification/adr/adr-269.md) D20).
     entries: std::collections::BTreeMap<String, Vec<crate::prove::Check>>,
     /// `check::Checked::reaches` (ADR-269 D20).
@@ -1727,18 +1723,13 @@ struct Emitter<'p> {
     /// ([ADR-094](../../docs/specification/adr/adr-094.md) D3), keyed as
     /// `lent_args` is. The third state, and the one that is a declaration
     /// rather than an inference.
-    mut_args:
-        std::collections::BTreeMap<(usize, String, usize), std::collections::BTreeSet<String>>,
+    mut_args: std::collections::BTreeSet<usize>,
     /// [`crate::check::Checked::copied_args`] (ADR-233 D4).
-    copied_args:
-        std::collections::BTreeMap<(usize, String, usize), std::collections::BTreeSet<String>>,
+    copied_args: std::collections::BTreeSet<usize>,
     /// Part I 2.3: the call arguments where a plain value stands in a nullable
     /// parameter, by statement, callee as written, and position
     /// (`check::Checked::nullable_args`).
-    nullable_args: std::collections::BTreeMap<
-        (usize, String, usize),
-        std::collections::BTreeMap<String, crate::check::Wrap>,
-    >,
+    nullable_args: std::collections::BTreeMap<usize, crate::check::Wrap>,
     /// **The options a method call has**, in the declaration's order, by the
     /// byte the statement starts at and the method's written name
     /// (`check::Checked::method_options`).
@@ -5616,6 +5607,7 @@ impl<'p> Emitter<'p> {
     /// `:name` is a deferred parameter and the body reaches its driver intact.
     /// A body with neither is refused, because nothing here knows what it
     /// means.
+    #[allow(clippy::too_many_arguments)]
     fn template(
         &self,
         out: &mut Out,
@@ -9269,27 +9261,13 @@ impl<'p> Emitter<'p> {
                     }
                     out.push(&self.name(field.name));
                     // Part I 2.3: a plain value in a field the struct declares
-                    // nullable. Keyed by the field's own name, because a struct
-                    // literal has one of these per field and the statement has
-                    // only one span - **and by the type and the value's shape**,
-                    // because a statement may build two literals
-                    // (`check::argument_shape`).
+                    // nullable, by the value's id.
                     let how = self
                         .nullable_fields
                         .get(&(
-                            flow.statement,
-                            owner.to_string(),
+                            crate::check::value_node(expr),
                             self.text(field.name).to_string(),
                         ))
-                        .and_then(|by_shape| {
-                            by_shape.get(
-                                &field
-                                    .value
-                                    .as_ref()
-                                    .map(crate::check::argument_shape)
-                                    .unwrap_or_default(),
-                            )
-                        })
                         .copied();
                     let (before, after) = Self::around(how);
                     // **A boxed field is built in its box**
@@ -9809,7 +9787,7 @@ impl<'p> Emitter<'p> {
                 // as one left of `<` does: `x as i64 << 3` is `i64<…>` to Rust.
                 // Only where `nested` would not write them itself.
                 let cast_before_a_shift = matches!(op, BinaryOp::Shl)
-                    && self.ends_in_a_cast(lhs, flow)
+                    && self.ends_in_a_cast(lhs)
                     && !matches!(lhs.as_ref(), Expr::Binary { op: inner, .. } if precedence(*inner) < here);
                 if cast_before_a_shift {
                     out.push("(");
@@ -10457,7 +10435,7 @@ impl<'p> Emitter<'p> {
             && self.text(*name) == crate::check::ASSERT
             && let Some(claim) = self
                 .claims
-                .get(&(flow.statement, crate::check::argument_shape(condition)))
+                .get(&(flow.statement, crate::check::value_node(condition)))
         {
             // **A claim held before the program runs costs nothing when it
             // does** ([ADR-269](../../docs/specification/adr/adr-269.md) D4,
@@ -12633,12 +12611,11 @@ impl<'p> Emitter<'p> {
         depth: usize,
         flow: Flow<'_>,
     ) -> Result<bool> {
-        let called = format!(
-            "{}.{}",
-            crate::check::argument_shape(receiver),
-            self.text(method)
-        );
-        let Some(pauses) = self.field_calls.get(&(flow.statement, called)).copied() else {
+        let Some(pauses) = self
+            .field_calls
+            .get(&crate::check::value_node(receiver))
+            .copied()
+        else {
             return Ok(false);
         };
         // **Inside a lambda, as a pausing function is**
@@ -13479,21 +13456,12 @@ impl<'p> Emitter<'p> {
         // so the call is written to `nikaia_std::fs::path`, which compares
         // the bytes.
         if let Some(on) = receiver
-            && self.path_methods.contains(&(
-                flow.statement,
-                self.text(method).to_string(),
-                format!("{args:?}"),
-            ))
+            && let Some(known_text) = self.path_methods.get(&crate::check::value_node(on))
         {
             let name = self.text(method).to_string();
             // **`to_text` on a name made from text cannot fail** (ADR-319
             // D5), and the checker said where.
-            let known = name == "to_text"
-                && self.path_methods.contains(&(
-                    flow.statement,
-                    "text_of".to_string(),
-                    format!("{args:?}"),
-                ));
+            let known = name == "to_text" && *known_text;
             let written = match known {
                 true => "text_of",
                 false => name.as_str(),
@@ -14036,7 +14004,7 @@ impl<'p> Emitter<'p> {
             } = &**end
             && args.is_empty()
             && self.text(*method) == "len"
-            && crate::check::argument_shape(receiver) == crate::check::argument_shape(base)
+            && **receiver == *base
         {
             // A start in literals is handed over as written, for the reason
             // a range in literals is (below): `at` has nothing to infer from.
@@ -14153,11 +14121,11 @@ impl<'p> Emitter<'p> {
     /// (Part III, C.1).
     /// Whether `expr` is written ending in `as T`: a conversion, or an
     /// operation whose right operand is written bare and ends in one.
-    fn ends_in_a_cast(&self, expr: &Expr, flow: Flow<'_>) -> bool {
+    fn ends_in_a_cast(&self, expr: &Expr) -> bool {
         match expr {
             Expr::Binary { op, rhs, .. } => match &**rhs {
                 Expr::Binary { op: inner, .. } if precedence(*inner) < precedence(*op) + 1 => false,
-                rhs => self.ends_in_a_cast(rhs, flow),
+                rhs => self.ends_in_a_cast(rhs),
             },
             _ => self.emits_as_cast(expr),
         }
@@ -14207,7 +14175,7 @@ impl<'p> Emitter<'p> {
             // `contracts::spelling` into Nikaia, #125).
             Expr::Binary { op, .. } => {
                 precedence(*op) < needs
-                    || (needs == precedence(BinaryOp::Lt) && self.ends_in_a_cast(expr, flow))
+                    || (needs == precedence(BinaryOp::Lt) && self.ends_in_a_cast(expr))
             }
             // **An operand that comes out as a conversion**, in the two
             // positions where Rust reads it wrongly without parentheses.
@@ -14277,13 +14245,7 @@ impl<'p> Emitter<'p> {
             // **A lookup's key of no known type** (0.0.235): the reference the
             // map wants, whichever of a number or a view the key turns out to
             // be (`check::Checked::lookup_keys`).
-            if i == 0
-                && self.lookup_keys.contains(&(
-                    flow.statement,
-                    callee.to_string(),
-                    crate::check::argument_shape(arg),
-                ))
-            {
+            if i == 0 && self.lookup_keys.contains(&crate::check::value_node(arg)) {
                 out.push("nikaia_std::index::AsKey::as_key(&");
                 self.expr(out, arg, depth, flow)?;
                 out.push(")");
@@ -14303,16 +14265,11 @@ impl<'p> Emitter<'p> {
                 && matches!(arg, Expr::Variable(_, _) | Expr::Field { .. });
             // Part I 2.3: a plain value in a parameter the callee declares
             // nullable.
-            // **And which of the statement's calls this is**
-            // (`check::argument_shape`): the three parts above name a
-            // *parameter*, and a statement may call one function twice. The
-            // shape is built only where something was recorded for this
-            // statement, callee and position, so the common argument pays a
-            // lookup and no allocation beyond the one this key already made.
+            // Found by the argument's id (`check::Checked::nullable_args`),
+            // which says which call and which parameter it is.
             let (before, after) = Self::around_value(
                 self.nullable_args
-                    .get(&(flow.statement, callee.to_string(), i))
-                    .and_then(|by_shape| by_shape.get(&crate::check::argument_shape(arg)))
+                    .get(&crate::check::value_node(arg))
                     .copied(),
                 arg,
             );
@@ -14337,9 +14294,7 @@ impl<'p> Emitter<'p> {
             // `is_count` is and has to be for a ledger's entries.
             let wants_a_size = is_count(callee, i)
                 || self.takes_a_size(callee, i)
-                || self
-                    .count_args
-                    .contains(&(flow.statement, callee.to_string(), i));
+                || self.count_args.contains(&crate::check::value_node(arg));
             let count = wants_a_size && !only_literals(arg);
             // **The caller writes no `&`** ([ADR-094](../../docs/specification/adr/adr-094.md)
             // D1): where the callee reads this argument rather than keeping it,
@@ -14348,12 +14303,8 @@ impl<'p> Emitter<'p> {
             // and where the source wrote one itself, `NK1137` has already
             // refused the program rather than letting a `&&T` reach the
             // language below.
-            let shape = crate::check::argument_shape(arg);
-            let key = (flow.statement, callee.to_string(), i);
-            let lend = self
-                .lent_args
-                .get(&key)
-                .is_some_and(|shapes| shapes.contains(&shape))
+            let node = crate::check::value_node(arg);
+            let lend = self.lent_args.contains(&node)
                 // **A literal is a view already** (ADR-282 D5): lent to a
                 // `&str` it is written as it is, and a `&` in front of it would
                 // be a `&&str` the language below has to see through.
@@ -14362,10 +14313,7 @@ impl<'p> Emitter<'p> {
             // which is the one of the three states the *author* wrote rather
             // than the inference. The two maps are disjoint by construction:
             // `lends` withholds its claim on a `mut` position.
-            let change = self
-                .mut_args
-                .get(&key)
-                .is_some_and(|shapes| shapes.contains(&shape));
+            let change = self.mut_args.contains(&node);
             // **A lambda handed to a parameter whose type may pause**
             // ([ADR-277](../../docs/specification/adr/adr-277.md) D11): a
             // closure that returns a **boxed future**, which is what a callee
@@ -14642,11 +14590,7 @@ impl<'p> Emitter<'p> {
                             }
                             // **A view of a value that copies, where the value
                             // is wanted** (ADR-233 D4): copied out of it.
-                            if self
-                                .copied_args
-                                .get(&key)
-                                .is_some_and(|shapes| shapes.contains(&shape))
-                            {
+                            if self.copied_args.contains(&node) {
                                 out.push("*");
                                 self.postfix_base(out, arg, depth, inside)?
                             } else if let Some(arity) = self

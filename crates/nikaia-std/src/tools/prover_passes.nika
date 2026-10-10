@@ -19,7 +19,7 @@ pub struct ProverAnswers {
 
 /// **Every claim of the program, proved** - the walk's `held`, `reaches` and
 /// `findings` are the last walk's - and what the passes make of it.
-pub fn prover_passes(mut walk: ProverWalk, program: ref Program, words: ref winnow_grammar::InternerContext, own: ref Ledger, library: ref Ledger, ask: fn(ref TermArena, ref Vec[i64], i64) -> SolverAnswer sync, model: fn(ref TermArena, ref Vec[i64], i64) -> collections::BTreeMap[String, i64]? sync, escape: fn(ref String) -> String sync, holes_of: fn(ref Expr) -> Vec[Expr] sync, unaliased: fn(ref String) -> String sync, written_of: fn(ref Expr) -> String sync, shape_of: fn(ref Expr) -> String sync, condition: fn(ref String, ref collections::BTreeSet[String]) -> Vec[SolverTerm] sync) -> ProverAnswers {
+pub fn prover_passes(mut walk: ProverWalk, program: ref Program, words: ref winnow_grammar::InternerContext, own: ref Ledger, library: ref Ledger, ask: fn(ref TermArena, ref Vec[i64], i64) -> SolverAnswer sync, model: fn(ref TermArena, ref Vec[i64], i64) -> collections::BTreeMap[String, i64]? sync, escape: fn(ref String) -> String sync, holes_of: fn(ref Expr) -> Vec[Expr] sync, unaliased: fn(ref String) -> String sync, written_of: fn(ref Expr) -> String sync, condition: fn(ref String, ref collections::BTreeSet[String]) -> Vec[SolverTerm] sync) -> ProverAnswers {
     // Pass 1: which parameter claims are preconditions (D5) - a function's
     // own `assert`s, and what its calls ask that it cannot show (D15). The
     // second depends on the callees' preconditions, so the pass repeats with
@@ -32,7 +32,7 @@ pub fn prover_passes(mut walk: ProverWalk, program: ref Program, words: ref winn
         walk.state.known = preconditions
         walk.state.preconditions = collections::BTreeMap()
         walk.state.candidates = collections::BTreeMap()
-        prover_bodies(walk, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition)
+        prover_bodies(walk, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, condition)
         preconditions = walk.state.preconditions.clone()
         if same_preconditions(walk.arena, preconditions, walk.state.known) {
             break
@@ -55,7 +55,7 @@ pub fn prover_passes(mut walk: ProverWalk, program: ref Program, words: ref winn
         walk.reaches = collections::BTreeMap()
         walk.findings = []
         walk.state.broken = collections::BTreeSet()
-        prover_bodies(walk, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition)
+        prover_bodies(walk, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, condition)
         settled = walk.state.broken.is_empty()
         if !settled {
             strike_broken(walk.state)
@@ -177,7 +177,7 @@ fn count_checked_calls(mut walk: ProverWalk) {
             else => {},
         }
     }
-    let mut counted: collections::BTreeMap[(i64, String), ClaimHeld] = collections::BTreeMap()
+    let mut counted: collections::BTreeMap[(i64, i64), ClaimHeld] = collections::BTreeMap()
     for (key, held) in walk.held {
         let now = match held {
             ClaimHeld::Precondition(function, _) => ClaimHeld::Precondition(function.clone(), checked[function] ?? 0),
@@ -199,8 +199,8 @@ fn hold_unreached(mut walk: ProverWalk, program: ref Program) {
             else => {},
         }
     }
-    for (at, shape) in walk.claims {
-        let key = (at, shape.clone())
+    for (at, node) in walk.claims {
+        let key = (at, node)
         if walk.held.contains_key(key) {
             continue
         }

@@ -54,7 +54,7 @@ pub type Reaches = BTreeMap<(String, String), Reach>;
 #[derive(Debug, Default)]
 pub struct Proved {
     pub findings: Vec<Finding>,
-    pub held: BTreeMap<(usize, String), Held>,
+    pub held: BTreeMap<(usize, usize), Held>,
     /// By the ledger's key (`f`, `Type::m`): what the checked entry checks.
     pub entries: BTreeMap<String, Vec<Check>>,
     pub reaches: Reaches,
@@ -77,7 +77,7 @@ pub fn prove(
     parsed: &Parsed,
     own: &Ledger,
     library: &Ledger,
-    claims: &BTreeSet<(usize, String)>,
+    claims: &BTreeSet<(usize, usize)>,
 ) -> Proved {
     let mut walk = ProverWalk {
         state: ProverState::fresh(),
@@ -87,7 +87,7 @@ pub fn prove(
         findings: Vec::new(),
         claims: claims
             .iter()
-            .map(|(at, shape)| (*at as i64, shape.clone()))
+            .map(|(at, node)| (*at as i64, *node as i64))
             .collect(),
     };
     // **The passes, and what they make** (`tools/prover_passes.nika`): the
@@ -106,7 +106,6 @@ pub fn prove(
         &|e| crate::emit::literal_expressions(parsed, e),
         &|name| parsed.unaliased(name),
         &|e| crate::check::written(parsed, e),
-        &|e| crate::check::argument_shape(e),
         &|text, names| condition_nodes(text, names),
     );
     Proved {
@@ -118,7 +117,7 @@ pub fn prove(
         held: walk
             .held
             .into_iter()
-            .map(|((at, shape), held)| ((at as usize, shape), held))
+            .map(|((at, node), held)| ((at as usize, node as usize), held))
             .collect(),
         entries: answers.entries,
         reaches: walk.reaches,

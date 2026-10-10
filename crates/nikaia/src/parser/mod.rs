@@ -370,13 +370,13 @@ pub struct Parsed {
     /// ([ADR-321](../../../docs/specification/adr/adr-321.md) D13).
     pub package: Option<String>,
     /// **What goes into a mixed position from inside an `f"…"` hole**, by the
-    /// hole's place - the byte its `{` stands at: the shape of each value and the method it is handed over
+    /// hole's place - the byte its `{` stands at: the id of each value and the method it is handed over
     /// with ([ADR-229](../../../docs/specification/adr/adr-229.md) D1). An
     /// `f"…"`'s holes are the grammar's ([ADR-309](../../../docs/specification/adr/adr-309.md)),
     /// and each reader takes a copy of one, so the wrap is applied where the
     /// copy is taken - [`crate::emit::literal_expressions`] - and every reader
     /// sees it.
-    pub hole_wraps: std::collections::BTreeMap<u32, Vec<(String, winnow_grammar::Symbol)>>,
+    pub hole_wraps: std::collections::BTreeMap<u32, Vec<(usize, winnow_grammar::Symbol)>>,
     /// **Every hole this file's readers parsed, by its text**: what
     /// [`Parsed::hole`] answered before. Each analysis walks every literal and
     /// parses its holes again, which was a fifth of lowering a program with a
@@ -385,6 +385,11 @@ pub struct Parsed {
     /// the first one copied. Only what parsed is kept; a hole that does not is
     /// said by whoever asks, in their own words, every time.
     holes: std::sync::Mutex<std::collections::HashMap<(u32, String), ast::Expr>>,
+    /// **The call a named function stands for where a function value is
+    /// kept**, by the function's name and its arity: one tree for the checker
+    /// that types it and the emitter that writes it, so the ids they look the
+    /// call up by agree ([`Parsed::kept_function_call`]).
+    kept_calls: std::sync::Mutex<std::collections::HashMap<(String, usize), (Vec<Symbol>, ast::Expr)>>,
     /// **The next id this file has not given**
     /// ([ADR-340](../../../docs/specification/adr/adr-340.md) D1): where the
     /// parse of the file stopped counting, and where a hole parsed later
@@ -422,6 +427,34 @@ impl Parsed {
         Ok(expr)
     }
 
+    /// **The call a named function stands for where a function value is
+    /// kept**: `double` put in a field is `fn(__nikaia_arg0) {
+    /// double(__nikaia_arg0) }`. Built once for a name and an arity, with ids of
+    /// its own, and read by the checker, which types it, and the emitter, which
+    /// writes it - so the two agree about every key the call is looked up by.
+    pub fn kept_function_call(&self, name: Symbol, arity: usize) -> (Vec<Symbol>, ast::Expr) {
+        let key = (self.text(name).to_string(), arity);
+        let mut built = self.kept_calls.lock().expect("a kept call build panicked");
+        built
+            .entry(key)
+            .or_insert_with(|| {
+                let names: Vec<Symbol> = (0..arity)
+                    .map(|at| self.interner.intern_string(&format!("__nikaia_arg{at}")))
+                    .collect();
+                let call = ast::Expr::Call {
+                    func: Box::new(ast::Expr::Variable(name, ast::NodeId::fresh())),
+                    args: names
+                        .iter()
+                        .map(|n| ast::Expr::Variable(*n, ast::NodeId::fresh()))
+                        .collect(),
+                    config: Vec::new(),
+                    id: ast::NodeId::fresh(),
+                };
+                (names, call)
+            })
+            .clone()
+    }
+
     /// The same file with only the items `keep` says yes to.
     ///
     /// **The interner travels with them**, which is the whole reason this is a
@@ -447,6 +480,7 @@ impl Parsed {
             package: self.package.clone(),
             hole_wraps: self.hole_wraps.clone(),
             holes: Default::default(),
+            kept_calls: Default::default(),
             next_id: std::sync::Mutex::new(*self.next_id.lock().expect("a hole parse panicked")),
         }
     }
@@ -483,6 +517,7 @@ impl Parsed {
             package: self.package.clone(),
             hole_wraps: self.hole_wraps.clone(),
             holes: Default::default(),
+            kept_calls: Default::default(),
             next_id: std::sync::Mutex::new(*self.next_id.lock().expect("a hole parse panicked")),
         }
     }
@@ -721,6 +756,7 @@ pub fn parse_to_ast(input: &str) -> Result<Parsed> {
         package: None,
         hole_wraps: std::collections::BTreeMap::new(),
         holes: Default::default(),
+        kept_calls: Default::default(),
         next_id: std::sync::Mutex::new(after_ids),
     };
     // **What a `String` field or result is below is decided here, once**

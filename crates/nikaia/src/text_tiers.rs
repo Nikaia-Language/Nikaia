@@ -166,18 +166,20 @@ pub fn refine(parsed: &mut Parsed) {
         .hole_wraps
         .iter()
         .map(|(at, wraps)| {
-            // By the value's shape, which is what the hole is matched by when
-            // it is parsed out of the literal again.
-            let shapes: BTreeSet<(String, usize)> = wraps
+            // By the value's id, which is what the hole is matched by wherever
+            // a reader takes a copy of it (ADR-340).
+            let nodes: BTreeSet<(usize, usize)> = wraps
                 .iter()
                 .map(|wrap| {
-                    let shape = crate::check::argument_shape(&wrap.value);
-                    (shape, hand_number(&wrap.hand) as usize)
+                    (
+                        crate::check::value_node(&wrap.value),
+                        hand_number(&wrap.hand) as usize,
+                    )
                 })
                 .collect();
-            let wraps = shapes
+            let wraps = nodes
                 .into_iter()
-                .map(|(shape, hand)| (shape, into[hand]))
+                .map(|(node, hand)| (node, into[hand]))
                 .collect();
             (*at as u32, wraps)
         })
@@ -612,33 +614,19 @@ fn said(tiers: &Tiers) -> Vec<String> {
         .collect()
 }
 
-/// **Apply a hole's wraps to it as it is parsed** (ADR-229 D1): each value
-/// whose shape was recorded becomes `value.<method>()`, innermost first, as
-/// [`wrap_item`] does to the program.
-pub fn wrap_hole(hole: &mut Expr, wraps: &[(String, winnow_grammar::Symbol)]) {
-    // The shapes are read off the tree as it was parsed, before any wrapper
-    // changes the text of a parent; what matched is replaced by its id.
-    let mut marked: Vec<(usize, winnow_grammar::Symbol)> = Vec::new();
-    let mut mark = |expr: &mut Expr| {
-        let shape = crate::check::argument_shape(expr);
-        if let Some((_, method)) = wraps.iter().find(|(s, _)| *s == shape) {
+/// **Apply a hole's wraps to it** (ADR-229 D1): each value whose id was
+/// recorded becomes `value.<method>()`, as [`wrap_item`] does to the program.
+/// The wrapper takes an id of its own and what it wraps keeps its own, so a
+/// reader of the copy finds what the checker recorded about the value.
+pub fn wrap_hole(hole: &mut Expr, wraps: &[(usize, winnow_grammar::Symbol)]) {
+    visit_expr_mut(
+        hole,
+        &mut |expr| {
             let id = crate::check::value_node(expr);
-            // Once for an id, whatever number of nodes carry it.
-            if !marked.iter().any(|(seen, _)| *seen == id) {
-                marked.push((id, *method));
+            if let Some((_, method)) = wraps.iter().find(|(wanted, _)| *wanted == id) {
+                wrapped(expr, *method);
             }
-        }
-    };
-    visit_expr_mut(hole, &mut mark, &mut |_, _| {});
-    for (id, method) in marked {
-        visit_expr_mut(
-            hole,
-            &mut |expr| {
-                if crate::check::value_node(expr) == id {
-                    wrapped(expr, method);
-                }
-            },
-            &mut |_, _| {},
-        );
-    }
+        },
+        &mut |_, _| {},
+    );
 }
