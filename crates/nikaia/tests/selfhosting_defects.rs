@@ -358,3 +358,411 @@ fn main() {
     );
     assert_eq!(said.trim(), "([1]+([2]+[3]))\n((3+2)+1)\n((3+2)+1)\n2\n7 2");
 }
+
+/// #567: a `match` over a `let` over a place, over a field and through a nested `match` binds a number as the number.
+#[test]
+fn a_number_bound_under_a_reference_is_a_number() {
+    let said = printed(
+        "number-under-a-reference",
+        r#"
+enum V {
+    Case(i64, i64),
+    Pair(V, i64),
+    Nothing,
+}
+
+struct H {
+    kind: V,
+    list: Vec[i64],
+}
+
+impl H {
+    fn one(ref self) -> i64 {
+        match self.kind {
+            V::Case(a, b) => self.list[a] + b * 2
+            else => 0
+        }
+    }
+
+    fn two(ref self, vs: ref Vec[V]) -> i64 {
+        let mut t = 0
+        for v in vs {
+            match v {
+                V::Case(a, b) => { t += self.list[a] + b }
+                V::Pair(inner, k) => {
+                    match inner {
+                        V::Case(c, d) => { t += self.list[c] + d + k }
+                        else => {}
+                    }
+                }
+                V::Nothing => {}
+            }
+        }
+        return t
+    }
+}
+
+fn three(vs: ref Vec[V], list: ref Vec[i64]) -> i64 {
+    let v = vs[0]
+    match v {
+        V::Case(a, b) => list[a] + b
+        else => 0
+    }
+}
+
+
+fn five(h: ref H) -> i64 {
+    match h.kind {
+        V::Pair(inner, k) => {
+            match inner {
+                V::Case(c, d) => h.list[c] + d + k
+                else => 0
+            }
+        }
+        else => 0
+    }
+}
+
+fn main() {
+    let h = H { kind: V::Case(1, 5), list: [10, 20, 30] }
+    let vs = [V::Case(1, 5), V::Pair(V::Case(2, 1), 4)]
+    println(f"{h.one()} {h.two(vs)} {three(vs, h.list)} {five(h)}")
+}
+"#,
+    );
+    assert_eq!(said.trim(), "30 60 25 0");
+}
+
+/// #570: `v[v.len() - 1] = x` and `+=`, on a list, a list of lists and a field.
+#[test]
+fn an_index_that_reads_the_target_is_worked_out_before_the_write() {
+    let said = printed(
+        "index-reads-the-target",
+        r#"
+struct Holder {
+    items: Vec[i64],
+}
+
+fn last_set(mut v: Vec[i64], x: i64) {
+    v[v.len() - 1] = x
+}
+
+fn last_add(mut v: Vec[i64]) {
+    v[v.len() - 1] += 1
+}
+
+fn nested(mut vv: Vec[Vec[i64]]) {
+    vv[vv.len() - 1][0] = 9
+    vv[0][vv[0].len() - 1] += 2
+}
+
+fn field(mut h: Holder) {
+    h.items[h.items.len() - 1] = 7
+}
+
+fn main() {
+    let mut v: Vec[i64] = [1, 2, 3]
+    last_set(v, 8)
+    last_add(v)
+    let mut vv: Vec[Vec[i64]] = [[1, 2], [3, 4]]
+    nested(vv)
+    let mut h = Holder { items: [5, 6] }
+    field(h)
+    let mut w: Vec[i64] = [1, 2, 3]
+    w[w.len() - 1] = 5
+    w[w.len() - 1] += 1
+    println(f"{v[2]} {vv[1][0]} {vv[0][1]} {h.items[1]} {w[2]}")
+}
+"#,
+    );
+    assert_eq!(said.trim(), "9 9 4 7 6");
+}
+
+/// #574: `x ?? BinaryOp::Add` for an `x: ref BinaryOp?`, with a struct variant as the fallback.
+#[test]
+fn a_value_beside_a_view_of_an_option_is_lent_with_it() {
+    let said = printed(
+        "fallback-beside-a-view",
+        r#"
+enum BinaryOp {
+    Add,
+    Sub,
+    Mul,
+}
+
+enum Shape {
+    Square(i64),
+    Rect { w: i64, h: i64 },
+}
+
+
+fn name(op: ref BinaryOp) -> String {
+    match op {
+        BinaryOp::Add => "add".clone()
+        BinaryOp::Sub => "sub".clone()
+        BinaryOp::Mul => "mul".clone()
+    }
+}
+
+fn pick(x: ref BinaryOp?) -> String {
+    let op = x ?? BinaryOp::Add
+    return name(op)
+}
+
+fn pick_const(x: ref BinaryOp?) -> String {
+    let op = x ?? BinaryOp::Mul
+    return name(op)
+}
+
+fn area(s: ref Shape?) -> i64 {
+    let shape = s ?? Shape::Rect { w: 2, h: 3 }
+    match shape {
+        Shape::Square(n) => n * n
+        Shape::Rect { w, h } => w * h
+    }
+}
+
+fn main() {
+    let some: BinaryOp? = BinaryOp::Sub
+    let none: BinaryOp? = null
+    let shape: Shape? = null
+    println(f"{pick(some)} {pick(none)} {pick_const(none)} {area(shape)}")
+}
+"#,
+    );
+    assert_eq!(said.trim(), "sub add mul 6");
+}
+
+/// #566: `return ("text", n)` for a `(String, i64)`, a tail, a struct field, a list element and a nested tuple (no longer reproduces; kept as the test).
+#[test]
+fn a_literal_in_a_tuple_is_text_where_the_result_says_text() {
+    let said = printed(
+        "literal-in-a-tuple",
+        r#"
+struct Row {
+    name: String,
+    n: i64,
+}
+
+fn pair(n: i64) -> (String, i64) {
+    return ("text", n)
+}
+
+fn tail(n: i64) -> (String, i64) {
+    ("tail", n)
+}
+
+fn built(n: i64) -> Row {
+    return Row { name: "row", n: n }
+}
+
+fn rows(n: i64) -> Vec[(String, i64)] {
+    return [("a", n), ("b", n + 1)]
+}
+
+fn nested(n: i64) -> ((String, i64), String) {
+    return (("deep", n), "outer")
+}
+
+fn main() {
+    let (s, n) = pair(1)
+    let (t, m) = tail(2)
+    let r = built(3)
+    let xs = rows(4)
+    let q = nested(5)
+    println(f"{s}{n} {t}{m} {r.name}{r.n} {xs.len()} {q.0.0}{q.0.1}{q.1}")
+}
+"#,
+    );
+    assert_eq!(said.trim(), "text1 tail2 row3 2 deep5outer");
+}
+
+/// #568: mutually recursive `throws` functions, one throwing `make_error(x)` (no longer reproduces; kept as the test).
+#[test]
+fn a_group_that_throws_a_called_error_keeps_its_channel() {
+    let said = printed(
+        "throw-a-call",
+        r#"
+enum Fault {
+    Odd { at: i64 },
+    Deep(i64),
+}
+
+impl Error for Fault {
+    fn message(ref self) -> String {
+        match self {
+            Fault::Odd { at } => f"odd {at}"
+            Fault::Deep(n) => f"deep {n}"
+        }
+    }
+}
+
+fn make_error(x: i64) -> Fault {
+    return Fault::Odd { at: x }
+}
+
+fn even(x: i64) -> i64 throws {
+    if x == 0 {
+        return 0
+    }
+    if x == 7 {
+        throw make_error(x)
+    }
+    return odd(x - 1)
+}
+
+fn odd(x: i64) -> i64 throws {
+    if x == 0 {
+        throw Fault::Deep(x)
+    }
+    return even(x - 1)
+}
+
+fn main() {
+    let r = even(4) catch { -1 }
+    let q = odd(8) catch { -2 }
+    let z = even(7) catch { -3 }
+    println(f"{r} {q} {z}")
+}
+"#,
+    );
+    assert_eq!(said.trim(), "0 -2 -3");
+}
+
+/// #569: a `Copy` and a non-`Copy` enum handed on from a `ref` binding and an owned one (no longer reproduces; kept as the test).
+#[test]
+fn an_enum_is_passed_by_value_from_a_view_and_an_owner() {
+    let said = printed(
+        "enum-by-value",
+        r#"
+enum Op {
+    Add,
+    Sub,
+}
+
+enum Tree {
+    Leaf(i64),
+    Node(Op, Tree, Tree),
+}
+
+fn apply(op: Op, a: i64, b: i64) -> i64 {
+    match op {
+        Op::Add => a + b
+        Op::Sub => a - b
+    }
+}
+
+fn describe(op: Op) -> String {
+    match op {
+        Op::Add => "add".clone()
+        Op::Sub => "sub".clone()
+    }
+}
+
+fn eval(t: ref Tree) -> i64 {
+    match t {
+        Tree::Leaf(n) => n
+        Tree::Node(op, l, r) => apply(op, eval(l), eval(r))
+    }
+}
+
+fn names(ops: ref Vec[Op]) -> Vec[String] {
+    let mut out: Vec[String] = []
+    for op in ops {
+        out.push(describe(op))
+    }
+    return out
+}
+
+fn first(ops: ref Vec[Op]) -> String {
+    let op = ops[0]
+    return describe(op)
+}
+
+fn main() {
+    let t = Tree::Node(Op::Add, Tree::Leaf(2), Tree::Node(Op::Sub, Tree::Leaf(9), Tree::Leaf(4)))
+    let ops = [Op::Add, Op::Sub]
+    println(f"{eval(t)} {names(ops).len()} {first(ops)}")
+}
+"#,
+    );
+    assert_eq!(said.trim(), "7 2 add");
+}
+
+/// #571: `let n = opt ?? return` then `m.get(n)`, `contains_key(n)` and `n.len()` for `ref String?` and `String?` (no longer reproduces; kept as the test).
+#[test]
+fn an_option_opened_past_a_jump_is_not_borrowed_again() {
+    let said = printed(
+        "option-past-a-jump",
+        r#"
+use std::collections
+
+fn lookup(opt: ref String?, m: ref collections::HashMap[String, i64]) -> i64 {
+    let n = opt ?? return 0
+    let a = m.get(n) ?? 0
+    let b = if m.contains_key(n) { 1 } else { 0 }
+    return a + b + n.len()
+}
+
+fn lookup_owned(opt: String?, m: ref collections::HashMap[String, i64]) -> i64 {
+    let n = opt ?? return 0
+    let a = m.get(n) ?? 0
+    let b = if m.contains_key(n) { 1 } else { 0 }
+    return a + b + n.len()
+}
+
+fn main() {
+    let mut m: collections::HashMap[String, i64] = collections::HashMap()
+    m["ab"] = 5
+    let some: String? = "ab"
+    let none: String? = null
+    let other: String? = "ab"
+    println(f"{lookup(some, m)} {lookup(none, m)} {lookup_owned(other, m)}")
+}
+"#,
+    );
+    assert_eq!(said.trim(), "8 0 8");
+}
+
+/// #572: a struct variant holding an enum, matched twice through a `ref` parameter (no longer reproduces; kept as the test).
+#[test]
+fn a_second_match_under_a_view_writes_no_ref() {
+    let said = printed(
+        "match-twice",
+        r#"
+enum Kind {
+    Num(i64),
+    Neg,
+}
+
+enum Term {
+    Atom { kind: Kind, name: String },
+    Group { inner: Kind, count: i64 },
+}
+
+fn show(t: ref Term) -> String {
+    match t {
+        Term::Atom { kind, name } => {
+            match kind {
+                Kind::Num(n) => f"{name}={n}"
+                Kind::Neg => f"-{name}"
+            }
+        }
+        Term::Group { inner, count } => {
+            match inner {
+                Kind::Num(n) => f"g{count}:{n}"
+                Kind::Neg => f"g{count}"
+            }
+        }
+    }
+}
+
+fn main() {
+    let a = Term::Atom { kind: Kind::Num(3), name: "x" }
+    let b = Term::Group { inner: Kind::Neg, count: 2 }
+    println(f"{show(a)} {show(b)}")
+}
+"#,
+    );
+    assert_eq!(said.trim(), "x=3 g2");
+}

@@ -5469,7 +5469,7 @@ fn bt_binary<H: BtHost>(op: &BinaryOp, lhs: &Expr, rhs: &Expr, frame: &collectio
 }
 
 fn bt_op_of(op: Option<&BinaryOp>) -> BinaryOp {
-    let held = nikaia_std::index::or(op, || BinaryOp::Add);
+    let held = nikaia_std::index::or(op, || &BinaryOp::Add);
     match held {
         BinaryOp::Add => BinaryOp::Add,
         BinaryOp::Sub => BinaryOp::Sub,

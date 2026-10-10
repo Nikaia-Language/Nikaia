@@ -13324,8 +13324,11 @@ impl<'a> Checker<'a> {
                 // handed on as the reference, and `rustc` answered *expected
                 // `Symbol`, found `&Symbol`* (found moving the compiler's
                 // `views` into Nikaia, #125).
+                // **And a `let` over a place** (#567): `let v = vs[0]` is a
+                // `&V` below whatever type it has here.
                 let lent_name = matches!(&**value, Expr::Variable(name)
-                    if self.binding(self.parsed.text(*name)).is_some_and(|local| local.lent));
+                    if self.binding(self.parsed.text(*name)).is_some_and(|local| local.lent))
+                    || self.a_lent_let(value);
                 let typed = match lent_name && !typed.is_a_view() && self.takes_away(&typed) {
                     true => view_of(&typed),
                     false => typed,
@@ -15308,6 +15311,28 @@ impl<'a> Checker<'a> {
                         .insert((span.at(), argument_shape(expr)));
                     return view_of(&other);
                 }
+                // **A value written out beside a view of a type of the program's
+                // own** (#574): `x ?? BinaryOp::Add` for an `x: ref BinaryOp?`
+                // is a view whichever side answers, so the fallback is lent
+                // too - a constant the language below promotes to a `&'static`.
+                // It was the value, and `rustc` expected the reference.
+                if let Ty::Nullable(inner) = &left
+                    && !from_a_map
+                    && inner.is_a_view()
+                    && !other.is_a_view()
+                    && let Ty::Named { name, .. } = inner.as_ref()
+                    && !is_number(name)
+                    && !matches!(
+                        crate::contracts::ty::base(name),
+                        "bool" | "char" | "scalar" | "String" | "str"
+                    )
+                    && self.a_value_written_out(fallback)
+                {
+                    self.checked
+                        .lent_map_fallbacks
+                        .insert((span.at(), argument_shape(expr)));
+                    return *inner.clone();
+                }
                 if let Ty::Nullable(inner) = &left {
                     match from_a_map {
                         // **What a map holds has its own sentence**, whether
@@ -16462,6 +16487,22 @@ impl<'a> Checker<'a> {
             labels: Vec::new(),
         });
         None
+    }
+
+    /// Whether an expression is a variant of an enum this file declares, with
+    /// or without its parts, or a struct written out: a value that stands for
+    /// itself, and that the language below can lend as a constant.
+    fn a_value_written_out(&self, written: &Expr) -> bool {
+        let variant = |segments: &[Ident]| {
+            segments.len() == 2
+                && self.is_variant(self.parsed.text(segments[0]), self.parsed.text(segments[1]))
+        };
+        match written {
+            Expr::Path(segments) => variant(segments),
+            Expr::StructLit { .. } => true,
+            Expr::Call { func, .. } => matches!(&**func, Expr::Path(segments) if variant(segments)),
+            _ => false,
+        }
     }
 
     /// **A `??` whose left side is a view and whose fallback owns** (`NK1185`,

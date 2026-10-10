@@ -6801,6 +6801,7 @@ impl<'p> Emitter<'p> {
         flow: Flow<'_>,
     ) -> Result<()> {
         self.hold_owned_receiver(out, stmt, depth, flow)?;
+        self.hold_indices_read_from_the_target(out, stmt, span, depth, flow)?;
         if self.held_reaches.is_empty() {
             return Ok(());
         }
@@ -6829,6 +6830,66 @@ impl<'p> Emitter<'p> {
             self.held
                 .borrow_mut()
                 .insert(receiver as *const Expr as usize, name);
+        }
+        Ok(())
+    }
+
+    /// **An index that reads what the write borrows is worked out first**
+    /// (#570). `v[v.len() - 1] = x` and `v[v.len() - 1] += 1` lowered to a
+    /// write that borrows `v` mutably with `v.len()` inside its arguments:
+    /// `rustc`'s E0502 about a file nobody wrote. The index is bound before the
+    /// statement, `let __nikaia_held_0 = v.len() as i64 - 1;`, which is what a
+    /// reader would write by hand and what the position was going to be.
+    ///
+    /// Only an index of a list that names the root of the place written, and
+    /// not a literal and not a key of a map.
+    fn hold_indices_read_from_the_target(
+        &self,
+        out: &mut Out,
+        stmt: &Stmt,
+        span: &Span,
+        depth: usize,
+        flow: Flow<'_>,
+    ) -> Result<()> {
+        let Stmt::Assign { target, .. } = stmt else {
+            return Ok(());
+        };
+        let mut chain: Vec<&Expr> = Vec::new();
+        let mut at = target;
+        let root = loop {
+            match at {
+                Expr::Index { base, index } => {
+                    chain.push(index);
+                    at = base;
+                }
+                Expr::Field { base, .. } => at = base,
+                Expr::Variable(name) => break self.text(*name),
+                _ => return Ok(()),
+            }
+        };
+        // Evaluated in the order they are written: the innermost base first.
+        for index in chain.into_iter().rev() {
+            if only_literals(index) || self.map_key(span.at(), index, true).is_some() {
+                continue;
+            }
+            let mut mentions = false;
+            crate::contracts::sync::visit_expr(self.parsed, index, &mut |expr| {
+                if let Expr::Variable(name) = expr
+                    && self.text(*name) == root
+                {
+                    mentions = true;
+                }
+            });
+            if !mentions {
+                continue;
+            }
+            let key = index as *const Expr as usize;
+            self.held.borrow_mut().remove(&key);
+            let name = format!("__nikaia_held_{}", self.held.borrow().len());
+            out.push(&format!("let {name} = "));
+            self.index_expr(out, index, depth, flow)?;
+            out.push(&format!(";\n{}", "    ".repeat(depth)));
+            self.held.borrow_mut().insert(key, name);
         }
         Ok(())
     }

@@ -8,6 +8,14 @@ or the specification. A change only to the guide, the notes, the README, the
 website, the tests, the examples or the tooling around them raises nothing and
 has no heading here; `CLAUDE.md` draws the line.
 
+## [0.0.771] — 2026-10-10
+
+**Four lowering defects the self-hosting sessions found (#125, #567, #570, #574).**
+- A number bound by a `match` over a `let` over a place (`let v = vs[0]`, then `match v { V::Case(a, b) => list[a] }`) is read as the number: it was a `&i64` below (#567).
+- An index that reads what the write borrows is worked out first: `v[v.len() - 1] = x` and `v[v.len() - 1] += 1` were `rustc`'s E0502 (#570).
+- `x ?? BinaryOp::Add` for an `x: ref BinaryOp?` lends the fallback too, a constant promoted to a `&'static`: the answer is a view whichever side gives it, and the value was a mismatch (#574). The lowered `tools` package changes by one line.
+- #566, #568, #569, #571 and #572 no longer reproduce on this compiler; each program is now a test in `selfhosting_defects.rs`.
+
 ## [0.0.770] — 2026-10-10
 
 **A field moved out of a borrowed value is refused wherever the value is lent, not only for `ref self` (`NK1131`, #576).**
