@@ -35,7 +35,7 @@
 10-nikaia-light.md #35 refused (as written) [NK1135]  // file: users.nika
 10-nikaia-light.md #36 refused (a body) [NK1117,NK1173]  let moved = p with { x: p.x + 1 }
 10-nikaia-light.md #37 lowered (as written) [about-a-refusal]  // file: main.nika
-10-nikaia-light.md #38 lowered (as written)  // Defining behavior for the User struct
+10-nikaia-light.md #38 refused (as written) [NK1245]  // Defining behavior for the User struct
 10-nikaia-light.md #39 lowered (as written)  enum Message {
 10-nikaia-light.md #40 lowered (as written)  enum Expr {
 10-nikaia-light.md #41 lowered (a body)  let numbers = [1, 2, 3, 4]
@@ -48,7 +48,7 @@
 10-nikaia-light.md #48 fragment (as written) [sketch]  pub fn get[F: Fn](self, comptime path: String, handler:…
 10-nikaia-light.md #49 fragment (as written) [about-a-refusal sketch]  fn reversed[comptime N: i64](xs: Array[i64, N]) -> Arra…
 10-nikaia-light.md #50 refused (as written) [about-a-refusal NK1126]  fn shout[T](x: T) -> String {
-10-nikaia-light.md #51 lowered (as written)  trait Summarize {
+10-nikaia-light.md #51 refused (as written) [NK1245]  trait Summarize {
 10-nikaia-light.md #52 lowered (as written)  use std::time
 10-nikaia-light.md #53 lowered (as written)  trait Summarize {
 10-nikaia-light.md #54 fragment (as written) [about-a-refusal sketch]  // Definition
@@ -88,7 +88,7 @@
 10-nikaia-light.md #88 lowered (a body)  let message = "Hello"
 10-nikaia-light.md #89 lowered (as written)  // file: src/parse.nika      (the same package as src/m…
 10-nikaia-light.md #90 refused (as written) [NK1117,NK1135]  // file: src/main.nika
-10-nikaia-light.md #91 lowered (as written)  use http
+10-nikaia-light.md #91 refused (as written) [NK1245]  use http
 10-nikaia-light.md #92 lowered (as written)  // file: network.nika
 20-nikaia-advance.md #1 refused (as written) [NK1117,NK1135,NK1181]  grammar Json {
 20-nikaia-advance.md #2 refused (as written) [NK1175,NK1181]  // The compiler runs the Json grammar at build time.
@@ -131,7 +131,7 @@
 30-nikaia-tooling.md #9 lowered (as written)  extern {
 30-nikaia-tooling.md #10 lowered (as written)  use std::foreign
 30-nikaia-tooling.md #11 lowered (as written)  // In code
-30-nikaia-tooling.md #12 refused (as written) [NK1109]  // main.nika
+30-nikaia-tooling.md #12 refused (as written) [NK1109,NK1171]  // main.nika
 30-nikaia-tooling.md #13 refused (as written)  use std::backend::x86
 30-nikaia-tooling.md #14 fragment (as written)  pub fn read_to_string() -> String throws   // all of it…
 30-nikaia-tooling.md #15 lowered (as written) [about-a-refusal]  use std::io

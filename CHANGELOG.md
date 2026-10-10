@@ -8,6 +8,19 @@ or the specification. A change only to the guide, the notes, the README, the
 website, the tests, the examples or the tooling around them raises nothing and
 has no heading here; `CLAUDE.md` draws the line.
 
+## [0.0.741] — 2026-10-10
+
+**`develop` is green under failing closed** (ADR-286 D41, #497).
+- A dependency's files are checked against what that package itself reaches,
+  under its own words for it: `c::Id` in a package that calls `deep` `c`.
+- A package's enum case is a value of the enum, as `std`'s is:
+  `http::Method::Post`.
+- A type seen through (`fs::Mapped`, `Shared`) answers methods and indexes with
+  what it holds: `data.lines()`, `data[0..<7]`, `counts.len()`.
+- Left to the refusal that names it: a call through a package whose ledger the
+  build does not read, a `dsl` block for a language no grammar is, an entry a
+  grammar does not have.
+
 ## [0.0.740] — 2026-10-10
 
 **More of what failing closed refused is typed, or asked where it belongs**

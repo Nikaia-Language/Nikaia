@@ -614,22 +614,20 @@ fn a_generic_parameter_is_not_a_type() {
     );
 }
 
-/// A type whose **fields** are not written down anywhere is not checked, so a
-/// field nobody can look up is never an error.
+/// A type whose **fields** are not written down anywhere has a field nobody
+/// can look up, and a value of no known type is refused
+/// ([ADR-286](../../../docs/specification/adr/adr-286.md) D41, #497). It said
+/// nothing until failing closed was switched on.
 ///
-/// **The fixture had to move**, and how it moved is the point. It used to write
-/// `&Row` — a type nothing declares — which stopped being an absence the day
-/// `NK1135` started asking what declares a type
-/// ([ADR-096](../../../docs/specification/adr/adr-096.md)). What this test is
-/// actually about is the *fields*, so the receiver is now a type `std`
-/// publishes and whose fields its ledger does not record: the type resolves,
-/// the field cannot be looked up, and nothing is claimed about it.
+/// The receiver is a type `std` publishes and whose fields its ledger does not
+/// record: the type resolves, the field cannot be looked up, and that is the
+/// refusal.
 #[test]
-fn a_field_of_an_unknown_type_says_nothing() {
-    assert!(
-        findings("use std::fs\n\nfn label(r: ref fs::Mapped) -> ref String { return r.nmae }")
-            .is_empty()
-    );
+fn a_field_of_an_unknown_type_is_refused() {
+    let (code, message) =
+        one("use std::fs\n\nfn label(r: ref fs::Mapped) -> ref String { return r.nmae }");
+    assert_eq!(code, "NK1245");
+    assert_eq!(message, "The compiler can't tell what type `r.nmae` is.");
 }
 
 /// `for (k, v) in map` takes apart a pair whose shape Stage 0 has no signature

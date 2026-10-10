@@ -212,6 +212,13 @@ fn the_specifications_version_is_the_changelogs() {
 /// same claim one position over, for a **bound** naming a trait nothing
 /// declares — so the block is refused in this compiler's words rather than
 /// counted as a program.
+/// **Lowered from 60 to 57 by failing closed** ([ADR-286](../../../docs/specification/adr/adr-286.md)
+/// D41, #497), the fourth time's reason again: Part I 4.3's `impl User` and
+/// 4.7's `impl Summarize for User` read `self.username` of a `User` another
+/// block declares, and 9.1's `use http` block calls an `http::read` the
+/// package does not have. Each lowered because the checker said nothing about
+/// a type it did not know, and `rustc` refused it about a file nobody wrote
+/// (`COMPILES.txt`); each is `NK1245` now.
 #[test]
 fn most_of_a_third_of_the_specifications_blocks_are_programs() {
     let verdicts = specbook::verdicts(&specbook::specification_dir(), &common::workshop());
@@ -220,8 +227,8 @@ fn most_of_a_third_of_the_specifications_blocks_are_programs() {
         .filter(|v| v.stage == Stage::Lowered)
         .count();
     assert!(
-        lowered >= 60,
-        "{lowered} of {} blocks lower, and 60 did when this floor was last set - \
+        lowered >= 57,
+        "{lowered} of {} blocks lower, and 57 did when this floor was last set - \
          raise it if it is beaten, and read the diff if it is not",
         verdicts.len()
     );

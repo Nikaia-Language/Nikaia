@@ -675,6 +675,8 @@ impl Program {
         // rather than a worse one derived here from half the graph. That order
         // is the whole of why this is two passes over the groups and not one.
         let mut library = crate::contracts::std_library();
+        let mut plain: std::collections::BTreeMap<String, crate::contracts::Ledger> =
+            std::collections::BTreeMap::new();
 
         for group in groups(&units) {
             let Some(package) = units[group.start].package.clone() else {
@@ -690,13 +692,32 @@ impl Program {
                 // second-best answer and D1 prefers the one it shipped.
                 &crate::contracts::std_library(),
             );
-            as_its_own.insert(package.clone(), own.clone());
+            plain.insert(package.clone(), own.clone());
             // **The program's own inference reads the dependency as promised**
             // (ADR-288 D28): a call into it that only the inference calls `sync`
             // makes the caller *may pause*. `contracts` keeps the entry as it
             // is, because that is what the lowering reads (D3).
             library.absorb_renaming(Some(&package), &renames, as_promised(own.clone(), |_| true));
             contracts.absorb_renaming(Some(&package), &renames, own);
+        }
+
+        // **And what each reaches, under its own words for it** (#497): a file
+        // of `lib` that writes `c::Id` for a package this build calls `deep` is
+        // checked against `deep`'s ledger absorbed as `c`. After every package
+        // is read, because the order the groups arrive in is not the order
+        // they depend on each other. Without it the type was not known, and a
+        // type nothing knows is refused.
+        for (package, own) in &plain {
+            let mut seen_by_it = own.clone();
+            if let Some(dependency) = dependencies.iter().find(|d| &d.name == package) {
+                for word in &dependency.reachable {
+                    let ours = dependency.renames.get(word).unwrap_or(word);
+                    if let Some(theirs) = plain.get(ours).filter(|_| ours != package) {
+                        seen_by_it.absorb(Some(word), as_promised(theirs.clone(), |_| true));
+                    }
+                }
+            }
+            as_its_own.insert(package.clone(), seen_by_it);
         }
 
         let mut paused_by_code = BTreeMap::new();

@@ -9668,6 +9668,15 @@ impl<'a> Checker<'a> {
             {
                 return self.call_on(held.clone(), method, args, entry, span);
             }
+            // **And a type seen through answers with what it holds** (#497),
+            // as a field read on one does: `data.lines()` on an `fs::Mapped`
+            // is the text's.
+            if let Some(held) = self
+                .seen_through(&on)
+                .filter(|held| held.unseen() != on.unseen())
+            {
+                return self.call_on(held, method, args, entry, span);
+            }
             // Unless the type is a **parameter**, where nothing will ever
             // describe it and saying so now is the whole of `NK1126`.
             self.nothing_says_what_a_parameter_can_do(name, Reached::Method(entry), span);
@@ -12620,7 +12629,9 @@ impl<'a> Checker<'a> {
         // D5): `db.prepare(query; id: 501)` is a row of what that call gave,
         // known where it is lowered, as `field.of(value)` is where it is
         // unrolled.
-        let per_call = self.a_drivers_row(expr);
+        let per_call = self.a_drivers_row(expr)
+            || self.through_a_package_unread(expr)
+            || self.refused_where_it_is_lowered(expr);
         // A member of a value that has no known type is unknown because of
         // that value, whose own refusal (or reason not to) was said.
         let of_an_unknown = matches!(expr, Expr::Field { base, .. } | Expr::MethodCall { receiver: base, .. }
@@ -12667,6 +12678,63 @@ impl<'a> Checker<'a> {
             ),
             labels: Vec::new(),
         });
+    }
+
+    /// **A call through a package whose ledger this build does not read**
+    /// (#497): a dependency's own dependency, which is invisible to the
+    /// program (ADR-286 D21) and checked by the build of the package that
+    /// names it, or a crate nothing describes yet, which `NK1182`'s
+    /// neighbour refuses by name.
+    fn through_a_package_unread(&self, expr: &Expr) -> bool {
+        let func = match expr {
+            Expr::Call { func, .. } => &**func,
+            Expr::Path(_) => expr,
+            _ => return false,
+        };
+        let Expr::Path(segments) = func else {
+            return false;
+        };
+        let [head, _, ..] = segments.as_slice() else {
+            return false;
+        };
+        let head = self.parsed.unaliased(self.parsed.text(*head));
+        let used = self.parsed.program.items.iter().any(|item| {
+            matches!(&item.node, Item::Import { path, .. }
+                if matches!(path.as_slice(), [package] if self.parsed.text(*package) == head))
+        });
+        if !(used || self.modules.contains(&head)) || self.std_modules.contains(&head) {
+            return false;
+        }
+        let prefix = format!("{head}::");
+        ![self.own, self.library].iter().any(|ledger| {
+            ledger.functions.keys().any(|k| k.starts_with(&prefix))
+                || ledger.types.keys().any(|k| k.starts_with(&prefix))
+        })
+    }
+
+    /// **What the lowering refuses in words of its own**: a `dsl` block for a
+    /// language no grammar here is (`dsl markdown { … }`), and an entry a
+    /// grammar does not have (`Tiny::two(…)`). Each is refused at its line
+    /// when it is lowered, naming what is missing, which says more than that
+    /// its type is not known.
+    fn refused_where_it_is_lowered(&self, expr: &Expr) -> bool {
+        match expr {
+            Expr::Dsl { .. } => true,
+            Expr::Call { func, .. } => {
+                let Expr::Path(segments) = &**func else {
+                    return false;
+                };
+                let name = segments
+                    .iter()
+                    .map(|s| self.parsed.text(*s))
+                    .collect::<Vec<_>>()
+                    .join("::");
+                name.split_once("::").is_some_and(|(grammar, _)| {
+                    self.grammars.contains_key(grammar) && !self.own.functions.contains_key(&name)
+                })
+            }
+            _ => false,
+        }
     }
 
     /// **What a DSL driver hands back** (ADR-296 D5): `db.prepare(query; id:
@@ -12847,11 +12915,15 @@ impl<'a> Checker<'a> {
                     // declaration. Only a case that holds nothing: one that
                     // holds something is its constructor.
                     [module, ty, variant] => {
+                        // And a package's (#497): `http::Method::Post`, from
+                        // the ledger the program absorbed it into.
                         let owner = self.parsed.unaliased(&format!("{module}::{ty}"));
-                        match self.library.types.get(&owner).is_some_and(|t| {
-                            t.variants
-                                .iter()
-                                .any(|v| v.name == *variant && v.holds.is_empty())
+                        match [self.library, self.own].iter().any(|ledger| {
+                            ledger.types.get(&owner).is_some_and(|t| {
+                                t.variants
+                                    .iter()
+                                    .any(|v| v.name == *variant && v.holds.is_empty())
+                            })
                         }) {
                             true => Ty::named(owner),
                             false => Ty::Unknown,
@@ -15182,6 +15254,12 @@ impl<'a> Checker<'a> {
                 // **An index of a mapping is a page fault**
                 // ([ADR-281](../../docs/specification/adr/adr-281.md) D35).
                 self.io_inside_a_door(&on, "this index", span);
+                // A type seen through is indexed as what it holds (#497):
+                // `data[0..<7]` on an `fs::Mapped` is a slice of its text.
+                let on = match self.seen_through(&on) {
+                    Some(held) if held.unseen() != on.unseen() => held,
+                    _ => on,
+                };
                 // **A view of a run is indexed as the run is** (ADR-179 D1,
                 // ADR-293 D23): `xs[i]` for an `xs: ref Array[T]` is a `T`, and a
                 // range in the brackets is a run of it again. It was `?`, so a

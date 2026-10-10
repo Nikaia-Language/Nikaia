@@ -244,8 +244,11 @@ fn reaching_for_a_withdrawn_automatic_name_is_refused() {
         "and what to write instead: {found:#?}"
     );
 
-    // A lambda that declares the name for itself never reaches this.
-    let fine = "fn ids(xs: Vec[i64]) -> Vec[i64] { return xs.map fn (a) { a.id } }";
+    // A lambda that declares the name for itself never reaches this. Over a
+    // type that has an `id`: on an `i64` the field is not known, which is
+    // `NK1245` since #497.
+    let fine = "struct Row { id: i64 }\n\
+                fn ids(xs: Vec[Row]) -> Vec[i64] { return xs.map fn (a) { a.id } }";
     let parsed = nikaia::parser::parse_to_ast(fine).expect("it parses");
     let own = nikaia::contracts::Ledger::infer(&parsed);
     assert!(
