@@ -12011,6 +12011,379 @@ pub struct CheckState {
     pub inside_a_door: bool,
     pub inside_an_action: Option<String>,
     pub inside_a_sync_function: Option<String>,
+    pub moved_into_a_task: Vec<(String, Ty, i64, String)>,
+    pub walked: Vec<CheckTaken>,
+    pub branch: Vec<(i64, i64)>,
+    pub reads_on_paths: Vec<CheckRead>,
+    pub lent_lets: collections::BTreeSet<(String, i64)>,
+    pub handed: Vec<CheckTaken>,
+    pub read_at: Vec<(String, i64)>,
+    pub written_at: Vec<(String, i64)>,
+    pub parts_out: Vec<CheckPartOut>,
+    pub gives: Vec<CheckGive>,
+    pub ways_out: Vec<CheckWayOut>,
+    pub reading_only: bool,
+    pub read_seq: i64,
+    pub task_bindings: Vec<Vec<(String, Ty, i64)>>,
+}
+
+
+// --- check_takes.nika ---
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CheckUse {
+    pub at: i64,
+    pub path: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CheckMissing {
+    subject: String,
+    at: i64,
+    seq: i64,
+    way: i64,
+    parts: Vec<i64>,
+}
+
+impl CheckState {
+    // sync (Part II, 12.1): pure CPU, cannot pause. Checked before
+    // this was written - see `contracts::sync`.
+    pub fn taken(&self, path: String, ty: Ty, seq: i64, to: &str, span: &Span) -> CheckTaken {
+        let root = a_root_segment(&path);
+        let binding = self.binding_id(&root);
+        CheckTaken { path, ty, from: span.start as i64, at: span.end as i64, seq, choices: self.branch.to_owned(), until: None, to: to.to_owned(), binding }
+    }
+    // sync (Part II, 12.1): pure CPU, cannot pause. Checked before
+    // this was written - see `contracts::sync`.
+    pub fn taken_so_far(&self) -> (i64, i64) { (self.walked.len() as i64, self.handed.len() as i64) }
+    // sync (Part II, 12.1): pure CPU, cannot pause. Checked before
+    // this was written - see `contracts::sync`.
+    pub fn a_branch_that_leaves(&mut self, from: (i64, i64), exits: bool, span: &Span) {
+        if !exits { return; }
+        let mut at = from.0;
+        while at < self.walked.len() as i64 {
+            if nikaia_std::index::get(&self.walked, nikaia_std::index::at(at)).until.is_none() { self.walked[nikaia_std::index::at(at)].until = Some(span.end as i64); }
+            at = at + 1;
+        }
+        at = from.1;
+        while at < self.handed.len() as i64 {
+            if nikaia_std::index::get(&self.handed, nikaia_std::index::at(at)).until.is_none() { self.handed[nikaia_std::index::at(at)].until = Some(span.end as i64); }
+            at = at + 1;
+        }
+    }
+    // sync (Part II, 12.1): pure CPU, cannot pause. Checked before
+    // this was written - see `contracts::sync`.
+    pub fn a_way_out(&mut self, how: &str, word: &str, span: &Span) {
+        for around in self.repeats.iter() { if around.what == "lambda" { return; } }
+        self.ways_out.push(CheckWayOut { how: how.to_owned(), word: word.to_owned(), at: span.start as i64, seq: self.read_seq, choices: self.branch.to_owned(), span: span.clone() });
+    }
+    // sync (Part II, 12.1): pure CPU, cannot pause. Checked before
+    // this was written - see `contracts::sync`.
+    pub fn first_read_after(&self, taken: &CheckTaken) -> Option<CheckUse> {
+        let mut best: i64 = -1;
+        let mut at: i64 = 0;
+        while at < self.reads_on_paths.len() as i64 {
+            let read = (*nikaia_std::index::get(&self.reads_on_paths, nikaia_std::index::at(at))).clone();
+            let mut before_the_end = true;
+            if taken.until.is_some() { before_the_end = read.at < nikaia_std::index::or(taken.until, || 0); }
+            if a_path_overlaps(&read.path, &taken.path) && read.binding == taken.binding && !choices_apart(&taken.choices, &read.choices) && before_the_end && (read.at >= taken.at || read.at == taken.from && read.seq > taken.seq) {
+                if best < 0 { best = at; } else {
+                    let held = (*nikaia_std::index::get(&self.reads_on_paths, nikaia_std::index::at(best))).clone();
+                    if read.at < held.at || read.at == held.at && read.seq < held.seq { best = at; }
+                }
+            }
+            at = at + 1;
+        }
+        if best < 0 { return None; }
+        let used = nikaia_std::index::get(&self.reads_on_paths, nikaia_std::index::at(best)).at;
+        for written in self.written_at.iter() { if a_path_revives(&written.0, &taken.path) && written.1 >= taken.from && written.1 <= used { return None; } }
+        Some(CheckUse { at: used, path: nikaia_std::index::get(&self.reads_on_paths, nikaia_std::index::at(best)).path.to_owned() })
+    }
+    // sync (Part II, 12.1): pure CPU, cannot pause. Checked before
+    // this was written - see `contracts::sync`.
+    pub fn lent_here(&self, name: &str) -> bool {
+        let frame = self.frame_of(name);
+        if frame < 0 { return false; }
+        if self.lent_lets.contains(&(name.to_owned(), frame)) { return true; }
+        let found = match self.binding(name) { Some(__nikaia_value) => __nikaia_value, None => return false };
+        found.lent || found.ty.is_a_view()
+    }
+    // sync (Part II, 12.1): pure CPU, cannot pause. Checked before
+    // this was written - see `contracts::sync`.
+    pub fn a_lent_let(&self, world: &CheckWorld<'_>, side: &Expr) -> bool {
+        let name = match side {
+            Expr::Variable(symbol, _) => { let symbol = *symbol; world.words.resolve(symbol).to_owned() },
+            _ => return false,
+        };
+        let frame = self.frame_of(&name);
+        frame >= 0 && self.lent_lets.contains(&(name, frame))
+    }
+    fn binding_id(&self, name: &str) -> Option<i64> {
+        let found = match self.binding(name) { Some(__nikaia_value) => __nikaia_value, None => return None };
+        Some(found.id)
+    }
+    fn frame_of(&self, name: &str) -> i64 {
+        let mut frame_at = self.scope.len() as i64;
+        while frame_at > 0 {
+            frame_at = frame_at - 1;
+            for local in (*nikaia_std::index::get(&self.scope, nikaia_std::index::at(frame_at))).iter() { if local.name == name { return frame_at; } }
+        }
+        -1
+    }
+    fn around_a_repeat(&self, bound: i64, name: &str) -> i64 {
+        let mut at = self.repeats.len() as i64;
+        while at > 0 {
+            at = at - 1;
+            if nikaia_std::index::get(&self.repeats, nikaia_std::index::at(at)).frame <= bound { return -1; }
+            if (*nikaia_std::index::get(&self.repeats, nikaia_std::index::at(at))).takes_again(name) { return at; }
+        }
+        -1
+    }
+    // sync (Part II, 12.1): pure CPU, cannot pause. Checked before
+    // this was written - see `contracts::sync`.
+    pub fn a_sequence_is_walked(&mut self, iter: &Expr, over: &Ty, span: &Span, world: &CheckWorld<'_>) {
+        if !a_sequence_that_is_used_up(over) { return; }
+        let name = match iter {
+            Expr::Variable(symbol, _) => { let symbol = *symbol; world.words.resolve(symbol).to_owned() },
+            _ => return,
+        };
+        let taken = self.taken(name, over.clone(), self.read_seq, "", span);
+        self.walked.push(taken);
+    }
+    // sync (Part II, 12.1): pure CPU, cannot pause. Checked before
+    // this was written - see `contracts::sync`.
+    pub fn hands_over_name(&mut self, world: &CheckWorld<'_>, name: &str, to: &str, span: &Span) {
+        let ty = match self.lookup(name) { Some(__nikaia_value) => __nikaia_value, None => return };
+        self.hands_over_path(world, name.to_owned(), &ty, self.read_seq, to, span);
+    }
+    // sync (Part II, 12.1): pure CPU, cannot pause. Checked before
+    // this was written - see `contracts::sync`.
+    pub fn hands_over_path(&mut self, world: &CheckWorld<'_>, path: String, ty: &Ty, seq: i64, to: &str, span: &Span) {
+        if !self.task_bindings.is_empty() { return; }
+        if !self.takes_away(world, &ty.unseen()) { return; }
+        let root = a_root_segment(&path);
+        if path.contains(".") && self.lent_here(&root) {
+            self.a_part_of_a_loan_handed_over(&path, &root, to, span);
+            return;
+        }
+        let taken = self.taken(path.to_owned(), ty.clone(), seq, to, span);
+        self.handed.push(taken);
+        let bound = self.frame_of(&root);
+        if bound < 0 { return; }
+        let around = self.around_a_repeat(bound, &root);
+        if around < 0 { return; }
+        let what = nikaia_std::index::get(&self.repeats, nikaia_std::index::at(around)).what.to_owned();
+        let mut again: String = String::from("a lambda may run more than once, and the second run would find it gone");
+        if what == "loop" { again = "the next time round the loop it would be handed over again, but it's already gone".to_owned(); }
+        self.findings.push(check_refusal("NK2105", span, format!("`{}` is {} inside a {}, but it was declared outside it.", path, to, what), vec![format!("`{}` is a `{}`, so it's handed over itself, not a copy - {}.", path, ty.text(), again), "Numbers, `bool`s, `char`s and views would be fine: they're copied.".to_owned()], Some(format!("Hand over a copy each time: `{}.clone()`.", path))));
+    }
+    // sync (Part II, 12.1): pure CPU, cannot pause. Checked before
+    // this was written - see `contracts::sync`.
+    pub fn data_handed_over_is_used_again(&mut self) {
+        let mut said: collections::BTreeSet<i64> = collections::BTreeSet::new();
+        let mut found: Vec<CheckFinding> = vec![];
+        for taken in self.handed.iter() {
+            let used = match self.first_read_after(taken) { Some(__nikaia_value) => __nikaia_value, None => continue };
+            let name = taken.path.to_owned();
+            let mut message: String = format!("You're using `{}`, but `{}` was {}.", used.path, name, taken.to);
+            if used.path == name { message = format!("You're using `{}` again, but it was {}.", name, taken.to); }
+            if said.contains(&used.at) { continue; }
+            said.insert(used.at);
+            found.push(check_refusal("NK2105", &Span { start: u32::try_from(used.at).unwrap_or_else(|_| panic!("the value does not fit in an `u32`")), end: u32::try_from(used.at).unwrap_or_else(|_| panic!("the value does not fit in an `u32`")) }, message, vec![format!("`{}` is a `{}`, so it's handed over itself, not a copy. Nikaia never copies behind your back, because a copy costs as much as the value is large.", name, taken.ty.text()), "Numbers, `bool`s, `char`s and views would be fine: they're copied.".to_owned()], Some(format!("If both need it, hand over a copy: `{}.clone()`.", name))));
+        }
+        self.handed = vec![];
+        for one in found.iter() { self.findings.push(one.clone()); }
+    }
+    // sync (Part II, 12.1): pure CPU, cannot pause. Checked before
+    // this was written - see `contracts::sync`.
+    pub fn a_sequence_is_taken(&mut self, name: &str, ty: &Ty, span: &Span) {
+        if self.reading_only || !a_sequence_that_is_used_up(ty) { return; }
+        let taken = self.taken(name.to_owned(), ty.clone(), self.read_seq, "", span);
+        self.walked.push(taken);
+        let bound = self.frame_of(name);
+        if bound < 0 { return; }
+        let around = self.around_a_repeat(bound, name);
+        if around < 0 { return; }
+        let what = nikaia_std::index::get(&self.repeats, nikaia_std::index::at(around)).what.to_owned();
+        let item = an_item_text(ty);
+        let mut again: String = String::from("a lambda may run more than once, and the second run would find it used up");
+        let mut help: String = format!("Collect it into a list before the lambda and walk the list inside: `let {} = {}.collect()`.", name, name);
+        if what == "loop" {
+            again = "the next time round the loop would use it again, but it's already used up".to_owned();
+            help = format!("Collect it into a list before the loop and walk the list: `let {} = {}.collect()`.", name, name);
+        }
+        self.findings.push(check_refusal("NK2702", span, format!("`{}` is a sequence, and you're using it up inside a {} it was declared outside of.", name, what), vec![format!("A sequence of `{}` makes its elements as they're asked for, so walking it uses it up - and {}.", item, again), "A `Vec` is different: it already holds its elements and can be walked as often as you like.".to_owned()], Some(help)));
+    }
+    // sync (Part II, 12.1): pure CPU, cannot pause. Checked before
+    // this was written - see `contracts::sync`.
+    pub fn a_sequence_was_walked_twice(&mut self) {
+        let mut said: collections::BTreeSet<i64> = collections::BTreeSet::new();
+        let mut found: Vec<CheckFinding> = vec![];
+        for taken in self.walked.iter() {
+            let used = match self.first_read_after(taken) { Some(__nikaia_value) => __nikaia_value, None => continue };
+            if said.contains(&used.at) { continue; }
+            said.insert(used.at);
+            let item = an_item_text(&taken.ty);
+            found.push(check_refusal("NK2702", &Span { start: u32::try_from(used.at).unwrap_or_else(|_| panic!("the value does not fit in an `u32`")), end: u32::try_from(used.at).unwrap_or_else(|_| panic!("the value does not fit in an `u32`")) }, format!("`{}` is a sequence, and it was already used up.", taken.path), vec![format!("A sequence of `{}` makes its elements as they're asked for, so walking it uses it up: a `for`, a `collect()`, a `count()` or any other walk.", item), "A `Vec` is different: it already holds its elements and can be walked as often as you like.".to_owned()], Some(format!("Collect it first and walk the collection: `let {} = {}.collect()`.", taken.path, taken.path))));
+        }
+        self.walked = vec![];
+        for one in found.iter() { self.findings.push(one.clone()); }
+    }
+    // sync (Part II, 12.1): pure CPU, cannot pause. Checked before
+    // this was written - see `contracts::sync`.
+    pub fn a_task_took_what_is_used_again(&mut self) {
+        let moved = self.moved_into_a_task.to_owned();
+        let read = self.read_at.to_owned();
+        let written = self.written_at.to_owned();
+        self.moved_into_a_task = vec![];
+        self.read_at = vec![];
+        self.written_at = vec![];
+        let mut found: Vec<CheckFinding> = vec![];
+        for (name, ty, at, who) in moved.iter() {
+            let at = nikaia_std::num::value(at);
+            let mut used: i64 = -1;
+            for seen in read.iter() { if seen.0 == *name && seen.1 >= at && (used < 0 || seen.1 < used) { used = seen.1; } }
+            if used < 0 { continue; }
+            let mut given_back = false;
+            for when in written.iter() { if when.0 == *name && when.1 >= at && when.1 <= used { given_back = true; } }
+            if given_back { continue; }
+            let mut first: String = format!("A task started with `spawn` may outlive this function, so it takes the variables it uses with it. `{}` is a `{}`, so it went to the task.", name, ty.text());
+            if who != "a background task" { first = format!("A function kept to be called later - a supervisor's child, a handler - is called after this function has moved on, so it takes the variables it uses with it. `{}` is a `{}`, so it went to the function.", name, ty.text()); }
+            found.push(check_refusal("NK2101", &Span { start: u32::try_from(used).unwrap_or_else(|_| panic!("the value does not fit in an `u32`")), end: u32::try_from(used).unwrap_or_else(|_| panic!("the value does not fit in an `u32`")) }, format!("You're using `{}` after {} took it.", name, who), vec![first, "Numbers, `bool`s, views and `Shared[T]` handles aren't taken: they're copied.".to_owned()], Some(format!("Make a copy before and hand over the copy: `let copy = {}.clone()`, then use `copy` inside.", name))));
+        }
+        for one in found.iter() { self.findings.push(one.clone()); }
+    }
+    // sync (Part II, 12.1): pure CPU, cannot pause. Checked before
+    // this was written - see `contracts::sync`.
+    pub fn a_part_left_out(&mut self) {
+        let outs = self.parts_out.to_owned();
+        let gives = self.gives.to_owned();
+        let ways = self.ways_out.to_owned();
+        self.parts_out = vec![];
+        self.gives = vec![];
+        self.ways_out = vec![];
+        let mut reports: Vec<CheckMissing> = vec![];
+        for index in 0..outs.len() as i64 {
+            let out = (*nikaia_std::index::get(&outs, nikaia_std::index::at(index))).clone();
+            if out.handed < 0 || out.handed >= self.handed.len() as i64 { continue; }
+            let taken = (*nikaia_std::index::get(&self.handed, nikaia_std::index::at(out.handed))).clone();
+            if nikaia_std::index::or(taken.binding, || -1) != out.binding { continue; }
+            let mut ahead: Vec<(i64, i64, i64)> = vec![];
+            for at in 0..ways.len() as i64 {
+                let way = (*nikaia_std::index::get(&ways, (at) as usize)).clone();
+                let after = way.at > taken.from || way.at == taken.from && way.seq >= taken.seq;
+                let before_the_end = taken.until.is_none() || way.at < nikaia_std::index::or(taken.until, || 0);
+                if after && !choices_apart(&taken.choices, &way.choices) && before_the_end { ahead.push((way.at, way.seq, at)); }
+            }
+            if taken.until.is_none() { ahead.push((9223372036854775807i64, 0, -1)); }
+            let places = by_position(&ahead);
+            for position in places.iter() {
+                let mut choices: Vec<(i64, i64)> = vec![];
+                if position.2 >= 0 { choices = nikaia_std::index::get(&ways, nikaia_std::index::at(position.2)).choices.to_owned(); }
+                let mut given_back = false;
+                for give in gives.iter() { if give.at >= taken.from && give.at < position.0 && (a_path_revives(&give.path, &out.subject) || give.path == out.part) && every_choice_held(&give.choices, &taken.choices, &choices) { given_back = true; } }
+                if given_back { continue; }
+                let mut found: i64 = -1;
+                for r in 0..reports.len() as i64 { if found < 0 && nikaia_std::index::get(&reports, (r) as usize).subject == out.subject && nikaia_std::index::get(&reports, (r) as usize).at == position.0 && nikaia_std::index::get(&reports, (r) as usize).seq == position.1 { found = r; } }
+                if found >= 0 { reports[nikaia_std::index::at(found)].parts.push(index); } else { reports.push(CheckMissing { subject: out.subject.to_owned(), at: position.0, seq: position.1, way: position.2, parts: vec![index] }); }
+                break;
+            }
+        }
+        let mut said: Vec<CheckFinding> = vec![];
+        for report in reports.iter() { said.push(self.a_part_is_missing(&outs, &ways, report)); }
+        for one in said.iter() { self.findings.push(one.clone()); }
+    }
+    fn a_part_is_missing(&self, outs: &[CheckPartOut], ways: &[CheckWayOut], report: &CheckMissing) -> CheckFinding {
+        let out = (*nikaia_std::index::get(&outs, nikaia_std::index::at(*nikaia_std::index::get(&report.parts, 0)))).clone();
+        let taken = (*nikaia_std::index::get(&self.handed, nikaia_std::index::at(out.handed))).clone();
+        let subject = out.subject.to_owned();
+        let mut names: Vec<String> = vec![];
+        for index in report.parts.iter() {
+            let index = nikaia_std::num::value(index);
+            names.push(format!("`{}`", nikaia_std::index::get(&outs, nikaia_std::index::at(index)).part));
+        }
+        let mut part: String = (*nikaia_std::index::get(&names, 0)).to_owned();
+        if names.len() > 1 {
+            let mut head: String = String::from("");
+            for at in 0..names.len() as i64 - 1 {
+                if at > 0 { head = format!("{}, ", head); }
+                head = format!("{}{}", head, *nikaia_std::index::get(&names, (at) as usize));
+            }
+            part = format!("{} and {}", head, *nikaia_std::index::get(&names, nikaia_std::index::at(names.len() as i64 - 1)));
+        }
+        let from = Span { start: u32::try_from(taken.from).unwrap_or_else(|_| panic!("the value does not fit in an `u32`")), end: u32::try_from(taken.at).unwrap_or_else(|_| panic!("the value does not fit in an `u32`")) };
+        let some = report.way >= 0;
+        let mut how: String = String::from("");
+        let mut word: String = String::from("");
+        let mut at_the_way = from.clone();
+        if some {
+            let way = (*nikaia_std::index::get(&ways, nikaia_std::index::at(report.way))).clone();
+            how = way.how.to_owned();
+            word = way.word.to_owned();
+            at_the_way = way.span.clone();
+        }
+        let fails = some && how == "fails";
+        let mut message: String = format!("`{}` is left without {}: it was taken out and never given back.", subject, part);
+        let mut span = from.clone();
+        let mut label = CheckLabel { span: from.clone(), word: out.part.to_owned(), text: "taken out here and not given back".to_owned(), main: true };
+        if fails {
+            message = format!("`{}` can fail, and {} is out of `{}` at that point.", word, part, subject);
+            span = at_the_way.clone();
+            label = CheckLabel { span: at_the_way.clone(), word: word.to_owned(), text: "can fail while the part is out".to_owned(), main: true };
+        } else if some {
+            message = format!("This `{}` leaves `{}` without {}.", how, subject, part);
+            span = at_the_way.clone();
+            label = CheckLabel { span: at_the_way.clone(), word: how.to_owned(), text: "leaves the function with the part still out".to_owned(), main: true };
+        }
+        let mut labels: Vec<CheckLabel> = vec![label];
+        if some { labels.push(CheckLabel { span: from.clone(), word: out.part.to_owned(), text: format!("taken out of `{}` here", subject), main: false }); }
+        let mut kept: String = format!("`{}` is a `mut` parameter, so it is the caller's and is whole whenever the caller can see it. `{}` was {}, and nothing has put it back.", subject, out.part, taken.to);
+        let mut tail: String = String::from("");
+        if fails {
+            kept = format!("Between taking {} out of `{}` and giving it back, no call that can fail may stand: the caller would be left a `{}` with a part missing.", part, subject, subject);
+            tail = String::from(" and move the call out from between");
+        }
+        CheckFinding { severity: CheckSeverity::Error, span, code: "NK2108".to_owned(), message, notes: vec![kept], help: Some(format!("Assign `{}` (or the part) before the function is left{}, or build the value by value with `fn f({}: T) -> T`.", subject, tail, subject)), labels }
+    }
+}
+
+fn a_sequence_that_is_used_up(ty: &Ty) -> bool {
+    match ty {
+        Ty::Seq { shape, .. } => !shape.replays,
+        _ => false,
+    }
+}
+
+fn an_item_text(ty: &Ty) -> String {
+    match ty {
+        Ty::Seq { item, .. } => { let item = nikaia_std::boxed::open(item); item.text() },
+        _ => "?".to_owned(),
+    }
+}
+
+fn a_root_segment(path: &str) -> String {
+    let parts: Vec<&str> = path.split(".").collect::<Vec<_>>();
+    (*nikaia_std::index::get(&parts, 0)).to_owned()
+}
+
+fn by_position(ahead: &[(i64, i64, i64)]) -> Vec<(i64, i64, i64)> {
+    let mut out: Vec<(i64, i64, i64)> = vec![];
+    for item in ahead.iter() {
+        let mut spot = out.len() as i64;
+        while spot > 0 && (nikaia_std::index::get(&out, nikaia_std::index::at(spot - 1)).0 > item.0 || nikaia_std::index::get(&out, nikaia_std::index::at(spot - 1)).0 == item.0 && nikaia_std::index::get(&out, nikaia_std::index::at(spot - 1)).1 > item.1) { spot = spot - 1; }
+        out.insert(nikaia_std::count::of(spot), item.clone());
+    }
+    out
+}
+
+fn every_choice_held(given: &[(i64, i64)], taking: &[(i64, i64)], way: &[(i64, i64)]) -> bool {
+    for choice in given.iter() {
+        let mut held = false;
+        for other in taking.iter() { if other.0 == choice.0 && other.1 == choice.1 { held = true; } }
+        for other in way.iter() { if other.0 == choice.0 && other.1 == choice.1 { held = true; } }
+        if !held { return false; }
+    }
+    true
 }
 
 
@@ -34128,6 +34501,10 @@ pub mod check_shapes {
 pub mod check_state {
     #[allow(unused_imports)]
     pub use super::{CheckKind, CheckImmutable, CheckLocal, CheckPromises, CheckHanded, CheckGuarded, CheckTaken, CheckRead, CheckPartOut, CheckGive, CheckWayOut, CheckPendingCoalesce, a_path_overlaps, a_path_revives, choices_apart, CheckRepeats, a_body_never_ends, a_jump_leaves, CheckSeverity, CheckLabel, CheckFinding, check_refusal, CheckWorld, CheckState};
+}
+pub mod check_takes {
+    #[allow(unused_imports)]
+    pub use super::{CheckUse};
 }
 pub mod check_types {
     #[allow(unused_imports)]

@@ -682,4 +682,43 @@ pub struct CheckState {
     /// [ADR-149](../../docs/specification/adr/adr-149.md) D2, and reachable
     /// before it through `TaskHandle::join`.
     pub inside_a_sync_function: String?,
+    /// **What a task or a function kept for later took with it** (`NK2101`,
+    /// ADR-293): the name, its type, the byte the statement **ends** on, and who
+    /// took it in words. The statement's end and not its start, because the
+    /// reads inside the body are the move itself.
+    pub moved_into_a_task: Vec[(String, Ty, i64, String)],
+    /// **A name whose sequence was walked** (`NK2702`, ADR-105 D2), the shape of
+    /// `handed` and for its reason.
+    pub walked: Vec[CheckTaken],
+    /// **Which branch of which `if` or `match` the walk is in**, outermost first
+    /// (ADR-293 D19): two places are on one path unless they sit in different
+    /// arms of one choice.
+    pub branch: Vec[(i64, i64)],
+    /// Every read of a name or a part of one, in the order the walk met them.
+    pub reads_on_paths: Vec[CheckRead],
+    /// The `let`s whose name is a **view** of a place (ADR-094 D4), by name and
+    /// the frame it was bound in: a part of one cannot be handed over.
+    pub lent_lets: collections::BTreeSet[(String, i64)],
+    /// **Data handed to something that keeps it** (ADR-293 D29): `NK2105` is a
+    /// later read on the same path.
+    pub handed: Vec[CheckTaken],
+    /// Every place a local name was read, by the byte its statement starts at.
+    pub read_at: Vec[(String, i64)],
+    /// Every **path** assigned to - a name, or a part of one, `p.name` - by the
+    /// byte its statement starts at.
+    pub written_at: Vec[(String, i64)],
+    /// **The parts of a `mut` parameter an arm took out** (`NK2108`), the
+    /// assignments that may give them back and the ways out of the function
+    /// they must not be missing at.
+    pub parts_out: Vec[CheckPartOut],
+    pub gives: Vec[CheckGive],
+    pub ways_out: Vec[CheckWayOut],
+    /// A read that does not take what it reads (ADR-293 D19): an assignment's
+    /// target, and the operand of a `&`.
+    pub reading_only: bool,
+    /// How many reads the walk has met so far: each read's place in the order.
+    pub read_seq: i64,
+    /// The bodies of the tasks being walked, each with the names it binds
+    /// (name, type, binding): what a task's body takes with it is `NK2101`'s.
+    pub task_bindings: Vec[Vec[(String, Ty, i64)]],
 }

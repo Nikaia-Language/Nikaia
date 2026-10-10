@@ -130,6 +130,7 @@ COMPILER_NIKA = {
     "check_pauses.nika": "check: a call that may pause where a lock is held, a lambda runs on every core, a grammar acts or a function is `sync` (0.0.776)",
     "check_doors.nika": "check: a lock inside a lock, a file read under a lock, a name shared by cores, a `set` that reads what it writes (0.0.776)",
     "check_buildtime2.nika": "check: a `comptime` that the build may not run, ran past a bound or depends on itself (0.0.776)",
+    "check_takes.nika": "check: what was taken, what was read after, what a loop or a lambda takes again, and a part of a `mut` parameter not given back (0.0.786)",
 }
 
 

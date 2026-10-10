@@ -8,6 +8,13 @@ or the specification. A change only to the guide, the notes, the README, the
 website, the tests, the examples or the tooling around them raises nothing and
 has no heading here; `CLAUDE.md` draws the line.
 
+## [0.0.786] — 2026-10-10
+
+**What was taken, what was read after and what a loop or a lambda takes again are Nikaia (`tools/check_takes.nika`, ADR-293, ADR-094 D7, #558, #125).**
+- `taken`, `first_read_after`, `hands_over_path` and `hands_over_name`, `a_sequence_is_walked` and `a_sequence_is_taken`, the end-of-body reports of `NK2101`, `NK2105`, `NK2702` and `NK2108` (`a_task_took_what_is_used_again`, `data_handed_over_is_used_again`, `a_sequence_was_walked_twice`, `a_part_left_out`, `a_part_is_missing`), `a_way_out`, `taken_so_far`, `a_branch_that_leaves`, `lent_here` and `a_lent_let` are methods of `CheckState`. The fourteen fields they read (`walked`, `handed`, `reads_on_paths`, `written_at`, `read_at`, `parts_out`, `gives`, `ways_out`, `branch`, `lent_lets`, `moved_into_a_task`, `task_bindings`, `reading_only`, `read_seq`) moved from the `Checker` into `CheckState`.
+- `Checked::unsigned_literals` is keyed on the literal's id alone (ADR-340 D5); the value was a second key for the same node. The emitter reads it the same way.
+- Left in Rust: `parts_taken_out_of_a_mut_parameter` (it tells the emitter) and the walks that call these.
+
 ## [0.0.785] — 2026-10-10
 
 **A field in a struct pattern takes a pattern ([ADR-291](docs/specification/adr/adr-291.md) D25, #573).**

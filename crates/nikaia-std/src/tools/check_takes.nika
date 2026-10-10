@@ -1,0 +1,552 @@
+// crates/nikaia-std/src/tools/check_takes.nika
+//
+// **What was taken, what was read after, and what a loop or a lambda takes
+// again** (ADR-293, ADR-094 D7; `NK2101`, `NK2105`, `NK2108`, `NK2702`), moved
+// from the compiler's checker (ADR-294, #125, #558). A walk records each taking
+// and each read with the statement it stands in and the choices it is under; a
+// pass at the end of the body asks which reads come after which takings.
+// **Positions are the bytes a statement starts and ends at**, and a branch is a
+// path of `(choice, arm)` pairs.
+
+use std::collections
+
+/// A read of a path after a taking: where, and what path it read.
+pub struct CheckUse {
+    pub at: i64,
+    pub path: String,
+}
+
+// One report of parts that are missing at one place: the subject, the place the
+// way out stands at (or the end of the function), the way out's index in the
+// list of ways (-1 for the end), and the parts, by index.
+struct CheckMissing {
+    subject: String,
+    at: i64,
+    seq: i64,
+    way: i64,
+    parts: Vec[i64],
+}
+
+impl CheckState {
+    /// A taking, where it stands.
+    pub fn taken(ref self, path: String, ty: Ty, seq: i64, to: ref String, span: ref Span) -> CheckTaken sync {
+        let root = a_root_segment(path)
+        let binding = self.binding_id(root)
+        return CheckTaken { path: path, ty: ty, from: span.start as i64, at: span.end as i64, seq: seq, choices: self.branch.clone(), until: null, to: to.clone(), binding: binding }
+    }
+
+    /// Where a walk or a hand-over recorded from here on stands.
+    pub fn taken_so_far(ref self) -> (i64, i64) sync {
+        return (self.walked.len(), self.handed.len())
+    }
+
+    /// **A branch that leaves the function takes its takings with it**
+    /// (ADR-293 D30). What was taken inside such a branch is asked about reads up
+    /// to the end of the statement the branch is in, and no further.
+    pub fn a_branch_that_leaves(ref mut self, from: (i64, i64), exits: bool, span: ref Span) sync {
+        if !exits {
+            return
+        }
+        let mut at = from.0
+        while at < self.walked.len() {
+            if self.walked[at].until == null {
+                self.walked[at].until = span.end as i64
+            }
+            at = at + 1
+        }
+        at = from.1
+        while at < self.handed.len() {
+            if self.handed[at].until == null {
+                self.handed[at].until = span.end as i64
+            }
+            at = at + 1
+        }
+    }
+
+    /// A way out of the function, or a call that can fail, where the walk stands
+    /// (`NK2108`). Not inside a lambda: its `return` leaves the lambda, and what
+    /// it calls is the lambda's.
+    pub fn a_way_out(ref mut self, how: ref String, word: ref String, span: ref Span) sync {
+        for around in self.repeats {
+            if around.what == "lambda" {
+                return
+            }
+        }
+        self.ways_out.push(CheckWayOut { how: how.clone(), word: word.clone(), at: span.start as i64, seq: self.read_seq, choices: self.branch.clone(), span: span.clone() })
+    }
+
+    /// **The first read after a taking, on a path that passes both** (ADR-293 D19,
+    /// D30, D31): in a later statement, or later in the same one; not in another
+    /// arm of a choice the taking stood in; not past a branch that left the
+    /// function; and touching what was taken. Nothing where an assignment gave it
+    /// back first - in the same statement too, since `name = f(name)` writes after
+    /// it reads.
+    pub fn first_read_after(ref self, taken: ref CheckTaken) -> CheckUse? sync {
+        let mut best: i64 = -1
+        let mut at = 0
+        while at < self.reads_on_paths.len() {
+            let read = self.reads_on_paths[at].clone()
+            let mut before_the_end = true
+            if taken.until != null {
+                before_the_end = read.at < (taken.until ?? 0)
+            }
+            if a_path_overlaps(read.path, taken.path) && read.binding == taken.binding && !choices_apart(taken.choices, read.choices) && before_the_end && (read.at >= taken.at || (read.at == taken.from && read.seq > taken.seq)) {
+                if best < 0 {
+                    best = at
+                } else {
+                    let held = self.reads_on_paths[best].clone()
+                    if read.at < held.at || (read.at == held.at && read.seq < held.seq) {
+                        best = at
+                    }
+                }
+            }
+            at = at + 1
+        }
+        if best < 0 {
+            return null
+        }
+        let used = self.reads_on_paths[best].at
+        for written in self.written_at {
+            if a_path_revives(written.0, taken.path) && written.1 >= taken.from && written.1 <= used {
+                return null
+            }
+        }
+        return CheckUse { at: used, path: self.reads_on_paths[best].path.clone() }
+    }
+
+    /// Whether a name is only **lent** to this body: a `let` over a place or a
+    /// part of a tuple taken apart out of one (#465), or a binding that is a view.
+    pub fn lent_here(ref self, name: ref String) -> bool sync {
+        let frame = self.frame_of(name)
+        if frame < 0 {
+            return false
+        }
+        if self.lent_lets.contains((name.clone(), frame)) {
+            return true
+        }
+        let found = self.binding(name) ?? return false
+        return found.lent || found.ty.is_a_view()
+    }
+
+    /// Whether an expression is a name a `let` over a place bound.
+    pub fn a_lent_let(ref self, world: ref CheckWorld, side: ref Expr) -> bool sync {
+        let name = match side {
+            Expr::Variable(symbol, _) => world.words.resolve(symbol).clone(),
+            else => return false,
+        }
+        let frame = self.frame_of(name)
+        return frame >= 0 && self.lent_lets.contains((name, frame))
+    }
+
+    // Which binding a name is: the innermost one's id.
+    fn binding_id(ref self, name: ref String) -> i64? {
+        let found = self.binding(name) ?? return null
+        return found.id
+    }
+
+    // The innermost frame a name is bound in, or -1.
+    fn frame_of(ref self, name: ref String) -> i64 {
+        let mut frame_at = self.scope.len()
+        while frame_at > 0 {
+            frame_at = frame_at - 1
+            for local in self.scope[frame_at] {
+                if local.name == name {
+                    return frame_at
+                }
+            }
+        }
+        return -1
+    }
+
+    // The nearest body that may run again around a name bound at `bound`, and
+    // that takes it again: its index in `repeats`, or -1.
+    fn around_a_repeat(ref self, bound: i64, name: ref String) -> i64 {
+        let mut at = self.repeats.len()
+        while at > 0 {
+            at = at - 1
+            if self.repeats[at].frame <= bound {
+                return -1
+            }
+            if self.repeats[at].takes_again(name) {
+                return at
+            }
+        }
+        return -1
+    }
+
+    /// A sequence walked by a `for`.
+    pub fn a_sequence_is_walked(ref mut self, iter: ref Expr, over: ref Ty, span: ref Span, world: ref CheckWorld) sync {
+        if !a_sequence_that_is_used_up(over) {
+            return
+        }
+        let name = match iter {
+            Expr::Variable(symbol, _) => world.words.resolve(symbol).clone(),
+            else => return,
+        }
+        let taken = self.taken(name, over.clone(), self.read_seq, "", span)
+        self.walked.push(taken)
+    }
+
+    /// A value handed over by name, as in `P { name }`, which no read stands for.
+    pub fn hands_over_name(ref mut self, world: ref CheckWorld, name: ref String, to: ref String, span: ref Span) sync {
+        let ty = self.lookup(name) ?? return
+        self.hands_over_path(world, name.clone(), ty, self.read_seq, to, span)
+    }
+
+    /// `NK2105`, `NK2106`: a value handed over, and what is written about it
+    /// where a loop or a lambda around it would hand it over again.
+    pub fn hands_over_path(ref mut self, world: ref CheckWorld, path: String, ty: ref Ty, seq: i64, to: ref String, span: ref Span) sync {
+        // A task's body is `NK2101`'s: what it uses it took with it already.
+        if self.task_bindings.len() > 0 {
+            return
+        }
+        // A stamp is not data: what is under it decides (ADR-281 D23).
+        if !self.takes_away(world, ty.unseen()) {
+            return
+        }
+        let root = a_root_segment(path)
+        if path.contains(".") && self.lent_here(root) {
+            self.a_part_of_a_loan_handed_over(path, root, to, span)
+            return
+        }
+        let taken = self.taken(path.clone(), ty.clone(), seq, to, span)
+        self.handed.push(taken)
+        let bound = self.frame_of(root)
+        if bound < 0 {
+            return
+        }
+        let around = self.around_a_repeat(bound, root)
+        if around < 0 {
+            return
+        }
+        let what = self.repeats[around].what.clone()
+        let mut again: String = "a lambda may run more than once, and the second run would find it gone"
+        if what == "loop" {
+            again = "the next time round the loop it would be handed over again, but it's already gone".clone()
+        }
+        self.findings.push(check_refusal("NK2105", span, f"`{path}` is {to} inside a {what}, but it was declared outside it.", [f"`{path}` is a `{ty.text()}`, so it's handed over itself, not a copy - {again}.", "Numbers, `bool`s, `char`s and views would be fine: they're copied.".clone()], f"Hand over a copy each time: `{path}.clone()`."))
+    }
+
+    /// Every taking whose name is read again: `NK2105`, said once per site.
+    pub fn data_handed_over_is_used_again(ref mut self) sync {
+        let mut said: collections::BTreeSet[i64] = collections::BTreeSet()
+        let mut found: Vec[CheckFinding] = []
+        for taken in self.handed {
+            let used = self.first_read_after(taken) ?? continue
+            let name = taken.path.clone()
+            // The part read where the whole was taken, or the whole where a part
+            // was: the sentence says which (ADR-293 D32).
+            let mut message: String = f"You're using `{used.path}`, but `{name}` was {taken.to}."
+            if used.path == name {
+                message = f"You're using `{name}` again, but it was {taken.to}."
+            }
+            if said.contains(used.at) {
+                continue
+            }
+            said.insert(used.at)
+            found.push(check_refusal("NK2105", Span { start: used.at as u32, end: used.at as u32 }, message, [f"`{name}` is a `{taken.ty.text()}`, so it's handed over itself, not a copy. Nikaia never copies behind your back, because a copy costs as much as the value is large.", "Numbers, `bool`s, `char`s and views would be fine: they're copied.".clone()], f"If both need it, hand over a copy: `{name}.clone()`."))
+        }
+        self.handed = []
+        for one in found {
+            self.findings.push(one.clone())
+        }
+    }
+
+    /// `NK2702`: a sequence used up inside a loop or a lambda it was declared
+    /// outside of, and recorded as walked.
+    pub fn a_sequence_is_taken(ref mut self, name: ref String, ty: ref Ty, span: ref Span) sync {
+        if self.reading_only || !a_sequence_that_is_used_up(ty) {
+            return
+        }
+        let taken = self.taken(name.clone(), ty.clone(), self.read_seq, "", span)
+        self.walked.push(taken)
+        let bound = self.frame_of(name)
+        if bound < 0 {
+            return
+        }
+        let around = self.around_a_repeat(bound, name)
+        if around < 0 {
+            return
+        }
+        let what = self.repeats[around].what.clone()
+        let item = an_item_text(ty)
+        let mut again: String = "a lambda may run more than once, and the second run would find it used up"
+        let mut help: String = f"Collect it into a list before the lambda and walk the list inside: `let {name} = {name}.collect()`."
+        if what == "loop" {
+            again = "the next time round the loop would use it again, but it's already used up".clone()
+            help = f"Collect it into a list before the loop and walk the list: `let {name} = {name}.collect()`."
+        }
+        self.findings.push(check_refusal("NK2702", span, f"`{name}` is a sequence, and you're using it up inside a {what} it was declared outside of.", [f"A sequence of `{item}` makes its elements as they're asked for, so walking it uses it up - and {again}.", "A `Vec` is different: it already holds its elements and can be walked as often as you like.".clone()], help))
+    }
+
+    /// `NK2702`: a sequence walked twice, said once per site.
+    pub fn a_sequence_was_walked_twice(ref mut self) sync {
+        let mut said: collections::BTreeSet[i64] = collections::BTreeSet()
+        let mut found: Vec[CheckFinding] = []
+        for taken in self.walked {
+            let used = self.first_read_after(taken) ?? continue
+            // Once per site: a name walked twice and read three times is one
+            // mistake, and three carets on it is three readings of the same line.
+            if said.contains(used.at) {
+                continue
+            }
+            said.insert(used.at)
+            let item = an_item_text(taken.ty)
+            found.push(check_refusal("NK2702", Span { start: used.at as u32, end: used.at as u32 }, f"`{taken.path}` is a sequence, and it was already used up.", [f"A sequence of `{item}` makes its elements as they're asked for, so walking it uses it up: a `for`, a `collect()`, a `count()` or any other walk.", "A `Vec` is different: it already holds its elements and can be walked as often as you like.".clone()], f"Collect it first and walk the collection: `let {taken.path} = {taken.path}.collect()`."))
+        }
+        self.walked = []
+        for one in found {
+            self.findings.push(one.clone())
+        }
+    }
+
+    /// `NK2101`: data a task took with it, used again afterwards.
+    ///
+    /// **The message `rustc` gave instead** is the reason this exists: *"borrow
+    /// of moved value: `message`"*, with *"consider cloning the value before
+    /// moving it into the closure"* - a closure the program does not have, about
+    /// a file nobody wrote (Part III, C.1).
+    ///
+    /// An **assignment** between the two clears it, and that is not a leniency:
+    /// `message = "other"` gives the name a value again, Rust accepts it, and
+    /// refusing it would refuse a correct program (C.4).
+    pub fn a_task_took_what_is_used_again(ref mut self) sync {
+        let moved = self.moved_into_a_task.clone()
+        let read = self.read_at.clone()
+        let written = self.written_at.clone()
+        self.moved_into_a_task = []
+        self.read_at = []
+        self.written_at = []
+        let mut found: Vec[CheckFinding] = []
+        for (name, ty, at, who) in moved {
+            // At or after the byte the `spawn` statement **ends** on. The reads
+            // inside the task's own body are the move itself and lie inside
+            // that statement's span, so they are excluded; a statement span
+            // runs up to the next one's first byte, so the next statement
+            // starts exactly *at* the end and the comparison is not strict.
+            let mut used: i64 = -1
+            for seen in read {
+                if seen.0 == name && seen.1 >= at && (used < 0 || seen.1 < used) {
+                    used = seen.1
+                }
+            }
+            if used < 0 {
+                continue
+            }
+            let mut given_back = false
+            for when in written {
+                if when.0 == name && when.1 >= at && when.1 <= used {
+                    given_back = true
+                }
+            }
+            if given_back {
+                continue
+            }
+            let mut first: String = f"A task started with `spawn` may outlive this function, so it takes the variables it uses with it. `{name}` is a `{ty.text()}`, so it went to the task."
+            if who != "a background task" {
+                first = f"A function kept to be called later - a supervisor's child, a handler - is called after this function has moved on, so it takes the variables it uses with it. `{name}` is a `{ty.text()}`, so it went to the function."
+            }
+            found.push(check_refusal("NK2101", Span { start: used as u32, end: used as u32 }, f"You're using `{name}` after {who} took it.", [first, "Numbers, `bool`s, views and `Shared[T]` handles aren't taken: they're copied.".clone()], f"Make a copy before and hand over the copy: `let copy = {name}.clone()`, then use `copy` inside."))
+        }
+        for one in found {
+            self.findings.push(one.clone())
+        }
+    }
+
+    /// **`NK2108`: a part taken out of a `mut` parameter and not given back**
+    /// (ADR-094 D7, Part I 6.5).
+    ///
+    /// The parameter is the caller's, and is whole whenever the caller can see
+    /// it: on every way out of the function, and with no call that can fail
+    /// between the taking and the giving back. The question is asked once the
+    /// body has been seen, per part taken, of what can follow the taking: a
+    /// `return`, a `throw` and a call that can fail where it stands after it
+    /// on a path that passes both, and the end of the function unless the arm
+    /// left. An assignment gives the part back when it stands on every path
+    /// from the taking to that point - in the same arm or in the one that
+    /// leads to the point - and before it.
+    pub fn a_part_left_out(ref mut self) sync {
+        let outs = self.parts_out.clone()
+        let gives = self.gives.clone()
+        let ways = self.ways_out.clone()
+        self.parts_out = []
+        self.gives = []
+        self.ways_out = []
+        // One report per place the parts are missing at, naming all of them.
+        let mut reports: Vec[CheckMissing] = []
+        for index in 0..<outs.len() {
+            let out = outs[index].clone()
+            if out.handed < 0 || out.handed >= self.handed.len() {
+                continue
+            }
+            let taken = self.handed[out.handed].clone()
+            if (taken.binding ?? -1) != out.binding {
+                continue
+            }
+            // The ways out after the taking, as (at, seq, index in `ways`), and
+            // the end of the function (-1) unless the arm left.
+            let mut ahead: Vec[(i64, i64, i64)] = []
+            for at in 0..<ways.len() {
+                let way = ways[at].clone()
+                let after = way.at > taken.from || (way.at == taken.from && way.seq >= taken.seq)
+                let before_the_end = taken.until == null || way.at < (taken.until ?? 0)
+                if after && !choices_apart(taken.choices, way.choices) && before_the_end {
+                    ahead.push((way.at, way.seq, at))
+                }
+            }
+            if taken.until == null {
+                ahead.push((9223372036854775807, 0, -1))
+            }
+            let places = by_position(ahead)
+            for position in places {
+                let mut choices: Vec[(i64, i64)] = []
+                if position.2 >= 0 {
+                    choices = ways[position.2].choices.clone()
+                }
+                let mut given_back = false
+                for give in gives {
+                    if give.at >= taken.from && give.at < position.0 && (a_path_revives(give.path, out.subject) || give.path == out.part) && every_choice_held(give.choices, taken.choices, choices) {
+                        given_back = true
+                    }
+                }
+                if given_back {
+                    continue
+                }
+                let mut found: i64 = -1
+                for r in 0..<reports.len() {
+                    if found < 0 && reports[r].subject == out.subject && reports[r].at == position.0 && reports[r].seq == position.1 {
+                        found = r
+                    }
+                }
+                if found >= 0 {
+                    reports[found].parts.push(index)
+                } else {
+                    reports.push(CheckMissing { subject: out.subject.clone(), at: position.0, seq: position.1, way: position.2, parts: [index] })
+                }
+                break
+            }
+        }
+        let mut said: Vec[CheckFinding] = []
+        for report in reports {
+            said.push(self.a_part_is_missing(outs, ways, report))
+        }
+        for one in said {
+            self.findings.push(one.clone())
+        }
+    }
+
+    // The report of one place the parts are missing at (`NK2108`).
+    fn a_part_is_missing(ref self, outs: ref Vec[CheckPartOut], ways: ref Vec[CheckWayOut], report: ref CheckMissing) -> CheckFinding {
+        let out = outs[report.parts[0]].clone()
+        let taken = self.handed[out.handed].clone()
+        let subject = out.subject.clone()
+        let mut names: Vec[String] = []
+        for index in report.parts {
+            names.push(f"`{outs[index].part}`")
+        }
+        let mut part: String = names[0].clone()
+        if names.len() > 1 {
+            let mut head: String = ""
+            for at in 0..<(names.len() - 1) {
+                if at > 0 {
+                    head = f"{head}, "
+                }
+                head = f"{head}{names[at]}"
+            }
+            part = f"{head} and {names[names.len() - 1]}"
+        }
+        let from = Span { start: taken.from as u32, end: taken.at as u32 }
+        let some = report.way >= 0
+        let mut how: String = ""
+        let mut word: String = ""
+        let mut at_the_way = from.clone()
+        if some {
+            let way = ways[report.way].clone()
+            how = way.how.clone()
+            word = way.word.clone()
+            at_the_way = way.span.clone()
+        }
+        let fails = some && how == "fails"
+        let mut message: String = f"`{subject}` is left without {part}: it was taken out and never given back."
+        let mut span = from.clone()
+        let mut label = CheckLabel { span: from.clone(), word: out.part.clone(), text: "taken out here and not given back".clone(), main: true }
+        if fails {
+            message = f"`{word}` can fail, and {part} is out of `{subject}` at that point."
+            span = at_the_way.clone()
+            label = CheckLabel { span: at_the_way.clone(), word: word.clone(), text: "can fail while the part is out".clone(), main: true }
+        } else if some {
+            message = f"This `{how}` leaves `{subject}` without {part}."
+            span = at_the_way.clone()
+            label = CheckLabel { span: at_the_way.clone(), word: how.clone(), text: "leaves the function with the part still out".clone(), main: true }
+        }
+        let mut labels: Vec[CheckLabel] = [label]
+        if some {
+            labels.push(CheckLabel { span: from.clone(), word: out.part.clone(), text: f"taken out of `{subject}` here", main: false })
+        }
+        let mut kept: String = f"`{subject}` is a `mut` parameter, so it is the caller's and is whole whenever the caller can see it. `{out.part}` was {taken.to}, and nothing has put it back."
+        let mut tail: String = ""
+        if fails {
+            kept = f"Between taking {part} out of `{subject}` and giving it back, no call that can fail may stand: the caller would be left a `{subject}` with a part missing."
+            tail = " and move the call out from between"
+        }
+        return CheckFinding { severity: CheckSeverity::Error, span: span, code: "NK2108".clone(), message: message, notes: [kept], help: f"Assign `{subject}` (or the part) before the function is left{tail}, or build the value by value with `fn f({subject}: T) -> T`.", labels: labels }
+    }
+}
+
+// Whether a sequence is one a walk uses up: not a range, which replays.
+fn a_sequence_that_is_used_up(ty: ref Ty) -> bool {
+    return match ty {
+        Ty::Seq { shape, .. } => !shape.replays,
+        else => false,
+    }
+}
+
+// What a sequence is a sequence of, as text, or `?`.
+fn an_item_text(ty: ref Ty) -> String {
+    return match ty {
+        Ty::Seq { item, .. } => item.text(),
+        else => "?".clone(),
+    }
+}
+
+// The first segment of a path: `p` for `p.name`.
+fn a_root_segment(path: ref String) -> String {
+    let parts: Vec[ref String] = path.split(".").collect()
+    return parts[0].clone()
+}
+
+// Ways out in the order they stand in, the ones at one place in the order they
+// were found in.
+fn by_position(ahead: ref Vec[(i64, i64, i64)]) -> Vec[(i64, i64, i64)] {
+    let mut out: Vec[(i64, i64, i64)] = []
+    for item in ahead {
+        let mut spot = out.len()
+        while spot > 0 && (out[spot - 1].0 > item.0 || (out[spot - 1].0 == item.0 && out[spot - 1].1 > item.1)) {
+            spot = spot - 1
+        }
+        out.insert(spot, item.clone())
+    }
+    return out
+}
+
+// Whether every choice an assignment stands under is one the taking stood under
+// or the way out stands under.
+fn every_choice_held(given: ref Vec[(i64, i64)], taking: ref Vec[(i64, i64)], way: ref Vec[(i64, i64)]) -> bool {
+    for choice in given {
+        let mut held = false
+        for other in taking {
+            if other.0 == choice.0 && other.1 == choice.1 {
+                held = true
+            }
+        }
+        for other in way {
+            if other.0 == choice.0 && other.1 == choice.1 {
+                held = true
+            }
+        }
+        if !held {
+            return false
+        }
+    }
+    return true
+}

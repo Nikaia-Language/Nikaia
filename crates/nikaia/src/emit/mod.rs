@@ -1303,7 +1303,7 @@ struct Emitter<'p> {
     /// ([`check::Checked::copied_view_bindings`]).
     copied_view_bindings: std::collections::BTreeSet<(usize, String)>,
     /// [`check::Checked::unsigned_literals`].
-    unsigned_literals: std::collections::BTreeMap<(usize, i128), String>,
+    unsigned_literals: std::collections::BTreeMap<usize, String>,
     /// [`check::Checked::copied_tuple_parts`].
     copied_tuple_parts: std::collections::BTreeSet<(usize, String)>,
     /// [`check::Checked::number_lets`].
@@ -8288,10 +8288,7 @@ impl<'p> Emitter<'p> {
                 value, negative, ..
             } => {
                 let v = crate::ast::int_value(*value, *negative);
-                match self
-                    .unsigned_literals
-                    .get(&(crate::check::value_node(expr), v))
-                {
+                match self.unsigned_literals.get(&crate::check::value_node(expr)) {
                     Some(ty) => out.push(&format!("{v}{ty}")),
                     None => out.push(&integer_literal(v, flow.widen)),
                 }
