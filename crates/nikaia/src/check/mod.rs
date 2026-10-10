@@ -16949,6 +16949,20 @@ impl<'a> Checker<'a> {
             // gives a *method* call the answer earlier).
             if let Some(given) = given.get(at) {
                 self.constant_fits(given, Some(want), span);
+                if self.an_open_number_where_none_fits(
+                    found,
+                    want,
+                    given,
+                    *span,
+                    "argument",
+                    &|found, want| {
+                        format!(
+                            "`{key}` expects `{name}` to be `{want}`, but you're passing `{found}`."
+                        )
+                    },
+                ) {
+                    continue;
+                }
                 // A free call walks its arguments first, so a call on a
                 // number written as its receiver is told its parameter here.
                 if let Expr::MethodCall { receiver, .. } = given
@@ -17254,6 +17268,74 @@ impl<'a> Checker<'a> {
         ty::substitute(result, &bound).fits(want)
     }
 
+    /// **An open number put where no number fits** (#554): `let n = 12` and
+    /// then `let s: String = n`. The number has no type until a use decides
+    /// it ([ADR-285](../../docs/specification/adr/adr-285.md) D23), so it read
+    /// as `?` here and passed, and `rustc` refused the generated file. A use
+    /// that asks for a type no number can be is refused at that use, with the
+    /// position's own code and sentence, the value named *a number*.
+    fn an_open_number_where_none_fits(
+        &mut self,
+        found: &Ty,
+        want: &Ty,
+        value: &Expr,
+        span: Span,
+        what: &str,
+        message: &dyn Fn(&str, &str) -> String,
+    ) -> bool {
+        if !found.is_unknown()
+            || !self.number_shaped(value)
+            || matches!(value, Expr::LitInt { .. })
+            || !self.no_number_is(want)
+        {
+            return false;
+        }
+        let code = match what {
+            "let" => "NK1103",
+            "returns" => "NK1104",
+            "assign" => "NK1105",
+            "field" => "NK1106",
+            "argument" => "NK1102",
+            _ => return false,
+        };
+        // The position's sentence, with the value's type written as words:
+        // there is none to put between backticks yet.
+        const HOLE: &str = "\u{0}";
+        let message = message(HOLE, &want.text()).replace(&format!("`{HOLE}`"), "a number");
+        self.checked.findings.push(Finding {
+            severity: Severity::Error,
+            span,
+            code,
+            message,
+            notes: vec![
+                "A number nothing typed takes the type its uses ask for, and this one asks for a type that is not a number."
+                    .to_string(),
+            ],
+            help: Some(format!(
+                "Make it a `{}`, or give the number to a place that holds one.",
+                want.text()
+            )),
+            labels: Vec::new(),
+        });
+        true
+    }
+
+    /// **A type no number can be**: text, a `bool`, a `char`, a tuple, a
+    /// container, or a struct or an enum declared here. A name this checker
+    /// does not know - a type parameter, a library's type - is not claimed.
+    fn no_number_is(&self, ty: &Ty) -> bool {
+        match ty {
+            Ty::Named { name, args, .. } => {
+                matches!(name.as_str(), "String" | "str" | "bool" | "char")
+                    || (!args.is_empty() && !is_number(name))
+                    || self.structs.contains_key(name)
+                    || self.enums.contains_key(name)
+            }
+            Ty::Tuple(_) => true,
+            _ => false,
+        }
+    }
+
     /// [`Checker::expect`], for a position that has the value in hand, so a
     /// view of text kept where text of its own is wanted can say **why** here
     /// ([ADR-282](../../docs/specification/adr/adr-282.md) D25). `keeper` is the
@@ -17267,13 +17349,16 @@ impl<'a> Checker<'a> {
         keeper: &str,
         span: Span,
         what: &str,
-        message: impl FnOnce(&str, &str) -> String,
+        message: impl Fn(&str, &str) -> String,
     ) {
         // **A place that says its type is a use of the numbers put there**
         // ([ADR-285](../../docs/specification/adr/adr-285.md) D24): a field, a
         // `let`'s annotation, what a function hands back.
         if let Some(value) = value {
             self.number_asked(value, want, &span, true);
+            if self.an_open_number_where_none_fits(found, want, value, span, what, &message) {
+                return;
+            }
         }
         if self.a_name_in_text(want, value, &span) {
             return;

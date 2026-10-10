@@ -8,6 +8,17 @@ or the specification. A change only to the guide, the notes, the README, the
 website, the tests, the examples or the tooling around them raises nothing and
 has no heading here; `CLAUDE.md` draws the line.
 
+## [0.0.731] — 2026-10-10
+
+**An open number where no number fits is refused at that use** (ADR-285 D23,
+#554).
+- `let n = 12` then `let s: String = n` is `NK1103`, where it reached `rustc`
+  as *mismatched types*: a use that asks an open number for text, a `bool`, a
+  `char`, a tuple, a container or a declared struct or enum is refused there,
+  the value named *a number*. An argument is `NK1102`, a field `NK1106`, a
+  `return` `NK1104`.
+- A number type still decides the number: `let x: u8 = n` passes.
+
 ## [0.0.730] — 2026-10-10
 
 **A supervisor's child takes a policy: `policy:` and `supervisor::Restart`**

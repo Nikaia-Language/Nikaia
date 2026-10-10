@@ -121,3 +121,59 @@ fn an_overflow_is_refused_wherever_the_operation_stands() {
         );
     }
 }
+
+/// **A use that asks for a type no number can be is refused at that use**
+/// (#554): `let n = 12` and then `let s: String = n` passed the checker, the
+/// number being unknown to it until a use decides, and reached `rustc` as
+/// *mismatched types*. Each typed place refuses it with its own code.
+#[test]
+fn a_number_where_no_number_fits_is_refused_at_the_use() {
+    for (place, code, message, source) in [
+        (
+            "let",
+            "NK1103",
+            "This value is a number, but the `let` declares `String`.",
+            "fn main() {\n    let n = 12\n    let s: String = n\n}\n",
+        ),
+        (
+            "argument",
+            "NK1102",
+            "`f` expects `s` to be `String`, but you're passing a number.",
+            "fn f(s: String) {\n    println(s)\n}\n\nfn main() {\n    let n = 12\n    f(n)\n}\n",
+        ),
+        (
+            "field",
+            "NK1106",
+            "`P.name` holds `String`, but you're giving it a number.",
+            "struct P {\n    name: String,\n}\n\nfn main() {\n    let n = 12\n    let p = P { name: n }\n}\n",
+        ),
+        (
+            "return",
+            "NK1104",
+            "You're returning a number, but the function is declared to return `String`.",
+            "fn g() -> String {\n    let n = 3\n    return n + 1\n}\n\nfn main() {\n    println(g())\n}\n",
+        ),
+        (
+            "bool",
+            "NK1103",
+            "This value is a number, but the `let` declares `bool`.",
+            "fn main() {\n    let n = 12\n    let b: bool = n\n}\n",
+        ),
+    ] {
+        let found = findings(source);
+        assert!(
+            found.len() == 1 && found[0].code == code && found[0].message == message,
+            "{place}: {found:#?}"
+        );
+    }
+}
+
+/// **A number type still decides it** (#554): `let x: u8 = n` types `n` as a
+/// `u8` and passes.
+#[test]
+fn a_number_type_still_decides_the_number() {
+    let source = "fn main() {\n    let n = 12\n    let x: u8 = n\n    println(f\"{x}\")\n}\n";
+    assert!(findings(source).is_empty(), "{:#?}", findings(source));
+    let rust = lowered(source);
+    assert!(rust.contains("let n: u8 = 12"), "{rust}");
+}
