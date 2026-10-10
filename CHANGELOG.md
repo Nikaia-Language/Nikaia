@@ -8,6 +8,15 @@ or the specification. A change only to the guide, the notes, the README, the
 website, the tests, the examples or the tooling around them raises nothing and
 has no heading here; `CLAUDE.md` draws the line.
 
+## [0.0.723] — 2026-10-10
+
+**An `enum` with payload at a C library's boundary** (ADR-284 D31-D32, #88).
+- Decided, not built: a handle to one is read through `_kind` and a getter
+  `<prefix>_<Type>_<Variant>_<field>` per field, a field without a name
+  numbered from `0`; a getter on another variant is `E_ARGUMENT`.
+  `pub extern enum` is a tagged union by value, as `#[repr(C)]` lays it out,
+  its fields C values (`NK1145`). Part III 15.1, C.3.
+
 ## [0.0.722] — 2026-10-10
 
 **A C library reports an absent number with a flag, not a status** (ADR-284
