@@ -171,6 +171,18 @@ enum Out {
     /// `Vec[T]` of a `pub extern struct`: the caller's buffer, counted in
     /// structs (D16).
     Records(usize),
+    /// `T?` of a number: the value's out-parameter, then `bool *present`,
+    /// the status `OK` either way (D30).
+    AbsentValue(ByValue),
+    /// `T?` of a `pub extern struct`, the same way (D30).
+    AbsentRecord(usize),
+}
+
+impl Out {
+    /// Whether a `bool *present` follows the value's out-parameter (D30).
+    fn flagged(&self) -> bool {
+        matches!(self, Out::AbsentValue(_) | Out::AbsentRecord(_))
+    }
 }
 
 /// **A `pub extern struct`** of the entry file (ADR-284 D14, D15): C's layout,
@@ -516,6 +528,12 @@ fn handed(
     if ty.is_nullable && !ty.is_view {
         let mut present = ty.clone();
         present.is_nullable = false;
+        if let Some(at) = record_of(parsed, records, &present) {
+            return Some(Out::AbsentRecord(at));
+        }
+        if let Some(shape) = by_value(parsed, &present) {
+            return Some(Out::AbsentValue(shape));
+        }
         return handle_of(parsed, handles, &present).map(Out::AbsentHandle);
     }
     if let Some(at) = handle_of(parsed, handles, ty) {
@@ -1282,6 +1300,17 @@ pub fn export(
                     c_params.push(format!("{prefix}_{ty} **out"));
                     Some(Out::AbsentHandle(at))
                 }
+                Some(Out::AbsentValue(shape)) => {
+                    rust_params.push(format!("out: *mut {}, present: *mut bool", shape.rust));
+                    c_params.push(format!("{} *out, bool *present", shape.c));
+                    Some(Out::AbsentValue(shape))
+                }
+                Some(Out::AbsentRecord(at)) => {
+                    let ty = &records[at].name;
+                    rust_params.push(format!("out: *mut __nikaia_c_{ty}, present: *mut bool"));
+                    c_params.push(format!("{prefix}_{ty} *out, bool *present"));
+                    Some(Out::AbsentRecord(at))
+                }
                 None => {
                     return Err(not_yet(
                         &written,
@@ -1379,6 +1408,34 @@ pub fn export(
                  unsafe { nikaia_std::c_boundary::put(out, made) };\n            \
                  }\n            0\n        }"
                 .to_string(),
+            // `null` leaves `out` as it was and writes `false` (D30).
+            Some(Out::AbsentValue(shape)) => {
+                let value = match shape.scalar {
+                    true => "value as u32",
+                    false => "value",
+                };
+                format!(
+                    "Ok(value) => {{\n            \
+                     let held = value.is_some();\n            \
+                     if let Some(value) = value {{\n                \
+                     // SAFETY: the C caller hands a place for one value, or NULL (ADR-284 D7).\n                \
+                     unsafe {{ nikaia_std::c_boundary::put(out, {value}) }};\n            \
+                     }}\n            \
+                     // SAFETY: the C caller hands a place for the flag, or NULL (ADR-284 D30).\n            \
+                     unsafe {{ nikaia_std::c_boundary::put(present, held) }};\n            0\n        }}"
+                )
+            }
+            Some(Out::AbsentRecord(at)) => format!(
+                "Ok(value) => {{\n            \
+                 let held = value.is_some();\n            \
+                 if let Some(value) = value {{\n                \
+                 // SAFETY: the C caller hands a place for one value, or NULL (ADR-284 D7).\n                \
+                 unsafe {{ nikaia_std::c_boundary::put(out, __nikaia_c_{}::from_nikaia(value)) }};\n            \
+                 }}\n            \
+                 // SAFETY: the C caller hands a place for the flag, or NULL (ADR-284 D30).\n            \
+                 unsafe {{ nikaia_std::c_boundary::put(present, held) }};\n            0\n        }}",
+                records[*at].name
+            ),
             None => "Ok(()) => 0,".to_string(),
         };
         // A failure is the variant's code, and its message, with its site,
@@ -1945,14 +2002,21 @@ impl Python {
                 after.push("return got".to_string());
             }
             Some(out) => {
+                let value = |shape: &ByValue| match (shape.scalar, shape.rust) {
+                    (true, _) => "chr(out.value)".to_string(),
+                    (false, "bool") => "bool(out.value)".to_string(),
+                    _ => "out.value".to_string(),
+                };
                 let (ctype, back) = match out {
-                    Out::Value(shape) => (
+                    Out::Value(shape) => (python_scalar(shape).to_string(), value(shape)),
+                    // `null` is `None` (D30).
+                    Out::AbsentValue(shape) => (
                         python_scalar(shape).to_string(),
-                        match (shape.scalar, shape.rust) {
-                            (true, _) => "chr(out.value)".to_string(),
-                            (false, "bool") => "bool(out.value)".to_string(),
-                            _ => "out.value".to_string(),
-                        },
+                        format!("{} if present.value else None", value(shape)),
+                    ),
+                    Out::AbsentRecord(at) => (
+                        records[*at].name.clone(),
+                        "out if present.value else None".to_string(),
                     ),
                     Out::Choice(at) => (
                         "ctypes.c_int".to_string(),
@@ -1976,6 +2040,11 @@ impl Python {
                 before.push(format!("out = {ctype}()"));
                 let mut asked = args.clone();
                 asked.push("ctypes.byref(out)".to_string());
+                if out.flagged() {
+                    argtypes.push("ctypes.POINTER(ctypes.c_bool)".to_string());
+                    before.push("present = ctypes.c_bool()".to_string());
+                    asked.push("ctypes.byref(present)".to_string());
+                }
                 body_call = format!("_check({})", call(&asked));
                 after.push(format!("return {back}"));
             }
@@ -2008,6 +2077,9 @@ impl Python {
                 let mut handed_args = args.clone();
                 if result.is_some() {
                     handed_args.push("ctypes.byref(out)".to_string());
+                }
+                if result.as_ref().is_some_and(Out::flagged) {
+                    handed_args.push("ctypes.byref(present)".to_string());
                 }
                 lines.push("def finish(status):".to_string());
                 lines.push("    if status != 0:".to_string());

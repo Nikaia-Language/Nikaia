@@ -325,7 +325,9 @@ impl Node {
         let mut body: Vec<String> = Vec::new();
         // The C type of the value and how it is made a JavaScript one, for
         // the Promise form: `None` where nothing comes back.
-        let mut finish: Option<(Option<String>, String)> = None;
+        // The finisher's C type of `out`, its conversion, and whether a
+        // `present` flag follows `out` (D30).
+        let mut finish: Option<(Option<String>, String, bool)> = None;
         let failed = match calls.is_empty() {
             true => String::new(),
             false => format!(
@@ -348,7 +350,7 @@ impl Node {
                 body.push(format!("status = {};", call(&args)));
                 body.push(check);
                 body.push("napi_get_undefined(env, &result);".to_string());
-                finish = Some((None, "napi_get_undefined(env, &result);".to_string()));
+                finish = Some((None, "napi_get_undefined(env, &result);".to_string(), false));
             }
             Some(Out::Buffer) => {
                 locals.push("uint8_t small[256];".to_string());
@@ -405,11 +407,32 @@ impl Node {
                 ));
             }
             Some(out) => {
+                // `null` where `present` is false (D30).
+                let absent = |back: String| {
+                    format!(
+                        "if (present) {{\n        \
+                         {back}\n    \
+                         }} else {{\n        \
+                         napi_get_null(env, &result);\n    \
+                         }}"
+                    )
+                };
                 let (c, back) = match out {
                     Out::Value(shape) => (
                         shape.c.to_string(),
                         format!("result = nk_from_{}(env, out);", scalar(shape)),
                     ),
+                    Out::AbsentValue(shape) => (
+                        shape.c.to_string(),
+                        absent(format!("result = nk_from_{}(env, out);", scalar(shape))),
+                    ),
+                    Out::AbsentRecord(which) => {
+                        let ty = &records[*which].name;
+                        (
+                            format!("{prefix}_{ty}"),
+                            absent(format!("result = nk_out_{ty}(env, &out);")),
+                        )
+                    }
                     Out::Choice(which) => (
                         format!("{prefix}_{}", plains[*which].name),
                         "result = nk_from_i32(env, (int32_t)out);".to_string(),
@@ -447,16 +470,20 @@ impl Node {
                     Out::Buffer | Out::Records(_) => unreachable!("handled above"),
                 };
                 let zero = match out {
-                    Out::Record(_) => "{0}",
+                    Out::Record(_) | Out::AbsentRecord(_) => "{0}",
                     _ => "0",
                 };
                 locals.push(format!("{c} out = {zero};"));
                 let mut asked = args.clone();
                 asked.push("&out".to_string());
+                if out.flagged() {
+                    locals.push("bool present = false;".to_string());
+                    asked.push("&present".to_string());
+                }
                 body.push(format!("status = {};", call(&asked)));
                 body.push(check);
                 if !constructor {
-                    finish = Some((Some(c), back.clone()));
+                    finish = Some((Some(c), back.clone(), out.flagged()));
                 }
                 body.push(back);
             }
@@ -511,16 +538,27 @@ impl Node {
         // ticket. Not for a result into a buffer, nor for a callback, nor for
         // `self` of a struct the call would have to keep.
         let promised = match (&finish, pauses && calls.is_empty() && !by_value) {
-            (Some((c, back)), true) => {
+            (Some((c, back, flagged)), true) => {
                 self.any_async = true;
                 let finisher = format!("nk_finish_{symbol}");
-                let (taken_out, read_out, out_arg) = match c {
-                    Some(c) => (
+                // A flagged result is kept as the value with its flag behind
+                // it, one block the finisher reads back (D30).
+                let (taken_out, read_out, out_arg) = match (c, flagged) {
+                    (Some(c), false) => (
                         format!("{c} *out = NULL;"),
                         format!("{c} out = *({c} *)at;"),
                         vec!["out".to_string()],
                     ),
-                    None => (String::new(), "(void)at;".to_string(), Vec::new()),
+                    (Some(c), true) => (
+                        format!("struct {{ {c} value; bool present; }} *out = NULL;"),
+                        format!(
+                            "struct {{ {c} value; bool present; }} *held = at;\n    \
+                             {c} out = held->value;\n    \
+                             bool present = held->present;"
+                        ),
+                        vec!["&out->value".to_string(), "&out->present".to_string()],
+                    ),
+                    (None, _) => (String::new(), "(void)at;".to_string(), Vec::new()),
                 };
                 let mut text = format!(
                     "static napi_value {finisher}(napi_env env, void *at) {{\n    \
@@ -542,7 +580,10 @@ impl Node {
                      {taken_out}\n",
                     function(symbol)
                 );
-                for local in locals.iter().filter(|local| !local.contains(" out = ")) {
+                for local in locals
+                    .iter()
+                    .filter(|local| !local.contains(" out = ") && !local.contains(" present = "))
+                {
                     text.push_str(&format!("    {local}\n"));
                 }
                 text.push_str(

@@ -8,6 +8,17 @@ or the specification. A change only to the guide, the notes, the README, the
 website, the tests, the examples or the tooling around them raises nothing and
 has no heading here; `CLAUDE.md` draws the line.
 
+## [0.0.725] — 2026-10-10
+
+**A C library's absent number is built: the value, then `bool *present`**
+(ADR-284 D30, #88).
+- An entry point, a method or a getter whose result is `T?` of a number or of
+  a `pub extern struct` is exported with the value's out-parameter followed by
+  `bool *present`; the status is `OK` either way, and `null` leaves the value's
+  out-parameter as it was. The `_async` form forwards both.
+- `nikaia bind python` makes `null` `None`, `nikaia bind node` makes it
+  `null`, in the Promise form too.
+
 ## [0.0.724] — 2026-10-10
 
 **A C library's error codes: `std`'s below 100 000, its own from 100 000**

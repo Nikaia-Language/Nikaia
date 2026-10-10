@@ -22,6 +22,14 @@ pub extern fn napped(ms: i64) -> i64 {
     return ms + got
 }
 
+pub extern fn waited(ms: i64) -> i64? {
+    time::sleep(ms.millis())
+    if ms > 0 {
+        return ms
+    }
+    return null
+}
+
 pub extern fn add(a: i64, b: i64) -> i64 sync {
     return a + b
 }
@@ -90,6 +98,27 @@ impl Counter {
     pub extern fn steps(ref self) -> i64 sync {
         return self.steps
     }
+
+    pub extern fn last(ref self) -> i64? sync {
+        if self.steps > 0 {
+            return self.count
+        }
+        return null
+    }
+}
+
+pub extern fn find(key: ref String) -> i64? sync {
+    if key == \"seven\" {
+        return 7
+    }
+    return null
+}
+
+pub extern fn nearest(n: i64) -> Point? sync {
+    if n > 0 {
+        return Point { x: 1.0, y: 2.0 }
+    }
+    return null
 }
 
 pub extern fn sum_of(a: ref Counter, b: ref Counter) -> i64 sync {
@@ -370,6 +399,26 @@ int main(void) {
     printf("length of null %lld\n", (long long)n);
     calc_length_of((const uint8_t *)"", 0, &n);
     printf("length of empty %lld\n", (long long)n);
+    int64_t kept = 99;
+    bool present = false;
+    status = calc_find((const uint8_t *)"seven", 5, &kept, &present);
+    printf("find %d %d %lld\n", status, present, (long long)kept);
+    kept = 99;
+    status = calc_find((const uint8_t *)"six", 3, &kept, &present);
+    printf("find none %d %d %lld\n", status, present, (long long)kept);
+    calc_Point p = {9.0, 9.0};
+    status = calc_nearest(0, &p, &present);
+    printf("nearest none %d %d %.1f\n", status, present, p.x);
+    status = calc_nearest(1, &p, &present);
+    printf("nearest %d %d %.1f %.1f\n", status, present, p.x, p.y);
+    calc_Counter_new((const uint8_t *)"last", 4, &counter);
+    kept = 99;
+    status = calc_Counter_last(counter, &kept, &present);
+    printf("last none %d %d %lld\n", status, present, (long long)kept);
+    calc_Counter_bump(counter, 3, &n);
+    status = calc_Counter_last(counter, &kept, &present);
+    printf("last %d %d %lld\n", status, present, (long long)kept);
+    calc_Counter_free(counter);
     return CALC_OK;
 }
 "#;
@@ -669,7 +718,7 @@ fn a_c_program_calls_the_library() {
     assert!(ran.status.success(), "{}", said(&ran));
     assert_eq!(
         String::from_utf8_lossy(&ran.stdout),
-        "new 0 1\nbump 0 7\nsteps 2\ncount 7\nname 0 clicks\nlight 1\nsum 17\nsame twice -5\nno handle -1\nfree 0 0 0\nnot found 0 1\nfound 0 1\ncount of 4\ncount of null -1\nlength of null 4\nlength of empty 0\n"
+        "new 0 1\nbump 0 7\nsteps 2\ncount 7\nname 0 clicks\nlight 1\nsum 17\nsame twice -5\nno handle -1\nfree 0 0 0\nnot found 0 1\nfound 0 1\ncount of 4\ncount of null -1\nlength of null 4\nlength of empty 0\nfind 0 1 7\nfind none 0 0 99\nnearest none 0 0 9.0\nnearest 0 1 1.0 2.0\nlast none 0 0 99\nlast 0 1 3\n"
     );
 
     std::fs::write(root.join("callback.c"), CALLBACK_CALLER).expect("the caller");
@@ -890,6 +939,9 @@ assert calc.found(0) is None
 found = calc.found(4)
 assert calc.count_of(found) == 4 and calc.count_of(None) == -1
 assert calc.length_of(None) == 4 and calc.length_of("") == 0
+assert calc.find("seven") == 7 and calc.find("six") is None
+assert calc.nearest(0) is None and (calc.nearest(1).x, calc.nearest(1).y) == (1.0, 2.0)
+assert calc.waited(0) is None and calc.waited(1) == 1
 assert calc.count_up(10, lambda i: i < 3) == 3
 # A stream is a generator (ADR-284 D20, D21): read to its end, or stopped.
 import itertools
@@ -914,6 +966,7 @@ assert landed == [52], landed
 
 async def awaited():
     assert await calc.napped_async(10) == 52
+    assert await calc.waited_async(5) == 5 and await calc.waited_async(0) is None
     slow = calc.napped_async(60000)
     slow.cancel()
     try:
@@ -1014,6 +1067,14 @@ assert.strictEqual(calc.count_of(found), 4);
 assert.strictEqual(calc.count_of(null), -1);
 assert.strictEqual(calc.length_of(undefined), 4);
 assert.strictEqual(calc.length_of(""), 0);
+assert.strictEqual(calc.find("seven"), 7);
+assert.strictEqual(calc.find("six"), null);
+assert.strictEqual(calc.nearest(0), null);
+assert.deepStrictEqual(calc.nearest(1), { x: 1, y: 2 });
+const last = new calc.Counter("last");
+assert.strictEqual(last.last(), null);
+last.bump(3);
+assert.strictEqual(last.last(), 3);
 assert.strictEqual(calc.count_up(10, (i) => i < 3), 3);
 const seen = [];
 calc.words("one two", (word, light) => seen.push([word, light]));
@@ -1030,6 +1091,8 @@ global.gc();
 // thread, its `cancel()` the ticket.
 (async () => {
     assert.strictEqual(await calc.napped_async(10), 52);
+    assert.strictEqual(await calc.waited_async(5), 5);
+    assert.strictEqual(await calc.waited_async(0), null);
     const slow = calc.napped_async(60000);
     slow.cancel();
     await assert.rejects(slow, { code: "CALC_E_CANCELLED", status: -7 });
