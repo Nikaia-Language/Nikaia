@@ -1519,6 +1519,7 @@ fn walked<'a>(
         empty_lists: BTreeMap::new(),
         open_numbers: BTreeMap::new(),
         open_elements: std::collections::HashMap::new(),
+        lambda_expected: None,
         list_constants: std::collections::HashMap::new(),
         open_comptimes: BTreeMap::new(),
         overflowed: BTreeSet::new(),
@@ -3639,6 +3640,10 @@ struct Checker<'a> {
     /// number** ([ADR-285](../../docs/specification/adr/adr-285.md) D34): the
     /// binding ([`Local::id`]) and the entry of `open_numbers` it names.
     open_elements: std::collections::HashMap<usize, usize>,
+    /// **The `fn` type the place a lambda stands in declares** (#497): a
+    /// `return` against a declared `fn(i64) -> i64`, a field of one, an
+    /// annotated `let`. Set just before such a lambda is walked, taken by it.
+    lambda_expected: Option<Ty>,
     /// **What such a list holds, where nothing can change it**: an immutable
     /// `let`'s elements, so `xs[0] + xs[1]` is measured as `a + b` is (D26).
     list_constants: std::collections::HashMap<usize, Vec<Constant>>,
@@ -11556,7 +11561,11 @@ impl<'a> Checker<'a> {
                         } if args.is_empty() => INTEGERS.iter().copied().find(|n| *n == name),
                         _ => None,
                     });
+                if let (Some(t), Expr::Closure { .. }) = (ty, value) {
+                    self.lambda_expected = Some(Ty::from_ast(self.parsed, t));
+                }
                 let found = self.expr(value, span);
+                self.lambda_expected = None;
                 // **A name bound to a map read is a view of the map** (#297):
                 // the read itself, not one somewhere inside the value.
                 let of_a_map = std::mem::replace(&mut self.read_a_map, outer_read)
@@ -12269,6 +12278,46 @@ impl<'a> Checker<'a> {
                         local.open_number = Some(span.at());
                         self.open_number_given(span.at(), start, span);
                         self.open_number_given(span.at(), end, span);
+                    }
+                }
+                // **A walk over a list written in numbers binds its open
+                // element** (ADR-285 D34): `for n in [1, 2, 3]`, and `for x in
+                // xs` over such a list's name, count in the type the uses ask.
+                if let [_] = bindings.as_slice()
+                    && let Some(local) = frame.first_mut()
+                    && local.ty.is_unknown()
+                {
+                    match iter {
+                        Expr::Variable(name) => {
+                            if let Some(at) = self
+                                .binding(self.parsed.text(*name))
+                                .and_then(|list| self.open_elements.get(&list.id).copied())
+                            {
+                                local.open_number = Some(self.open_root(at));
+                            }
+                        }
+                        Expr::ListLit { items, .. }
+                            if !items.is_empty() && items.iter().all(|i| self.number_shaped(i)) =>
+                        {
+                            self.open_numbers.insert(
+                                span.at(),
+                                OpenNumber {
+                                    name: local.name.clone(),
+                                    element: false,
+                                    at: *span,
+                                    joined: span.at(),
+                                    asks: Vec::new(),
+                                    given: Vec::new(),
+                                    derived: Vec::new(),
+                                    written: Vec::new(),
+                                },
+                            );
+                            local.open_number = Some(span.at());
+                            for item in items {
+                                self.open_number_given(span.at(), item, span);
+                            }
+                        }
+                        _ => {}
                     }
                 }
                 for local in &frame {
@@ -13904,10 +13953,17 @@ impl<'a> Checker<'a> {
                     if let Some(value) = &init.value {
                         self.a_mut_parameter_given_away(value, span, "put into a field");
                     }
+                    if let Some(Expr::Closure { .. }) = &init.value {
+                        self.lambda_expected = declared
+                            .as_ref()
+                            .and_then(|d| d.iter().find(|f| f.name == field))
+                            .map(|f| f.ty.clone());
+                    }
                     let found = match &init.value {
                         Some(value) => self.expr(value, span),
                         None => self.lookup(&field).unwrap_or(Ty::Unknown),
                     };
+                    self.lambda_expected = None;
                     if code_field {
                         let mut stored = self.stored_frames.pop().unwrap_or_default();
                         match &init.value {
@@ -14195,9 +14251,19 @@ impl<'a> Checker<'a> {
                 mutable,
                 body,
             } => {
+                // **Its parameters are what the place it stands in says**
+                // (#497), as a callee's signature says for an argument.
+                let given = match self.lambda_expected.take() {
+                    Some(Ty::Fn { params: given, .. }) if given.len() == params.len() => given,
+                    _ => Vec::new(),
+                };
                 let frame: Vec<Local> = params
                     .iter()
-                    .map(|p| self.lambda_parameter(*p, mutable, Ty::Unknown, span))
+                    .enumerate()
+                    .map(|(at, p)| {
+                        let ty = given.get(at).cloned().unwrap_or(Ty::Unknown);
+                        self.lambda_parameter(*p, mutable, ty, span)
+                    })
                     .collect();
                 for local in &frame {
                     self.nameable(&local.name.clone(), span, "a lambda's argument");
@@ -24884,7 +24950,9 @@ impl<'a> Checker<'a> {
             return;
         };
         let name = self.parsed.text(*name).to_string();
-        if !self.binding(&name).is_some_and(|local| local.lent) {
+        // A number is copied out of the view, and one put where no number fits
+        // is refused as that (#554).
+        if !self.binding(&name).is_some_and(|local| local.lent) || self.number_shaped(value) {
             return;
         }
         let want = want.clone();
@@ -26858,10 +26926,14 @@ impl<'a> Checker<'a> {
             self.a_field_of_a_borrowed_subject(value, span, "handed back");
             self.a_mut_parameter_given_away(value, span, "handed back");
         }
+        if let Some(Expr::Closure { .. }) = value {
+            self.lambda_expected = self.expected.clone();
+        }
         let found = match value {
             Some(value) => self.expr(value, span),
             None => Ty::Tuple(Vec::new()),
         };
+        self.lambda_expected = None;
         let Some(expected) = self.expected.clone() else {
             return;
         };
@@ -27195,16 +27267,19 @@ impl<'a> Checker<'a> {
         if let (Ty::Tuple(types), MatchPattern::Tuple { path, parts }) = (on, pattern)
             && path.is_empty()
         {
-            return parts
-                .iter()
-                .zip(types)
-                .filter_map(|(part, ty)| match part {
+            let mut out = BTreeMap::new();
+            for (part, ty) in parts.iter().zip(types) {
+                match part {
                     MatchPattern::Path(one) if one.len() == 1 => {
-                        Some((self.parsed.text(one[0]).to_string(), ty.clone()))
+                        out.insert(self.parsed.text(one[0]).to_string(), ty.clone());
                     }
-                    _ => None,
-                })
-                .collect();
+                    MatchPattern::Tuple { .. } | MatchPattern::Named { .. } => {
+                        out.extend(self.pattern_parts(part, ty));
+                    }
+                    _ => {}
+                }
+            }
+            return out;
         }
         let Ty::Named { name: owner, .. } = on else {
             return BTreeMap::new();
@@ -27229,10 +27304,16 @@ impl<'a> Checker<'a> {
                         .unwrap_or_default(),
                 };
                 for (part, ty) in parts.iter().zip(types) {
-                    if let MatchPattern::Path(one) = part
-                        && let [name] = one.as_slice()
-                    {
-                        out.insert(self.parsed.text(*name).to_string(), ty);
+                    match part {
+                        MatchPattern::Path(one) if one.len() == 1 => {
+                            out.insert(self.parsed.text(one[0]).to_string(), ty);
+                        }
+                        // **A pattern inside a pattern binds from its part's
+                        // type** (ADR-291 D10): `Add(Num(x), Num(y))`.
+                        MatchPattern::Tuple { .. } | MatchPattern::Named { .. } => {
+                            out.extend(self.pattern_parts(part, &ty));
+                        }
+                        _ => {}
                     }
                 }
             }
@@ -27757,6 +27838,13 @@ fn number_branches(expr: &Expr) -> Option<Vec<&Expr>> {
         )
     }
     fn of_block<'e>(block: &'e Block, out: &mut Vec<&'e Expr>) -> Option<()> {
+        // A block that ends in `return`, `break` or `continue` leaves.
+        if matches!(
+            block.stmts.last().map(|s| &s.node),
+            Some(Stmt::Return(_) | Stmt::Break | Stmt::Continue)
+        ) {
+            return Some(());
+        }
         let tail = tail_of(block)?;
         of_value(tail, out)
     }

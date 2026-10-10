@@ -108,7 +108,8 @@ fn a_bare_name_in_a_pattern_is_the_value_matched() {
         "enum E {\n    A(i64),\n    B,\n}\n\nfn f(e: E) -> i64 {\n    return match e {\n        E::A(n) => n,\n        x => {\n            let s: String = x\n            0\n        }\n    }\n}\n\nfn main() {\n    println(f\"{f(E::B)}\")\n}\n",
     );
     assert!(
-        found.iter().any(|f| f.code == "NK1103" && f.message == "This value is `E`, but the `let` declares `String`."),
+        found.iter().any(|f| f.code == "NK1103"
+            && f.message == "This value is `E`, but the `let` declares `String`."),
         "{found:#?}"
     );
 }

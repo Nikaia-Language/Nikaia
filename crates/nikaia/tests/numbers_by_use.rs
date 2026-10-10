@@ -236,13 +236,26 @@ fn a_choice_between_numbers_is_an_open_number() {
     let rust = lowered(
         "fn main() {\n    let c = true\n    let taken = if c { 1 } else { 0 }\n    let x: u8 = taken\n    println(f\"{x}\")\n}\n",
     );
-    assert!(rust.contains("let taken: u8 = if c { 1 } else { 0 };"), "{rust}");
+    assert!(
+        rust.contains("let taken: u8 = if c { 1 } else { 0 };"),
+        "{rust}"
+    );
     let found = findings(
         "fn pick(k: i64) -> String {\n    let n = match k {\n        1 => 10,\n        else => 20,\n    }\n    return n\n}\n\nfn main() {\n    println(pick(1))\n}\n",
     );
     assert!(
         found.iter().any(|f| f.code == "NK1104"
-            && f.message == "You're returning a number, but the function is declared to return `String`."),
+            && f.message
+                == "You're returning a number, but the function is declared to return `String`."),
+        "{found:#?}"
+    ); // A branch that leaves comes to nothing: the `if` is the other branch's
+    // number.
+    let found = findings(
+        "fn pick(c: bool) -> i64 {\n    let x = if c { return 1 } else { 2 }\n    let s: String = x\n    0\n}\n\nfn main() {\n    println(f\"{pick(true)}\")\n}\n",
+    );
+    assert!(
+        found.iter().any(|f| f.code == "NK1103"
+            && f.message == "This value is a number, but the `let` declares `String`."),
         "{found:#?}"
     );
 }
@@ -251,9 +264,8 @@ fn a_choice_between_numbers_is_an_open_number() {
 /// `for k in 0..<5` bound `k` as unknown.
 #[test]
 fn a_range_between_literals_binds_an_open_number() {
-    let found = findings(
-        "fn main() {\n    for j in 0..<3 {\n        let s: String = j\n    }\n}\n",
-    );
+    let found =
+        findings("fn main() {\n    for j in 0..<3 {\n        let s: String = j\n    }\n}\n");
     assert!(
         found.iter().any(|f| f.code == "NK1103"
             && f.message == "This value is a number, but the `let` declares `String`."),
@@ -262,6 +274,27 @@ fn a_range_between_literals_binds_an_open_number() {
     assert!(
         findings(
             "fn main() {\n    let mut cut: Vec[u8] = []\n    for k in 0..<5 {\n        let b: u8 = k\n        cut.push(b)\n    }\n    println(f\"{cut.len()}\")\n}\n"
+        )
+        .is_empty()
+    );
+}
+
+/// **A walk over a list written in numbers binds its open element** (ADR-285
+/// D34, #497): `for n in [1, 2, 3]` and `for y in ys` over such a list.
+#[test]
+fn a_walk_over_a_list_of_numbers_binds_an_open_number() {
+    let found = findings(
+        "fn main() {\n    for n in [1, 2, 3] {\n        let s: String = n\n    }\n    let ys = [4, 5]\n    for y in ys {\n        let t: String = y\n    }\n}\n",
+    );
+    assert_eq!(found.len(), 2, "{found:#?}");
+    assert!(
+        found.iter().all(|f| f.code == "NK1103"
+            && f.message == "This value is a number, but the `let` declares `String`."),
+        "{found:#?}"
+    );
+    assert!(
+        findings(
+            "fn main() {\n    let mut c: Vec[u8] = []\n    for z in [1, 2] {\n        let b: u8 = z\n        c.push(b)\n    }\n    println(f\"{c.len()}\")\n}\n"
         )
         .is_empty()
     );

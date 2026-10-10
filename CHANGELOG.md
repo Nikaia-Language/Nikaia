@@ -8,6 +8,21 @@ or the specification. A change only to the guide, the notes, the README, the
 website, the tests, the examples or the tooling around them raises nothing and
 has no heading here; `CLAUDE.md` draws the line.
 
+## [0.0.736] — 2026-10-10
+
+**Four more names the checker can type** (#497).
+- A branch that ends in `return`, `break` or `continue` comes to nothing:
+  `let x = if c { return 1 } else { 2 }` is the other branch's open number.
+- A pattern inside a pattern binds from its part's type (ADR-291 D10):
+  `E::Add(E::Num(x), E::Num(y))` binds two `i64`s, `E::Add(E::Neg { inner }, _)`
+  an `E`.
+- A lambda's parameters are what the place it stands in declares: a `return`
+  against a declared `fn(i64) -> i64`, a field of that type and an annotated
+  `let` type them, as a callee's signature types an argument's.
+- `for n in [1, 2, 3]`, and `for y in ys` over a list written in numbers, bind
+  the elements' open number (ADR-285 D34).
+- `NK1183` no longer calls a number bound by a `for` a view of text.
+
 ## [0.0.735] — 2026-10-10
 
 **Three places the checker knew a type and kept it unknown** (#497).
