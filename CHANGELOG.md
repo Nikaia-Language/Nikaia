@@ -8,6 +8,15 @@ or the specification. A change only to the guide, the notes, the README, the
 website, the tests, the examples or the tooling around them raises nothing and
 has no heading here; `CLAUDE.md` draws the line.
 
+## [0.0.760] — 2026-10-10
+
+**More of the toolchain is Nikaia** (ADR-294, #125).
+- `build_time`: the evaluator of a build-time expression - calls, loops, `f"…"`,
+  structs and variants, a grammar run on a text - is `tools/build_eval.nika`. It
+  asks the compiler for the program's files, the ledger, what a build may read
+  and the grammar workshop. A refusal's `because`, `why` and `way_out` are
+  `String`s now.
+
 ## [0.0.759] — 2026-10-10
 
 **A `??` whose fallback is an index read lowers to a value (#561).**

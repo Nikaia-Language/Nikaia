@@ -1,0 +1,1114 @@
+// crates/nikaia-std/src/tools/build_eval.nika
+//
+// **What a build-time expression comes to** (ADR-287, ADR-311, ADR-318):
+// the evaluator itself, moved from the compiler's `build_time` (ADR-294, #125).
+// An initialiser, the body of a function of the program, a loop, an early
+// `return`, a list filled by index, `f"…"`, a struct and a variant, a grammar
+// run on a text. Reading the program's files, the ledger, what a build may
+// read and compiling and running a grammar stay with the compiler, which the
+// evaluator asks through `BtHost`.
+//
+// **The program's files are numbered**: 0 is the file being checked, the rest
+// are the files beside it, and a symbol means what the file it was parsed in
+// says it means - so the unit a body was read from travels with it.
+//
+// Nothing here panics and nothing hangs but a `while` that does not end
+// (ADR-287 D4); what it will not do it refuses, and says which kind of "not" it is.
+
+use std::collections
+use std::text
+
+/// How deep a build-time call may go before this stops (ADR-287 D16's
+/// neighbour). **Not a step budget**: what this prevents is a *recursion* that
+/// takes the compiler's stack down with it.
+comptime BT_DEEPEST: i64 = 128
+
+/// The one call the evaluator answers before it evaluates its arguments
+/// (ADR-310 D3).
+comptime BT_ASSET: ref String = "asset"
+
+/// A function's parameters, its options with their defaults, its body, and the
+/// file it came from.
+pub struct BtCallee {
+    pub args: Vec[String],
+    pub options: Vec[(String, Expr)],
+    pub body: Block,
+    pub owner: i64,
+}
+
+/// What the ledger says about running a function while the program is built.
+pub struct BtContract {
+    /// Whether the program's ledger describes the function at all.
+    pub declared: bool,
+    /// Why it may not run (ADR-287 D13, D14); empty where it may.
+    pub reason: String,
+}
+
+/// What a grammar run came to.
+pub struct BtRan {
+    /// Whether the grammar and its entry rule are the program's.
+    pub found: bool,
+    pub value: BuildValue?,
+    /// Where the compiler kept what refused it, where nothing came back.
+    pub slot: i64,
+}
+
+/// What a file read at build time came to.
+pub struct BtRead {
+    pub text: String?,
+    pub denied: Denied?,
+}
+
+/// What the evaluator asks of the compiler.
+pub trait BtHost {
+    /// What a symbol of file `unit` is.
+    fn text(ref self, unit: i64, symbol: winnow_grammar::Symbol) -> String sync
+    /// Which numbers name a character: Unicode's table.
+    fn char_of(ref self, n: i64) -> scalar? sync
+    /// What a name outside a build-time body is worth: a `comptime` already
+    /// evaluated, or a `let` whose value folded.
+    fn known(ref self, name: ref String) -> BuildValue? sync
+    fn contract(ref self, name: ref String) -> BtContract sync
+    /// The function a name is: this file first, then the files beside it.
+    fn callee(ref self, unit: i64, name: ref String) -> BtCallee? sync
+    /// The initialiser of the `comptime` item `name` of file `unit`.
+    fn constant(ref self, unit: i64, name: ref String) -> Expr? sync
+    /// Whether `ty::variant` names a variant of an `enum` the program declares.
+    fn variant_of(ref self, unit: i64, ty: ref String, variant: ref String) -> bool sync
+    fn run_grammar(ref self, unit: i64, which: ref String, rule: ref String, input: ref String) -> BtRan sync
+    fn read(ref self, path: ref String) -> BtRead sync
+}
+
+/// Why a build-time expression did not come to a value.
+pub enum BtRefusal {
+    /// This evaluator does not know the shape. **Not an error by itself.**
+    Unevaluable,
+    /// The callee may not be run while the program is built (ADR-287 D13, D14).
+    NotAllowed { callee: String, because: String },
+    TooDeep { callee: String },
+    /// Understood, and not something this evaluator can do here.
+    NotHere { what: String, why: String, way_out: String },
+    /// A constant worked out from itself.
+    Circular { ring: Vec[String] },
+    /// A file this build may not read (ADR-310 D4 to D5).
+    MayNotRead { path: String, why: Denied },
+    /// A path that is not a literal (D4).
+    PathIsComputed,
+    /// An index this array does not have.
+    OutOfBounds { at: Integer, len: i64 },
+    /// A refusal the compiler kept, by its place in what it kept.
+    Host(i64),
+}
+
+impl Error for BtRefusal {
+    fn message(ref self) -> String {
+        return match self {
+            BtRefusal::Unevaluable => "a build-time expression this does not read",
+            BtRefusal::NotAllowed { callee, because } => f"`{callee}` may not run at build time: {because}",
+            BtRefusal::TooDeep { callee } => f"`{callee}` went too deep",
+            BtRefusal::NotHere { what, .. } => f"`{what}` is not here",
+            BtRefusal::Circular { ring } => f"a constant built from itself: {ring.join(" -> ")}",
+            BtRefusal::MayNotRead { path, .. } => f"`{path}` may not be read",
+            BtRefusal::PathIsComputed => "a path that is not a literal",
+            BtRefusal::OutOfBounds { len, .. } => f"an index outside {len}",
+            BtRefusal::Host(slot) => f"refused by the compiler ({slot})",
+        }
+    }
+}
+
+/// How a block ended.
+///
+/// Four ways: a block that **falls through** has no value and is not an error -
+/// it is a loop's body between turns.
+enum BtFlow {
+    /// A `return`, or a last statement that is a value.
+    Value(BuildValue),
+    /// Ran to the end and produced nothing.
+    Fell,
+    Broke,
+    Continued,
+}
+
+/// Where an evaluation stands: the file the body being read came from, whether
+/// that is a file other than the one being checked, how deep the calls are, and
+/// the constants being worked out, innermost last.
+struct BtState {
+    unit: i64,
+    foreign: bool,
+    depth: i64,
+    resolving: Vec[String],
+}
+
+/// What an initialiser comes to.
+pub fn bt_evaluate[H: BtHost](expr: ref Expr, host: ref H) -> BuildValue sync throws {
+    let mut state = BtState { unit: 0, foreign: false, depth: 0, resolving: [] }
+    let frame: collections::BTreeMap[String, BuildValue] = collections::BTreeMap()
+    return bt_expr(expr, frame, host, state)
+}
+
+/// A float as the source wrote it.
+fn bt_float(written: ref String) -> f64 throws {
+    let number = text::parse_f64(written)
+    if number == null {
+        throw BtRefusal::Unevaluable
+    }
+    return number ?? 0.0
+}
+
+fn bt_expr[H: BtHost](expr: ref Expr, frame: ref collections::BTreeMap[String, BuildValue], host: ref H, mut state: BtState) -> BuildValue sync throws {
+    return match expr {
+        Expr::LitInt { value, negative } => BuildValue::Int(integer(value, negative)),
+        Expr::LitFloat(written) => BuildValue::Float(bt_float(written)),
+        Expr::LitBool(value) => BuildValue::Bool(value),
+        Expr::LitStr { text, .. } => {
+            let decoded = decoded(text) fn(n) { host.char_of(n) }
+            if decoded == null {
+                throw BtRefusal::Unevaluable
+            }
+            BuildValue::Text(decoded ?? "")
+        },
+        Expr::Tuple(parts) => {
+            let mut held: Vec[BuildValue] = []
+            for part in parts {
+                held.push(bt_expr(part, frame, host, state))
+            }
+            BuildValue::Tuple(held)
+        },
+        // **`f"…"` is text with code in it** (ADR-309), and the code is Nikaia,
+        // so this evaluator can read it.
+        Expr::LitInterpolated { parts } => bt_interpolated(parts, frame, host, state),
+        // **A variant that carries nothing**: `Shade::Odd`, which is a value and
+        // not a call.
+        Expr::Path(path) => {
+            if path.len() != 2 {
+                throw BtRefusal::Unevaluable
+            }
+            let ty = host.text(state.unit, path[0])
+            let variant = host.text(state.unit, path[1])
+            if !host.variant_of(state.unit, ty, variant) {
+                throw BtRefusal::Unevaluable
+            }
+            BuildValue::Variant { ty: ty, variant: variant, payload: [] }
+        },
+        Expr::Variable(symbol) => bt_variable(symbol, frame, host, state),
+        Expr::Unary { .. } => bt_unary_expr(expr, frame, host, state),
+        Expr::Binary { .. } => bt_binary_expr(expr, frame, host, state),
+        // **An `if` is an expression always** (Part I 3.1), so it is one here too.
+        Expr::If { cond, then_branch, else_branch } => bt_if_value(cond, then_branch, else_branch, frame, host, state),
+        // **A list literal is the aggregate's only constructor here** (ADR-135).
+        Expr::ListLit { items, .. } => {
+            let mut values: Vec[BuildValue] = []
+            for item in items {
+                values.push(bt_expr(item, frame, host, state))
+            }
+            BuildValue::List(values)
+        },
+        Expr::Index { base, index } => {
+            let on = bt_expr(base, frame, host, state)
+            let at = bt_expr(index, frame, host, state)
+            bt_element(on, at)
+        },
+        // Kap 4.2's literal, and the shorthand with it: `Point { x, y }` is
+        // `Point { x: x, y: y }`, which the parser leaves as a field with no
+        // value of its own.
+        Expr::StructLit { name, fields } => {
+            let ty = host.text(state.unit, name)
+            let mut held: collections::BTreeMap[String, BuildValue] = collections::BTreeMap()
+            for field in fields {
+                let written = host.text(state.unit, field.name)
+                let given = field.value?.clone()
+                if given != null {
+                    held.insert(written, bt_expr(given ?? Expr::LitNull, frame, host, state))
+                } else {
+                    let found = frame.get(written)
+                    if found == null {
+                        throw BtRefusal::Unevaluable
+                    }
+                    held.insert(written, found?.clone() ?? BuildValue::Bool(false))
+                }
+            }
+            BuildValue::Struct { name: ty, fields: held }
+        },
+        Expr::Field { base, name } => bt_field(base, name, frame, host, state),
+        Expr::MethodCall { receiver, method, args, config } => bt_method(receiver, method, args, config, frame, host, state),
+        Expr::Call { func, args, config } => bt_call_expr(func, args, config, frame, host, state),
+        else => {
+            throw BtRefusal::Unevaluable
+        },
+    }
+}
+
+fn bt_variable[H: BtHost](symbol: winnow_grammar::Symbol, frame: ref collections::BTreeMap[String, BuildValue], host: ref H, mut state: BtState) -> BuildValue sync throws {
+    let name = host.text(state.unit, symbol)
+    let held = frame.get(name)
+    if held != null {
+        return held?.clone() ?? BuildValue::Bool(false)
+    }
+    // **The checking file's scope**, which holds what the walk above this one
+    // has already worked out. Asked only while the body is that file's: a body
+    // read elsewhere names its own file's constants.
+    if !state.foreign {
+        let known = host.known(name)
+        if known != null {
+            return known ?? BuildValue::Bool(false)
+        }
+    }
+    // …and otherwise the **item**, read from the file that wrote it. A constant
+    // is an item, so it is visible wherever its file is - which is what makes
+    // a forward reference a program.
+    return bt_constant_item(name, host, state)
+}
+
+fn bt_unary_expr[H: BtHost](whole: ref Expr, frame: ref collections::BTreeMap[String, BuildValue], host: ref H, mut state: BtState) -> BuildValue sync throws {
+    return match whole {
+        Expr::Unary { op, expr } => bt_unary(op, bt_expr(expr, frame, host, state)),
+        else => {
+            throw BtRefusal::Unevaluable
+        },
+    }
+}
+
+fn bt_binary_expr[H: BtHost](whole: ref Expr, frame: ref collections::BTreeMap[String, BuildValue], host: ref H, mut state: BtState) -> BuildValue sync throws {
+    return match whole {
+        Expr::Binary { op, lhs, rhs, .. } => bt_binary(op, lhs, rhs, frame, host, state),
+        else => {
+            throw BtRefusal::Unevaluable
+        },
+    }
+}
+
+fn bt_unary(op: ref UnaryOp, inner: ref BuildValue) -> BuildValue throws {
+    return match inner {
+        BuildValue::Int(v) => {
+            if op == UnaryOp::Neg {
+                BuildValue::Int(integer_negated(v))
+            } else {
+                throw BtRefusal::Unevaluable
+            }
+        },
+        BuildValue::Bool(v) => {
+            if op == UnaryOp::Not {
+                BuildValue::Bool(!v)
+            } else {
+                throw BtRefusal::Unevaluable
+            }
+        },
+        else => {
+            throw BtRefusal::Unevaluable
+        },
+    }
+}
+
+fn bt_if_value[H: BtHost](cond: ref Expr, then_branch: ref Block, else_branch: ref Block?, frame: ref collections::BTreeMap[String, BuildValue], host: ref H, mut state: BtState) -> BuildValue sync throws {
+    let value = bt_expr(cond, frame, host, state)
+    let taken = bt_taken(value, then_branch, else_branch)
+    // **The branch gets a frame of its own**, because an `if` in value position
+    // is not a place a name is assigned from: what the branch writes is the
+    // branch's, and what it hands back is the value.
+    let block = taken ?? throw BtRefusal::Unevaluable
+    let mut inner = frame.clone()
+    let flow = bt_block(block, inner, host, state)
+    return match flow {
+        BtFlow::Value(value) => value,
+        else => {
+            throw BtRefusal::Unevaluable
+        },
+    }
+}
+
+/// The branch an `if` takes, where it has one.
+fn bt_taken(verdict: ref BuildValue, then_branch: ref Block, else_branch: ref Block?) -> Block? throws {
+    let yes = match verdict {
+        BuildValue::Bool(held) => held,
+        else => {
+            throw BtRefusal::Unevaluable
+        },
+    }
+    if yes {
+        return then_branch.clone()
+    }
+    return else_branch?.clone()
+}
+
+fn bt_element(on: ref BuildValue, index_value: ref BuildValue) -> BuildValue throws {
+    return match element_at(on, index_value) {
+        ElementRead::Found(value) => value,
+        ElementRead::OutOfBounds { at, len } => {
+            throw BtRefusal::OutOfBounds { at: at, len: len }
+        },
+        ElementRead::Unreadable => {
+            throw BtRefusal::Unevaluable
+        },
+    }
+}
+
+fn bt_field[H: BtHost](base: ref Expr, name: winnow_grammar::Symbol, frame: ref collections::BTreeMap[String, BuildValue], host: ref H, mut state: BtState) -> BuildValue sync throws {
+    let on = bt_expr(base, frame, host, state)
+    let field = host.text(state.unit, name)
+    return match on {
+        BuildValue::Struct { fields, .. } => {
+            let found = fields.get(field)
+            if found == null {
+                throw BtRefusal::Unevaluable
+            }
+            found?.clone() ?? BuildValue::Bool(false)
+        },
+        else => {
+            throw BtRefusal::Unevaluable
+        },
+    }
+}
+
+/// `xs.len()` of a list or a text, and a method of a struct this program declares.
+fn bt_method[H: BtHost](receiver: ref Expr, method: winnow_grammar::Symbol, args: ref Vec[Expr], config: ref Vec[ConfigArg], frame: ref collections::BTreeMap[String, BuildValue], host: ref H, mut state: BtState) -> BuildValue sync throws {
+    let word = host.text(state.unit, method)
+    let on = bt_expr(receiver, frame, host, state)
+    if args.len() == 0 && config.len() == 0 && word == "len" {
+        return match on {
+            BuildValue::List(items) => BuildValue::Int(integer_of_count(items.len())),
+            // **Bytes, which is what `String::len` says it is.**
+            BuildValue::Text(held) => BuildValue::Int(integer_of_count(held.len())),
+            else => {
+                throw BtRefusal::Unevaluable
+            },
+        }
+    }
+    // **A method of this program, on a value this evaluator made.** The receiver
+    // is evaluated first because it is what says *which* method.
+    let owner = match on {
+        BuildValue::Struct { name, .. } => name.clone(),
+        else => {
+            throw BtRefusal::NotHere {
+                what: f".{word}()",
+                // **Said as what happened** (#519): a `std` method does run at
+                // build time, in the compiled run (ADR-321); this answer is the
+                // one given where that run could not take the value.
+                why: "this value could not be compiled to run while the program is built, and without that the compiler can only call methods your program declares, and `len` and `push` on a list",
+                // **Not *move it into a function***, which is the trap: the
+                // method would be just as unreadable one function further in.
+                way_out: "write what it does with arithmetic, `if`, `for` and calls to functions in this file",
+            }
+        },
+    }
+    let key = f"{owner}::{word}"
+    let mut given: Vec[BuildValue] = [on.clone()]
+    for arg in args {
+        given.push(bt_expr(arg, frame, host, state))
+    }
+    let named = bt_named(config, frame, host, state)
+    return bt_call(key, given, named, host, state)
+}
+
+fn bt_call_expr[H: BtHost](func: ref Expr, args: ref Vec[Expr], config: ref Vec[ConfigArg], frame: ref collections::BTreeMap[String, BuildValue], host: ref H, mut state: BtState) -> BuildValue sync throws {
+    return match func {
+        // **A grammar's entry, run by compiling the parser it generates** (issue
+        // #178), or a variant with a payload, which is written the same way.
+        Expr::Path(path) => {
+            if config.len() > 0 || path.len() != 2 {
+                throw BtRefusal::Unevaluable
+            }
+            let parser = host.text(state.unit, path[0])
+            let rule = host.text(state.unit, path[1])
+            // An `enum` this program declares wins, because a grammar and an
+            // `enum` under one name is a name declared twice and `NK1148`'s to
+            // refuse, not this walk's.
+            if host.variant_of(state.unit, parser, rule) {
+                let mut payload: Vec[BuildValue] = []
+                for arg in args {
+                    payload.push(bt_expr(arg, frame, host, state))
+                }
+                return BuildValue::Variant { ty: parser, variant: rule, payload: payload }
+            }
+            if args.len() != 1 {
+                throw BtRefusal::Unevaluable
+            }
+            let input = match bt_expr(args[0], frame, host, state) {
+                BuildValue::Text(held) => held,
+                else => {
+                    throw BtRefusal::Unevaluable
+                },
+            }
+            let ran = host.run_grammar(state.unit, parser, rule, input)
+            if !ran.found {
+                throw BtRefusal::Unevaluable
+            }
+            let value = ran.value?.clone()
+            if value == null {
+                throw BtRefusal::Host(ran.slot)
+            }
+            value ?? BuildValue::Bool(false)
+        },
+        Expr::Variable(symbol) => {
+            let name = host.text(state.unit, symbol)
+            // **`asset("…")` is answered before the arguments are** (ADR-310 D3,
+            // D7). A name that folds to `"config.json"` is a path that was
+            // *computed*, and reading it would make *named in the code*
+            // something a reader cannot decide by looking at the line.
+            if name == BT_ASSET {
+                return bt_asset(args, host)
+            }
+            let mut given: Vec[BuildValue] = []
+            for arg in args {
+                given.push(bt_expr(arg, frame, host, state))
+            }
+            let named = bt_named(config, frame, host, state)
+            bt_call(name, given, named, host, state)
+        },
+        else => {
+            throw BtRefusal::Unevaluable
+        },
+    }
+}
+
+fn bt_binary[H: BtHost](op: ref BinaryOp, lhs: ref Expr, rhs: ref Expr, frame: ref collections::BTreeMap[String, BuildValue], host: ref H, mut state: BtState) -> BuildValue sync throws {
+    // **`&&` and `||` short-circuit**, which is not an optimisation here: a body
+    // may guard a call with one, and evaluating the far side of a guard is how a
+    // build-time evaluator reaches what the guard was keeping it away from.
+    if op == BinaryOp::And || op == BinaryOp::Or {
+        let left = match bt_expr(lhs, frame, host, state) {
+            BuildValue::Bool(held) => held,
+            else => {
+                throw BtRefusal::Unevaluable
+            },
+        }
+        if op == BinaryOp::And && !left {
+            return BuildValue::Bool(false)
+        }
+        if op == BinaryOp::Or && left {
+            return BuildValue::Bool(true)
+        }
+        return match bt_expr(rhs, frame, host, state) {
+            BuildValue::Bool(right) => BuildValue::Bool(right),
+            else => {
+                throw BtRefusal::Unevaluable
+            },
+        }
+    }
+    let left = bt_expr(lhs, frame, host, state)
+    let right = bt_expr(rhs, frame, host, state)
+    return bt_operate(op, left, right)
+}
+
+/// The operator of a compound assignment: `+=` and the like.
+fn bt_op_of(op: ref BinaryOp?) -> BinaryOp {
+    let held = op ?? BinaryOp::Add
+    return match held {
+        BinaryOp::Add => BinaryOp::Add,
+        BinaryOp::Sub => BinaryOp::Sub,
+        BinaryOp::Mul => BinaryOp::Mul,
+        BinaryOp::Div => BinaryOp::Div,
+        BinaryOp::Rem => BinaryOp::Rem,
+        BinaryOp::Eq => BinaryOp::Eq,
+        BinaryOp::Ne => BinaryOp::Ne,
+        BinaryOp::Lt => BinaryOp::Lt,
+        BinaryOp::Le => BinaryOp::Le,
+        BinaryOp::Gt => BinaryOp::Gt,
+        BinaryOp::Ge => BinaryOp::Ge,
+        BinaryOp::And => BinaryOp::And,
+        BinaryOp::Or => BinaryOp::Or,
+        BinaryOp::BitAnd => BinaryOp::BitAnd,
+        BinaryOp::BitOr => BinaryOp::BitOr,
+        BinaryOp::BitXor => BinaryOp::BitXor,
+        BinaryOp::Shl => BinaryOp::Shl,
+        BinaryOp::Shr => BinaryOp::Shr,
+    }
+}
+
+/// An operator on two values already in hand.
+fn bt_operate(op: ref BinaryOp, left: ref BuildValue, right: ref BuildValue) -> BuildValue throws {
+    let made = operated(op, left, right)
+    if made == null {
+        throw BtRefusal::Unevaluable
+    }
+    return made ?? BuildValue::Bool(false)
+}
+
+/// **`f"…"` while the program is built** (ADR-309, D3 - a hole is code and every
+/// analysis sees it, this one included).
+///
+/// What is rebuilt is the **written** form: a number contributes its digits, a
+/// `bool` its word, and text its own written form. **A format spec is not
+/// read.** `f"{n:>8}"` asks for a width, and what that means is `std::fmt`'s
+/// rather than this language's.
+fn bt_interpolated[H: BtHost](parts: ref Vec[FPart], frame: ref collections::BTreeMap[String, BuildValue], host: ref H, mut state: BtState) -> BuildValue sync throws {
+    // Built from the parts the grammar parsed (ADR-309 D6, D9): each run of text
+    // as written, and each hole as `{}` or `{:spec}`.
+    let mut format: String = ""
+    let mut values: Vec[BuildValue] = []
+    for part in parts {
+        match part {
+            FPart::Text(written) => format.push_str(written),
+            FPart::Hole { expr, spec, .. } => {
+                if spec != null {
+                    format.push_str("{:")
+                    format.push_str(spec ?? "")
+                    format.push_str("}")
+                } else {
+                    format.push_str("{}")
+                }
+                values.push(bt_expr(expr, frame, host, state))
+            },
+        }
+    }
+    // **The literal parts are still *written*.** A chunk is read by `decoded`
+    // exactly as a plain literal is, and a hole's value is already decoded.
+    let mut out: String = ""
+    let mut chunk: String = ""
+    let mut taken = 0
+    let chars: Vec[scalar] = format.chars().collect()
+    let mut at = 0
+    while at < chars.len() {
+        let c = chars[at]
+        at += 1
+        if c == '\\' {
+            // An escape is two characters and the chunk keeps both, so that
+            // `decoded` sees what the source wrote.
+            chunk.push('\\')
+            if at >= chars.len() {
+                throw BtRefusal::Unevaluable
+            }
+            let escape = chars[at]
+            at += 1
+            chunk.push(escape)
+            // `\u{…}` carries its braces, and they are not the format's.
+            if escape == 'u' && at < chars.len() && chars[at] == '{' {
+                while at < chars.len() {
+                    let inner = chars[at]
+                    at += 1
+                    chunk.push(inner)
+                    if inner == '}' {
+                        break
+                    }
+                }
+            }
+        } else if c == '{' && at < chars.len() && chars[at] == '{' {
+            // `{{` and `}}` are how a format string spells one brace, and text
+            // spells it with one.
+            at += 1
+            bt_flush(chunk, out, host)
+            chunk = f""
+            out.push('{')
+        } else if c == '}' && at < chars.len() && chars[at] == '}' {
+            at += 1
+            bt_flush(chunk, out, host)
+            chunk = f""
+            out.push('}')
+        } else if c == '{' {
+            // `{}` and nothing else: anything between the braces is a spec,
+            // which this does not read.
+            if at >= chars.len() || chars[at] != '}' {
+                throw BtRefusal::Unevaluable
+            }
+            at += 1
+            bt_flush(chunk, out, host)
+            chunk = f""
+            if taken >= values.len() {
+                throw BtRefusal::Unevaluable
+            }
+            match values[taken].clone() {
+                BuildValue::Int(n) => out.push_str(integer_text(n)),
+                BuildValue::Bool(yes) => {
+                    if yes {
+                        out.push_str("true")
+                    } else {
+                        out.push_str("false")
+                    }
+                },
+                BuildValue::Text(held) => out.push_str(held),
+                else => {
+                    throw BtRefusal::Unevaluable
+                },
+            }
+            taken += 1
+        } else {
+            chunk.push(c)
+        }
+    }
+    bt_flush(chunk, out, host)
+    return BuildValue::Text(out)
+}
+
+/// The literal text collected so far, decoded and written out.
+fn bt_flush[H: BtHost](chunk: ref String, mut out: String, host: ref H) sync throws {
+    if chunk.len() == 0 {
+        return
+    }
+    let decoded = decoded(chunk) fn(n) { host.char_of(n) }
+    if decoded == null {
+        throw BtRefusal::Unevaluable
+    }
+    out.push_str(decoded ?? "")
+}
+
+/// **A constant of this file, worked out on demand.**
+///
+/// The one lookup that makes a constant behave like the item it is. A function
+/// declared below its caller has always been callable - items are
+/// order-independent - and a constant was not, because the walk that binds them
+/// goes down the file.
+///
+/// **And the ring is refused by name.** `comptime A = B` beside `comptime B = A`
+/// has no base case to reach, so it is not the call depth that catches it - the
+/// stack of names being worked out is, and it can say which ones.
+fn bt_constant_item[H: BtHost](name: ref String, host: ref H, mut state: BtState) -> BuildValue sync throws {
+    for held in state.resolving {
+        if held == name {
+            let mut ring = state.resolving.clone()
+            ring.push(name.clone())
+            throw BtRefusal::Circular { ring: ring }
+        }
+    }
+    let value = host.constant(state.unit, name) ?? throw BtRefusal::Unevaluable
+    state.resolving.push(name.clone())
+    let frame: collections::BTreeMap[String, BuildValue] = collections::BTreeMap()
+    // A refusal ends the whole evaluation, so the ring need not be unwound on the
+    // way out.
+    let out = bt_expr(value, frame, host, state)
+    state.resolving.pop()
+    return out
+}
+
+/// **The file a build reads** (ADR-310 D3): a string literal and nothing else
+/// (D4) - not "an expression that evaluates to text", because a name that folds
+/// to one is exactly what this refuses, and the refusal has to happen before the
+/// fold.
+fn bt_asset[H: BtHost](args: ref Vec[Expr], host: ref H) -> BuildValue sync throws {
+    if args.len() != 1 {
+        throw BtRefusal::PathIsComputed
+    }
+    let written = match args[0] {
+        Expr::LitStr { text, .. } => text.clone(),
+        else => {
+            throw BtRefusal::PathIsComputed
+        },
+    }
+    let path = decoded(written) fn(n) { host.char_of(n) }
+    if path == null {
+        throw BtRefusal::PathIsComputed
+    }
+    let wanted = path ?? ""
+    let read = host.read(wanted)
+    if read.text != null {
+        return BuildValue::Text(read.text?.clone() ?? "")
+    }
+    let denied = read.denied?.clone() ?? Denied::NoList
+    throw BtRefusal::MayNotRead { path: wanted, why: denied }
+}
+
+/// A call to a function this unit declares.
+///
+/// **The permission is read off the ledger** (ADR-287 D13, D14) and not off a
+/// list kept here: `sync` says the body never pauses, and a touch set that is
+/// empty or exactly the build's own parameters says it reaches nothing else.
+fn bt_call[H: BtHost](name: ref String, given: ref Vec[BuildValue], named: ref Vec[(String, BuildValue)], host: ref H, mut state: BtState) -> BuildValue sync throws {
+    if state.depth >= BT_DEEPEST {
+        throw BtRefusal::TooDeep { callee: name.clone() }
+    }
+    let contract = host.contract(name)
+    if !contract.declared {
+        // A callee this program does not declare - `std`, a package. Not *you may
+        // not*, which would be a claim about somebody else's body; **there is no
+        // body here to run**, and for `std` there never will be, because half of
+        // it is Rust (ADR-014).
+        throw BtRefusal::NotHere {
+            what: name.clone(),
+            why: "it comes from `std` or a package, which is compiled Rust, and at build time the compiler can only run code written in your program",
+            way_out: "write the work in Nikaia, in this file, and call that",
+        }
+    }
+    if contract.reason.len() > 0 {
+        throw BtRefusal::NotAllowed { callee: name.clone(), because: contract.reason.clone() }
+    }
+    let found = host.callee(state.unit, name)
+    if found == null {
+        // **No file of this program declares it**, which for a name the ledger
+        // describes means a `.contracts` a package shipped: its body was
+        // compiled beside this build rather than parsed into it.
+        throw BtRefusal::NotHere {
+            what: name.clone(),
+            why: "it isn't declared in your program: it comes from a package, which is compiled Rust, and at build time the compiler can only run code written in your program",
+            way_out: "write the work in Nikaia, in this program, and call that",
+        }
+    }
+    let callee = found ?? throw BtRefusal::Unevaluable
+    if callee.args.len() != given.len() {
+        throw BtRefusal::Unevaluable
+    }
+    let mut frame: collections::BTreeMap[String, BuildValue] = collections::BTreeMap()
+    let mut at = 0
+    while at < callee.args.len() {
+        frame.insert(callee.args[at].clone(), given[at].clone())
+        at += 1
+    }
+    // **The body is read with the file it came from.** Every `parse_to_ast`
+    // builds its own interner, so a symbol from another file resolves to nothing
+    // - or to the wrong text - when read with this one's. Swapped for the length
+    // of the call and put back after, which is what makes a nested call across
+    // two more files right as well.
+    let outer = state.unit
+    let was_foreign = state.foreign
+    state.foreign = state.foreign || callee.owner != outer
+    state.unit = callee.owner
+    state.depth += 1
+    let flow = bt_run(name, callee, named, frame, host, state)
+    state.depth -= 1
+    state.unit = outer
+    state.foreign = was_foreign
+    // A body that fell off its end has no value, and a `break` or a `continue`
+    // outside a loop is not a body this evaluator reads.
+    return match flow {
+        BtFlow::Value(value) => value,
+        else => {
+            throw BtRefusal::Unevaluable
+        },
+    }
+}
+
+fn bt_run[H: BtHost](name: ref String, callee: ref BtCallee, named: ref Vec[(String, BuildValue)], mut frame: collections::BTreeMap[String, BuildValue], host: ref H, mut state: BtState) -> BtFlow sync throws {
+    bt_options(name, callee.options, named, frame, host, state)
+    return bt_block(callee.body, frame, host, state)
+}
+
+/// **What the caller named after the `;`**, evaluated where it is written.
+fn bt_named[H: BtHost](config: ref Vec[ConfigArg], frame: ref collections::BTreeMap[String, BuildValue], host: ref H, mut state: BtState) -> Vec[(String, BuildValue)] sync throws {
+    let mut named: Vec[(String, BuildValue)] = []
+    for option in config {
+        let name = host.text(state.unit, option.name)
+        named.push((name, bt_expr(option.value, frame, host, state)))
+    }
+    return named
+}
+
+/// **The options of a call, into the callee's frame** (ADR-318): what the caller
+/// named, and the default for what it left out.
+///
+/// A default is evaluated as the declaration wrote it, with nothing of the call
+/// in scope, and in the callee's file. **The option stands in the ring** while
+/// its default is worked out: `comptime X = f()` above `fn f(; t: i64 = X)` is
+/// `X` needing `t` needing `X`, and the reader is told so.
+fn bt_options[H: BtHost](callee: ref String, options: ref Vec[(String, Expr)], named: ref Vec[(String, BuildValue)], mut frame: collections::BTreeMap[String, BuildValue], host: ref H, mut state: BtState) sync throws {
+    for (given, _) in named {
+        let mut known = false
+        for (option, _) in options {
+            if option == given {
+                known = true
+            }
+        }
+        if !known {
+            throw BtRefusal::Unevaluable
+        }
+    }
+    for (option, default) in options {
+        let mut value: BuildValue? = null
+        for (given, held) in named {
+            if given == option && value == null {
+                value = held.clone()
+            }
+        }
+        if value == null {
+            // **Named as the reader would say it**, `t` of `f`: the ring is
+            // printed with each entry in backticks, and two functions may both
+            // have a `t`.
+            let held = f"{option}` of `{callee}"
+            for one in state.resolving {
+                if one == held {
+                    let mut ring = state.resolving.clone()
+                    ring.push(held.clone())
+                    throw BtRefusal::Circular { ring: ring }
+                }
+            }
+            state.resolving.push(held.clone())
+            let nothing: collections::BTreeMap[String, BuildValue] = collections::BTreeMap()
+            let worked = bt_expr(default, nothing, host, state)
+            state.resolving.pop()
+            value = worked
+        }
+        frame.insert(option.clone(), value ?? BuildValue::Bool(false))
+    }
+}
+
+/// A body: `let`s, an early `return`, a loop, and a last statement that is the
+/// value - which is Part I 3.1's rule for every block, read here.
+///
+/// **The frame is by reference, and a loop is why.** A `for` has to see what its
+/// body assigned on the last turn, and a `while` has to see what its condition
+/// reads.
+fn bt_block[H: BtHost](block: ref Block, mut frame: collections::BTreeMap[String, BuildValue], host: ref H, mut state: BtState) -> BtFlow sync throws {
+    let last = block.stmts.len() - 1
+    let mut at = 0
+    while at < block.stmts.len() {
+        let here = at
+        at += 1
+        match block.stmts[here].node {
+            Stmt::Let { names, value, .. } => {
+                if names.len() != 1 {
+                    throw BtRefusal::Unevaluable
+                }
+                let made = bt_expr(value, frame, host, state)
+                frame.insert(host.text(state.unit, names[0]), made)
+            },
+            // A `comptime` inside a body is a `let` that must fold (ADR-287 D3),
+            // and inside a build-time body everything must, so the two are the
+            // same statement here.
+            Stmt::Comptime { name, value, .. } => {
+                let made = bt_expr(value, frame, host, state)
+                frame.insert(host.text(state.unit, name), made)
+            },
+            Stmt::Assign { target, op, value } => bt_assign(target, op, value, frame, host, state),
+            Stmt::Return(value) => {
+                let returned = value ?? throw BtRefusal::Unevaluable
+                return BtFlow::Value(bt_expr(returned, frame, host, state))
+            },
+            Stmt::Break => {
+                return BtFlow::Broke
+            },
+            Stmt::Continue => {
+                return BtFlow::Continued
+            },
+            Stmt::For { bindings, iter, body } => {
+                let flow = bt_walk(bindings, iter, body, frame, host, state)
+                match flow {
+                    BtFlow::Value(_) => {
+                        return flow
+                    },
+                    else => {},
+                }
+            },
+            Stmt::While { cond, body } => {
+                // **No step budget** (ADR-287 D4), deliberately and with the cost
+                // written down: a `while` that does not end hangs the build.
+                while true {
+                    let verdict = bt_expr(cond, frame, host, state)
+                    match verdict {
+                        BuildValue::Bool(yes) => {
+                            if !yes {
+                                break
+                            }
+                        },
+                        else => {
+                            throw BtRefusal::Unevaluable
+                        },
+                    }
+                    let flow = bt_block(body, frame, host, state)
+                    match flow {
+                        BtFlow::Value(_) => {
+                            return flow
+                        },
+                        BtFlow::Broke => {
+                            break
+                        },
+                        else => {},
+                    }
+                }
+            },
+            Stmt::Expr(inner) => {
+                let flow = bt_expression_statement(inner, here == last, frame, host, state)
+                match flow {
+                    BtFlow::Fell => {},
+                    else => {
+                        return flow
+                    },
+                }
+            },
+        }
+    }
+    return BtFlow::Fell
+}
+
+/// An expression standing as a statement: an `if`, which carries on unless a
+/// branch returns, breaks or continues; `xs.push(v)`; and the last statement,
+/// which is the value.
+fn bt_expression_statement[H: BtHost](expr: ref Expr, last: bool, mut frame: collections::BTreeMap[String, BuildValue], host: ref H, mut state: BtState) -> BtFlow sync throws {
+    return match expr {
+        // **An `if` is read as a statement here whatever its position**, which
+        // is what a loop's body needs: `if i > n { break }` is the last statement
+        // of its block and hands back no value at all.
+        Expr::If { cond, then_branch, else_branch } => {
+            let verdict = bt_expr(cond, frame, host, state)
+            let taken = bt_taken(verdict, then_branch, else_branch)
+            if taken != null {
+                let flow = bt_block(taken ?? Block { stmts: [] }, frame, host, state)
+                match flow {
+                    BtFlow::Fell => {},
+                    else => {
+                        return flow
+                    },
+                }
+            }
+            BtFlow::Fell
+        },
+        // **`xs.push(v)`, which is how a table is *grown* rather than filled**
+        // (ADR-311): a statement and not an expression, because that is what it
+        // is.
+        Expr::MethodCall { receiver, method, args, config } => {
+            let word = host.text(state.unit, method)
+            if word == "push" && args.len() == 1 && config.len() == 0 {
+                return bt_push(receiver, args[0], frame, host, state)
+            }
+            if last {
+                return BtFlow::Value(bt_expr(expr, frame, host, state))
+            }
+            throw BtRefusal::Unevaluable
+        },
+        else => {
+            if last {
+                return BtFlow::Value(bt_expr(expr, frame, host, state))
+            }
+            throw BtRefusal::Unevaluable
+        },
+    }
+}
+
+fn bt_push[H: BtHost](receiver: ref Expr, arg: ref Expr, mut frame: collections::BTreeMap[String, BuildValue], host: ref H, mut state: BtState) -> BtFlow sync throws {
+    let name = match receiver {
+        Expr::Variable(symbol) => host.text(state.unit, symbol),
+        else => {
+            throw BtRefusal::Unevaluable
+        },
+    }
+    let given = bt_expr(arg, frame, host, state)
+    let held = frame.get(name) ?? throw BtRefusal::Unevaluable
+    match held.clone() {
+        BuildValue::List(items) => {
+            let mut grown = items.clone()
+            grown.push(given)
+            frame.insert(name, BuildValue::List(grown))
+        },
+        else => {
+            throw BtRefusal::Unevaluable
+        },
+    }
+    return BtFlow::Fell
+}
+
+/// `xs[i] = …`, which is how a build-time table is filled, and `name = …`.
+fn bt_assign[H: BtHost](target: ref Expr, op: ref BinaryOp?, value: ref Expr, mut frame: collections::BTreeMap[String, BuildValue], host: ref H, mut state: BtState) sync throws {
+    // Before the name, because an index is a target this evaluator reads and
+    // `Expr::Variable` is not what it looks like.
+    match target {
+        Expr::Index { base, index } => {
+            let name = match base {
+                Expr::Variable(symbol) => host.text(state.unit, symbol),
+                else => {
+                    throw BtRefusal::Unevaluable
+                },
+            }
+            let at = bt_expr(index, frame, host, state)
+            let given = bt_expr(value, frame, host, state)
+            let held = frame.get(name) ?? throw BtRefusal::Unevaluable
+            let mut next = given.clone()
+            if op != null {
+                let before = bt_element(held, at)
+                let which = bt_op_of(op)
+                next = bt_operate(which, before, given)
+            }
+            let mut items: Vec[BuildValue] = match held.clone() {
+                BuildValue::List(list) => list.clone(),
+                else => {
+                    throw BtRefusal::Unevaluable
+                },
+            }
+            let position = match at {
+                BuildValue::Int(n) => n.clone(),
+                else => {
+                    throw BtRefusal::Unevaluable
+                },
+            }
+            let counted = integer_as_count(position)
+            if counted == null || (counted ?? -1) < 0 || (counted ?? 0) >= items.len() {
+                throw BtRefusal::OutOfBounds { at: position, len: items.len() }
+            }
+            items[counted ?? 0] = next
+            frame.insert(name, BuildValue::List(items))
+        },
+        Expr::Variable(symbol) => {
+            let name = host.text(state.unit, symbol)
+            let given = bt_expr(value, frame, host, state)
+            let mut next = given.clone()
+            if op != null {
+                let held = frame.get(name) ?? throw BtRefusal::Unevaluable
+                let which = bt_op_of(op)
+                next = bt_operate(which, held, given)
+            }
+            if frame.get(name) == null {
+                throw BtRefusal::Unevaluable
+            }
+            frame.insert(name, next)
+        },
+        else => {
+            throw BtRefusal::Unevaluable
+        },
+    }
+}
+
+/// The counts a `for` walks, and whether the last is among them.
+struct BtRange {
+    low: i64,
+    high: i64,
+    closed: bool,
+}
+
+fn bt_range[H: BtHost](iter: ref Expr, frame: ref collections::BTreeMap[String, BuildValue], host: ref H, mut state: BtState) -> BtRange sync throws {
+    return match iter {
+        Expr::Range { start, end, inclusive } => {
+            let first = bt_expr(start, frame, host, state)
+            let second = bt_expr(end, frame, host, state)
+            let low = match first {
+                BuildValue::Int(n) => integer_as_count(n),
+                else => {
+                    throw BtRefusal::Unevaluable
+                },
+            }
+            let high = match second {
+                BuildValue::Int(n) => integer_as_count(n),
+                else => {
+                    throw BtRefusal::Unevaluable
+                },
+            }
+            // A range walks counts an `i64` holds.
+            if low == null || high == null {
+                throw BtRefusal::Unevaluable
+            }
+            BtRange { low: low ?? 0, high: high ?? 0, closed: inclusive }
+        },
+        else => {
+            throw BtRefusal::Unevaluable
+        },
+    }
+}
+
+/// A `for` over a range, which is the one shape a build-time loop has.
+fn bt_walk[H: BtHost](bindings: ref Vec[winnow_grammar::Symbol], iter: ref Expr, body: ref Block, mut frame: collections::BTreeMap[String, BuildValue], host: ref H, mut state: BtState) -> BtFlow sync throws {
+    if bindings.len() != 1 {
+        throw BtRefusal::Unevaluable
+    }
+    let range = bt_range(iter, frame, host, state)
+    let start_at = range.low
+    let end_at = range.high
+    let closed_range = range.closed
+    let name = host.text(state.unit, bindings[0])
+    let mut at = start_at
+    while (closed_range && at <= end_at) || (!closed_range && at < end_at) {
+        frame.insert(name.clone(), BuildValue::Int(integer_of_count(at)))
+        let flow = bt_block(body, frame, host, state)
+        match flow {
+            BtFlow::Value(_) => {
+                return flow
+            },
+            BtFlow::Broke => {
+                break
+            },
+            else => {},
+        }
+        let next = at.checked_add(1)
+        if next == null {
+            throw BtRefusal::Unevaluable
+        }
+        at = next ?? 0
+    }
+    // **The binding does not outlive the loop**, which is Part I 3.3's rule and
+    // matters here because the frame is shared: a name the loop bound must not
+    // be readable after it.
+    frame.remove(name)
+    return BtFlow::Fell
+}

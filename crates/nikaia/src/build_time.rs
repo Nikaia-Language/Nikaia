@@ -32,50 +32,23 @@
 //! not the hang D4 accepted. The limit is high enough that no terminating
 //! program meets it and the message says which call path found it.
 
-use std::collections::BTreeMap;
+use std::cell::RefCell;
 
-use crate::assets::{ASSET, Denied, Reads};
-use crate::ast::{BinaryOp, Block, Expr, Item, Stmt, UnaryOp};
+use nikaia_std::tools::build_eval::{
+    BtCallee, BtContract, BtHost, BtRan, BtRead, BtRefusal, bt_evaluate,
+};
+
+use crate::assets::{Denied, Reads};
+use crate::ast::{Expr, Item};
 use crate::contracts::ty::TyOps;
 use crate::contracts::{Ledger, touch};
 use crate::parser::Parsed;
 
-/// How deep a build-time call may go before this stops
-/// ([ADR-287](../../../docs/specification/adr/adr-287.md) D16's neighbour).
-///
-/// **Not a step budget.** A body that loops forever still hangs the build, which
-/// is what that record accepted; what this prevents is a *recursion* that takes
-/// the compiler's stack down with it, which it did not.
-const DEEPEST: usize = 128;
-
-/// The stack [`BuildTime::evaluate`] runs on: room for [`DEEPEST`] calls
+/// The stack [`BuildTime::evaluate`] runs on: room for `BT_DEEPEST` calls
 /// with a body nested deeply inside each, in a debug build, many times over.
 /// Reserved, not touched - the pages a shallow evaluation never reaches cost
 /// nothing.
 const EVALUATION_STACK: usize = 256 * 1024 * 1024;
-
-/// A function's parameters, its options with their defaults, and its body.
-struct Callee {
-    args: Vec<String>,
-    options: Vec<(String, Expr)>,
-    body: Block,
-}
-
-/// How a block ended.
-///
-/// Four ways, and the evaluator needed all four the moment it gained a loop: a
-/// block that **falls through** has no value and is not an error — it is a
-/// loop's body between turns — where before this a block with no value was the
-/// only thing `Unevaluable` could mean.
-#[derive(Debug, Clone)]
-enum Flow {
-    /// A `return`, or a last statement that is a value.
-    Value(Value),
-    /// Ran to the end and produced nothing.
-    Fell,
-    Broke,
-    Continued,
-}
 
 /// **What a build-time expression came to**, in Nikaia
 /// (`tools/build_values.nika`, ADR-294, #125): an integer as a magnitude and
@@ -95,10 +68,7 @@ pub enum Refusal {
     /// ([ADR-287](../../../docs/specification/adr/adr-287.md) D13, D14). A
     /// different claim from the one above and it gets a different code: the
     /// shape is understood and the rule says no.
-    NotAllowed {
-        callee: String,
-        because: &'static str,
-    },
+    NotAllowed { callee: String, because: String },
     /// The call depth above.
     TooDeep { callee: String },
     /// **Understood, and not something this evaluator can do here.**
@@ -112,13 +82,13 @@ pub enum Refusal {
     /// help.
     NotHere {
         what: String,
-        why: &'static str,
+        why: String,
         /// **The way out belongs to the wall.** *Put the work in a function of
         /// this file* is right for a callee in another file and is a trap for
         /// `"a".to_uppercase()`: the method would be just as unreadable one
         /// function further in. [Part III C.2](../../../docs/specification/30-nikaia-tooling.md)
         /// asks for a way out, and one that cannot be taken is not one.
-        way_out: &'static str,
+        way_out: String,
     },
     /// A constant worked out from itself.
     ///
@@ -162,7 +132,6 @@ pub enum Refusal {
     OutOfBounds { at: Integer, len: usize },
 }
 
-use nikaia_std::tools::integers as int;
 /// What a name outside a build-time body is worth: a `comptime` already
 /// evaluated, or a `let` whose value folded.
 /// **An integer while the program is built**: a magnitude and a sign, the
@@ -172,18 +141,13 @@ pub use nikaia_std::tools::integers::Integer;
 
 pub type Known<'a> = &'a (dyn Fn(&str) -> Option<Value> + Sync);
 
-/// The evaluator, over one unit's items.
+/// The evaluator, over one unit's items. The evaluator itself is
+/// `tools/build_eval.nika` (ADR-294, #125); this holds what it asks for - the
+/// program's files, the ledger, what a build may read, and the grammar workshop.
 pub struct BuildTime<'a> {
     parsed: &'a Parsed,
     /// **Every file of this program**, because a body is an AST and an AST
     /// belongs to the file that was parsed into it.
-    ///
-    /// The *permission* to run a callee has been program-wide from the start —
-    /// it is two ledger columns ([ADR-287](../../../docs/specification/adr/adr-287.md)
-    /// D1, D2) and a program's ledger is absorbed from its units'. What was not
-    /// was the **body**, and no column could carry one: a ledger records what a
-    /// caller has to know about a function it *cannot see the body of*, which
-    /// is the opposite of what this needs.
     beside: &'a [&'a Parsed],
     own: &'a Ledger,
     /// **What this build may read while it builds**
@@ -192,18 +156,6 @@ pub struct BuildTime<'a> {
     /// every test and every build that did not ask for it gets.
     reads: &'a Reads,
     known: Known<'a>,
-    depth: usize,
-    /// Whether the body being read came from a file other than the one being
-    /// checked — see [`BuildTime::call`] for what it costs.
-    foreign: bool,
-    /// The item-level constants being worked out, innermost last.
-    ///
-    /// **A constant is an item, so it is visible wherever its file is** — which
-    /// makes `comptime A = B * 2` above `comptime B = 21` a program, and makes
-    /// `comptime A = B` beside `comptime B = A` one this has to refuse rather
-    /// than run forever. The stack is what tells the two apart, and it names
-    /// the ring.
-    resolving: Vec<String>,
 }
 
 impl<'a> BuildTime<'a> {
@@ -220,452 +172,129 @@ impl<'a> BuildTime<'a> {
             own,
             reads,
             known,
-            depth: 0,
-            foreign: false,
-            resolving: Vec::new(),
         }
     }
 
     /// What an initialiser comes to.
     ///
     /// **On a thread of its own, with a stack of its own size**
-    /// ([`EVALUATION_STACK`]). [`DEEPEST`] counts calls, and what a call costs
-    /// on the stack is this evaluator's frames, which differ by build profile
-    /// and by how deeply the body nests: measured, 128 calls of a one-line
-    /// recursion took more than the 2 MiB a test thread has in a debug build,
-    /// and `an_unbounded_recursion_is_refused_rather_than_crashing` overflowed
-    /// instead of reading `NK1152`. Whether the refusal happens may not depend
-    /// on which thread asked.
+    /// ([`EVALUATION_STACK`]). `BT_DEEPEST` (`tools/build_eval.nika`) counts calls, and what a call costs
+    /// on the stack differs by build profile and by how deeply the body nests.
+    /// Whether the refusal happens may not depend on which thread asked.
     pub fn evaluate(&mut self, expr: &Expr) -> Result<Value, Refusal> {
+        let this = &*self;
+        let run = move || this.run(expr);
         std::thread::scope(|scope| {
             std::thread::Builder::new()
                 .name("nikaia-build-time".to_string())
                 .stack_size(EVALUATION_STACK)
-                .spawn_scoped(scope, || self.expr(expr, &BTreeMap::new()))
+                .spawn_scoped(scope, run)
                 .map(|thread| thread.join())
         })
         .unwrap_or_else(|_| {
             // No thread to be had: the caller's own stack, as before.
-            Ok(self.expr(expr, &BTreeMap::new()))
+            Ok(self.run(expr))
         })
         .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
     }
 
-    fn expr(&mut self, expr: &Expr, frame: &BTreeMap<String, Value>) -> Result<Value, Refusal> {
-        match expr {
-            Expr::LitInt { value, negative } => Ok(Value::Int(int::integer(*value, *negative))),
-            Expr::LitFloat(written) => written
-                .parse()
-                .map(Value::Float)
-                .map_err(|_| Refusal::Unevaluable),
-            Expr::LitBool(value) => Ok(Value::Bool(*value)),
-            Expr::LitStr { text, .. } => decoded(text).map(Value::Text).ok_or(Refusal::Unevaluable),
-            Expr::Tuple(parts) => {
-                let mut held = Vec::with_capacity(parts.len());
-                for part in parts {
-                    held.push(self.expr(part, frame)?);
-                }
-                Ok(Value::Tuple(held))
-            }
-            // **`f"…"` is text with code in it** (ADR-309), and the code is
-            // Nikaia, so this evaluator can read it — which is what makes text
-            // at build time worth having at all. A literal alone would be a
-            // value somebody could have written down.
-            Expr::LitInterpolated { parts } => self.interpolated(parts, frame),
-            // **A variant that carries nothing**: `Shade::Odd`, which is a
-            // value and not a call. The path arm below a call, one shape out.
-            Expr::Path(path) => {
-                let names: Vec<&str> = path.iter().map(|s| self.parsed.text(*s)).collect();
-                let [ty, variant] = names.as_slice() else {
-                    return Err(Refusal::Unevaluable);
-                };
-                match self.variant_of(ty, variant) {
-                    Some(()) => Ok(Value::Variant {
-                        ty: ty.to_string(),
-                        variant: variant.to_string(),
-                        payload: Vec::new(),
-                    }),
-                    None => Err(Refusal::Unevaluable),
-                }
-            }
-            Expr::Variable(name) => {
-                let name = self.parsed.text(*name).to_string();
-                if let Some(held) = frame.get(&name) {
-                    return Ok(held.clone());
-                }
-                // **The checking file's scope**, which holds what the walk
-                // above this one has already worked out. Asked only while the
-                // body is that file's: a body read elsewhere names its own
-                // file's constants, and this scope is not that file's.
-                if !self.foreign
-                    && let Some(known) = (self.known)(&name)
-                {
-                    return Ok(known);
-                }
-                // …and otherwise the **item**, read from the file that wrote
-                // it. A constant is an item, so it is visible wherever its file
-                // is — which is what makes a forward reference a program, and
-                // what lets a body in another file name its own constants
-                // without this one guessing from the wrong scope.
-                self.constant_item(&name)
-            }
-            Expr::Unary { op, expr } => {
-                let inner = self.expr(expr, frame)?;
-                match (op, inner) {
-                    (UnaryOp::Neg, Value::Int(v)) => Ok(Value::Int(int::integer_negated(&v))),
-                    (UnaryOp::Not, Value::Bool(v)) => Ok(Value::Bool(!v)),
-                    _ => Err(Refusal::Unevaluable),
-                }
-            }
-            Expr::Binary { op, lhs, rhs, .. } => self.binary(*op, lhs, rhs, frame),
-            // **An `if` is an expression always** (Part I 3.1), so it is one
-            // here too — and it is what makes a body worth calling at all.
-            Expr::If {
-                cond,
-                then_branch,
-                else_branch,
-            } => {
-                let taken = match self.expr(cond, frame)? {
-                    Value::Bool(true) => Some(then_branch),
-                    Value::Bool(false) => else_branch.as_ref(),
-                    _ => return Err(Refusal::Unevaluable),
-                };
-                // **The branch gets a frame of its own**, because an `if` in
-                // value position is not a place a name is assigned from: what
-                // the branch writes is the branch's, and what it hands back is
-                // the value.
-                let Some(block) = taken else {
-                    return Err(Refusal::Unevaluable);
-                };
-                let mut inner = frame.clone();
-                match self.block(block, &mut inner)? {
-                    Flow::Value(value) => Ok(value),
-                    Flow::Fell | Flow::Broke | Flow::Continued => Err(Refusal::Unevaluable),
-                }
-            }
-            // **A list literal is the aggregate's only constructor here**
-            // ([ADR-135](../../../docs/specification/adr/adr-135.md)). There is
-            // no `push`: what `.push` hands back is a `Vec[?]`, and `NK1104`
-            // refuses one against the `Array[T, N]` a `const` can hold long
-            // before this evaluator sees it. So a table is written at its
-            // length and filled by index, below.
-            Expr::ListLit { items, .. } => {
-                let mut values = Vec::with_capacity(items.len());
-                for item in items {
-                    values.push(self.expr(item, frame)?);
-                }
-                Ok(Value::List(values))
-            }
-            Expr::Index { base, index } => {
-                let on = self.expr(base, frame)?;
-                let at = self.expr(index, frame)?;
-                element(&on, &at)
-            }
-            // `xs.len()`, which is what a loop over a table is written with —
-            // `for i in 0..<xs.len()`. One method and no others: the length of
-            // a list this evaluator already holds is a fact it has, where
-            // anything else would be a body somewhere it cannot read.
-            Expr::MethodCall {
-                receiver,
-                method,
-                args,
-                config,
-            } if args.is_empty() && config.is_empty() && self.parsed.text(*method) == "len" => {
-                match self.expr(receiver, frame)? {
-                    Value::List(items) => Ok(Value::Int(int::integer_of_count(items.len() as i64))),
-                    // **Bytes, which is what `String::len` says it is.** Text
-                    // is UTF-8 and a character outside ASCII is more than one
-                    // byte; `chars().count()` is the other question and `std`
-                    // spells it out. The value is decoded, so this is the
-                    // number the program would have counted itself.
-                    Value::Text(text) => Ok(Value::Int(int::integer_of_count(text.len() as i64))),
-                    _ => Err(Refusal::Unevaluable),
-                }
-            }
-            // **A method is not a shape this evaluator reads**, and the two it
-            // does read above - `len` and `push` over a list it holds - are
-            // forms it knows itself rather than entries it resolved. Said out
-            // loud, because a `sync` method of this program's own looks exactly
-            // like something that should work: `sync` is the **permission**
-            // ([ADR-287](../../../docs/specification/adr/adr-287.md) D13) and a
-            // body this walk can read is the **ability**, and they are two
-            // different things.
-            // Kap 4.2's literal, and the shorthand with it: `Point { x, y }`
-            // is `Point { x: x, y: y }`, which the parser leaves as a field
-            // with no value of its own.
-            Expr::StructLit { name, fields } => {
-                let name = self.parsed.text(*name).to_string();
-                let mut held = BTreeMap::new();
-                for field in fields {
-                    let written = self.parsed.text(field.name).to_string();
-                    let value = match &field.value {
-                        Some(value) => self.expr(value, frame)?,
-                        None => frame.get(&written).cloned().ok_or(Refusal::Unevaluable)?,
-                    };
-                    held.insert(written, value);
-                }
-                Ok(Value::Struct { name, fields: held })
-            }
-            Expr::Field { base, name } => {
-                let on = self.expr(base, frame)?;
-                let field = self.parsed.text(*name);
-                match on {
-                    Value::Struct { mut fields, .. } => {
-                        fields.remove(field).ok_or(Refusal::Unevaluable)
-                    }
-                    _ => Err(Refusal::Unevaluable),
-                }
-            }
-            // **A method of this program, on a value this evaluator made.**
-            // The receiver is evaluated first because it is what says *which*
-            // method: a `Point`'s `length` and a `Line`'s are two entries, and
-            // the ledger keys them apart by the type.
-            Expr::MethodCall {
-                receiver,
-                method,
-                args,
-                config,
-            } => {
-                let on = self.expr(receiver, frame)?;
-                let Value::Struct { name, .. } = &on else {
-                    return Err(self.no_method_here(*method));
-                };
-                let key = format!("{name}::{}", self.parsed.text(*method));
-                let mut given = vec![on.clone()];
-                for arg in args {
-                    given.push(self.expr(arg, frame)?);
-                }
-                let named = self.named(config, frame)?;
-                self.call(&key, &given, &named)
-            }
-            // **A grammar's entry, run by compiling the parser it generates**
-            // (issue #178, Part II
-            // 10.2 A). `Json::value(asset("config.json"))` says *when* with the
-            // `comptime` around it, *where the bytes come from* with `asset`,
-            // and *what is done with them* here.
-            Expr::Call { func, args, config }
-                if config.is_empty() && matches!(func.as_ref(), Expr::Path(_)) =>
-            {
-                let Expr::Path(path) = func.as_ref() else {
-                    return Err(Refusal::Unevaluable);
-                };
-                let names: Vec<&str> = path.iter().map(|s| self.parsed.text(*s)).collect();
-                let [grammar, rule] = names.as_slice() else {
-                    return Err(Refusal::Unevaluable);
-                };
-                let (grammar, rule) = (grammar.to_string(), rule.to_string());
-                // **A variant with a payload is written the same way a grammar
-                // rule is called** — `Json::Number(1.5)` beside
-                // `Cfg::file(text)` — so the declaration decides which it is.
-                // An `enum` this program declares wins, because a grammar and
-                // an `enum` under one name is a name declared twice and
-                // `NK1148`'s to refuse, not this walk's.
-                if self.variant_of(&grammar, &rule).is_some() {
-                    let mut payload = Vec::with_capacity(args.len());
-                    for arg in args {
-                        payload.push(self.expr(arg, frame)?);
-                    }
-                    return Ok(Value::Variant {
-                        ty: grammar,
-                        variant: rule,
-                        payload,
-                    });
-                }
-                let [input] = args.as_slice() else {
-                    return Err(Refusal::Unevaluable);
-                };
-                let Value::Text(input) = self.expr(input, frame)? else {
-                    return Err(Refusal::Unevaluable);
-                };
-                self.grammar(&grammar, &rule, &input)
-            }
-            Expr::Call { func, args, config } => {
-                let Expr::Variable(name) = func.as_ref() else {
-                    return Err(Refusal::Unevaluable);
-                };
-                let name = self.parsed.text(*name).to_string();
-                // **`asset("…")` is answered before the arguments are**
-                // ([ADR-310](../../../docs/specification/adr/adr-310.md) D3,
-                // [ADR-310](../../../docs/specification/adr/adr-310.md) D7).
-                // A name that folds to `"config.json"` is a path that was
-                // *computed*, and reading it would make *named in the code*
-                // something a reader cannot decide by looking at the line.
-                if name == ASSET {
-                    return self.asset(args);
-                }
-                let mut given = Vec::new();
-                for arg in args {
-                    given.push(self.expr(arg, frame)?);
-                }
-                let named = self.named(config, frame)?;
-                self.call(&name, &given, &named)
-            }
-            _ => Err(Refusal::Unevaluable),
-        }
-    }
-
-    fn binary(
-        &mut self,
-        op: BinaryOp,
-        lhs: &Expr,
-        rhs: &Expr,
-        frame: &BTreeMap<String, Value>,
-    ) -> Result<Value, Refusal> {
-        // **`&&` and `||` short-circuit**, which is not an optimisation here: a
-        // body may guard a call with one, and evaluating the far side of a
-        // guard is how a build-time evaluator reaches what the guard was
-        // keeping it away from.
-        if matches!(op, BinaryOp::And | BinaryOp::Or) {
-            let Value::Bool(left) = self.expr(lhs, frame)? else {
-                return Err(Refusal::Unevaluable);
-            };
-            return match (op, left) {
-                (BinaryOp::And, false) => Ok(Value::Bool(false)),
-                (BinaryOp::Or, true) => Ok(Value::Bool(true)),
-                _ => match self.expr(rhs, frame)? {
-                    Value::Bool(right) => Ok(Value::Bool(right)),
-                    _ => Err(Refusal::Unevaluable),
-                },
-            };
-        }
-        let left = self.expr(lhs, frame)?;
-        let right = self.expr(rhs, frame)?;
-        self.operate(op, left, right)
-    }
-
-    /// An operator on two values already in hand.
-    ///
-    /// **Split out of [`binary`](Self::binary) for `+=`**, whose left side is a
-    /// name that is already bound: re-evaluating it as an expression would read
-    /// it a second time, which is the same answer here and would stop being one
-    /// the moment a left side can call anything.
-    /// **Two values and an operator**, in Nikaia
-    /// (`tools/build_values.nika`): integers as magnitudes and signs, floats as
-    /// the machine does, `+` and a comparison over text, the logic of truth
-    /// values - and nothing for a shape this evaluator does not read.
-    fn operate(&self, op: BinaryOp, left: Value, right: Value) -> Result<Value, Refusal> {
-        nikaia_std::tools::build_values::operated(&op, &left, &right).ok_or(Refusal::Unevaluable)
-    }
-
-    /// **`f"…"` while the program is built** (ADR-309, [ADR-309](../../../docs/specification/adr/adr-309.md)
-    /// D3 — a hole is code and every analysis sees it, this one included).
-    ///
-    /// The holes are split out by the same function the lowering uses, so the
-    /// two cannot disagree about where one begins. What is rebuilt is the
-    /// **written** form: a number contributes its digits, a `bool` its word,
-    /// and text its own written form, which is why nothing has to be escaped
-    /// on the way in or out.
-    ///
-    /// **A format spec is not read.** `f"{n:>8}"` asks for a width, and what
-    /// that means is `std::fmt`'s rather than this language's — so it is a
-    /// shape this evaluator does not know, not a rule it breaks.
-    fn interpolated(
-        &mut self,
-        parts: &[crate::ast::FPart],
-        frame: &BTreeMap<String, Value>,
-    ) -> Result<Value, Refusal> {
-        // Built from the parts the grammar parsed (ADR-309 D6, D9).
-        let format = crate::emit::format_of(parts);
-        let holes = crate::emit::interpolated_holes(parts);
-        let mut values = Vec::with_capacity(holes.len());
-        for (_, expr) in &holes {
-            values.push(self.expr(expr, frame)?);
-        }
-
-        // **The literal parts are still *written*.** The grammar keeps a run
-        // of text as written (ADR-309 D5) — a `\` and the character after it,
-        // `\u{…}` braces included — so a chunk is read by
-        // [`decoded`] exactly as a plain literal is, and a hole's value is
-        // already decoded.
-        let mut out = String::new();
-        let mut chunk = String::new();
-        let mut taken = values.into_iter();
-        let mut chars = format.chars().peekable();
-        let flush = |chunk: &mut String, out: &mut String| -> Result<(), Refusal> {
-            if !chunk.is_empty() {
-                out.push_str(&decoded(chunk).ok_or(Refusal::Unevaluable)?);
-                chunk.clear();
-            }
-            Ok(())
+    fn run(&self, expr: &Expr) -> Result<Value, Refusal> {
+        let mut units: Vec<&Parsed> = vec![self.parsed];
+        units.extend(self.beside.iter().copied());
+        let host = Host {
+            units,
+            own: self.own,
+            reads: self.reads,
+            known: self.known,
+            kept: RefCell::new(Vec::new()),
         };
-        while let Some(c) = chars.next() {
-            match c {
-                // An escape is two characters and the chunk keeps both, so
-                // that `decoded` sees what the source wrote.
-                '\\' => {
-                    chunk.push('\\');
-                    match chars.next() {
-                        Some(escape) => {
-                            chunk.push(escape);
-                            // `\u{…}` carries its braces, and they are not the
-                            // format's — the grammar keeps them in the text run
-                            // for exactly this reason.
-                            if escape == 'u' && chars.peek() == Some(&'{') {
-                                for c in chars.by_ref() {
-                                    chunk.push(c);
-                                    if c == '}' {
-                                        break;
-                                    }
-                                }
-                            }
-                        }
-                        None => return Err(Refusal::Unevaluable),
-                    }
-                }
-                // `{{` and `}}` are how a format string spells one brace, and
-                // text spells it with one.
-                '{' if chars.peek() == Some(&'{') => {
-                    chars.next();
-                    flush(&mut chunk, &mut out)?;
-                    out.push('{');
-                }
-                '}' if chars.peek() == Some(&'}') => {
-                    chars.next();
-                    flush(&mut chunk, &mut out)?;
-                    out.push('}');
-                }
-                '{' => {
-                    // `{}` and nothing else: anything between the braces is a
-                    // spec, which this does not read.
-                    if chars.next() != Some('}') {
-                        return Err(Refusal::Unevaluable);
-                    }
-                    flush(&mut chunk, &mut out)?;
-                    match taken.next() {
-                        Some(Value::Int(n)) => out.push_str(&int::integer_text(&n)),
-                        Some(Value::Bool(yes)) => out.push_str(&yes.to_string()),
-                        Some(Value::Text(text)) => out.push_str(&text),
-                        _ => return Err(Refusal::Unevaluable),
-                    }
-                }
-                c => chunk.push(c),
-            }
+        bt_evaluate(expr, &host).map_err(|thrown| host.refusal(thrown.split().0))
+    }
+}
+
+/// What the evaluator asks the compiler: the files by number (0 is the one
+/// being checked), the ledger, what may be read, and the grammar workshop.
+struct Host<'h> {
+    units: Vec<&'h Parsed>,
+    own: &'h Ledger,
+    reads: &'h Reads,
+    known: Known<'h>,
+    /// The refusals the evaluator carries by their place here: a grammar that
+    /// would not run says why in a type of this compiler's.
+    kept: RefCell<Vec<Refusal>>,
+}
+
+impl Host<'_> {
+    fn refusal(&self, refused: BtRefusal) -> Refusal {
+        match refused {
+            BtRefusal::Unevaluable => Refusal::Unevaluable,
+            BtRefusal::NotAllowed { callee, because } => Refusal::NotAllowed { callee, because },
+            BtRefusal::TooDeep { callee } => Refusal::TooDeep { callee },
+            BtRefusal::NotHere { what, why, way_out } => Refusal::NotHere { what, why, way_out },
+            BtRefusal::Circular { ring } => Refusal::Circular { ring },
+            BtRefusal::MayNotRead { path, why } => Refusal::MayNotRead { path, why },
+            BtRefusal::PathIsComputed => Refusal::PathIsComputed,
+            BtRefusal::OutOfBounds { at, len } => Refusal::OutOfBounds {
+                at,
+                len: len as usize,
+            },
+            BtRefusal::Host(slot) => self.kept.borrow()[slot as usize].clone(),
         }
-        flush(&mut chunk, &mut out)?;
-        Ok(Value::Text(out))
     }
 
-    /// **A constant of this file, worked out on demand.**
-    ///
-    /// The one lookup that makes a constant behave like the item it is. A
-    /// function declared below its caller has always been callable — items are
-    /// order-independent — and a constant was not, because the walk that binds
-    /// them goes down the file. So `comptime A = B * 2` above `comptime B = 21`
-    /// was *nothing declares `B`*, which was a **correct program refused** with
-    /// a sentence that was not true: the next line declares it.
-    ///
-    /// **And the ring is refused by name.** `comptime A = B` beside
-    /// `comptime B = A` has no base case to reach, so it is not the call depth
-    /// that catches it — the stack of names being worked out is, and it can say
-    /// which ones.
-    fn constant_item(&mut self, name: &str) -> Result<Value, Refusal> {
-        if self.resolving.iter().any(|held| held == name) {
-            let mut ring = self.resolving.clone();
-            ring.push(name.to_string());
-            return Err(Refusal::Circular { ring });
+    /// The files in the order a name is looked for: the one the body being read
+    /// came from, and then every file beside the one being checked.
+    fn in_reach(&self, unit: i64) -> impl Iterator<Item = (usize, &Parsed)> {
+        std::iter::once(unit as usize)
+            .chain(1..self.units.len())
+            .map(|at| (at, self.units[at]))
+    }
+
+    fn in_file(&self, parsed: &Parsed, at: usize, name: &str) -> Option<BtCallee> {
+        // `Tag::doubled` is a method's key, and it is the ledger's own - so the
+        // split here is the same one `contracts` makes when it writes the
+        // entry, and the two cannot drift about which name a call resolves to.
+        match name.split_once("::") {
+            Some((target, method)) => method_of(parsed, at, target, method),
+            None => free_body_of(parsed, at, name),
         }
-        let value = self
-            .parsed
+    }
+}
+
+impl BtHost for Host<'_> {
+    fn text(&self, unit: i64, symbol: winnow_grammar::Symbol) -> String {
+        self.units[unit as usize].text(symbol).to_string()
+    }
+
+    fn char_of(&self, n: i64) -> Option<char> {
+        char_of(n)
+    }
+
+    fn known(&self, name: &str) -> Option<Value> {
+        (self.known)(name)
+    }
+
+    fn contract(&self, name: &str) -> BtContract {
+        match self.own.functions.get(name) {
+            None => BtContract {
+                declared: false,
+                reason: String::new(),
+            },
+            Some(contract) => BtContract {
+                declared: true,
+                reason: may_not_run(contract).unwrap_or_default().to_string(),
+            },
+        }
+    }
+
+    fn callee(&self, unit: i64, name: &str) -> Option<BtCallee> {
+        self.in_reach(unit)
+            .find_map(|(at, parsed)| self.in_file(parsed, at, name))
+    }
+
+    fn constant(&self, unit: i64, name: &str) -> Option<Expr> {
+        let parsed = self.units[unit as usize];
+        parsed
             .program
             .items
             .iter()
@@ -674,667 +303,190 @@ impl<'a> BuildTime<'a> {
                     name: declared,
                     value,
                     ..
-                } if self.parsed.text(*declared) == name => Some(value.clone()),
+                } if parsed.text(*declared) == name => Some(value.clone()),
                 _ => None,
             })
-            .ok_or(Refusal::Unevaluable)?;
-
-        self.resolving.push(name.to_string());
-        let out = self.expr(&value, &BTreeMap::new());
-        self.resolving.pop();
-        out
     }
 
-    /// **A method this evaluator has no receiver for.**
-    ///
-    /// Two of them reach a value it holds — a struct's own method, and `len`
-    /// and `push` over a list — and everything else is `std`'s or a package's,
-    /// whose body is Rust rather than something this reads.
-    fn no_method_here(&self, method: winnow_grammar::Symbol) -> Refusal {
-        Refusal::NotHere {
-            what: format!(".{}()", self.parsed.text(method)),
-            // **Said as what happened** (#519): a `std` method does run at
-            // build time, in the compiled run (ADR-321); this answer is the
-            // one given where that run could not take the value.
-            why: "this value could not be compiled to run while the program is built, \
-                  and without that the compiler can only call methods your program \
-                  declares, and `len` and `push` on a list",
-            // **Not *move it into a function***, which is the trap: the method
-            // would be just as unreadable one function further in.
-            way_out: "write what it does with arithmetic, `if`, `for` and calls to \
-                      functions in this file",
-        }
+    fn variant_of(&self, unit: i64, ty: &str, variant: &str) -> bool {
+        self.in_reach(unit).any(|(_, parsed)| {
+            parsed.program.items.iter().any(|item| match &item.node {
+                Item::Enum { name, variants, .. } if parsed.text(*name) == ty => variants
+                    .iter()
+                    .any(|held| parsed.text(held.name) == variant),
+                _ => false,
+            })
+        })
     }
-    /// **A grammar, run while the program is built**
-    /// (issue #178).
-    ///
-    /// Not interpreted: the generated parser is compiled and run, so there is
-    /// one implementation of the grammar language and Part II 10.2's *the same
-    /// syntax and the same meaning* is a tautology rather than a claim.
-    /// [`crate::grammar_run`] says why at length.
-    ///
-    /// **The grammar may be in another file**, which is the same rule a call
-    /// across a file boundary already follows: a program's files share one
-    /// namespace (Part I 9.1), and each owns the interner its symbols resolve
-    /// in — so the parser is compiled from the file that *declared* it.
-    fn grammar(&mut self, grammar: &str, rule: &str, input: &str) -> Result<Value, Refusal> {
-        let Some((parsed, result)) = self.rule_of(grammar, rule) else {
-            return Err(Refusal::Unevaluable);
+
+    fn run_grammar(&self, unit: i64, which: &str, rule: &str, input: &str) -> BtRan {
+        let Some((parsed, result)) = self.rule_of(unit, which, rule) else {
+            return BtRan {
+                found: false,
+                value: None,
+                slot: -1,
+            };
         };
+        let beside: Vec<&Parsed> = self.units[1..].to_vec();
         let ask = crate::grammar_run::Ask {
-            grammar,
+            grammar: which,
             rule,
             input,
             result: &result,
-            units: self.beside,
+            units: &beside,
         };
-        match self.reads.workshop().run(parsed, &ask) {
-            Ok(dump) => crate::grammar_run::decode(&dump).map_err(|why| Refusal::GrammarWall {
-                grammar: grammar.to_string(),
-                rule: rule.to_string(),
-                why,
-            }),
-            Err(why) => Err(Refusal::GrammarWall {
-                grammar: grammar.to_string(),
-                rule: rule.to_string(),
-                why,
-            }),
-        }
-    }
-
-    /// Whether `ty::variant` names a variant of an `enum` this **program**
-    /// declares — this file or one beside it, which is the same reach a call
-    /// across a file boundary has (Part I 9.1).
-    fn variant_of(&self, ty: &str, variant: &str) -> Option<()> {
-        std::iter::once(self.parsed)
-            .chain(self.beside.iter().copied())
-            .find_map(|parsed| {
-                parsed
-                    .program
-                    .items
-                    .iter()
-                    .find_map(|item| match &item.node {
-                        Item::Enum { name, variants, .. } if parsed.text(*name) == ty => variants
-                            .iter()
-                            .any(|held| parsed.text(held.name) == variant)
-                            .then_some(()),
-                        _ => None,
-                    })
-            })
-    }
-
-    /// The file a grammar was declared in, and what its `entry` rule hands back.
-    fn rule_of(&self, grammar: &str, rule: &str) -> Option<(&'a Parsed, crate::contracts::ty::Ty)> {
-        std::iter::once(self.parsed)
-            .chain(self.beside.iter().copied())
-            .find_map(|parsed| {
-                let found = parsed
-                    .program
-                    .items
-                    .iter()
-                    .find_map(|item| match &item.node {
-                        Item::Grammar(def) if parsed.text(def.name) == grammar => def
-                            .rules
-                            .iter()
-                            .find(|r| r.is_entry && parsed.text(r.name) == rule),
-                        _ => None,
-                    })?;
-                let ty = found.ret_type.as_ref()?;
-                Some((parsed, crate::contracts::ty::Ty::from_ast(parsed, ty)))
-            })
-    }
-
-    /// **The file a build reads**
-    /// ([ADR-310](../../../docs/specification/adr/adr-310.md) D3).
-    ///
-    /// It is the compiler's and not `std`'s, so it is read here rather than
-    /// resolved through a ledger: there is no body to describe. What comes back
-    /// is the file's **text**, which is what crosses to the program as a `&str`
-    /// ([ADR-311](../../../docs/specification/adr/adr-311.md) D1) and what a
-    /// grammar's entry takes.
-    ///
-    /// Every rule [ADR-310](../../../docs/specification/adr/adr-310.md) states
-    /// holds unchanged under the call rather than under the keyword it was
-    /// written for, and the first of them is the one that costs nothing to
-    /// keep: a build given no list reads nothing.
-    fn asset(&mut self, args: &[Expr]) -> Result<Value, Refusal> {
-        // **A string literal and nothing else** (D4). Not "an expression that
-        // evaluates to text": a name that folds to one is exactly what this
-        // refuses, and the refusal has to happen before the fold.
-        let [Expr::LitStr { text: written, .. }] = args else {
-            return Err(Refusal::PathIsComputed);
+        let wall = |why| Refusal::GrammarWall {
+            grammar: which.to_string(),
+            rule: rule.to_string(),
+            why,
         };
-        let Some(path) = decoded(written) else {
-            return Err(Refusal::PathIsComputed);
+        let outcome = match self.reads.workshop().run(parsed, &ask) {
+            Ok(dump) => crate::grammar_run::decode(&dump).map_err(wall),
+            Err(why) => Err(wall(why)),
         };
-        match self.reads.read(&path) {
-            Ok(text) => Ok(Value::Text(text)),
-            Err(why) => Err(Refusal::MayNotRead { path, why }),
-        }
-    }
-
-    /// A call to a function this unit declares.
-    ///
-    /// **The permission is read off the ledger**
-    /// ([ADR-287](../../../docs/specification/adr/adr-287.md) D13, D14) and not
-    /// off a list kept here: `sync` says the body never pauses, and a touch set
-    /// that is empty or exactly the build's own parameters says it reaches
-    /// nothing else. Both are derived for every function already.
-    fn call(
-        &mut self,
-        name: &str,
-        given: &[Value],
-        named: &[(String, Value)],
-    ) -> Result<Value, Refusal> {
-        if self.depth >= DEEPEST {
-            return Err(Refusal::TooDeep {
-                callee: name.to_string(),
-            });
-        }
-        let Some(contract) = self.own.functions.get(name) else {
-            // A callee this program does not declare — `std`, a package. Not
-            // *you may not*, which would be a claim about somebody else's
-            // body; **there is no body here to run**, and for `std` there
-            // never will be, because half of it is Rust
-            // ([ADR-014](../../../docs/specification/adr/adr-014.md)).
-            //
-            // Reimplementing one here is the thing issue #178 argues
-            // against one construct over: two implementations of one meaning
-            // is a promise that becomes a hope.
-            return Err(Refusal::NotHere {
-                what: name.to_string(),
-                why: "it comes from `std` or a package, which is compiled Rust, and at \
-                      build time the compiler can only run code written in your program",
-                way_out: "write the work in Nikaia, in this file, and call that",
-            });
-        };
-        if let Some(because) = may_not_run(contract) {
-            return Err(Refusal::NotAllowed {
-                callee: name.to_string(),
-                because,
-            });
-        }
-        let Some((
-            Callee {
-                args,
-                options,
-                body,
+        match outcome {
+            Ok(value) => BtRan {
+                found: true,
+                value: Some(value),
+                slot: -1,
             },
-            owner,
-        )) = self.body_of(name)
-        else {
-            // **No file of this program declares it**, which for a name the
-            // ledger describes means a `.contracts` a package shipped: its
-            // body was compiled beside this build rather than parsed into it.
-            return Err(Refusal::NotHere {
-                what: name.to_string(),
-                why: "it isn't declared in your program: it comes from a package, which \
-                      is compiled Rust, and at build time the compiler can only run code \
-                      written in your program",
-                way_out: "write the work in Nikaia, in this program, and call that",
-            });
-        };
-        if args.len() != given.len() {
-            return Err(Refusal::Unevaluable);
-        }
-        let mut frame: BTreeMap<String, Value> = args
-            .iter()
-            .map(|name| name.to_string())
-            .zip(given.iter().cloned())
-            .collect();
-        // **The body is read with the file it came from.** Every
-        // `parse_to_ast` builds its own interner, so a symbol from another file
-        // resolves to nothing — or to the wrong text — when read with this
-        // one's. Swapped for the length of the call and put back after, which
-        // is what makes a nested call across two more files right as well.
-        let outer = std::mem::replace(&mut self.parsed, owner);
-        let elsewhere = self.foreign || !std::ptr::eq(owner, outer);
-        let was_foreign = std::mem::replace(&mut self.foreign, elsewhere);
-        self.depth += 1;
-        let out = self
-            .options(name, &options, named, &mut frame)
-            .and_then(|()| self.block(&body, &mut frame));
-        self.depth -= 1;
-        self.parsed = outer;
-        self.foreign = was_foreign;
-        // A body that fell off its end has no value, and a `break` or a
-        // `continue` outside a loop is not a body this evaluator reads — the
-        // checker refuses both long before here, and neither is a value.
-        match out? {
-            Flow::Value(value) => Ok(value),
-            Flow::Fell | Flow::Broke | Flow::Continued => Err(Refusal::Unevaluable),
-        }
-    }
-
-    /// The parameters and the body of a function this unit declares.
-    ///
-    /// A **receiver** stops it: a method needs a value to be called on, and a
-    /// build-time call by name has none.
-    /// The parameters, the body, and **the file the body came from**.
-    ///
-    /// The third is what makes a call across a file boundary sound: every
-    /// `parse_to_ast` builds its own interner, so a symbol from another file
-    /// resolves to nothing — or, worse, to the wrong text — when read with this
-    /// one's. So the body travels with its `Parsed` and [`Self::call`] reads it
-    /// with that.
-    ///
-    /// **This file first**, which is not an optimisation: the files of a
-    /// package share one namespace (Part I 9.1) and the checker has already
-    /// refused a duplicate, so the order settles nothing — it just means the
-    /// common case never looks further.
-    fn body_of(&self, name: &str) -> Option<(Callee, &'a Parsed)> {
-        let here = self.parsed;
-        self.in_file(here, name)
-            .map(|callee| (callee, here))
-            .or_else(|| {
-                self.beside
-                    .iter()
-                    .find_map(|parsed| self.in_file(parsed, name).map(|callee| (callee, *parsed)))
-            })
-    }
-
-    /// **What the caller named after the `;`**, evaluated where it is written.
-    fn named(
-        &mut self,
-        config: &[crate::ast::ConfigArg],
-        frame: &BTreeMap<String, Value>,
-    ) -> Result<Vec<(String, Value)>, Refusal> {
-        let mut named = Vec::with_capacity(config.len());
-        for option in config {
-            let name = self.parsed.text(option.name).to_string();
-            named.push((name, self.expr(&option.value, frame)?));
-        }
-        Ok(named)
-    }
-
-    /// **The options of a call, into the callee's frame**
-    /// ([ADR-318](../../../docs/specification/adr/adr-318.md)): what the caller
-    /// named, and the default for what it left out.
-    ///
-    /// A default is evaluated as the declaration wrote it, with nothing of the
-    /// call in scope, and in the callee's file, which is the one `self.parsed`
-    /// is by the time this runs. **The option stands in the ring** while its
-    /// default is worked out: `comptime X = f()` above `fn f(; t: i64 = X)` is
-    /// `X` needing `t` needing `X`, and the reader is told so.
-    fn options(
-        &mut self,
-        callee: &str,
-        options: &[(String, Expr)],
-        named: &[(String, Value)],
-        frame: &mut BTreeMap<String, Value>,
-    ) -> Result<(), Refusal> {
-        if named
-            .iter()
-            .any(|(name, _)| options.iter().all(|(option, _)| option != name))
-        {
-            return Err(Refusal::Unevaluable);
-        }
-        for (option, default) in options {
-            let value = match named.iter().find(|(name, _)| name == option) {
-                Some((_, value)) => value.clone(),
-                None => {
-                    // **Named as the reader would say it**, `t` of `f`: the
-                    // ring is printed with each entry in backticks, and two
-                    // functions may both have a `t`.
-                    let held = format!("{option}` of `{callee}");
-                    if self.resolving.contains(&held) {
-                        let mut ring = self.resolving.clone();
-                        ring.push(held);
-                        return Err(Refusal::Circular { ring });
-                    }
-                    self.resolving.push(held);
-                    let value = self.expr(default, &BTreeMap::new());
-                    self.resolving.pop();
-                    value?
+            Err(refusal) => {
+                let mut kept = self.kept.borrow_mut();
+                kept.push(refusal);
+                BtRan {
+                    found: true,
+                    value: None,
+                    slot: kept.len() as i64 - 1,
                 }
-            };
-            frame.insert(option.clone(), value);
-        }
-        Ok(())
-    }
-
-    fn in_file(&self, parsed: &Parsed, name: &str) -> Option<Callee> {
-        // `Tag::doubled` is a method's key, and it is the ledger's own — so the
-        // split here is the same one `contracts` makes when it writes the
-        // entry, and the two cannot drift about which name a call resolves to.
-        match name.split_once("::") {
-            Some((target, method)) => self.method_of(parsed, target, method),
-            None => self.free_body_of(parsed, name),
+            }
         }
     }
 
-    fn free_body_of(&self, parsed: &Parsed, name: &str) -> Option<Callee> {
-        parsed.program.items.iter().find_map(|item| {
+    fn read(&self, path: &str) -> BtRead {
+        match self.reads.read(path) {
+            Ok(text) => BtRead {
+                text: Some(text),
+                denied: None,
+            },
+            Err(why) => BtRead {
+                text: None,
+                denied: Some(why),
+            },
+        }
+    }
+}
+
+impl Host<'_> {
+    /// The file a grammar was declared in, and what its `entry` rule hands back.
+    fn rule_of(
+        &self,
+        unit: i64,
+        grammar: &str,
+        rule: &str,
+    ) -> Option<(&Parsed, crate::contracts::ty::Ty)> {
+        self.in_reach(unit).find_map(|(_, parsed)| {
+            let found = parsed
+                .program
+                .items
+                .iter()
+                .find_map(|item| match &item.node {
+                    Item::Grammar(def) if parsed.text(def.name) == grammar => def
+                        .rules
+                        .iter()
+                        .find(|r| r.is_entry && parsed.text(r.name) == rule),
+                    _ => None,
+                })?;
+            let ty = found.ret_type.as_ref()?;
+            Some((parsed, crate::contracts::ty::Ty::from_ast(parsed, ty)))
+        })
+    }
+}
+
+fn parameters(parsed: &Parsed, args: &[crate::ast::FnArg]) -> Vec<String> {
+    args.iter()
+        .map(|arg| parsed.text(arg.name).to_string())
+        .collect()
+}
+
+fn options_of(parsed: &Parsed, config: &[crate::ast::ConfigParam]) -> Vec<(String, Expr)> {
+    config
+        .iter()
+        .map(|option| (parsed.text(option.name).to_string(), option.default.clone()))
+        .collect()
+}
+
+fn free_body_of(parsed: &Parsed, owner: usize, name: &str) -> Option<BtCallee> {
+    parsed.program.items.iter().find_map(|item| {
+        let Item::Fn {
+            name: declared,
+            args,
+            receiver,
+            config,
+            body,
+            ..
+        } = &item.node
+        else {
+            return None;
+        };
+        if receiver.is_some() || parsed.text((*declared)?) != name {
+            return None;
+        }
+        Some(BtCallee {
+            args: parameters(parsed, args),
+            options: options_of(parsed, config),
+            body: body.clone(),
+            owner: owner as i64,
+        })
+    })
+}
+
+/// A method of a `struct` this file declares, by the key a call resolves to.
+///
+/// **`self` is the first parameter**, which is the shape the call site builds:
+/// the receiver is evaluated before the arguments, because it is what says
+/// *which* method. A method with **no receiver** is Kap 4.2's constructor and
+/// is reached by its own name (`Stats::new`), so it takes no `self`.
+fn method_of(parsed: &Parsed, owner: usize, target: &str, method: &str) -> Option<BtCallee> {
+    parsed.program.items.iter().find_map(|item| {
+        let Item::Impl {
+            target: on,
+            methods,
+            ..
+        } = &item.node
+        else {
+            return None;
+        };
+        if parsed.text(on.name) != target {
+            return None;
+        }
+        methods.iter().find_map(|declared| {
             let Item::Fn {
-                name: declared,
+                name,
                 args,
                 receiver,
                 config,
                 body,
                 ..
-            } = &item.node
+            } = &declared.node
             else {
                 return None;
             };
-            if receiver.is_some() || parsed.text((*declared)?) != name {
+            if parsed.text((*name)?) != method {
                 return None;
             }
-            Some(Callee {
-                args: self.parameters(parsed, args),
-                options: self.options_of(parsed, config),
+            let mut names = match receiver {
+                Some(_) => vec!["self".to_string()],
+                None => Vec::new(),
+            };
+            names.extend(parameters(parsed, args));
+            Some(BtCallee {
+                args: names,
+                options: options_of(parsed, config),
                 body: body.clone(),
+                owner: owner as i64,
             })
         })
-    }
-
-    /// A method of a `struct` this file declares, by the key a call resolves to.
-    ///
-    /// **`self` is the first parameter**, which is the shape the call site
-    /// builds: the receiver is evaluated before the arguments, because it is
-    /// what says *which* method — a `Point`'s `length` and a `Line`'s are two
-    /// entries the ledger keys apart by the type.
-    ///
-    /// A method with **no receiver** is Kap 4.2's constructor and is reached by
-    /// its own name (`Stats::new`), so it takes no `self` and is left as the
-    /// declaration wrote it.
-    fn method_of(&self, parsed: &Parsed, target: &str, method: &str) -> Option<Callee> {
-        parsed.program.items.iter().find_map(|item| {
-            let Item::Impl {
-                target: on,
-                methods,
-                ..
-            } = &item.node
-            else {
-                return None;
-            };
-            if parsed.text(on.name) != target {
-                return None;
-            }
-            methods.iter().find_map(|declared| {
-                let Item::Fn {
-                    name,
-                    args,
-                    receiver,
-                    config,
-                    body,
-                    ..
-                } = &declared.node
-                else {
-                    return None;
-                };
-                if parsed.text((*name)?) != method {
-                    return None;
-                }
-                let mut parameters = match receiver {
-                    Some(_) => vec!["self".to_string()],
-                    None => Vec::new(),
-                };
-                parameters.extend(self.parameters(parsed, args));
-                Some(Callee {
-                    args: parameters,
-                    options: self.options_of(parsed, config),
-                    body: body.clone(),
-                })
-            })
-        })
-    }
-
-    fn options_of(
-        &self,
-        parsed: &Parsed,
-        config: &[crate::ast::ConfigParam],
-    ) -> Vec<(String, Expr)> {
-        config
-            .iter()
-            .map(|option| (parsed.text(option.name).to_string(), option.default.clone()))
-            .collect()
-    }
-
-    fn parameters(&self, parsed: &Parsed, args: &[crate::ast::FnArg]) -> Vec<String> {
-        args.iter()
-            .map(|arg| parsed.text(arg.name).to_string())
-            .collect()
-    }
-
-    /// A body: `let`s, an early `return`, a loop, and a last statement that is
-    /// the value — which is Part I 3.1's rule for every block, read here.
-    ///
-    /// **The frame is by reference now, and a loop is why.** A body used to get
-    /// a fresh map it owned; a `for` has to see what its body assigned on the
-    /// last turn, and a `while` has to see what its condition reads.
-    fn block(
-        &mut self,
-        block: &Block,
-        frame: &mut BTreeMap<String, Value>,
-    ) -> Result<Flow, Refusal> {
-        let last = block.stmts.len().saturating_sub(1);
-        for (at, stmt) in block.stmts.iter().enumerate() {
-            match &stmt.node {
-                Stmt::Let { names, value, .. } => {
-                    let [name] = names.as_slice() else {
-                        return Err(Refusal::Unevaluable);
-                    };
-                    let value = self.expr(value, frame)?;
-                    frame.insert(self.parsed.text(*name).to_string(), value);
-                }
-                // A `comptime` inside a body is a `let` that must fold
-                // ([ADR-287](../../../docs/specification/adr/adr-287.md) D3),
-                // and inside a build-time body everything must, so the two are
-                // the same statement here.
-                Stmt::Comptime { name, value, .. } => {
-                    let value = self.expr(value, frame)?;
-                    frame.insert(self.parsed.text(*name).to_string(), value);
-                }
-                // **`xs[i] = …`, which is how a build-time table is filled.**
-                // Before the name, because an index is a target this evaluator
-                // reads and `Expr::Variable` is not what it looks like.
-                Stmt::Assign {
-                    target: Expr::Index { base, index },
-                    op,
-                    value,
-                } => {
-                    let Expr::Variable(name) = base.as_ref() else {
-                        return Err(Refusal::Unevaluable);
-                    };
-                    let name = self.parsed.text(*name).to_string();
-                    let at = self.expr(index, frame)?;
-                    let given = self.expr(value, frame)?;
-                    let held = frame.get(&name).ok_or(Refusal::Unevaluable)?;
-                    let next = match op {
-                        None => given,
-                        Some(op) => {
-                            let before = element(held, &at)?;
-                            self.operate(*op, before, given)?
-                        }
-                    };
-                    let Value::List(items) = frame.get_mut(&name).ok_or(Refusal::Unevaluable)?
-                    else {
-                        return Err(Refusal::Unevaluable);
-                    };
-                    let Value::Int(at) = at else {
-                        return Err(Refusal::Unevaluable);
-                    };
-                    let len = items.len();
-                    let slot = int::integer_as_count(&at)
-                        .and_then(|at| usize::try_from(at).ok())
-                        .and_then(|at| items.get_mut(at))
-                        .ok_or(Refusal::OutOfBounds { at, len })?;
-                    *slot = next;
-                }
-                Stmt::Assign { target, op, value } => {
-                    let Expr::Variable(name) = target else {
-                        return Err(Refusal::Unevaluable);
-                    };
-                    let name = self.parsed.text(*name).to_string();
-                    let given = self.expr(value, frame)?;
-                    let next = match op {
-                        None => given,
-                        Some(op) => {
-                            let held = frame.get(&name).cloned().ok_or(Refusal::Unevaluable)?;
-                            self.operate(*op, held, given)?
-                        }
-                    };
-                    if !frame.contains_key(&name) {
-                        return Err(Refusal::Unevaluable);
-                    }
-                    frame.insert(name, next);
-                }
-                Stmt::Return(Some(value)) => return Ok(Flow::Value(self.expr(value, frame)?)),
-                Stmt::Break => return Ok(Flow::Broke),
-                Stmt::Continue => return Ok(Flow::Continued),
-                Stmt::For {
-                    bindings,
-                    iter,
-                    body,
-                } => {
-                    let flow = self.walk(bindings, iter, body, frame)?;
-                    if let Flow::Value(_) = flow {
-                        return Ok(flow);
-                    }
-                }
-                Stmt::While { cond, body } => {
-                    // **No step budget**
-                    // ([ADR-287](../../../docs/specification/adr/adr-287.md)
-                    // D4), deliberately and with the cost written down: a
-                    // `while` that does not end hangs the build. The call-depth
-                    // limit above is not this and does not become it.
-                    loop {
-                        match self.expr(cond, frame)? {
-                            Value::Bool(true) => {}
-                            Value::Bool(false) => break,
-                            _ => return Err(Refusal::Unevaluable),
-                        }
-                        match self.block(body, frame)? {
-                            Flow::Value(value) => return Ok(Flow::Value(value)),
-                            Flow::Broke => break,
-                            Flow::Fell | Flow::Continued => {}
-                        }
-                    }
-                }
-                // **An `if` is read as a statement here whatever its
-                // position**, which is what a loop's body needs: `if i > n
-                // { break }` is the last statement of its block and hands back
-                // no value at all. A branch that falls through carries on; one
-                // that returns, breaks or continues ends the block.
-                Stmt::Expr(Expr::If {
-                    cond,
-                    then_branch,
-                    else_branch,
-                }) => {
-                    let taken = match self.expr(cond, frame)? {
-                        Value::Bool(true) => Some(then_branch),
-                        Value::Bool(false) => else_branch.as_ref(),
-                        _ => return Err(Refusal::Unevaluable),
-                    };
-                    if let Some(block) = taken {
-                        match self.block(block, frame)? {
-                            Flow::Fell => {}
-                            other => return Ok(other),
-                        }
-                    }
-                }
-                // **`xs.push(v)`, which is how a table is *grown* rather than
-                // filled** — [ADR-311](../../../docs/specification/adr/adr-311.md)'s
-                // own title, *growable going in, fixed coming out*. The body
-                // works with a list that does not know its length yet; what
-                // crosses into the program is fixed, and the declaration is
-                // where it becomes so.
-                //
-                // A statement and not an expression, because that is what it
-                // is: `Vec::push` hands back nothing, and a body that reads
-                // its result is not one this evaluator sees.
-                Stmt::Expr(Expr::MethodCall {
-                    receiver,
-                    method,
-                    args,
-                    config,
-                }) if self.parsed.text(*method) == "push"
-                    && args.len() == 1
-                    && config.is_empty() =>
-                {
-                    let Expr::Variable(name) = receiver.as_ref() else {
-                        return Err(Refusal::Unevaluable);
-                    };
-                    let name = self.parsed.text(*name).to_string();
-                    let given = self.expr(&args[0], frame)?;
-                    let Some(Value::List(items)) = frame.get_mut(&name) else {
-                        return Err(Refusal::Unevaluable);
-                    };
-                    items.push(given);
-                }
-                Stmt::Expr(expr) if at == last => return Ok(Flow::Value(self.expr(expr, frame)?)),
-                _ => return Err(Refusal::Unevaluable),
-            }
-        }
-        Ok(Flow::Fell)
-    }
-
-    /// A `for` over a range, which is the one shape a build-time loop has: a
-    /// list needs a value this evaluator does not carry yet, and that is
-    /// issue #178's next step rather than this one's.
-    fn walk(
-        &mut self,
-        bindings: &[winnow_grammar::Symbol],
-        iter: &Expr,
-        body: &Block,
-        frame: &mut BTreeMap<String, Value>,
-    ) -> Result<Flow, Refusal> {
-        let [binding] = bindings else {
-            return Err(Refusal::Unevaluable);
-        };
-        let Expr::Range {
-            start,
-            end,
-            inclusive,
-        } = iter
-        else {
-            return Err(Refusal::Unevaluable);
-        };
-        let (Value::Int(start), Value::Int(end)) =
-            (self.expr(start, frame)?, self.expr(end, frame)?)
-        else {
-            return Err(Refusal::Unevaluable);
-        };
-        // A range walks counts an `i64` holds.
-        let (Some(start), Some(end)) = (int::integer_as_count(&start), int::integer_as_count(&end))
-        else {
-            return Err(Refusal::Unevaluable);
-        };
-        let name = self.parsed.text(*binding).to_string();
-        let mut at = start;
-        while if *inclusive { at <= end } else { at < end } {
-            frame.insert(name.clone(), Value::Int(int::integer_of_count(at)));
-            match self.block(body, frame)? {
-                Flow::Value(value) => return Ok(Flow::Value(value)),
-                Flow::Broke => break,
-                Flow::Fell | Flow::Continued => {}
-            }
-            at = at.checked_add(1).ok_or(Refusal::Unevaluable)?;
-        }
-        // **The binding does not outlive the loop**, which is Part I 3.3's rule
-        // and matters here because the frame is shared: a name the loop bound
-        // must not be readable after it.
-        frame.remove(&name);
-        Ok(Flow::Fell)
-    }
-}
-
-/// One element of a list value, by an index that is a value.
-///
-/// **An index this array does not have is a refusal and not an
-/// `Unevaluable`** — see [`Refusal::OutOfBounds`]. A receiver that is not a
-/// list, or an index that is not a number, is a shape this evaluator does not
-/// read, which is the other thing entirely.
-fn element(on: &Value, at: &Value) -> Result<Value, Refusal> {
-    use nikaia_std::tools::build_values::{ElementRead, element_at};
-    match element_at(on, at) {
-        ElementRead::Found(value) => Ok(value),
-        ElementRead::OutOfBounds { at, len } => Err(Refusal::OutOfBounds {
-            at,
-            len: len as usize,
-        }),
-        ElementRead::Unreadable => Err(Refusal::Unevaluable),
-    }
+    })
 }
 
 /// An escape the set does not name, as it is written, and why.

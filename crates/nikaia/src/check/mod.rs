@@ -22148,7 +22148,7 @@ impl<'a> Checker<'a> {
         ) {
             crate::comptime_run::Computed::Value(computed) => Some((Some(computed), false)),
             crate::comptime_run::Computed::Forbidden { callee, because } => {
-                self.a_body_that_may_not_run_at_build_time(&callee, because, span);
+                self.a_body_that_may_not_run_at_build_time(&callee, &because, span);
                 Some((None, true))
             }
             crate::comptime_run::Computed::Stopped(detail) => {
@@ -22346,7 +22346,7 @@ impl<'a> Checker<'a> {
             Ok(value) => (Some(value), false),
             Err(build_time::Refusal::Unevaluable) => (None, false),
             Err(build_time::Refusal::NotAllowed { callee, because }) => {
-                self.a_body_that_may_not_run_at_build_time(&callee, because, span);
+                self.a_body_that_may_not_run_at_build_time(&callee, &because, span);
                 (None, true)
             }
             Err(build_time::Refusal::TooDeep { callee }) => {
@@ -22362,7 +22362,7 @@ impl<'a> Checker<'a> {
                 (None, true)
             }
             Err(build_time::Refusal::NotHere { what, why, way_out }) => {
-                self.a_build_time_body_that_is_not_here(bound, &what, why, way_out, span);
+                self.a_build_time_body_that_is_not_here(bound, &what, &why, &way_out, span);
                 (None, true)
             }
             Err(build_time::Refusal::MayNotRead { path, why }) => {

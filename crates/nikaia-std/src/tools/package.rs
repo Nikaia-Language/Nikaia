@@ -4951,6 +4951,817 @@ fn element_refusal(keeper: &str, why: &str, help: &str, plan: &BufferPlan) -> Fi
 }
 
 
+// --- build_eval.nika ---
+
+const BT_DEEPEST: i64 = 128;
+
+const BT_ASSET: &str = "asset";
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct BtCallee {
+    pub args: Vec<String>,
+    pub options: Vec<(String, Expr)>,
+    pub body: Block,
+    pub owner: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BtContract {
+    pub declared: bool,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct BtRan {
+    pub found: bool,
+    pub value: Option<BuildValue>,
+    pub slot: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BtRead {
+    pub text: Option<String>,
+    pub denied: Option<Denied>,
+}
+
+pub trait BtHost {
+    fn text(&self, unit: i64, symbol: winnow_grammar::Symbol) -> String;
+    fn char_of(&self, n: i64) -> Option<scalar>;
+    fn known(&self, name: &str) -> Option<BuildValue>;
+    fn contract(&self, name: &str) -> BtContract;
+    fn callee(&self, unit: i64, name: &str) -> Option<BtCallee>;
+    fn constant(&self, unit: i64, name: &str) -> Option<Expr>;
+    fn variant_of(&self, unit: i64, ty: &str, variant: &str) -> bool;
+    fn run_grammar(&self, unit: i64, which: &str, rule: &str, input: &str) -> BtRan;
+    fn read(&self, path: &str) -> BtRead;
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BtRefusal {
+    Unevaluable,
+    NotAllowed { callee: String, because: String },
+    TooDeep { callee: String },
+    NotHere { what: String, why: String, way_out: String },
+    Circular { ring: Vec<String> },
+    MayNotRead { path: String, why: Denied },
+    PathIsComputed,
+    OutOfBounds { at: Integer, len: i64 },
+    Host(i64),
+}
+
+impl BtRefusal {
+    fn message(&self) -> String {
+        match self {
+            BtRefusal::Unevaluable => String::from("a build-time expression this does not read"),
+            BtRefusal::NotAllowed { callee, because } => format!("`{}` may not run at build time: {}", callee, because),
+            BtRefusal::TooDeep { callee } => format!("`{}` went too deep", callee),
+            BtRefusal::NotHere { what, .. } => format!("`{}` is not here", what),
+            BtRefusal::Circular { ring } => format!("a constant built from itself: {}", ring.join(" -> ")),
+            BtRefusal::MayNotRead { path, .. } => format!("`{}` may not be read", path),
+            BtRefusal::PathIsComputed => String::from("a path that is not a literal"),
+            BtRefusal::OutOfBounds { len, .. } => { let len = *len; format!("an index outside {}", len) },
+            BtRefusal::Host(slot) => { let slot = *slot; format!("refused by the compiler ({})", slot) },
+        }
+    }
+}
+impl std::fmt::Display for BtRefusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message())
+    }
+}
+impl std::error::Error for BtRefusal {}
+
+#[derive(Debug, Clone, PartialEq)]
+enum BtFlow {
+    Value(BuildValue),
+    Fell,
+    Broke,
+    Continued,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct BtState {
+    unit: i64,
+    foreign: bool,
+    depth: i64,
+    resolving: Vec<String>,
+}
+
+// sync (Part II, 12.1): pure CPU, cannot pause. Checked before
+// this was written - see `contracts::sync`.
+pub fn bt_evaluate<H: BtHost>(expr: &Expr, host: &H) -> Result<BuildValue, nikaia_std::error::Thrown<BtRefusal>> {
+    let mut state = BtState { unit: 0, foreign: false, depth: 0, resolving: vec![] };
+    let frame: collections::BTreeMap<String, BuildValue> = collections::BTreeMap::new();
+    Ok(bt_expr(expr, &frame, host, &mut state)?)
+}
+
+fn bt_float(written: &str) -> Result<f64, nikaia_std::error::Thrown<BtRefusal>> {
+    let number = text::parse_f64(written);
+    if number.is_none() { return Err(nikaia_std::error::throwing(BtRefusal::Unevaluable, &"bt_float")); }
+    Ok(nikaia_std::index::or(number, || 0.0))
+}
+
+// sync (Part II, 12.1): pure CPU, cannot pause. Checked before
+// this was written - see `contracts::sync`.
+fn bt_expr<H: BtHost>(expr: &Expr, frame: &collections::BTreeMap<String, BuildValue>, host: &H, state: &mut BtState) -> Result<BuildValue, nikaia_std::error::Thrown<BtRefusal>> {
+    Ok(match expr {
+        Expr::LitInt { value, negative } => { let negative = *negative; let value = *value; BuildValue::Int(integer(value, negative)) },
+        Expr::LitFloat(written) => BuildValue::Float(bt_float(written)?),
+        Expr::LitBool(value) => { let value = *value; BuildValue::Bool(value) },
+        Expr::LitStr { text, .. } => {
+            let decoded = decoded(text, &|n| { host.char_of(n) });
+            if decoded.is_none() { return Err(nikaia_std::error::throwing(BtRefusal::Unevaluable, &"bt_expr")); }
+            BuildValue::Text(nikaia_std::index::or(decoded, || "".into()))
+        },
+        Expr::Tuple(parts) => {
+            let mut held: Vec<BuildValue> = vec![];
+            for part in parts.iter() { held.push(bt_expr(part, frame, host, state)?); }
+            BuildValue::Tuple(held)
+        },
+        Expr::LitInterpolated { parts } => bt_interpolated(parts, frame, host, state)?,
+        Expr::Path(path) => {
+            if path.len() != 2 { return Err(nikaia_std::error::throwing(BtRefusal::Unevaluable, &"bt_expr")); }
+            let ty = host.text(state.unit, *nikaia_std::index::get(&path, 0));
+            let variant = host.text(state.unit, *nikaia_std::index::get(&path, 1));
+            if !host.variant_of(state.unit, &ty, &variant) { return Err(nikaia_std::error::throwing(BtRefusal::Unevaluable, &"bt_expr")); }
+            BuildValue::Variant { ty, variant, payload: vec![] }
+        },
+        Expr::Variable(symbol) => { let symbol = *symbol; bt_variable(symbol, frame, host, state)? },
+        Expr::Unary { .. } => bt_unary_expr(expr, frame, host, state)?,
+        Expr::Binary { .. } => bt_binary_expr(expr, frame, host, state)?,
+        Expr::If { cond, then_branch, else_branch } => { let cond = nikaia_std::boxed::open(cond); bt_if_value(cond, then_branch, (else_branch).as_ref(), frame, host, state)? },
+        Expr::ListLit { items, .. } => {
+            let mut values: Vec<BuildValue> = vec![];
+            for item in items.iter() { values.push(bt_expr(item, frame, host, state)?); }
+            BuildValue::List(values)
+        },
+        Expr::Index { base, index } => {
+            let base = nikaia_std::boxed::open(base); let index = nikaia_std::boxed::open(index);
+            let on = bt_expr(base, frame, host, state)?;
+            let at = bt_expr(index, frame, host, state)?;
+            bt_element(&on, &at)?
+        },
+        Expr::StructLit { name, fields } => {
+            let name = *name;
+            let ty = host.text(state.unit, name);
+            let mut held: collections::BTreeMap<String, BuildValue> = collections::BTreeMap::new();
+            for field in fields.iter() {
+                let written = host.text(state.unit, field.name);
+                let given = match field.value.as_ref() {
+                    Some(__nikaia_it) => Some(__nikaia_it.clone()),
+                    None => None,
+                };
+                if given.is_some() { held.insert(written, bt_expr(nikaia_std::index::or(given.as_ref(), || &Expr::LitNull), frame, host, state)?); } else {
+                    let found = frame.get(&written);
+                    if found.is_none() { return Err(nikaia_std::error::throwing(BtRefusal::Unevaluable, &"bt_expr")); }
+                    held.insert(written, nikaia_std::index::or(match found {
+                        Some(__nikaia_it) => Some(__nikaia_it.to_owned()),
+                        None => None,
+                    }, || BuildValue::Bool(false)));
+                }
+            }
+            BuildValue::Struct { name: ty, fields: held }
+        },
+        Expr::Field { base, name } => { let base = nikaia_std::boxed::open(base); let name = *name; bt_field(base, name, frame, host, state)? },
+        Expr::MethodCall { receiver, method, args, config } => { let receiver = nikaia_std::boxed::open(receiver); let method = *method; bt_method(receiver, method, args, config, frame, host, state)? },
+        Expr::Call { func, args, config } => { let func = nikaia_std::boxed::open(func); bt_call_expr(func, args, config, frame, host, state)? },
+        _ => { return Err(nikaia_std::error::throwing(BtRefusal::Unevaluable, &"bt_expr")) },
+    })
+}
+
+// sync (Part II, 12.1): pure CPU, cannot pause. Checked before
+// this was written - see `contracts::sync`.
+fn bt_variable<H: BtHost>(symbol: winnow_grammar::Symbol, frame: &collections::BTreeMap<String, BuildValue>, host: &H, state: &mut BtState) -> Result<BuildValue, nikaia_std::error::Thrown<BtRefusal>> {
+    let name = host.text(state.unit, symbol);
+    let held = frame.get(&name);
+    if held.is_some() {
+        return Ok(nikaia_std::index::or(match held {
+            Some(__nikaia_it) => Some(__nikaia_it.to_owned()),
+            None => None,
+        }, || BuildValue::Bool(false)));
+    }
+    if !state.foreign {
+        let known = host.known(&name);
+        if known.is_some() { return Ok(nikaia_std::index::or(known, || BuildValue::Bool(false))); }
+    }
+    Ok(bt_constant_item(&name, host, state)?)
+}
+
+// sync (Part II, 12.1): pure CPU, cannot pause. Checked before
+// this was written - see `contracts::sync`.
+fn bt_unary_expr<H: BtHost>(whole: &Expr, frame: &collections::BTreeMap<String, BuildValue>, host: &H, state: &mut BtState) -> Result<BuildValue, nikaia_std::error::Thrown<BtRefusal>> {
+    Ok(match whole {
+        Expr::Unary { op, expr } => { let expr = nikaia_std::boxed::open(expr); bt_unary(op, &bt_expr(expr, frame, host, state)?)? },
+        _ => { return Err(nikaia_std::error::throwing(BtRefusal::Unevaluable, &"bt_unary_expr")) },
+    })
+}
+
+// sync (Part II, 12.1): pure CPU, cannot pause. Checked before
+// this was written - see `contracts::sync`.
+fn bt_binary_expr<H: BtHost>(whole: &Expr, frame: &collections::BTreeMap<String, BuildValue>, host: &H, state: &mut BtState) -> Result<BuildValue, nikaia_std::error::Thrown<BtRefusal>> {
+    Ok(match whole {
+        Expr::Binary { op, lhs, rhs, .. } => { let lhs = nikaia_std::boxed::open(lhs); let rhs = nikaia_std::boxed::open(rhs); bt_binary(op, lhs, rhs, frame, host, state)? },
+        _ => { return Err(nikaia_std::error::throwing(BtRefusal::Unevaluable, &"bt_binary_expr")) },
+    })
+}
+
+fn bt_unary(op: &UnaryOp, inner: &BuildValue) -> Result<BuildValue, nikaia_std::error::Thrown<BtRefusal>> {
+    Ok(match inner {
+        BuildValue::Int(v) => { if *op == UnaryOp::Neg { BuildValue::Int(integer_negated(v)) } else { return Err(nikaia_std::error::throwing(BtRefusal::Unevaluable, &"bt_unary")) } },
+        BuildValue::Bool(v) => {
+            let v = *v;
+            if *op == UnaryOp::Not { BuildValue::Bool(!v) } else { return Err(nikaia_std::error::throwing(BtRefusal::Unevaluable, &"bt_unary")) }
+        },
+        _ => { return Err(nikaia_std::error::throwing(BtRefusal::Unevaluable, &"bt_unary")) },
+    })
+}
+
+// sync (Part II, 12.1): pure CPU, cannot pause. Checked before
+// this was written - see `contracts::sync`.
+fn bt_if_value<H: BtHost>(cond: &Expr, then_branch: &Block, else_branch: Option<&Block>, frame: &collections::BTreeMap<String, BuildValue>, host: &H, state: &mut BtState) -> Result<BuildValue, nikaia_std::error::Thrown<BtRefusal>> {
+    let value = bt_expr(cond, frame, host, state)?;
+    let taken = bt_taken(&value, then_branch, else_branch)?;
+    let block = match taken { Some(__nikaia_value) => __nikaia_value, None => return Err(nikaia_std::error::throwing(BtRefusal::Unevaluable, &"bt_if_value")) };
+    let mut inner = frame.to_owned();
+    let flow = bt_block(&block, &mut inner, host, state)?;
+    Ok(match flow {
+        BtFlow::Value(value) => value,
+        _ => { return Err(nikaia_std::error::throwing(BtRefusal::Unevaluable, &"bt_if_value")) },
+    })
+}
+
+fn bt_taken(verdict: &BuildValue, then_branch: &Block, else_branch: Option<&Block>) -> Result<Option<Block>, nikaia_std::error::Thrown<BtRefusal>> {
+    let yes = match verdict {
+        BuildValue::Bool(held) => { let held = *held; held },
+        _ => { return Err(nikaia_std::error::throwing(BtRefusal::Unevaluable, &"bt_taken")) },
+    };
+    if yes { return Ok(Some(then_branch.clone())); }
+    Ok(match else_branch {
+        Some(__nikaia_it) => Some(__nikaia_it.to_owned()),
+        None => None,
+    })
+}
+
+fn bt_element(on: &BuildValue, index_value: &BuildValue) -> Result<BuildValue, nikaia_std::error::Thrown<BtRefusal>> {
+    Ok(match element_at(on, index_value) {
+        ElementRead::Found(value) => value,
+        ElementRead::OutOfBounds { at, len } => { return Err(nikaia_std::error::throwing(BtRefusal::OutOfBounds { at, len }, &"bt_element")) },
+        ElementRead::Unreadable => { return Err(nikaia_std::error::throwing(BtRefusal::Unevaluable, &"bt_element")) },
+    })
+}
+
+// sync (Part II, 12.1): pure CPU, cannot pause. Checked before
+// this was written - see `contracts::sync`.
+fn bt_field<H: BtHost>(base: &Expr, name: winnow_grammar::Symbol, frame: &collections::BTreeMap<String, BuildValue>, host: &H, state: &mut BtState) -> Result<BuildValue, nikaia_std::error::Thrown<BtRefusal>> {
+    let on = bt_expr(base, frame, host, state)?;
+    let field = host.text(state.unit, name);
+    Ok(match on {
+        BuildValue::Struct { ref fields, .. } => {
+            let found = fields.get(&field);
+            if found.is_none() { return Err(nikaia_std::error::throwing(BtRefusal::Unevaluable, &"bt_field")); }
+            nikaia_std::index::or(match found {
+                Some(__nikaia_it) => Some(__nikaia_it.to_owned()),
+                None => None,
+            }, || BuildValue::Bool(false))
+        },
+        _ => { return Err(nikaia_std::error::throwing(BtRefusal::Unevaluable, &"bt_field")) },
+    })
+}
+
+// sync (Part II, 12.1): pure CPU, cannot pause. Checked before
+// this was written - see `contracts::sync`.
+fn bt_method<H: BtHost>(receiver: &Expr, method: winnow_grammar::Symbol, args: &[Expr], config: &[ConfigArg], frame: &collections::BTreeMap<String, BuildValue>, host: &H, state: &mut BtState) -> Result<BuildValue, nikaia_std::error::Thrown<BtRefusal>> {
+    let word = host.text(state.unit, method);
+    let on = bt_expr(receiver, frame, host, state)?;
+    if args.is_empty() && config.is_empty() && word == "len" {
+        return Ok(match on {
+            BuildValue::List(ref items) => BuildValue::Int(integer_of_count(items.len() as i64)),
+            BuildValue::Text(ref held) => BuildValue::Int(integer_of_count(held.len() as i64)),
+            _ => { return Err(nikaia_std::error::throwing(BtRefusal::Unevaluable, &"bt_method")) },
+        });
+    }
+    let owner = match on {
+        BuildValue::Struct { ref name, .. } => name.to_owned(),
+        _ => { return Err(nikaia_std::error::throwing(BtRefusal::NotHere { what: format!(".{}()", word), why: String::from("this value could not be compiled to run while the program is built, and without that the compiler can only call methods your program declares, and `len` and `push` on a list"), way_out: String::from("write what it does with arithmetic, `if`, `for` and calls to functions in this file") }, &"bt_method")) },
+    };
+    let key = format!("{}::{}", owner, word);
+    let mut given: Vec<BuildValue> = vec![on.clone()];
+    for arg in args.iter() { given.push(bt_expr(arg, frame, host, state)?); }
+    let named = bt_named(config, frame, host, state)?;
+    Ok(bt_call(&key, &given, &named, host, state)?)
+}
+
+// sync (Part II, 12.1): pure CPU, cannot pause. Checked before
+// this was written - see `contracts::sync`.
+fn bt_call_expr<H: BtHost>(func: &Expr, args: &[Expr], config: &[ConfigArg], frame: &collections::BTreeMap<String, BuildValue>, host: &H, state: &mut BtState) -> Result<BuildValue, nikaia_std::error::Thrown<BtRefusal>> {
+    Ok(match func {
+        Expr::Path(path) => {
+            if !config.is_empty() || path.len() != 2 { return Err(nikaia_std::error::throwing(BtRefusal::Unevaluable, &"bt_call_expr")); }
+            let parser = host.text(state.unit, *nikaia_std::index::get(&path, 0));
+            let rule = host.text(state.unit, *nikaia_std::index::get(&path, 1));
+            if host.variant_of(state.unit, &parser, &rule) {
+                let mut payload: Vec<BuildValue> = vec![];
+                for arg in args.iter() { payload.push(bt_expr(arg, frame, host, state)?); }
+                return Ok(BuildValue::Variant { ty: parser, variant: rule, payload });
+            }
+            if args.len() != 1 { return Err(nikaia_std::error::throwing(BtRefusal::Unevaluable, &"bt_call_expr")); }
+            let input = match bt_expr(nikaia_std::index::get(&args, 0), frame, host, state)? {
+                BuildValue::Text(held) => held,
+                _ => { return Err(nikaia_std::error::throwing(BtRefusal::Unevaluable, &"bt_call_expr")) },
+            };
+            let ran = host.run_grammar(state.unit, &parser, &rule, &input);
+            if !ran.found { return Err(nikaia_std::error::throwing(BtRefusal::Unevaluable, &"bt_call_expr")); }
+            let value = match ran.value.as_ref() {
+                Some(__nikaia_it) => Some(__nikaia_it.clone()),
+                None => None,
+            };
+            if value.is_none() { return Err(nikaia_std::error::throwing(BtRefusal::Host(ran.slot), &"bt_call_expr")); }
+            nikaia_std::index::or(value, || BuildValue::Bool(false))
+        },
+        Expr::Variable(symbol) => {
+            let symbol = *symbol;
+            let name = host.text(state.unit, symbol);
+            if name == BT_ASSET { return Ok(bt_asset(args, host)?); }
+            let mut given: Vec<BuildValue> = vec![];
+            for arg in args.iter() { given.push(bt_expr(arg, frame, host, state)?); }
+            let named = bt_named(config, frame, host, state)?;
+            bt_call(&name, &given, &named, host, state)?
+        },
+        _ => { return Err(nikaia_std::error::throwing(BtRefusal::Unevaluable, &"bt_call_expr")) },
+    })
+}
+
+// sync (Part II, 12.1): pure CPU, cannot pause. Checked before
+// this was written - see `contracts::sync`.
+fn bt_binary<H: BtHost>(op: &BinaryOp, lhs: &Expr, rhs: &Expr, frame: &collections::BTreeMap<String, BuildValue>, host: &H, state: &mut BtState) -> Result<BuildValue, nikaia_std::error::Thrown<BtRefusal>> {
+    if *op == BinaryOp::And || *op == BinaryOp::Or {
+        let left = match bt_expr(lhs, frame, host, state)? {
+            BuildValue::Bool(held) => held,
+            _ => { return Err(nikaia_std::error::throwing(BtRefusal::Unevaluable, &"bt_binary")) },
+        };
+        if *op == BinaryOp::And && !left { return Ok(BuildValue::Bool(false)); }
+        if *op == BinaryOp::Or && left { return Ok(BuildValue::Bool(true)); }
+        return Ok(match bt_expr(rhs, frame, host, state)? {
+            BuildValue::Bool(right) => BuildValue::Bool(right),
+            _ => { return Err(nikaia_std::error::throwing(BtRefusal::Unevaluable, &"bt_binary")) },
+        });
+    }
+    let left = bt_expr(lhs, frame, host, state)?;
+    let right = bt_expr(rhs, frame, host, state)?;
+    Ok(bt_operate(op, &left, &right)?)
+}
+
+fn bt_op_of(op: Option<&BinaryOp>) -> BinaryOp {
+    let held = nikaia_std::index::or(op, || BinaryOp::Add);
+    match held {
+        BinaryOp::Add => BinaryOp::Add,
+        BinaryOp::Sub => BinaryOp::Sub,
+        BinaryOp::Mul => BinaryOp::Mul,
+        BinaryOp::Div => BinaryOp::Div,
+        BinaryOp::Rem => BinaryOp::Rem,
+        BinaryOp::Eq => BinaryOp::Eq,
+        BinaryOp::Ne => BinaryOp::Ne,
+        BinaryOp::Lt => BinaryOp::Lt,
+        BinaryOp::Le => BinaryOp::Le,
+        BinaryOp::Gt => BinaryOp::Gt,
+        BinaryOp::Ge => BinaryOp::Ge,
+        BinaryOp::And => BinaryOp::And,
+        BinaryOp::Or => BinaryOp::Or,
+        BinaryOp::BitAnd => BinaryOp::BitAnd,
+        BinaryOp::BitOr => BinaryOp::BitOr,
+        BinaryOp::BitXor => BinaryOp::BitXor,
+        BinaryOp::Shl => BinaryOp::Shl,
+        BinaryOp::Shr => BinaryOp::Shr,
+    }
+}
+
+fn bt_operate(op: &BinaryOp, left: &BuildValue, right: &BuildValue) -> Result<BuildValue, nikaia_std::error::Thrown<BtRefusal>> {
+    let made = operated(op, left, right);
+    if made.is_none() { return Err(nikaia_std::error::throwing(BtRefusal::Unevaluable, &"bt_operate")); }
+    Ok(nikaia_std::index::or(made, || BuildValue::Bool(false)))
+}
+
+// sync (Part II, 12.1): pure CPU, cannot pause. Checked before
+// this was written - see `contracts::sync`.
+fn bt_interpolated<H: BtHost>(parts: &[FPart], frame: &collections::BTreeMap<String, BuildValue>, host: &H, state: &mut BtState) -> Result<BuildValue, nikaia_std::error::Thrown<BtRefusal>> {
+    let mut format: String = String::from("");
+    let mut values: Vec<BuildValue> = vec![];
+    for part in parts.iter() {
+        match part {
+            FPart::Text(written) => format.push_str(written),
+            FPart::Hole { expr, spec, .. } => {
+                if spec.is_some() {
+                    format.push_str("{:");
+                    format.push_str(nikaia_std::index::or(spec, || ""));
+                    format.push_str("}");
+                } else { format.push_str("{}"); }
+                values.push(bt_expr(expr, frame, host, state)?);
+            },
+        }
+    }
+    let mut out: String = String::from("");
+    let mut chunk: String = String::from("");
+    let mut taken: i64 = 0;
+    let chars: Vec<scalar> = nikaia_std::list::chars(format.chars());
+    let mut at: i64 = 0;
+    while ((at) as usize) < chars.len() {
+        let c = *nikaia_std::index::get(&chars, (at) as usize);
+        at += 1;
+        if c == '\\' {
+            chunk.push('\\');
+            if ((at) as usize) >= chars.len() { return Err(nikaia_std::error::throwing(BtRefusal::Unevaluable, &"bt_interpolated")); }
+            let escape = *nikaia_std::index::get(&chars, (at) as usize);
+            at += 1;
+            chunk.push(escape);
+            if escape == 'u' && ((at) as usize) < chars.len() && *nikaia_std::index::get(&chars, (at) as usize) == '{' {
+                while ((at) as usize) < chars.len() {
+                    let inner = *nikaia_std::index::get(&chars, (at) as usize);
+                    at += 1;
+                    chunk.push(inner);
+                    if inner == '}' { break; }
+                }
+            }
+        } else if c == '{' && ((at) as usize) < chars.len() && *nikaia_std::index::get(&chars, (at) as usize) == '{' {
+            at += 1;
+            bt_flush(&chunk, &mut out, host)?;
+            chunk = "".to_string();
+            out.push('{');
+        } else if c == '}' && ((at) as usize) < chars.len() && *nikaia_std::index::get(&chars, (at) as usize) == '}' {
+            at += 1;
+            bt_flush(&chunk, &mut out, host)?;
+            chunk = "".to_string();
+            out.push('}');
+        } else if c == '{' {
+            if ((at) as usize) >= chars.len() || *nikaia_std::index::get(&chars, (at) as usize) != '}' { return Err(nikaia_std::error::throwing(BtRefusal::Unevaluable, &"bt_interpolated")); }
+            at += 1;
+            bt_flush(&chunk, &mut out, host)?;
+            chunk = "".to_string();
+            if ((taken) as usize) >= values.len() { return Err(nikaia_std::error::throwing(BtRefusal::Unevaluable, &"bt_interpolated")); }
+            match (*nikaia_std::index::get(&values, (taken) as usize)).clone() {
+                BuildValue::Int(n) => out.push_str(&integer_text(&n)),
+                BuildValue::Bool(yes) => { if yes { out.push_str("true"); } else { out.push_str("false"); } },
+                BuildValue::Text(ref held) => out.push_str(held),
+                _ => { return Err(nikaia_std::error::throwing(BtRefusal::Unevaluable, &"bt_interpolated")); },
+            }
+            taken += 1;
+        } else { chunk.push(c); }
+    }
+    bt_flush(&chunk, &mut out, host)?;
+    Ok(BuildValue::Text(out))
+}
+
+// sync (Part II, 12.1): pure CPU, cannot pause. Checked before
+// this was written - see `contracts::sync`.
+fn bt_flush<H: BtHost>(chunk: &str, out: &mut String, host: &H) -> Result<(), nikaia_std::error::Thrown<BtRefusal>> {
+    if chunk.is_empty() { return Ok(()); }
+    let decoded = decoded(chunk, &|n| { host.char_of(n) });
+    if decoded.is_none() { return Err(nikaia_std::error::throwing(BtRefusal::Unevaluable, &"bt_flush")); }
+    out.push_str(nikaia_std::index::or(decoded.as_deref(), || ""));
+    Ok(())
+}
+
+// sync (Part II, 12.1): pure CPU, cannot pause. Checked before
+// this was written - see `contracts::sync`.
+fn bt_constant_item<H: BtHost>(name: &str, host: &H, state: &mut BtState) -> Result<BuildValue, nikaia_std::error::Thrown<BtRefusal>> {
+    for held in state.resolving.iter() {
+        if held == name {
+            let mut ring = state.resolving.to_owned();
+            ring.push(name.to_owned());
+            return Err(nikaia_std::error::throwing(BtRefusal::Circular { ring }, &"bt_constant_item"));
+        }
+    }
+    let value = match host.constant(state.unit, name) { Some(__nikaia_value) => __nikaia_value, None => return Err(nikaia_std::error::throwing(BtRefusal::Unevaluable, &"bt_constant_item")) };
+    state.resolving.push(name.to_owned());
+    let frame: collections::BTreeMap<String, BuildValue> = collections::BTreeMap::new();
+    let out = bt_expr(&value, &frame, host, state)?;
+    state.resolving.pop();
+    Ok(out)
+}
+
+// sync (Part II, 12.1): pure CPU, cannot pause. Checked before
+// this was written - see `contracts::sync`.
+fn bt_asset<H: BtHost>(args: &[Expr], host: &H) -> Result<BuildValue, nikaia_std::error::Thrown<BtRefusal>> {
+    if args.len() != 1 { return Err(nikaia_std::error::throwing(BtRefusal::PathIsComputed, &"bt_asset")); }
+    let written = match nikaia_std::index::get(&args, 0) {
+        Expr::LitStr { text, .. } => text.to_owned(),
+        _ => { return Err(nikaia_std::error::throwing(BtRefusal::PathIsComputed, &"bt_asset")) },
+    };
+    let path = decoded(&written, &|n| { host.char_of(n) });
+    if path.is_none() { return Err(nikaia_std::error::throwing(BtRefusal::PathIsComputed, &"bt_asset")); }
+    let wanted = nikaia_std::index::or(path, || "".into());
+    let read = host.read(&wanted);
+    if read.text.is_some() {
+        return Ok(BuildValue::Text(nikaia_std::index::or(match read.text.as_ref() {
+            Some(__nikaia_it) => Some(__nikaia_it.clone()),
+            None => None,
+        }, || "".into())));
+    }
+    let denied = nikaia_std::index::or(match read.denied.as_ref() {
+        Some(__nikaia_it) => Some(__nikaia_it.clone()),
+        None => None,
+    }, || Denied::NoList);
+    return Err(nikaia_std::error::throwing(BtRefusal::MayNotRead { path: wanted, why: denied }, &"bt_asset"))
+}
+
+// sync (Part II, 12.1): pure CPU, cannot pause. Checked before
+// this was written - see `contracts::sync`.
+fn bt_call<H: BtHost>(name: &str, given: &[BuildValue], named: &[(String, BuildValue)], host: &H, state: &mut BtState) -> Result<BuildValue, nikaia_std::error::Thrown<BtRefusal>> {
+    if state.depth >= BT_DEEPEST { return Err(nikaia_std::error::throwing(BtRefusal::TooDeep { callee: name.to_owned() }, &"bt_call")); }
+    let contract = host.contract(name);
+    if !contract.declared { return Err(nikaia_std::error::throwing(BtRefusal::NotHere { what: name.to_owned(), why: String::from("it comes from `std` or a package, which is compiled Rust, and at build time the compiler can only run code written in your program"), way_out: String::from("write the work in Nikaia, in this file, and call that") }, &"bt_call")); }
+    if !contract.reason.is_empty() { return Err(nikaia_std::error::throwing(BtRefusal::NotAllowed { callee: name.to_owned(), because: contract.reason.to_owned() }, &"bt_call")); }
+    let found = host.callee(state.unit, name);
+    if found.is_none() { return Err(nikaia_std::error::throwing(BtRefusal::NotHere { what: name.to_owned(), why: String::from("it isn't declared in your program: it comes from a package, which is compiled Rust, and at build time the compiler can only run code written in your program"), way_out: String::from("write the work in Nikaia, in this program, and call that") }, &"bt_call")); }
+    let callee = match found { Some(__nikaia_value) => __nikaia_value, None => return Err(nikaia_std::error::throwing(BtRefusal::Unevaluable, &"bt_call")) };
+    if (callee.args.len() as i64) != given.len() as i64 { return Err(nikaia_std::error::throwing(BtRefusal::Unevaluable, &"bt_call")); }
+    let mut frame: collections::BTreeMap<String, BuildValue> = collections::BTreeMap::new();
+    let mut at: i64 = 0;
+    while ((at) as usize) < callee.args.len() {
+        frame.insert((*nikaia_std::index::get(&callee.args, (at) as usize)).to_owned(), (*nikaia_std::index::get(&given, (at) as usize)).clone());
+        at += 1;
+    }
+    let outer = state.unit;
+    let was_foreign = state.foreign;
+    state.foreign = state.foreign || callee.owner != outer;
+    state.unit = callee.owner;
+    state.depth += 1;
+    let flow = bt_run(name, &callee, named, &mut frame, host, state)?;
+    state.depth -= 1;
+    state.unit = outer;
+    state.foreign = was_foreign;
+    Ok(match flow {
+        BtFlow::Value(value) => value,
+        _ => { return Err(nikaia_std::error::throwing(BtRefusal::Unevaluable, &"bt_call")) },
+    })
+}
+
+// sync (Part II, 12.1): pure CPU, cannot pause. Checked before
+// this was written - see `contracts::sync`.
+fn bt_run<H: BtHost>(name: &str, callee: &BtCallee, named: &[(String, BuildValue)], frame: &mut collections::BTreeMap<String, BuildValue>, host: &H, state: &mut BtState) -> Result<BtFlow, nikaia_std::error::Thrown<BtRefusal>> {
+    bt_options(name, &callee.options, named, frame, host, state)?;
+    Ok(bt_block(&callee.body, frame, host, state)?)
+}
+
+// sync (Part II, 12.1): pure CPU, cannot pause. Checked before
+// this was written - see `contracts::sync`.
+fn bt_named<H: BtHost>(config: &[ConfigArg], frame: &collections::BTreeMap<String, BuildValue>, host: &H, state: &mut BtState) -> Result<Vec<(String, BuildValue)>, nikaia_std::error::Thrown<BtRefusal>> {
+    let mut named: Vec<(String, BuildValue)> = vec![];
+    for option in config.iter() {
+        let name = host.text(state.unit, option.name);
+        named.push((name, bt_expr(&option.value, frame, host, state)?));
+    }
+    Ok(named)
+}
+
+// sync (Part II, 12.1): pure CPU, cannot pause. Checked before
+// this was written - see `contracts::sync`.
+fn bt_options<H: BtHost>(callee: &str, options: &[(String, Expr)], named: &[(String, BuildValue)], frame: &mut collections::BTreeMap<String, BuildValue>, host: &H, state: &mut BtState) -> Result<(), nikaia_std::error::Thrown<BtRefusal>> {
+    for (given, _) in named.iter() {
+        let mut known = false;
+        for (option, _) in options.iter() { if option == given { known = true; } }
+        if !known { return Err(nikaia_std::error::throwing(BtRefusal::Unevaluable, &"bt_options")); }
+    }
+    for (option, default) in options.iter() {
+        let mut value: Option<BuildValue> = None;
+        for (given, held) in named.iter() { if given == option && value.is_none() { value = Some(held.clone()); } }
+        if value.is_none() {
+            let held = format!("{}` of `{}", option, callee);
+            for one in state.resolving.iter() {
+                if *one == held {
+                    let mut ring = state.resolving.to_owned();
+                    ring.push(held.to_owned());
+                    return Err(nikaia_std::error::throwing(BtRefusal::Circular { ring }, &"bt_options"));
+                }
+            }
+            state.resolving.push(held.to_owned());
+            let nothing: collections::BTreeMap<String, BuildValue> = collections::BTreeMap::new();
+            let worked = bt_expr(default, &nothing, host, state)?;
+            state.resolving.pop();
+            value = Some(worked);
+        }
+        frame.insert(option.to_owned(), nikaia_std::index::or(value, || BuildValue::Bool(false)));
+    }
+    Ok(())
+}
+
+// sync (Part II, 12.1): pure CPU, cannot pause. Checked before
+// this was written - see `contracts::sync`.
+fn bt_block<H: BtHost>(block: &Block, frame: &mut collections::BTreeMap<String, BuildValue>, host: &H, state: &mut BtState) -> Result<BtFlow, nikaia_std::error::Thrown<BtRefusal>> {
+    let last = block.stmts.len() as i64 - 1;
+    let mut at: i64 = 0;
+    while ((at) as usize) < block.stmts.len() {
+        let here: i64 = at;
+        at += 1;
+        match &nikaia_std::index::get(&block.stmts, nikaia_std::index::at(here)).node {
+            Stmt::Let { names, value, .. } => {
+                if names.len() != 1 { return Err(nikaia_std::error::throwing(BtRefusal::Unevaluable, &"bt_block")); }
+                let made = bt_expr(value, &frame, host, state)?;
+                frame.insert(host.text(state.unit, *nikaia_std::index::get(&names, 0)), made);
+            },
+            Stmt::Comptime { name, value, .. } => {
+                let name = *name;
+                let made = bt_expr(value, &frame, host, state)?;
+                frame.insert(host.text(state.unit, name), made);
+            },
+            Stmt::Assign { target, op, value } => bt_assign(target, (op).as_ref(), value, frame, host, state)?,
+            Stmt::Return(value) => {
+                let returned = match value { Some(__nikaia_value) => __nikaia_value, None => return Err(nikaia_std::error::throwing(BtRefusal::Unevaluable, &"bt_block")) };
+                return Ok(BtFlow::Value(bt_expr(returned, &frame, host, state)?));
+            },
+            Stmt::Break => { return Ok(BtFlow::Broke); },
+            Stmt::Continue => { return Ok(BtFlow::Continued); },
+            Stmt::For { bindings, iter, body } => {
+                let flow = bt_walk(bindings, iter, body, frame, host, state)?;
+                match flow {
+                    BtFlow::Value(_) => { return Ok(flow); },
+                    _ => { },
+                }
+            },
+            Stmt::While { cond, body } => {
+                loop {
+                    let verdict = bt_expr(cond, &frame, host, state)?;
+                    match verdict {
+                        BuildValue::Bool(yes) => { if !yes { break; } },
+                        _ => { return Err(nikaia_std::error::throwing(BtRefusal::Unevaluable, &"bt_block")); },
+                    }
+                    let flow = bt_block(body, frame, host, state)?;
+                    match flow {
+                        BtFlow::Value(_) => { return Ok(flow); },
+                        BtFlow::Broke => { break; },
+                        _ => { },
+                    }
+                }
+            },
+            Stmt::Expr(inner) => {
+                let flow = bt_expression_statement(inner, here == last, frame, host, state)?;
+                match flow {
+                    BtFlow::Fell => { },
+                    _ => { return Ok(flow); },
+                }
+            },
+        }
+    }
+    Ok(BtFlow::Fell)
+}
+
+// sync (Part II, 12.1): pure CPU, cannot pause. Checked before
+// this was written - see `contracts::sync`.
+fn bt_expression_statement<H: BtHost>(expr: &Expr, last: bool, frame: &mut collections::BTreeMap<String, BuildValue>, host: &H, state: &mut BtState) -> Result<BtFlow, nikaia_std::error::Thrown<BtRefusal>> {
+    Ok(match expr {
+        Expr::If { cond, then_branch, else_branch } => {
+            let cond = nikaia_std::boxed::open(cond);
+            let verdict = bt_expr(cond, &frame, host, state)?;
+            let taken = bt_taken(&verdict, then_branch, (else_branch).as_ref())?;
+            if taken.is_some() {
+                let flow = bt_block(&nikaia_std::index::or(taken, || Block { stmts: vec![] }), frame, host, state)?;
+                match flow {
+                    BtFlow::Fell => { },
+                    _ => { return Ok(flow); },
+                }
+            }
+            BtFlow::Fell
+        },
+        Expr::MethodCall { receiver, method, args, config } => {
+            let receiver = nikaia_std::boxed::open(receiver); let method = *method;
+            let word = host.text(state.unit, method);
+            if word == "push" && args.len() == 1 && config.is_empty() { return Ok(bt_push(receiver, nikaia_std::index::get(&args, 0), frame, host, state)?); }
+            if last { return Ok(BtFlow::Value(bt_expr(expr, &frame, host, state)?)); }
+            return Err(nikaia_std::error::throwing(BtRefusal::Unevaluable, &"bt_expression_statement"))
+        },
+        _ => {
+            if last { return Ok(BtFlow::Value(bt_expr(expr, &frame, host, state)?)); }
+            return Err(nikaia_std::error::throwing(BtRefusal::Unevaluable, &"bt_expression_statement"))
+        },
+    })
+}
+
+// sync (Part II, 12.1): pure CPU, cannot pause. Checked before
+// this was written - see `contracts::sync`.
+fn bt_push<H: BtHost>(receiver: &Expr, arg: &Expr, frame: &mut collections::BTreeMap<String, BuildValue>, host: &H, state: &mut BtState) -> Result<BtFlow, nikaia_std::error::Thrown<BtRefusal>> {
+    let name = match receiver {
+        Expr::Variable(symbol) => { let symbol = *symbol; host.text(state.unit, symbol) },
+        _ => { return Err(nikaia_std::error::throwing(BtRefusal::Unevaluable, &"bt_push")) },
+    };
+    let given = bt_expr(arg, &frame, host, state)?;
+    let held = match frame.get(&name) { Some(__nikaia_value) => __nikaia_value, None => return Err(nikaia_std::error::throwing(BtRefusal::Unevaluable, &"bt_push")) };
+    match held.clone() {
+        BuildValue::List(ref items) => {
+            let mut grown = items.to_owned();
+            grown.push(given);
+            frame.insert(name, BuildValue::List(grown));
+        },
+        _ => { return Err(nikaia_std::error::throwing(BtRefusal::Unevaluable, &"bt_push")); },
+    }
+    Ok(BtFlow::Fell)
+}
+
+// sync (Part II, 12.1): pure CPU, cannot pause. Checked before
+// this was written - see `contracts::sync`.
+fn bt_assign<H: BtHost>(target: &Expr, op: Option<&BinaryOp>, value: &Expr, frame: &mut collections::BTreeMap<String, BuildValue>, host: &H, state: &mut BtState) -> Result<(), nikaia_std::error::Thrown<BtRefusal>> {
+    match target {
+        Expr::Index { base, index } => {
+            let base = nikaia_std::boxed::open(base); let index = nikaia_std::boxed::open(index);
+            let name = match base {
+                Expr::Variable(symbol) => { let symbol = *symbol; host.text(state.unit, symbol) },
+                _ => { return Err(nikaia_std::error::throwing(BtRefusal::Unevaluable, &"bt_assign")) },
+            };
+            let at = bt_expr(index, &frame, host, state)?;
+            let given = bt_expr(value, &frame, host, state)?;
+            let held = match frame.get(&name) { Some(__nikaia_value) => __nikaia_value, None => return Err(nikaia_std::error::throwing(BtRefusal::Unevaluable, &"bt_assign")) };
+            let mut next = given.clone();
+            if op.is_some() {
+                let before = bt_element(&held, &at)?;
+                let which = bt_op_of(op);
+                next = bt_operate(&which, &before, &given)?;
+            }
+            let mut items: Vec<BuildValue> = match held.clone() {
+                BuildValue::List(ref list) => list.to_owned(),
+                _ => { return Err(nikaia_std::error::throwing(BtRefusal::Unevaluable, &"bt_assign")) },
+            };
+            let position = match at {
+                BuildValue::Int(n) => n.clone(),
+                _ => { return Err(nikaia_std::error::throwing(BtRefusal::Unevaluable, &"bt_assign")) },
+            };
+            let counted = integer_as_count(&position);
+            if counted.is_none() || nikaia_std::index::or(counted, || -1) < 0 || nikaia_std::index::or(counted, || 0) >= items.len() as i64 { return Err(nikaia_std::error::throwing(BtRefusal::OutOfBounds { at: position, len: items.len() as i64 }, &"bt_assign")); }
+            { let __nikaia_stored = next; nikaia_std::index::set(&mut items, nikaia_std::index::at(nikaia_std::index::or(counted, || 0)), __nikaia_stored); }
+            frame.insert(name, BuildValue::List(items));
+        },
+        Expr::Variable(symbol) => {
+            let symbol = *symbol;
+            let name = host.text(state.unit, symbol);
+            let given = bt_expr(value, &frame, host, state)?;
+            let mut next = given.clone();
+            if op.is_some() {
+                let held = match frame.get(&name) { Some(__nikaia_value) => __nikaia_value, None => return Err(nikaia_std::error::throwing(BtRefusal::Unevaluable, &"bt_assign")) };
+                let which = bt_op_of(op);
+                next = bt_operate(&which, &held, &given)?;
+            }
+            if frame.get(&name).is_none() { return Err(nikaia_std::error::throwing(BtRefusal::Unevaluable, &"bt_assign")); }
+            frame.insert(name, next);
+        },
+        _ => { return Err(nikaia_std::error::throwing(BtRefusal::Unevaluable, &"bt_assign")); },
+    }
+    Ok(())
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct BtRange {
+    low: i64,
+    high: i64,
+    closed: bool,
+}
+
+// sync (Part II, 12.1): pure CPU, cannot pause. Checked before
+// this was written - see `contracts::sync`.
+fn bt_range<H: BtHost>(iter: &Expr, frame: &collections::BTreeMap<String, BuildValue>, host: &H, state: &mut BtState) -> Result<BtRange, nikaia_std::error::Thrown<BtRefusal>> {
+    Ok(match iter {
+        Expr::Range { start, end, inclusive } => {
+            let start = nikaia_std::boxed::open(start); let end = nikaia_std::boxed::open(end); let inclusive = *inclusive;
+            let first = bt_expr(start, frame, host, state)?;
+            let second = bt_expr(end, frame, host, state)?;
+            let low = match first {
+                BuildValue::Int(n) => integer_as_count(&n),
+                _ => { return Err(nikaia_std::error::throwing(BtRefusal::Unevaluable, &"bt_range")) },
+            };
+            let high = match second {
+                BuildValue::Int(n) => integer_as_count(&n),
+                _ => { return Err(nikaia_std::error::throwing(BtRefusal::Unevaluable, &"bt_range")) },
+            };
+            if low.is_none() || high.is_none() { return Err(nikaia_std::error::throwing(BtRefusal::Unevaluable, &"bt_range")); }
+            BtRange { low: nikaia_std::index::or(low, || 0), high: nikaia_std::index::or(high, || 0), closed: inclusive }
+        },
+        _ => { return Err(nikaia_std::error::throwing(BtRefusal::Unevaluable, &"bt_range")) },
+    })
+}
+
+// sync (Part II, 12.1): pure CPU, cannot pause. Checked before
+// this was written - see `contracts::sync`.
+fn bt_walk<H: BtHost>(bindings: &[winnow_grammar::Symbol], iter: &Expr, body: &Block, frame: &mut collections::BTreeMap<String, BuildValue>, host: &H, state: &mut BtState) -> Result<BtFlow, nikaia_std::error::Thrown<BtRefusal>> {
+    if bindings.len() != 1 { return Err(nikaia_std::error::throwing(BtRefusal::Unevaluable, &"bt_walk")); }
+    let range = bt_range(iter, &frame, host, state)?;
+    let start_at = range.low;
+    let end_at = range.high;
+    let closed_range = range.closed;
+    let name = host.text(state.unit, *nikaia_std::index::get(&bindings, 0));
+    let mut at = start_at;
+    while closed_range && at <= end_at || !closed_range && at < end_at {
+        frame.insert(name.to_owned(), BuildValue::Int(integer_of_count(at)));
+        let flow = bt_block(body, frame, host, state)?;
+        match flow {
+            BtFlow::Value(_) => { return Ok(flow); },
+            BtFlow::Broke => { break; },
+            _ => { },
+        }
+        let next = at.checked_add(1);
+        if next.is_none() { return Err(nikaia_std::error::throwing(BtRefusal::Unevaluable, &"bt_walk")); }
+        at = nikaia_std::index::or(next, || 0);
+    }
+    frame.remove(&name);
+    Ok(BtFlow::Fell)
+}
+
+
 // --- build_values.nika ---
 
 #[derive(Debug, Clone, PartialEq)]
@@ -30265,6 +31076,10 @@ pub mod bounds_walk {
 pub mod buffers {
     #[allow(unused_imports)]
     pub use super::{Escape, Source, KeepAt, BufferPlan, BufferAsk, buffer_plans};
+}
+pub mod build_eval {
+    #[allow(unused_imports)]
+    pub use super::{BtCallee, BtContract, BtRan, BtRead, BtHost, BtRefusal, bt_evaluate};
 }
 pub mod build_values {
     #[allow(unused_imports)]
