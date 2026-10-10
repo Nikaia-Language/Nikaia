@@ -1038,9 +1038,40 @@ fn entries<'a>(program: &'a Program) -> Result<Vec<Entry<'a>>> {
     Ok(out)
 }
 
-/// Every error `enum` the entry file declares and an entry point throws, with
-/// the code of each variant: `1…` in declaration order across the library.
-fn variant_codes(program: &Program, entries: &[Entry]) -> Vec<(String, Vec<(String, i64)>)> {
+/// **One error type an entry point throws**, with the status each of its
+/// values is (D7, D33).
+struct Raising {
+    /// As the ledger names it: `ConfigError`, `io::IoError`.
+    error: String,
+    codes: Vec<Code>,
+}
+
+/// One status a thrown error is.
+struct Code {
+    /// The variant, where the type has variants.
+    variant: Option<String>,
+    number: i64,
+    /// What follows `<PACKAGE>_E_` in the header.
+    constant: String,
+    /// The `errno` it is, for a `std` error that is one (D33).
+    errno: Option<&'static str>,
+}
+
+impl Code {
+    /// The pattern of the error's type that is this code, in the wrapper.
+    fn pattern(&self, error: &str) -> String {
+        match &self.variant {
+            Some(variant) => format!("{error}::{variant} {{ .. }}"),
+            None => "_".to_string(),
+        }
+    }
+}
+
+/// **The library's own variants are `100 000…`** (D33): every variant of
+/// every error `enum` the entry file declares and an entry point throws, in
+/// declaration order across the library. After them, every `std` error an
+/// entry point throws, with `std`'s numbers for the target.
+fn variant_codes(program: &Program, entries: &[Entry], target: &str) -> Vec<Raising> {
     let Some(unit) = program.units.first() else {
         return Vec::new();
     };
@@ -1050,7 +1081,7 @@ fn variant_codes(program: &Program, entries: &[Entry]) -> Vec<(String, Vec<(Stri
         .filter_map(|entry| program.contracts.functions.get(&entry.key()))
         .flat_map(|contract| contract.fails_with.iter().cloned())
         .collect();
-    let mut next = 1;
+    let mut next = 100_000;
     let mut out = Vec::new();
     for item in &parsed.program.items {
         let Item::Enum { name, variants, .. } = &item.node else {
@@ -1060,17 +1091,84 @@ fn variant_codes(program: &Program, entries: &[Entry]) -> Vec<(String, Vec<(Stri
         if !thrown.contains(&error) {
             continue;
         }
-        let numbered = variants
+        let codes = variants
             .iter()
             .map(|variant| {
-                let code = next;
+                let variant = parsed.text(variant.name).to_string();
                 next += 1;
-                (parsed.text(variant.name).to_string(), code)
+                Code {
+                    constant: variant.to_uppercase(),
+                    variant: Some(variant),
+                    number: next - 1,
+                    errno: None,
+                }
             })
             .collect();
-        out.push((error, numbered));
+        out.push(Raising { error, codes });
+    }
+    for error in &thrown {
+        if let Some(codes) = std_codes(error, target) {
+            out.push(Raising {
+                error: error.clone(),
+                codes,
+            });
+        }
     }
     out
+}
+
+/// **`std`'s errors, below `100 000`** (D33, Part III 15.1): an `errno` has
+/// the number of the target the library is built for; the rest are fixed, a
+/// block of a hundred per type, appended and never moved.
+fn std_codes(error: &str, target: &str) -> Option<Vec<Code>> {
+    let one = |variant: Option<&str>, number: i64, constant: &str, errno| Code {
+        variant: variant.map(str::to_string),
+        number,
+        constant: constant.to_string(),
+        errno,
+    };
+    let numbered = |name: &'static str| one(None, errno(target, name), "", Some(name));
+    Some(match error {
+        "io::IoError" => vec![
+            Code {
+                variant: Some("NotFound".to_string()),
+                constant: "IO_NOT_FOUND".to_string(),
+                ..numbered("ENOENT")
+            },
+            Code {
+                variant: Some("PermissionDenied".to_string()),
+                constant: "IO_PERMISSION_DENIED".to_string(),
+                ..numbered("EACCES")
+            },
+            Code {
+                variant: Some("NotText".to_string()),
+                constant: "IO_NOT_TEXT".to_string(),
+                ..numbered("EILSEQ")
+            },
+            one(Some("Outside"), 1000, "IO_OUTSIDE", None),
+            one(Some("Other"), 1001, "IO_OTHER", None),
+        ],
+        "task::Crashed" => vec![one(None, 1100, "TASK_CRASHED", None)],
+        "supervisor::Escalated" => vec![one(None, 1200, "SUPERVISOR_ESCALATED", None)],
+        "cleanup::Failure" => vec![one(None, 1300, "CLEANUP_FAILURE", None)],
+        "Overtaken" => vec![one(None, 1400, "OVERTAKEN", None)],
+        _ => return None,
+    })
+}
+
+/// An `errno`'s number on the target: Linux's on both Linux targets, WASI's
+/// under WebAssembly (D33).
+fn errno(target: &str, name: &str) -> i64 {
+    let wasi = target.starts_with("wasm32");
+    match (name, wasi) {
+        ("ENOENT", false) => 2,
+        ("EACCES", false) => 13,
+        ("EILSEQ", false) => 84,
+        ("ENOENT", true) => 44,
+        ("EACCES", true) => 2,
+        ("EILSEQ", true) => 25,
+        _ => unreachable!("an errno this table has: {name}"),
+    }
 }
 
 /// The wrappers and the header for every entry point the program's own files
@@ -1083,6 +1181,7 @@ pub fn export(
     prefix: &str,
     package: &str,
     concurrent: bool,
+    target: &str,
 ) -> Result<Option<Exported>> {
     let user_code = match concurrent {
         true => "Concurrent",
@@ -1169,10 +1268,9 @@ pub fn export(
         return Ok(None);
     };
     let parsed = &unit.parsed;
-    // **A `throws` function's variants are `1…`, per library in declaration
-    // order** (D7): every variant of every error `enum` the entry file
-    // declares and an entry point throws.
-    let codes = variant_codes(program, &found);
+    // **What the entry points throw, as codes** (D7, D33): the library's own
+    // variants from `100 000`, `std`'s errors below.
+    let codes = variant_codes(program, &found, target);
     let mut plains = plain_enums(parsed);
     let handles = handled_structs(parsed);
     let records = records(parsed, &plains)?;
@@ -1306,11 +1404,16 @@ pub fn export(
         });
     }
     let mut constants = String::new();
-    for (error, variants) in &codes {
-        for (variant, code) in variants {
+    for raising in &codes {
+        for code in &raising.codes {
+            let what = match &code.variant {
+                Some(variant) => format!("{}::{variant}", raising.error),
+                None => raising.error.clone(),
+            };
+            let errno = code.errno.map(|e| format!(", {e}")).unwrap_or_default();
             constants.push_str(&format!(
-                "#define {upper}_E_{} {code} /* {error}::{variant} */\n",
-                variant.to_uppercase()
+                "#define {upper}_E_{} {} /* {what}{errno} */\n",
+                code.constant, code.number
             ));
         }
     }
@@ -1359,16 +1462,16 @@ pub fn export(
         // the shared reactor (D9): the blocking form. The `_async` one is not
         // built yet.
         let pauses = contract.is_some_and(|c| !c.sync_claim.is_sync());
-        // **What it throws is one `enum` of the entry file** (D7), whose
-        // variants are the codes; anything else is not exported yet.
-        let thrown: Option<&Vec<(String, i64)>> = match contract.map(|c| c.fails_with.as_slice()) {
-            None | Some([]) => None,
-            Some([one]) => match codes.iter().find(|(error, _)| error == one) {
-                Some((_, variants)) => Some(variants),
-                None => return Err(not_yet(&written, "failure")),
-            },
-            Some(_) => return Err(not_yet(&written, "failure")),
-        };
+        // **What it throws is the entry file's `enum`s and `std`'s errors**
+        // (D7, D33), each of whose values is a code; anything else is not
+        // exported yet.
+        let thrown: Vec<&Raising> = contract
+            .map(|c| c.fails_with.as_slice())
+            .unwrap_or_default()
+            .iter()
+            .map(|one| codes.iter().find(|raising| raising.error == *one))
+            .collect::<Option<Vec<_>>>()
+            .ok_or_else(|| not_yet(&written, "failure"))?;
         let symbol = match &entry.owner {
             Some(owner) => format!("{prefix}_{owner}_{}", entry.name),
             None => format!("{prefix}_{}", entry.name),
@@ -1849,17 +1952,42 @@ pub fn export(
         };
         // A failure is the variant's code, and its message, with its site,
         // is what `<prefix>_last_error` hands back (D7).
-        let (handed_back, failed) = match thrown {
-            None => (handed_back, String::new()),
-            Some(variants) => {
-                let error = contract
-                    .and_then(|c| c.fails_with.first())
-                    .cloned()
-                    .unwrap_or_default();
-                let arms: Vec<String> = variants
-                    .iter()
-                    .map(|(variant, code)| format!("{error}::{variant} {{ .. }} => {code},"))
-                    .collect();
+        // One type's codes, matched on its value.
+        let arms = |raising: &Raising| -> String {
+            raising
+                .codes
+                .iter()
+                .map(|code| format!("{} => {},", code.pattern(&raising.error), code.number))
+                .collect::<Vec<_>>()
+                .join(" ")
+        };
+        let (handed_back, failed) = match thrown.as_slice() {
+            [] => (handed_back, String::new()),
+            // Several types travel in the generated sum, one variant per type
+            // (ADR-280 D15).
+            several => {
+                let matched = match several {
+                    [one] => format!("match thrown.split().0 {{ {} }}", arms(one)),
+                    _ => {
+                        let members: Vec<String> = several
+                            .iter()
+                            .map(|raising| raising.error.clone())
+                            .collect();
+                        let sum = crate::emit::sum_name(&members);
+                        format!(
+                            "match thrown {{ {} }}",
+                            several
+                                .iter()
+                                .map(|raising| format!(
+                                    "crate::{sum}::{}(thrown) => match thrown.split().0 {{ {} }},",
+                                    crate::emit::sum_variant(&raising.error),
+                                    arms(raising)
+                                ))
+                                .collect::<Vec<_>>()
+                                .join(" ")
+                        )
+                    }
+                };
                 (
                     handed_back
                         .replacen("Ok(", "Ok(Ok(", 1)
@@ -1867,8 +1995,7 @@ pub fn export(
                     format!(
                         "\n        Ok(Err(thrown)) => {{\n            \
                          __nikaia_failed(thrown.full());\n            \
-                         match thrown.split().0 {{ {} }}\n        }}",
-                        arms.join(" ")
+                         {matched}\n        }}"
                     ),
                 )
             }
@@ -2142,7 +2269,7 @@ pub fn export(
          #define {upper}_E_REENTRANT (-5)\n\
          #define {upper}_E_CLEANUP (-6)\n\
          #define {upper}_E_CANCELLED (-7)\n\n\
-         /* What the entry points throw, numbered per library (ADR-284 D7). */\n\
+         /* What the entry points throw: the library's own from 100000, std's below (ADR-284 D33). */\n\
          {constants}\n\
          {types}\
          /* What the library holds across calls comes from alloc and free, with ctx,\n\
@@ -2692,7 +2819,7 @@ impl Python {
         &self,
         package: &str,
         prefix: &str,
-        codes: &[(String, Vec<(String, i64)>)],
+        codes: &[Raising],
         plains: &[Plain],
         handles: &[Handled],
         held: &[bool],
@@ -2746,16 +2873,48 @@ impl Python {
         }
         let mut taken: std::collections::BTreeSet<String> =
             boundary.iter().map(|(name, _)| name.to_string()).collect();
-        for (error, variants) in codes {
-            for (variant, code) in variants {
-                let name = match taken.insert(variant.clone()) {
-                    true => variant.clone(),
-                    false => format!("{error}{variant}"),
+        for raising in codes {
+            let error = &raising.error;
+            let spelled = error.replace("::", "");
+            for code in &raising.codes {
+                let (name, what) = match &code.variant {
+                    Some(variant) => match taken.insert(variant.clone()) {
+                        true => (variant.clone(), format!("{error}::{variant}")),
+                        false => (format!("{spelled}{variant}"), format!("{error}::{variant}")),
+                    },
+                    None => {
+                        let mut name = spelled.clone();
+                        if let Some(first) = name.get_mut(..1) {
+                            first.make_ascii_uppercase();
+                        }
+                        taken.insert(name.clone());
+                        (name, error.clone())
+                    }
                 };
-                out.push_str(&format!(
-                    "class {name}(Error):\n    \"\"\"`{error}::{variant}`.\"\"\"\n    code = {code}\n\n\n"
-                ));
-                errors.push((name, *code));
+                let number = code.number;
+                // **An `errno` is the matching `OSError` too** (D33): `ENOENT`
+                // a `FileNotFoundError`, `EACCES` a `PermissionError`, each with
+                // `errno` set.
+                match code.errno {
+                    Some(errno) => {
+                        let os = match errno {
+                            "ENOENT" => "FileNotFoundError",
+                            "EACCES" => "PermissionError",
+                            _ => "OSError",
+                        };
+                        out.push_str(&format!(
+                            "class {name}(Error, {os}):\n    \
+                             \"\"\"`{what}`, `{errno}`.\"\"\"\n    \
+                             code = {number}\n\n    \
+                             def __init__(self, said):\n        \
+                             {os}.__init__(self, {number}, said)\n\n\n"
+                        ));
+                    }
+                    None => out.push_str(&format!(
+                        "class {name}(Error):\n    \"\"\"`{what}`.\"\"\"\n    code = {number}\n\n\n"
+                    )),
+                }
+                errors.push((name, number));
             }
         }
         let table: Vec<String> = errors
@@ -3094,5 +3253,31 @@ impl Python {
             out.push_str("\n\n");
         }
         out
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// **An `errno` is the target's** (ADR-284 D33): Linux's on both Linux
+    /// targets, WASI's under WebAssembly; the rest of `std`'s numbers are fixed.
+    #[test]
+    fn std_codes_are_the_targets_errno_or_fixed() {
+        let numbers = |target: &str| -> Vec<i64> {
+            std_codes("io::IoError", target)
+                .expect("io::IoError has codes")
+                .iter()
+                .map(|code| code.number)
+                .collect()
+        };
+        assert_eq!(numbers("x86_64-linux"), [2, 13, 84, 1000, 1001]);
+        assert_eq!(numbers("aarch64-linux"), [2, 13, 84, 1000, 1001]);
+        assert_eq!(numbers("wasm32-unknown"), [44, 2, 25, 1000, 1001]);
+        assert_eq!(
+            std_codes("task::Crashed", "x86_64-linux").expect("fixed")[0].number,
+            1100
+        );
+        assert!(std_codes("ConfigError", "x86_64-linux").is_none());
     }
 }

@@ -13,6 +13,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 const LIBRARY: &str = "\
+use std::fs
 use std::time
 
 pub extern fn napped(ms: i64) -> i64 {
@@ -347,6 +348,17 @@ pub extern fn checked(n: i64) -> i64 sync throws {
     }
     return n * 2
 }
+
+pub extern fn read_size(path: ref String) -> i64 throws {
+    return fs::read_to_string(path, fs::Root::Anywhere).len()
+}
+
+pub extern fn sized(path: ref String, most: i64) -> i64 throws {
+    if most < 0 {
+        throw Refusal::Negative
+    }
+    return fs::read_to_string(path, fs::Root::Anywhere).len()
+}
 ";
 
 const CALLER: &str = r#"#include <stdio.h>
@@ -435,7 +447,8 @@ int main(void) {
 }
 "#;
 
-const THROWING_CALLER: &str = r#"#include <stdio.h>
+const THROWING_CALLER: &str = r#"#include <errno.h>
+#include <stdio.h>
 #include "calc.h"
 
 int main(void) {
@@ -450,6 +463,16 @@ int main(void) {
     status = calc_checked(500, &n);
     calc_last_error((uint8_t *)said, sizeof said, &written);
     printf("too large %d %.16s\n", status == CALC_E_TOOLARGE, said);
+    printf("own codes %d %d\n", CALC_E_NEGATIVE, CALC_E_TOOLARGE);
+    status = calc_read_size((const uint8_t *)"/no/such/file", 13, &n);
+    printf("missing %d %d\n", status == ENOENT, status == CALC_E_IO_NOT_FOUND);
+    status = calc_read_size((const uint8_t *)"throwing.c", 10, &n);
+    printf("read %d %d\n", status, n > 100);
+    status = calc_sized((const uint8_t *)"/no/such/file", 13, 1, &n);
+    printf("several, missing %d\n", status == ENOENT);
+    status = calc_sized((const uint8_t *)"throwing.c", 10, -1, &n);
+    printf("several, negative %d\n", status == CALC_E_NEGATIVE);
+    printf("fixed %d %d %d\n", CALC_E_IO_OUTSIDE, CALC_E_IO_OTHER, CALC_E_IO_PERMISSION_DENIED == EACCES);
     return CALC_OK;
 }
 "#;
@@ -912,27 +935,13 @@ fn a_c_program_calls_the_library() {
     assert!(ran.status.success(), "{}", said(&ran));
     assert_eq!(String::from_utf8_lossy(&ran.stdout), "hits 2001\n");
 
-    std::fs::write(root.join("throwing.c"), THROWING_CALLER).expect("the caller");
-    let program = root.join("throwing");
-    let compiled = Command::new("cc")
-        .arg("-I")
-        .arg(&made)
-        .arg(root.join("throwing.c"))
-        .arg("-L")
-        .arg(&made)
-        .args(["-lcalc", "-o"])
-        .arg(&program)
-        .output()
-        .expect("cc runs");
-    assert!(compiled.status.success(), "{}", said(&compiled));
-    let ran = Command::new(&program)
-        .env("LD_LIBRARY_PATH", &made)
-        .output()
-        .expect("the caller runs");
-    assert!(ran.status.success(), "{}", said(&ran));
+    // **A `std` error is the target's `errno`, or `std`'s fixed number**, and
+    // the library's own variants start at 100 000 (ADR-284 D33).
     assert_eq!(
-        String::from_utf8_lossy(&ran.stdout),
-        "checked 0 42\nnegative 1 a negative count\ntoo large 1 500 is too large\n"
+        run_c(&root, &made, "throwing", THROWING_CALLER),
+        "checked 0 42\nnegative 1 a negative count\ntoo large 1 500 is too large\n\
+         own codes 100000 100001\nmissing 1 1\nread 0 1\nseveral, missing 1\n\
+         several, negative 1\nfixed 1000 1001 1\n"
     );
 }
 
@@ -1043,12 +1052,30 @@ try:
     calc.checked(-1)
     raise AssertionError("no exception")
 except calc.Negative as error:
-    assert error.code == 1 and "a negative count" in str(error), str(error)
+    assert error.code == 100000 and "a negative count" in str(error), str(error)
 try:
     calc.checked(500)
     raise AssertionError("no exception")
 except calc.Error as error:
     assert isinstance(error, calc.TooLarge) and "500 is too large" in str(error)
+# `std`'s errors (ADR-284 D33): an `errno` is the matching `OSError` too.
+import errno
+
+try:
+    calc.read_size("/no/such/file")
+    raise AssertionError("no exception")
+except FileNotFoundError as error:
+    assert isinstance(error, calc.Error) and error.errno == errno.ENOENT, error
+try:
+    calc.sized("/no/such/file", 1)
+    raise AssertionError("no exception")
+except calc.NotFound:
+    pass
+try:
+    calc.sized("/no/such/file", -1)
+    raise AssertionError("no exception")
+except calc.Negative:
+    pass
 with calc.Counter("clicks") as counter:
     counter.bump(5)
     assert counter.bump(2) == 7
@@ -1188,8 +1215,10 @@ assert.throws(() => calc.perimeter({ sides: [1], lights: [0, 0], corners: [] }),
 assert.strictEqual(calc.widest([{ x: 1, y: 0 }, { x: 7, y: 0 }]), 7);
 assert.deepStrictEqual(calc.diagonal(3), [{ x: 0, y: 0 }, { x: 1, y: 2 }, { x: 2, y: 4 }]);
 assert.strictEqual(calc.diagonal(20).length, 20);
-assert.throws(() => calc.checked(-1), (error) => error.code === "CALC_E_NEGATIVE" && error.status === 1 && error.message.includes("a negative count"));
+assert.throws(() => calc.checked(-1), (error) => error.code === "CALC_E_NEGATIVE" && error.status === 100000 && error.message.includes("a negative count"));
 assert.throws(() => calc.checked(500), (error) => error.code === "CALC_E_TOOLARGE" && error.message.includes("500 is too large"));
+assert.throws(() => calc.read_size("/no/such/file"), (error) => error.code === "ENOENT" && error.errno === require("os").constants.errno.ENOENT);
+assert.throws(() => calc.sized("/no/such/file", -1), { code: "CALC_E_NEGATIVE" });
 const counter = new calc.Counter("clicks");
 counter.bump(5);
 assert.strictEqual(counter.bump(2), 7);
@@ -1323,8 +1352,8 @@ fn nikaia_with(root: &Path, args: &[&str]) -> Output {
         .expect("the nikaia binary runs")
 }
 
-/// Compiles `source` against the library in `made`, runs it, and hands back
-/// what it printed.
+/// Compiles `source` against the library in `made`, runs it in `root`, and
+/// hands back what it printed.
 fn run_c(root: &Path, made: &Path, name: &str, source: &str) -> String {
     std::fs::write(root.join(format!("{name}.c")), source).expect("the caller");
     let program = root.join(name);
@@ -1341,6 +1370,7 @@ fn run_c(root: &Path, made: &Path, name: &str, source: &str) -> String {
     assert!(compiled.status.success(), "{}", said(&compiled));
     let ran = Command::new(&program)
         .env("LD_LIBRARY_PATH", made)
+        .current_dir(root)
         .output()
         .expect("the caller runs");
     assert!(ran.status.success(), "{}", said(&ran));

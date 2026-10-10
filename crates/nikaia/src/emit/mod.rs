@@ -2045,6 +2045,25 @@ enum Named<'a> {
 /// collides with it.
 const SUM: &str = "__NikaiaThrows_";
 
+/// **The generated sum of a set of error types**
+/// ([ADR-280](../../docs/specification/adr/adr-280.md) D15), named from its
+/// members in the ledger's order, so the name is a function of the set.
+pub(crate) fn sum_name(members: &[String]) -> String {
+    format!(
+        "{SUM}{}",
+        members
+            .iter()
+            .map(|m| m.replace("::", "_"))
+            .collect::<Vec<_>>()
+            .join("__")
+    )
+}
+
+/// A member's variant in the sum.
+pub(crate) fn sum_variant(member: &str) -> String {
+    member.replace("::", "_")
+}
+
 /// The call that never comes back
 /// ([Part III A.2](../../docs/specification/30-nikaia-tooling.md), Part I 1.3).
 const PANIC: &str = "panic";
@@ -11501,15 +11520,7 @@ impl<'p> Emitter<'p> {
             if members.iter().any(|m| self.name_of_error(m).is_none()) {
                 continue;
             }
-            let name = format!(
-                "{SUM}{}",
-                members
-                    .iter()
-                    .map(|m| m.replace("::", "_"))
-                    .collect::<Vec<_>>()
-                    .join("__")
-            );
-            out.insert(members.clone(), name);
+            out.insert(members.clone(), sum_name(members));
         }
         out
     }
@@ -11835,7 +11846,7 @@ impl<'p> Emitter<'p> {
     /// The variant a member is written as: its name with the module flattened,
     /// because a variant is one identifier.
     fn sum_variant(name: &str) -> String {
-        name.replace("::", "_")
+        sum_variant(name)
     }
 
     /// Whether an expression **never comes back**, so that nothing joins with

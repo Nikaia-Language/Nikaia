@@ -20,8 +20,8 @@
 // thread, whose `cancel()` is the ticket (D9, D19). Only the entry points (D29).
 
 use super::{
-    ByValue, Entry, Handled, In, LEDGER_DIGEST, Lent, Out, Part, Plain, Record, records_in_order,
-    result_of, taken,
+    ByValue, Entry, Handled, In, LEDGER_DIGEST, Lent, Out, Part, Plain, Raising, Record,
+    records_in_order, result_of, taken,
 };
 
 /// The N-API module of one library, gathered entry by entry.
@@ -685,7 +685,7 @@ impl Node {
         &self,
         package: &str,
         prefix: &str,
-        codes: &[(String, Vec<(String, i64)>)],
+        codes: &[Raising],
         plains: &[Plain],
         handles: &[Handled],
         held: &[bool],
@@ -704,9 +704,19 @@ impl Node {
         .iter()
         .map(|(code, name)| (*code, format!("{upper}_E_{name}")))
         .collect();
-        for (_, variants) in codes {
-            for (variant, code) in variants {
-                statuses.push((*code, format!("{upper}_E_{}", variant.to_uppercase())));
+        // **An `errno`'s `code` is its name** (D33), as Node's own are, and
+        // `errno` is its number.
+        let mut errnos = String::new();
+        for raising in codes {
+            for code in &raising.codes {
+                let name = match code.errno {
+                    Some(errno) => {
+                        errnos.push_str(&format!("    case {}: return true;\n", code.number));
+                        errno.to_string()
+                    }
+                    None => format!("{upper}_E_{}", code.constant),
+                };
+                statuses.push((code.number, name));
             }
         }
         let cases: String = statuses
@@ -787,6 +797,13 @@ impl Node {
              }}\n\
              }}\n\
              \n\
+             /* Whether a status is an `errno` (ADR-284 D33). */\n\
+             static bool nk_errno(int status) {{\n    \
+             switch (status) {{\n{errnos}    \
+             default: return false;\n    \
+             }}\n\
+             }}\n\
+             \n\
              /* The header's name for a status (ADR-284 D7). */\n\
              static const char *nk_code(int status) {{\n    \
              switch (status) {{\n{cases}    \
@@ -807,6 +824,7 @@ impl Node {
              napi_create_error(env, code, message, &error);\n    \
              napi_create_int32(env, status, &number);\n    \
              napi_set_named_property(env, error, \"status\", number);\n    \
+             if (nk_errno(status)) napi_set_named_property(env, error, \"errno\", number);\n    \
              return error;\n\
              }}\n\
              \n\

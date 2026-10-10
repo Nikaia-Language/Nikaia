@@ -8,6 +8,24 @@ or the specification. A change only to the guide, the notes, the README, the
 website, the tests, the examples or the tooling around them raises nothing and
 has no heading here; `CLAUDE.md` draws the line.
 
+## [0.0.728] — 2026-10-10
+
+**A C library's error codes are built: `std`'s below 100 000, its own from
+100 000** (ADR-284 D33, #88).
+- The library's own variants are numbered from `100 000`.
+- An entry point that throws `std`'s errors is exported: `io::IoError`'s
+  `NotFound`, `PermissionDenied` and `NotText` are the target's `ENOENT`,
+  `EACCES` and `EILSEQ` (Linux's on the Linux targets, WASI's under
+  WebAssembly), `Outside` and `Other` `1000` and `1001`; `task::Crashed`,
+  `supervisor::Escalated`, `cleanup::Failure` and `Overtaken` `1100` to `1400`.
+  The header writes each as `<PACKAGE>_E_IO_NOT_FOUND` and so on.
+- An entry point that throws several types is exported, each type with its
+  codes, read off the generated sum.
+- `nikaia bind python` raises `FileNotFoundError` for `ENOENT` and
+  `PermissionError` for `EACCES`, each also the package's `Error`, with
+  `errno` set; `nikaia bind node` gives an `errno` status `code` `'ENOENT'` and
+  `errno` its number.
+
 ## [0.0.727] — 2026-10-10
 
 **`pub extern enum` is built: a tagged union, by value** (ADR-284 D32, #88).

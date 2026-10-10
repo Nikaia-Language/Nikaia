@@ -1109,6 +1109,7 @@ pub fn lower_reading(
                 &settings.symbol_prefix,
                 &package,
                 settings.user_parallelism == "yes",
+                &settings.target,
             )?
         }
         false => None,
