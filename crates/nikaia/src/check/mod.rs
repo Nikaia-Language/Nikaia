@@ -1518,6 +1518,8 @@ fn walked<'a>(
         read_seq: 0,
         empty_lists: BTreeMap::new(),
         open_numbers: BTreeMap::new(),
+        open_elements: std::collections::HashMap::new(),
+        list_constants: std::collections::HashMap::new(),
         open_comptimes: BTreeMap::new(),
         overflowed: BTreeSet::new(),
         reaching: None,
@@ -2982,6 +2984,9 @@ enum Copyable {
 struct OpenNumber {
     /// The name, for the message.
     name: String,
+    /// Whether it is the elements of the list `name` binds (D34) rather than
+    /// the name's own number.
+    element: bool,
     /// The `let`, where the type is written and where a refusal points.
     at: Span,
     /// The entry this one was joined into, by the `let` it names; itself where
@@ -3630,6 +3635,13 @@ struct Checker<'a> {
     /// once the body has been walked, as `empty_lists` is: the use that
     /// answers stands after the `let`.
     open_numbers: BTreeMap<usize, OpenNumber>,
+    /// **A list written in number literals, whose elements are one open
+    /// number** ([ADR-285](../../docs/specification/adr/adr-285.md) D34): the
+    /// binding ([`Local::id`]) and the entry of `open_numbers` it names.
+    open_elements: std::collections::HashMap<usize, usize>,
+    /// **What such a list holds, where nothing can change it**: an immutable
+    /// `let`'s elements, so `xs[0] + xs[1]` is measured as `a + b` is (D26).
+    list_constants: std::collections::HashMap<usize, Vec<Constant>>,
     /// **The integer `comptime`s without a written type**, by their binding
     /// ([`Local::id`]): open numbers each use takes in its own type
     /// ([ADR-287](../../docs/specification/adr/adr-287.md) D21).
@@ -9742,6 +9754,23 @@ impl<'a> Checker<'a> {
         // `let mut rows = Vec()` then `rows.push((fragment, tally.n))` makes
         // `rows` a list of what was pushed, for every read after.
         if let Some(name) = self.pushed_into.take() {
+            // **A `push` onto a list of open elements is a use of them**
+            // (ADR-285 D34): a typed value asks for its type, and a number is
+            // given to them and held to the type they come to.
+            let open = self
+                .binding(&name)
+                .and_then(|local| self.open_elements.get(&local.id).copied())
+                .map(|at| self.open_root(at));
+            if let (Some(number), "push", [pushed], [value]) = (open, entry, found.as_slice(), args)
+            {
+                if let Some(ty) = integer_named(&value_of_a_copy(pushed.unseen())) {
+                    if let Some(number) = self.open_numbers.get_mut(&number) {
+                        number.asks.push((ty, *span, true));
+                    }
+                } else if self.number_shaped(value) {
+                    self.open_number_given(number, value, span);
+                }
+            }
             let given: Option<(Option<String>, Vec<Ty>)> = match (entry, found.as_slice()) {
                 ("push", [pushed]) if !pushed.is_unknown() => Some((
                     Some("Vec".to_string()),
@@ -10778,6 +10807,9 @@ impl<'a> Checker<'a> {
     /// `bind_with` decides; a declaration on the way pins the type, and that is
     /// what makes `let a: i32 = 2` then `a + a` arithmetic in an `i32`.
     fn constant_of(&self, expr: &Expr) -> Option<Constant> {
+        if let Some(element) = self.element_constant(expr) {
+            return Some(element);
+        }
         crate::fold::constant_of(expr, &|name| {
             let (ty, constant) = self.local(self.parsed.text(name))?;
             let value = constant?;
@@ -10833,6 +10865,11 @@ impl<'a> Checker<'a> {
                     out.push(self.open_root(at));
                 }
             }
+            Expr::Index { .. } => {
+                if let Some(at) = self.open_element_of(expr) {
+                    out.push(self.open_root(at));
+                }
+            }
             Expr::Binary { op, lhs, rhs, .. } if an_operation_of_one_type(*op) => {
                 self.open_numbers_in(lhs, out);
                 if !matches!(op, BinaryOp::Shl | BinaryOp::Shr) {
@@ -10847,6 +10884,41 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// **An element read out of a list whose elements are open** (D34):
+    /// `xs[i]`, and not a slice of it.
+    fn open_element_of(&self, expr: &Expr) -> Option<usize> {
+        let Expr::Index { base, index } = expr else {
+            return None;
+        };
+        let Expr::Variable(name) = &**base else {
+            return None;
+        };
+        if matches!(&**index, Expr::Range { .. }) {
+            return None;
+        }
+        let local = self.binding(self.parsed.text(*name))?;
+        self.open_elements.get(&local.id).copied()
+    }
+
+    /// **The constant an element of an immutable list of literals is**, where
+    /// the index folds (D34, D26).
+    fn element_constant(&self, expr: &Expr) -> Option<Constant> {
+        let Expr::Index { base, index } = expr else {
+            return None;
+        };
+        let Expr::Variable(name) = &**base else {
+            return None;
+        };
+        let local = self.binding(self.parsed.text(*name))?;
+        let elements = self.list_constants.get(&local.id)?;
+        let at = self.constant_of(index)?;
+        if at.value.negative {
+            return None;
+        }
+        let at = usize::try_from(at.value.magnitude).ok()?;
+        elements.get(at).map(|c| Constant::of(c.value.clone()))
+    }
+
     /// **A value that is nothing but numbers**: literals and open numbers,
     /// joined by the operations [`Self::open_numbers_in`] walks. A `let` of one
     /// is an open number itself (D1).
@@ -10856,6 +10928,7 @@ impl<'a> Checker<'a> {
             Expr::Variable(name) => self
                 .binding(self.parsed.text(*name))
                 .is_some_and(|local| local.open_number.is_some()),
+            Expr::Index { .. } => self.open_element_of(expr).is_some(),
             Expr::Binary { op, lhs, rhs, .. } if an_operation_of_one_type(*op) => {
                 self.number_shaped(lhs) && self.number_shaped(rhs)
             }
@@ -10870,6 +10943,29 @@ impl<'a> Checker<'a> {
     /// **A use asks the open numbers in a value for a type** (D2): a type
     /// standing beside it (`beside`), or an index, which takes any integer.
     fn number_asked(&mut self, value: &Expr, want: &Ty, at: &Span, beside: bool) {
+        // **A list of open elements asked for a list of one integer type**
+        // (D34): `fn total(xs: Vec[u8])` handed `xs` or a copy of it, or
+        // `let ys: Vec[u8] = xs`.
+        let list = match value {
+            Expr::MethodCall {
+                receiver, method, ..
+            } if self.parsed.text(*method) == "clone" => &**receiver,
+            value => value,
+        };
+        if let Expr::Variable(name) = list
+            && let Some(number) = self
+                .binding(self.parsed.text(*name))
+                .and_then(|local| self.open_elements.get(&local.id).copied())
+            && let Ty::Named { name, args, .. } = value_of_a_copy(want.unseen())
+            && matches!(name.as_str(), "Vec" | "Array")
+            && let Some(ty) = args.first().and_then(integer_named)
+        {
+            let number = self.open_root(number);
+            if let Some(number) = self.open_numbers.get_mut(&number) {
+                number.asks.push((ty, *at, beside));
+            }
+            return;
+        }
         let Some(ty) = integer_named(&value_of_a_copy(want.unseen())) else {
             return;
         };
@@ -11003,7 +11099,7 @@ impl<'a> Checker<'a> {
             // say *mismatched types* about the generated file.
             if let [(first, _), (second, at), ..] = types.as_slice() {
                 let (first, second, at) = (first.clone(), second.clone(), *at);
-                self.a_number_asked_for_two_types(&head.name, &first, &second, &at);
+                self.a_number_asked_for_two_types(head, &first, &second, &at);
                 continue;
             }
             let decided = match types.first() {
@@ -11023,12 +11119,16 @@ impl<'a> Checker<'a> {
                     false => "i64".to_string(),
                 }
             });
-            let why = decided.as_ref().map(|ty| {
-                format!(
+            let why = decided.as_ref().map(|ty| match head.element {
+                false => format!(
                     "`{}` is {} `{ty}` because of how it is used",
                     head.name,
                     an_or_a(ty)
-                )
+                ),
+                true => format!(
+                    "the elements of `{}` are `{ty}`s because of how they are used",
+                    head.name
+                ),
             });
             // What it is given first; what an operation over it comes to only
             // where that held, so one cause is one refusal.
@@ -11056,7 +11156,13 @@ impl<'a> Checker<'a> {
             // otherwise give an `i64`'s suffix is given this one.
             if let Some(ty) = decided {
                 for member in &members {
-                    self.checked.number_lets.insert(member.at.at(), ty.clone());
+                    // A list's elements: the list is written with the type
+                    // (D34), so the language below infers nothing either.
+                    let written = match member.element {
+                        false => ty.clone(),
+                        true => format!("Vec<{ty}>"),
+                    };
+                    self.checked.number_lets.insert(member.at.at(), written);
                     for (_, literals, widened) in &member.written {
                         let suffixed =
                             *widened || literals.iter().any(|(_, v)| i32::try_from(*v).is_err());
@@ -11074,25 +11180,47 @@ impl<'a> Checker<'a> {
 
     /// `NK1200`: one number, two uses, two types
     /// ([ADR-285](../../docs/specification/adr/adr-285.md) D24).
-    fn a_number_asked_for_two_types(&mut self, name: &str, first: &str, second: &str, at: &Span) {
+    fn a_number_asked_for_two_types(
+        &mut self,
+        number: &OpenNumber,
+        first: &str,
+        second: &str,
+        at: &Span,
+    ) {
+        let name = &number.name;
+        let (message, help) = match number.element {
+            false => (
+                format!(
+                    "You're using `{name}` as {} `{first}` and here as {} `{second}`.",
+                    an_or_a(first),
+                    an_or_a(second)
+                ),
+                format!(
+                    "Declare its type, `let {name}: {first} = …`, and convert with `as` where \
+                     the other one is needed."
+                ),
+            ),
+            true => (
+                format!(
+                    "You're using the elements of `{name}` as `{first}`s and here as `{second}`s."
+                ),
+                format!(
+                    "Declare its type, `let {name}: Vec[{first}] = …`, and convert with `as` \
+                     where the other one is needed."
+                ),
+            ),
+        };
         self.checked.findings.push(Finding {
             severity: Severity::Error,
             span: *at,
             code: "NK1200",
-            message: format!(
-                "You're using `{name}` as {} `{first}` and here as {} `{second}`.",
-                an_or_a(first),
-                an_or_a(second)
-            ),
+            message,
             notes: vec![
                 "A number takes its type from how it's used, and these uses want two \
                  different types."
                     .to_string(),
             ],
-            help: Some(format!(
-                "Declare its type, `let {name}: {first} = …`, and convert with `as` where \
-                 the other one is needed."
-            )),
+            help: Some(help),
             labels: Vec::new(),
         });
     }
@@ -11545,6 +11673,7 @@ impl<'a> Checker<'a> {
                             span.at(),
                             OpenNumber {
                                 name: name.clone(),
+                                element: false,
                                 at: *span,
                                 joined: span.at(),
                                 asks: Vec::new(),
@@ -11555,6 +11684,41 @@ impl<'a> Checker<'a> {
                         );
                         self.open_number_given(span.at(), value, span);
                         Some(span.at())
+                    }
+                    _ => None,
+                };
+                // **A list written in numbers has one open number for its
+                // elements** ([ADR-285](../../docs/specification/adr/adr-285.md)
+                // D34), decided as a `let`'s is: by the uses, else the first
+                // type that holds every element.
+                let element = match (ty, value) {
+                    (None, Expr::ListLit { items, .. })
+                        if !items.is_empty()
+                            && matches!(&bound, Ty::Named { name, args, .. }
+                                if name == "Vec" && matches!(args.as_slice(), [Ty::Unknown]))
+                            && items.iter().all(|item| self.number_shaped(item)) =>
+                    {
+                        self.open_numbers.insert(
+                            span.at(),
+                            OpenNumber {
+                                name: name.clone(),
+                                element: true,
+                                at: *span,
+                                joined: span.at(),
+                                asks: Vec::new(),
+                                given: Vec::new(),
+                                derived: Vec::new(),
+                                written: Vec::new(),
+                            },
+                        );
+                        for item in items {
+                            self.open_number_given(span.at(), item, span);
+                        }
+                        let elements = match mutable {
+                            false => items.iter().map(|item| self.constant_of(item)).collect(),
+                            true => None,
+                        };
+                        Some((span.at(), elements))
                     }
                     _ => None,
                 };
@@ -11588,6 +11752,12 @@ impl<'a> Checker<'a> {
                     task.push((name.clone(), bound.clone(), span.at()));
                 }
                 let id = a_new_binding();
+                if let Some((at, elements)) = element {
+                    self.open_elements.insert(id, at);
+                    if let Some(elements) = elements {
+                        self.list_constants.insert(id, elements);
+                    }
+                }
                 // **And typed as one**: a `V?` read out of a map is an option
                 // of a view of the `V` the map keeps, which is what a `ref V?`
                 // is - so `found?.clone()` copies the value and not the view.
@@ -11798,6 +11968,9 @@ impl<'a> Checker<'a> {
                             .binding(self.parsed.text(*name))
                             .and_then(|local| local.open_number)
                             .map(|at| self.open_root(at)),
+                        Expr::Index { .. } => {
+                            self.open_element_of(target).map(|at| self.open_root(at))
+                        }
                         _ => None,
                     };
                     match open {

@@ -177,3 +177,53 @@ fn a_number_type_still_decides_the_number() {
     let rust = lowered(source);
     assert!(rust.contains("let n: u8 = 12"), "{rust}");
 }
+
+/// **A list written in numbers has one open number for its elements**
+/// (ADR-285 D34, #513): a read of an element is a use of it, as a read of a
+/// name is. `let s: String = readings[0]` reached `rustc` as *mismatched
+/// types*; two `2000000000`s summed through the list stopped at run time where
+/// the same sum through names was refused while building.
+#[test]
+fn a_lists_elements_are_refused_as_a_names_number_is() {
+    for (place, code, message, source) in [
+        (
+            "no number fits",
+            "NK1103",
+            "This value is a number, but the `let` declares `String`.",
+            "fn main() {\n    let readings = [12, 14, 13]\n    let s: String = readings[0]\n}\n",
+        ),
+        (
+            "an overflow",
+            "NK1116",
+            "This comes to 4000000000, which doesn't fit in an `i32`.",
+            "fn main() {\n    let xs = [2000000000, 2000000000]\n    println(f\"{xs[0] + xs[1]}\")\n}\n",
+        ),
+        (
+            "two uses",
+            "NK1200",
+            "You're using the elements of `xs` as `u8`s and here as `i32`s.",
+            "fn a(xs: Vec[u8]) -> i64 {\n    return xs.len()\n}\n\n\
+             fn b(xs: Vec[i32]) -> i64 {\n    return xs.len()\n}\n\n\
+             fn main() {\n    let xs = [1, 2]\n    println(f\"{a(xs)} {b(xs)}\")\n}\n",
+        ),
+    ] {
+        let found = findings(source);
+        assert!(
+            found.len() == 1 && found[0].code == code && found[0].message == message,
+            "{place}: {found:#?}"
+        );
+    }
+}
+
+/// **The type the uses decide is written into the generated list** (D34, D27),
+/// and one no use asked for is the first that holds every element.
+#[test]
+fn a_lists_decided_type_is_written() {
+    let rust = lowered(
+        "fn total(xs: Vec[u8]) -> i64 {\n    return xs.len()\n}\n\n\
+         fn main() {\n    let ys = [1, 2, 3]\n    println(f\"{total(ys)}\")\n}\n",
+    );
+    assert!(rust.contains("let ys: Vec<u8> = vec![1, 2, 3];"), "{rust}");
+    let rust = lowered("fn main() {\n    let xs = [1, 3000000000]\n    println(f\"{xs[1]}\")\n}\n");
+    assert!(rust.contains("vec![1, 3000000000i64]"), "{rust}");
+}

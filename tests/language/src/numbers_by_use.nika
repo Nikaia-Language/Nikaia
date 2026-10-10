@@ -60,3 +60,26 @@ test "an operation that fits is computed" {
     let line = f"{a + b} {a - b}"
     assert(line == "2000000100 1999999900")
 }
+
+// **A list written in numbers has one open number for its elements**
+// (ADR-285 D34, #513): the parameter it is handed to types them, a typed value
+// pushed onto it does, and with no use the first type that holds every element
+// does - `[1, 3000000000]` is a list of `i64`s.
+fn numbers_by_use_total(xs: Vec[u8]) -> u8 {
+    let mut s: u8 = 0
+    for x in xs {
+        s = s + x
+    }
+    return s
+}
+
+test "a list's elements take the type its uses ask for" {
+    let ys = [1, 2, 3]
+    let mut v = [1, 2]
+    let b: u8 = 7
+    v.push(b)
+    v[0] = 200
+    let wide = [1, 3000000000]
+    let line = f"{numbers_by_use_total([1, 2, 3])} {numbers_by_use_total(ys)} {v[0]} {v[2]} {wide[1]}"
+    assert(line == "6 6 200 7 3000000000")
+}

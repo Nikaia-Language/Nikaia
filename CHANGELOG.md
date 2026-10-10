@@ -8,6 +8,21 @@ or the specification. A change only to the guide, the notes, the README, the
 website, the tests, the examples or the tooling around them raises nothing and
 has no heading here; `CLAUDE.md` draws the line.
 
+## [0.0.732] — 2026-10-10
+
+**A list written in numbers has one open number for its elements** (ADR-285
+D34, #513).
+- `let xs = [12, 14, 13]` gives its elements one open number, decided as a
+  `let`'s is: by the uses - a parameter `Vec[T]` it is handed to (or a
+  `.clone()` of it), an annotated `let`, an element read into a typed place, a
+  typed value pushed or written into it, an element in a typed operation - else
+  the first type that holds every element, `i32`, else `i64`.
+- A read `xs[i]` is a use of it as a name is: `let s: String = xs[0]` is
+  `NK1103`, two uses asking two types are `NK1200`, and `xs[0] + xs[1]` over an
+  immutable list of two `2000000000`s is `NK1116` where it stopped at run time.
+- The type the uses decide is written into the generated `let`
+  (`let xs: Vec<u8> = vec![…]`); a list no use asked for is written bare (D27).
+
 ## [0.0.731] — 2026-10-10
 
 **An open number where no number fits is refused at that use** (ADR-285 D23,
