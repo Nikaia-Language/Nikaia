@@ -8,6 +8,12 @@ or the specification. A change only to the guide, the notes, the README, the
 website, the tests, the examples or the tooling around them raises nothing and
 has no heading here; `CLAUDE.md` draws the line.
 
+## [0.0.773] — 2026-10-10
+
+**`develop` is green under clippy again.**
+- The lowered `tools` package allows nine more clippy lints about code the
+  lowering writes (`assign_op_pattern`, `single_char_add_str`, `useless_vec`, ...).
+
 ## [0.0.772] — 2026-10-10
 
 **`lower-std` reports every refusal of a file (#575).**

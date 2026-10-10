@@ -180,7 +180,16 @@ pub mod text {
     clippy::useless_conversion,
     clippy::for_kv_map,
     clippy::needless_borrow,
-    clippy::needless_option_as_deref
+    clippy::needless_option_as_deref,
+    clippy::assign_op_pattern,
+    clippy::single_char_add_str,
+    clippy::useless_vec,
+    clippy::unnecessary_to_owned,
+    clippy::explicit_auto_deref,
+    clippy::same_item_push,
+    clippy::redundant_field_names,
+    clippy::unnecessary_get_then_check,
+    clippy::collapsible_match
 )]
 pub mod tools {
     // **One package, one file** ([ADR-294](../../../docs/specification/adr/adr-294.md)):

@@ -4026,6 +4026,14 @@ struct Give {
     choices: Choices,
 }
 
+/// One report per place a part is missing at: the name, the place, the way out taken and the parts.
+type PartsMissing<'a> = (
+    &'a str,
+    (usize, usize),
+    Option<&'a WayOut>,
+    Vec<&'a PartOut>,
+);
+
 /// **A way out of the function, or a call that can fail**, where it stands:
 /// what a part taken out of a `mut` parameter may not be missing at
 /// ([`Checker::parts_out`]).
@@ -20399,7 +20407,7 @@ impl<'a> Checker<'a> {
         let gives = std::mem::take(&mut self.gives);
         let ways = std::mem::take(&mut self.ways_out);
         // One report per place the parts are missing at, naming all of them.
-        let mut reports: Vec<(&str, (usize, usize), Option<&WayOut>, Vec<&PartOut>)> = Vec::new();
+        let mut reports: Vec<PartsMissing<'_>> = Vec::new();
         for out in &outs {
             let Some(taken) = self.handed.get(out.handed) else {
                 continue;
@@ -22671,7 +22679,7 @@ impl<'a> Checker<'a> {
         ) {
             crate::comptime_run::Computed::Value(computed) => Some((Some(computed), false)),
             crate::comptime_run::Computed::Forbidden { callee, because } => {
-                self.a_body_that_may_not_run_at_build_time(&callee, &because, span);
+                self.a_body_that_may_not_run_at_build_time(&callee, because, span);
                 Some((None, true))
             }
             crate::comptime_run::Computed::Stopped(detail) => {

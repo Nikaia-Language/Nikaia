@@ -117,7 +117,7 @@ pub struct Proven {
 /// has an entry answers; a condition that does not read back is left out,
 /// which only ever proves less.
 fn ensured(ledgers: &[&crate::contracts::Ledger]) -> BTreeMap<String, Ensured> {
-    nikaia_std::tools::bounds_matched::bm_ensured(&ledgers.to_vec(), &|text, names| {
+    nikaia_std::tools::bounds_matched::bm_ensured(ledgers, &|text, names| {
         crate::prove::condition_nodes(text, names)
     })
 }

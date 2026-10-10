@@ -125,7 +125,7 @@ pub fn filtered(package: &str, found_by: &str, said: &str) -> Result<Vec<String>
 
 /// **The flags as `rustc` takes them**: `tools/libraries.nika` (ADR-294, #125).
 pub fn as_rustc_args(flags: &[String]) -> Vec<String> {
-    nikaia_std::tools::libraries::as_rustc_args(&flags.to_vec())
+    nikaia_std::tools::libraries::as_rustc_args(flags)
 }
 
 #[cfg(test)]
