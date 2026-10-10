@@ -1,7 +1,7 @@
 # Nikaia Language Specification
 **Part II: Advanced Features & Metaprogramming**
-**Version:** 0.0.720 (Draft)
-**Date:** 2026-10-09
+**Version:** 0.0.721 (Draft)
+**Date:** 2026-10-10
 
 ---
 
@@ -1038,25 +1038,21 @@ task::scope fn(s) {
 
 **A scope may not be opened while a lock is open.** Because the scope waits for its tasks, their bodies belong to the function that writes the scope. Whatever a task touches, the surrounding function touches, including a lock (12.3). Opening a scope inside an open lock is therefore refused. A task started with `spawn` is the other case (11.2).
 
-**One rule differs with `user_parallelism`.** The scope's promise holds only where the runtime can wait the tasks out:
+**A task's effect decides how the scope runs it**, at every setting of `user_parallelism`:
 
-* **At `no`:** everything runs on one thread, and the runtime owns every task. When a scope ends, including when an error tears it down early, the runtime collects its tasks *before* the function's variables disappear. **A scoped task may do anything, including I/O.**
-* **At `yes`:** tasks run on other CPU cores *in parallel*, and the scope keeps its promise only for tasks that finish on their own. **At `yes`, a scoped task must be `sync`**: it never pauses (12.1), the same rule as `par_iter` (12.6).
+* **A task that never pauses** (`sync`, 12.1) runs on the thread pool where tasks run in parallel, and where it is started at `no`.
+* **A task that may pause** is run by the scope itself: the scope holds the task and lets it go on whenever what it waits for is ready, together with the scope's other pausing tasks. It is never handed to the runtime, so it cannot outlive what it borrows. A scope with a pausing task pauses where it is written.
 
-A task that needs I/O is a background task, not a scoped one. A program starts it with `spawn` (the task takes ownership, Part I 8.3) and collects the result through its handle. A scoped task that can pause is refused with `NK2102` where tasks run in parallel:
-
-```text
-error[NK2102]: A task in `task::scope` has to be `sync` here, but `fetch_url` does network I/O.
-   --> worker.nika:12:18
-    |
- 12 |     s.spawn fn { fetch_url(url) }
-    |                  ^^^^^^^^^^^^^^ network I/O here
-    |
-    = note: A scope promises to wait for its tasks. With tasks running in parallel, that promise only holds for work that finishes on its own (`sync` functions), and a task waiting on the network might not.
-    = help: Do the I/O before the scope and keep only the computation in it, or run it as a background task: `let target = url.clone()`, then `let handle = spawn fn { fetch_url(target) }` and `handle.join()`.
+```nika
+let config = load_config()
+task::scope fn(s) {
+    for url in urls {
+        s.spawn fn { fetch(url, config) } // pauses, borrows `config`
+    }
+}
 ```
 
-At `no` the runtime owns all task state and tears a scope down synchronously. The language exposes no way to leak a live scope.
+The scope waits for both kinds. A task that panics cancels the others, and the scope throws `task::Crashed` where it ends. Where tasks run in parallel, the pausing tasks of one scope take turns on one thread: they run at the same time as each other, but not on separate cores, so a pausing task that computes long between its pauses holds back the others. Computation that should use the cores belongs in a task that does not pause.
 
 ### 12.8. Supervision Trees
 A **supervisor** runs tasks and restarts them when they end ([ADR-328](adr/adr-328.md)).

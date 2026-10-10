@@ -8,6 +8,16 @@ or the specification. A change only to the guide, the notes, the README, the
 website, the tests, the examples or the tooling around them raises nothing and
 has no heading here; `CLAUDE.md` draws the line.
 
+## [0.0.721] — 2026-10-10
+
+**A task in `task::scope` may pause at every setting; the scope polls it**
+(ADR-328 D10, #95).
+- Decided, not built: a task's effect decides how its scope runs it, not
+  `user_parallelism`. A `sync` task runs on the pool; a pausing one is polled
+  by the scope's own future, may borrow, and cannot outlive the frame. The
+  scope pauses where it is written. `NK2102` is retired. ADR-005 D5 changed.
+  Part II 12.7; Part III C.3.
+
 ## [0.0.720] — 2026-10-09
 
 **A build-time run that stopped has a code of its own** (ADR-321 D16-D19,
