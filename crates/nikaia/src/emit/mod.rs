@@ -7426,6 +7426,14 @@ impl<'p> Emitter<'p> {
             Stmt::Assign { target, op, value } => {
                 let (before, after) =
                     Self::around_value(self.nullable_sites.get(&span.at()).copied(), value);
+                // **A `mut` parameter assigned whole is written through**
+                // (ADR-094 D3, #576): below it is a `&mut T`, and `n = n + 1`
+                // is the caller's value changed, `*n = *n + 1`.
+                if matches!(target, Expr::Variable(name)
+                    if self.changes_in_place(flow, self.text(*name)))
+                {
+                    out.push("*");
+                }
                 self.expr(out, target, depth, flow.place())?;
                 match op {
                     Some(op) => out.push(&format!(" {}= ", binary_op(*op))),
@@ -8112,6 +8120,26 @@ impl<'p> Emitter<'p> {
             .is_some_and(|s| s.mutable.iter().any(|m| m == name))
     }
 
+    /// Whether `name` is a `mut` parameter whose value **copies** - a number,
+    /// a `bool`, a `char`, a `scalar` (Part I 2.2): below it is a `&mut i64`,
+    /// and a read of it is the number, `*n`, as `n + 1` and `n == 0` need
+    /// (#576). A parameter of any other type is read through methods and
+    /// handed on, which the language below dereferences itself.
+    fn copied_in_place(&self, flow: Flow<'_>, name: &str) -> bool {
+        self.own_contracts
+            .functions
+            .get(flow.function)
+            .and_then(|c| c.signature.as_ref())
+            .is_some_and(|s| {
+                s.mutable.iter().any(|m| m == name)
+                    && s.params.iter().any(|(param, ty)| {
+                        param == name
+                            && !ty.is_a_view()
+                            && nikaia_std::tools::check_types::copies_plainly(ty)
+                    })
+            })
+    }
+
     /// Whether `place` is a `mut` parameter of the function being emitted, or
     /// a field of one: a value that stays the caller's (ADR-094 D3).
     fn stays_the_callers(&self, place: &Expr, flow: Flow<'_>) -> bool {
@@ -8320,6 +8348,11 @@ impl<'p> Emitter<'p> {
                     .contains_key(&crate::check::value_node(expr)) =>
             {
                 out.push(&self.comptime_uses[&crate::check::value_node(expr)]);
+            }
+            Expr::Variable(name)
+                if !flow.in_a_place && self.copied_in_place(flow, self.text(*name)) =>
+            {
+                out.push(&format!("*{}", self.name(*name)));
             }
             Expr::Variable(name) => {
                 out.push(&self.name(*name));
@@ -12064,6 +12097,24 @@ impl<'p> Emitter<'p> {
 
     /// Whether the code a call hands `callee` at argument `i` is only run
     /// there, not kept - by its entry, or by every method of that name.
+    /// Whether `callee`'s parameter at `i` is written `mut` (ADR-094 D3).
+    fn changes_at(&self, callee: &str, i: usize) -> bool {
+        let changes = |contract: &crate::contracts::FnContract| {
+            contract.signature.as_ref().is_some_and(|s| {
+                s.arguments()
+                    .get(i)
+                    .is_some_and(|(name, _)| s.mutable.iter().any(|m| m == name))
+            })
+        };
+        match self.own_contracts.functions.get(callee) {
+            Some(contract) => changes(contract),
+            None => {
+                let candidates = self.own_contracts.candidates(callee);
+                !candidates.is_empty() && candidates.iter().all(|(_, contract)| changes(contract))
+            }
+        }
+    }
+
     fn runs_code_at(&self, callee: &str, i: usize) -> bool {
         let runs = |contract: &crate::contracts::FnContract| {
             contract
@@ -13908,6 +13959,11 @@ impl<'p> Emitter<'p> {
         // its parentheses belong (ADR-293 D33).
         let a_read = !flow.in_a_place
             && matches!(expr, Expr::Index { index, .. } if !self.slices(flow.statement, index));
+        // **And so is a `mut` parameter read as its number**
+        // (`copied_in_place`): `(*n).abs()`.
+        let a_read = a_read
+            || !flow.in_a_place
+                && matches!(expr, Expr::Variable(name) if self.copied_in_place(flow, self.text(*name)));
         let parenthesise = a_read
             || self.emits_as_cast(expr, flow)
             || matches!(
@@ -14359,6 +14415,18 @@ impl<'p> Emitter<'p> {
             let inside = match wants_a_size && !count {
                 true => flow.inferred(),
                 false => flow,
+            };
+            // **A `mut` parameter handed to a `mut` parameter is handed on as
+            // the `&mut` it is** (ADR-094 D3), and not read as its number:
+            // `copied_in_place`'s `*n` is for a read.
+            let inside = match arg {
+                Expr::Variable(name)
+                    if self.copied_in_place(flow, self.text(*name))
+                        && self.changes_at(callee, i) =>
+                {
+                    inside.place()
+                }
+                _ => inside,
             };
             match (future, arg) {
                 // `|a| Box::pin(async move { … })`, which is what a parameter

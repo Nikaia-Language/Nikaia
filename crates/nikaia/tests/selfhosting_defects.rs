@@ -199,3 +199,67 @@ fn main() {
     );
     assert_eq!(said.trim(), "z a 7 3");
 }
+
+/// #576: a `mut` parameter is a `&mut T` below, so assigning it whole writes
+/// through it and reading a number out of it reads the number - `n = n + 1`
+/// was `n = n + 1;` against a `&mut i64`, which `rustc` refused, on exactly
+/// the program `NK1138` asks for. Handed to another `mut` parameter it is
+/// handed on as it is.
+#[test]
+fn a_mut_parameter_is_assigned_and_read_through() {
+    let said = printed(
+        "mut-parameter-assigned",
+        r#"
+struct P {
+    x: i64,
+}
+
+fn bump(mut n: i64) {
+    n = n + 1
+    n += 2
+    if n == 4 {
+        n = n * 10
+    }
+}
+
+fn twice(mut n: i64) {
+    bump(n)
+    bump(n)
+}
+
+fn step(mut n: i64, xs: ref Vec[i64]) {
+    n = xs[n] + n.abs() - (-n)
+}
+
+fn flip(mut b: bool) {
+    b = !b
+}
+
+fn reset(mut p: P) {
+    p = P { x: 0 }
+}
+
+fn refill(mut xs: Vec[i64]) {
+    xs = [7, 8]
+    xs.push(9)
+}
+
+fn main() {
+    let mut n = 1
+    bump(n)
+    let mut m = 0
+    twice(m)
+    let mut k = 1
+    step(k, [10, 20, 30])
+    let mut b = false
+    flip(b)
+    let mut p = P { x: 5 }
+    reset(p)
+    let mut xs: Vec[i64] = []
+    refill(xs)
+    println(f"{n} {m} {k} {b} {p.x} {xs.len()}")
+}
+"#,
+    );
+    assert_eq!(said.trim(), "40 6 22 true 0 3");
+}

@@ -8,6 +8,11 @@ or the specification. A change only to the guide, the notes, the README, the
 website, the tests, the examples or the tooling around them raises nothing and
 has no heading here; `CLAUDE.md` draws the line.
 
+## [0.0.766] — 2026-10-10
+
+**A `mut` parameter is assigned and read through its reference (#576).**
+- A `mut` parameter is a `&mut T` below, and `n = n + 1` was written as it stood: `rustc` refused the very program `NK1138` asks for. Assigning one whole now writes through it (`*n = …`), a number, `bool` or `char` read out of one is read as the value (`*n`), and one handed to another `mut` parameter is handed on as it is. Test: `selfhosting_defects.rs`.
+
 ## [0.0.765] — 2026-10-10
 
 **A mixed `String` reassigned from a view of itself lowers (#563).**
