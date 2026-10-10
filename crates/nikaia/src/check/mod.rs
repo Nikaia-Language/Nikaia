@@ -5759,6 +5759,18 @@ impl<'a> Checker<'a> {
         let outer_grown = std::mem::replace(&mut self.grown_text, grown_text(self.parsed, body));
         let tail = self.block(body);
         self.grown_text = outer_grown;
+        // **The tail hands back as a `return` does**, and a field of a lent
+        // place is refused there too (`NK1131`, #576). Read against the scope
+        // still standing, as the numbers below are.
+        if expected.is_some()
+            && !never_ends(body)
+            && let Some(Stmt::Expr(value)) = body.stmts.last().map(|s| &s.node)
+            && let Some(at) = tail_span
+            && !self.hands_back_a_view_of_the_subject(value)
+        {
+            self.a_field_of_a_borrowed_subject(value, &at, "handed back");
+            self.a_field_of_a_lent_place_handed_back(value, &at);
+        }
         // **A body's numbers, typed by their uses** once all of them have been
         // seen ([ADR-285](../../docs/specification/adr/adr-285.md) D24) - the
         // tail's included, which is read against the scope still standing.
@@ -9470,6 +9482,58 @@ impl<'a> Checker<'a> {
                      `ref self` if the method is meant to use up its value."
                 ),
             }),
+            labels: Vec::new(),
+        });
+    }
+
+    /// **`NK1131` for a place that is lent here and is not `self`**
+    /// ([ADR-083](../../docs/specification/adr/adr-083.md), #576): a field of a
+    /// `ref` parameter, of a `for` binding over a list or of a `let` over a
+    /// place, handed back by value. `return l.ty` out of a `Local` the loop lent
+    /// passed the check, and the language below said *cannot move out of `l.ty`
+    /// which is behind a shared reference* about a file nobody wrote.
+    ///
+    /// **Only where the value is handed back**: a field passed to a call or
+    /// bound to a name is `NK2106`'s, which says the same about what keeps it.
+    /// **And not where the function declares a view**, which is what a field of
+    /// a lent place is the answer to (D1's third position).
+    fn a_field_of_a_lent_place_handed_back(&mut self, value: &Expr, span: &Span) {
+        if self.expected.as_ref().is_some_and(Ty::is_a_view) {
+            return;
+        }
+        let Expr::Field { .. } = value else {
+            return;
+        };
+        let Some(path) = self.place_path(value) else {
+            return;
+        };
+        let Some((root, _)) = path.split_once('.') else {
+            return;
+        };
+        if root == "self" || !self.lent_here(root) {
+            return;
+        }
+        let ty = self.expr(value, span);
+        if ty.is_unknown() || copies(&ty) {
+            return;
+        }
+        let root = root.to_string();
+        self.checked.findings.push(Finding {
+            severity: Severity::Error,
+            span: *span,
+            code: "NK1131",
+            message: format!("You can't give away `{path}` here: `{root}` is only borrowed."),
+            notes: vec![format!(
+                "`{root}` belongs to whoever lent it (a `ref` parameter, a `for` over a list, \
+                 a `let` over a place), and `{path}` is a `{}`. Giving it away would take a \
+                 piece out of something this function doesn't own.",
+                ty.text()
+            )],
+            help: Some(format!(
+                "Declare the result `ref {}` to return a view of it, or write `{path}.clone()` \
+                 for a copy.",
+                ty.text()
+            )),
             labels: Vec::new(),
         });
     }
@@ -27836,6 +27900,7 @@ impl<'a> Checker<'a> {
             && !lending
         {
             self.a_field_of_a_borrowed_subject(value, span, "handed back");
+            self.a_field_of_a_lent_place_handed_back(value, span);
             self.a_mut_parameter_given_away(value, span, "handed back");
         }
         if let Some(Expr::Closure { .. }) = value {

@@ -8,6 +8,11 @@ or the specification. A change only to the guide, the notes, the README, the
 website, the tests, the examples or the tooling around them raises nothing and
 has no heading here; `CLAUDE.md` draws the line.
 
+## [0.0.770] — 2026-10-10
+
+**A field moved out of a borrowed value is refused wherever the value is lent, not only for `ref self` (`NK1131`, #576).**
+- `return l.ty` out of a `ref` parameter, a `for` binding over a list or a `let` over a place, and the same field as a body's last expression (also for `ref self`), passed the check and reached `rustc` with *cannot move out of `l.ty` which is behind a shared reference*. They are `NK1131` now, naming the whole path, with `.clone()` and a result declared `ref T` as the ways out. Part III's table says which subjects. Test: `borrowed_part.rs`.
+
 ## [0.0.769] — 2026-10-10
 
 **An arm that takes parts of a `mut` parameter and writes the whole back lowers ([ADR-094](docs/specification/adr/adr-094.md) D7, #576).**
