@@ -8,6 +8,14 @@ or the specification. A change only to the guide, the notes, the README, the
 website, the tests, the examples or the tooling around them raises nothing and
 has no heading here; `CLAUDE.md` draws the line.
 
+## [0.0.722] — 2026-10-10
+
+**A C library reports an absent number with a flag, not a status** (ADR-284
+D30, #88).
+- Decided, not built: a `T?` of a number or of an `extern` struct at an entry
+  point comes out as the value's out-parameter and `bool* present`; the status
+  stays `OK`. The status `<PACKAGE>_NONE` of D5 and D16 is gone. Part III 15.
+
 ## [0.0.721] — 2026-10-10
 
 **A task in `task::scope` may pause at every setting; the scope polls it**

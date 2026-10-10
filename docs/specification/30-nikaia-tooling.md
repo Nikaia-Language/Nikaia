@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part III: Tooling, Ecosystem & Interoperability**
-**Version:** 0.0.721 (Draft)
+**Version:** 0.0.722 (Draft)
 **Date:** 2026-10-10
 
 ---
@@ -643,7 +643,8 @@ generates `<package>.h` from the ledger. The caller owns the memory, and a call 
   and `free(at, size, align, ctx)` takes it back. It holds where it is called before `init` and
   before any other call; after them, or with a `NULL` function, it is `E_ARGUMENT`;
 * an exported `struct` is an opaque handle with `_new`, `_free`, a getter per `pub` field and its
-  `extern` methods; text and bytes go in as pointer and length; `T?` is `NULL` or a status;
+  `extern` methods; text and bytes go in as pointer and length; `T?` is `NULL` for a handle or text, and for a
+  number or an `extern` struct a `bool* present` out-parameter beside the value, with the status `OK`;
 * a function that may pause is exported **blocking** and **`_async`** with a callback on a library
   thread; a `sync` one only blocking;
 * a panic is caught at the boundary, returns a status, and poisons the library until
