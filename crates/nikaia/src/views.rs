@@ -16,7 +16,7 @@ use std::collections::{HashMap, HashSet};
 
 use winnow_grammar::Symbol as Ident;
 
-use crate::ast::{Expr, Item, Type, VariantFields};
+use crate::ast::{Expr, Type};
 use crate::check::Finding;
 use crate::contracts::Ledger;
 use crate::parser::Parsed;
@@ -48,14 +48,10 @@ pub fn check(parsed: &Parsed, own: &Ledger, library: &Ledger) -> Vec<Finding> {
 /// byte the method they belong to starts at.
 pub fn carried(parsed: &Parsed, own: &Ledger, library: &Ledger) -> HashMap<usize, HashSet<Ident>> {
     let mut out: HashMap<usize, HashSet<Ident>> = HashMap::new();
-    for stored in analyse(parsed, own, library) {
-        if stored.carried {
-            let at = out.entry(stored.method as usize).or_default();
-            at.insert(stored.symbol);
-            // The struct parameter that carries it is written over the same
-            // buffer.
-            at.extend(stored.carrier);
-        }
+    // `tools/views.nika` says which names each method carries: the parameter,
+    // and the struct parameter that carries it, written over the same buffer.
+    for (method, symbol) in nikaia_std::tools::views::carrying(&analyse(parsed, own, library)) {
+        out.entry(method as usize).or_default().insert(symbol);
     }
     out
 }
@@ -89,40 +85,8 @@ fn own_buffer(parsed: &Parsed, value: &Expr, own: &Ledger, library: &Ledger) -> 
 /// asked - does this field hold a view - a variant's field is a field of the
 /// enum.
 pub(crate) fn fields_of(parsed: &Parsed) -> HashMap<Ident, Vec<(String, Type)>> {
-    let mut out: HashMap<Ident, Vec<(String, Type)>> = HashMap::new();
-    for item in &parsed.program.items {
-        match &item.node {
-            Item::Struct { name, fields, .. } => {
-                out.insert(
-                    *name,
-                    fields
-                        .iter()
-                        .map(|f| (parsed.text(f.name).to_string(), f.ty.clone()))
-                        .collect(),
-                );
-            }
-            Item::Enum { name, variants, .. } => {
-                let mut carried = Vec::new();
-                for variant in variants {
-                    match &variant.fields {
-                        VariantFields::Unit => {}
-                        VariantFields::Tuple(types) => {
-                            for (i, ty) in types.iter().enumerate() {
-                                carried.push((i.to_string(), ty.clone()));
-                            }
-                        }
-                        VariantFields::Named(fields) => {
-                            for field in fields {
-                                carried
-                                    .push((parsed.text(field.name).to_string(), field.ty.clone()));
-                            }
-                        }
-                    }
-                }
-                out.insert(*name, carried);
-            }
-            _ => {}
-        }
-    }
-    out
+    nikaia_std::tools::views::fields_held(&parsed.interner, &parsed.program.items)
+        .into_iter()
+        .map(|held| (held.name, held.fields))
+        .collect()
 }

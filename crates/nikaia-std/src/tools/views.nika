@@ -1216,3 +1216,64 @@ fn stores_maybe(unit: ref Unit, asked: ref Asked, expr: ref Expr?, span: ref Spa
 fn walk_maybe_block(unit: ref Unit, asked: ref Asked, block: ref Block?, own_buffer: fn(ref Expr) -> bool sync, mut here: Here) {
     walk_block(unit, asked, block ?? return, false, own_buffer, here)
 }
+
+/// One declared struct or enum and the fields it holds, by the name the source
+/// gives them: a tuple variant's payloads are numbered.
+pub struct FieldsHeld {
+    pub name: winnow_grammar::Symbol,
+    pub fields: Vec[(String, Type)],
+}
+
+/// What every declared struct and enum holds - an enum's fields are those of
+/// all its variants together.
+pub fn fields_held(words: ref winnow_grammar::InternerContext, items: ref Vec[Spanned[Item]]) -> Vec[FieldsHeld] {
+    let mut out: Vec[FieldsHeld] = []
+    for item in items {
+        match item.node {
+            Item::Struct { name, fields, .. } => {
+                let mut held: Vec[(String, Type)] = []
+                for f in fields {
+                    held.push((words.resolve(f.name).clone(), f.ty.clone()))
+                }
+                out.push(FieldsHeld { name: name, fields: held })
+            },
+            Item::Enum { name, variants, .. } => {
+                let mut held: Vec[(String, Type)] = []
+                for variant in variants {
+                    match variant.fields {
+                        VariantFields::Unit => {},
+                        VariantFields::Tuple(types) => {
+                            for k in 0..<types.len() {
+                                held.push((f"{k}", types[k].clone()))
+                            }
+                        },
+                        VariantFields::Named(fields) => {
+                            for f in fields {
+                                held.push((words.resolve(f.name).clone(), f.ty.clone()))
+                            }
+                        },
+                    }
+                }
+                out.push(FieldsHeld { name: name, fields: held })
+            },
+            else => {},
+        }
+    }
+    return out
+}
+
+/// Which method carries which names into its input: the parameter and the
+/// carrier of every view whose destination already names the buffer.
+pub fn carrying(stored: ref Vec[Stored]) -> Vec[(u32, winnow_grammar::Symbol)] {
+    let mut out: Vec[(u32, winnow_grammar::Symbol)] = []
+    for s in stored {
+        if s.carried {
+            out.push((s.method, s.symbol))
+            if s.carrier != null {
+                let carrier = s.carrier ?? s.symbol
+                out.push((s.method, carrier))
+            }
+        }
+    }
+    return out
+}

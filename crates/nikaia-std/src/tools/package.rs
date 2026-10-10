@@ -27553,6 +27553,54 @@ fn stores_maybe(unit: &Unit, asked: &Asked<'_>, expr: Option<&Expr>, span: &Span
 
 fn walk_maybe_block(unit: &Unit, asked: &Asked<'_>, block: Option<&Block>, own_buffer: &impl Fn(&Expr) -> bool, here: &mut Here) { walk_block(unit, asked, match block { Some(__nikaia_value) => __nikaia_value, None => return }, false, own_buffer, here); }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct FieldsHeld {
+    pub name: winnow_grammar::Symbol,
+    pub fields: Vec<(String, Type)>,
+}
+
+pub fn fields_held(words: &winnow_grammar::InternerContext, items: &[Spanned<Item>]) -> Vec<FieldsHeld> {
+    let mut out: Vec<FieldsHeld> = vec![];
+    for item in items.iter() {
+        match &item.node {
+            Item::Struct { name, fields, .. } => {
+                let name = *name;
+                let mut held: Vec<(String, Type)> = vec![];
+                for f in fields.iter() { held.push((words.resolve(f.name).to_owned(), f.ty.clone())); }
+                out.push(FieldsHeld { name, fields: held });
+            },
+            Item::Enum { name, variants, .. } => {
+                let name = *name;
+                let mut held: Vec<(String, Type)> = vec![];
+                for variant in variants.iter() {
+                    match &variant.fields {
+                        VariantFields::Unit => { },
+                        VariantFields::Tuple(types) => { for k in 0..types.len() as i64 { held.push((format!("{}", k), (*nikaia_std::index::get(&types, (k) as usize)).clone())); } },
+                        VariantFields::Named(fields) => { for f in fields.iter() { held.push((words.resolve(f.name).to_owned(), f.ty.clone())); } },
+                    }
+                }
+                out.push(FieldsHeld { name, fields: held });
+            },
+            _ => { },
+        }
+    }
+    out
+}
+
+pub fn carrying(stored: &[Stored]) -> Vec<(u32, winnow_grammar::Symbol)> {
+    let mut out: Vec<(u32, winnow_grammar::Symbol)> = vec![];
+    for s in stored.iter() {
+        if s.carried {
+            out.push((s.method, s.symbol));
+            if s.carrier.is_some() {
+                let carrier = nikaia_std::index::or(s.carrier, || s.symbol.into());
+                out.push((s.method, carrier));
+            }
+        }
+    }
+    out
+}
+
 
 // --- written.nika ---
 
@@ -28071,7 +28119,7 @@ pub mod types {
 }
 pub mod views {
     #[allow(unused_imports)]
-    pub use super::{Stored, Destination, Asked, views_stored, views_checked, holds_view, written_type};
+    pub use super::{Stored, Destination, Asked, views_stored, views_checked, holds_view, written_type, FieldsHeld, fields_held, carrying};
 }
 pub mod written {
     #[allow(unused_imports)]

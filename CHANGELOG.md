@@ -8,6 +8,11 @@ or the specification. A change only to the guide, the notes, the README, the
 website, the tests, the examples or the tooling around them raises nothing and
 has no heading here; `CLAUDE.md` draws the line.
 
+## [0.0.753] — 2026-10-10
+
+**More of the toolchain is Nikaia** (ADR-294, #125).
+- `views`: the fields each declared type holds and the names a method carries into its input are `tools/views.nika`.
+
 ## [0.0.752] — 2026-10-10
 
 **More of the toolchain is Nikaia** (ADR-294, #125).
