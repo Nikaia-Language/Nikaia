@@ -6834,7 +6834,7 @@ impl<'p> Emitter<'p> {
             out.push(&format!(";\n{}", "    ".repeat(depth)));
             self.held
                 .borrow_mut()
-                .insert(receiver as *const Expr as usize, name);
+                .insert(crate::check::value_node(receiver), name);
         }
         Ok(())
     }
@@ -6888,7 +6888,7 @@ impl<'p> Emitter<'p> {
             if !mentions {
                 continue;
             }
-            let key = index as *const Expr as usize;
+            let key = crate::check::value_node(index);
             self.held.borrow_mut().remove(&key);
             let name = format!("__nikaia_held_{}", self.held.borrow().len());
             out.push(&format!("let {name} = "));
@@ -6938,13 +6938,16 @@ impl<'p> Emitter<'p> {
             Expr::Try(inner, _) => inner.as_ref(),
             other => other,
         };
-        if !viewed || std::ptr::eq(at, value) || !matches!(base, Expr::Call { .. }) {
+        if !viewed
+            || crate::check::value_node(at) == crate::check::value_node(value)
+            || !matches!(base, Expr::Call { .. })
+        {
             return Ok(());
         }
         // A statement written twice (a scratch pass, then the real one) holds
         // the same receiver twice: the second time it is written out again, not
         // read back from the first.
-        let key = at as *const Expr as usize;
+        let key = crate::check::value_node(at);
         self.held.borrow_mut().remove(&key);
         let name = format!("__nikaia_held_{}", self.held.borrow().len());
         out.push(&format!("let {name} = "));
@@ -8232,19 +8235,19 @@ impl<'p> Emitter<'p> {
     fn expr(&self, out: &mut Out, expr: &Expr, depth: usize, flow: Flow<'_>) -> Result<()> {
         // **A receiver bound before the statement** reads as its name
         // (`hold_owned_receiver`).
-        if let Some(name) = self.held.borrow().get(&(expr as *const Expr as usize)) {
+        if let Some(name) = self.held.borrow().get(&(crate::check::value_node(expr))) {
             out.push(name);
             return Ok(());
         }
         // **A plain arm beside a `null` is `Some`** (`check::Checked::some_tails`).
-        if self.some_tails.contains(&(expr as *const Expr as usize)) {
+        if self.some_tails.contains(&(crate::check::value_node(expr))) {
             out.push("Some(");
             self.expr_as_written(out, expr, depth, flow)?;
             out.push(")");
             return Ok(());
         }
         // **And a plain value in a nullable slot** (`check::Checked::wrapped`).
-        if let Some(how) = self.wrapped.get(&(expr as *const Expr as usize)) {
+        if let Some(how) = self.wrapped.get(&(crate::check::value_node(expr))) {
             let (before, after) = Self::around_value(Some(*how), expr);
             out.push(before);
             self.expr_as_written(out, expr, depth, flow)?;
@@ -8681,7 +8684,7 @@ impl<'p> Emitter<'p> {
                 let held = self
                     .held
                     .borrow()
-                    .get(&(receiver.as_ref() as *const Expr as usize))
+                    .get(&(crate::check::value_node(receiver.as_ref())))
                     .cloned();
                 match held {
                     Some(name) => out.push(&name),
@@ -8772,7 +8775,7 @@ impl<'p> Emitter<'p> {
                 // (`check::Checked::lent_scrutinees`).
                 if self
                     .lent_scrutinees
-                    .contains(&(&**value as *const Expr as usize))
+                    .contains(&(crate::check::value_node(value)))
                 {
                     out.push("&");
                 }
@@ -11069,7 +11072,7 @@ impl<'p> Emitter<'p> {
                     Some(passed) => {
                         if self
                             .lent_options
-                            .contains(&(&passed.value as *const Expr as usize))
+                            .contains(&(crate::check::value_node(&passed.value)))
                         {
                             out.push("&");
                         }

@@ -8,6 +8,12 @@ or the specification. A change only to the guide, the notes, the README, the
 website, the tests, the examples or the tooling around them raises nothing and
 has no heading here; `CLAUDE.md` draws the line.
 
+## [0.0.779] — 2026-10-10
+
+**The checker and the emitter key their tables about an expression on its id, not its address (ADR-340 D4, #558, step 4).**
+- The 22 places that wrote `expr as *const Expr as usize` (13 in `check`, 9 in `emit`) and the checker's `address` helper are `value_node`, the id; the one `std::ptr::eq` on two expressions compares ids. `Checked`'s `wrapped`, `some_tails`, `held` and the read sites no longer depend on where the allocator put a copy.
+- Left on addresses: the keys of a `MatchPattern` and a `Stmt`, which carry no id (ADR-340 D6 leaves them open).
+
 ## [0.0.778] — 2026-10-10
 
 **A node the compiler builds takes a new id, a clone keeps its own (ADR-340 D2, #558, step 3).**

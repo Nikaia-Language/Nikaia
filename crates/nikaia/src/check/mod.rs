@@ -3173,12 +3173,6 @@ enum Reached<'a> {
 /// One report per place a part is missing at: the name, the place, the way out taken and the parts.
 type PartsMissing<'a> = (&'a str, (i64, i64), Option<&'a WayOut>, Vec<&'a PartOut>);
 
-/// An expression's address, which is what tells two reads of one name apart
-/// in one statement (ADR-293 D31).
-fn address(expr: &Expr) -> usize {
-    expr as *const Expr as usize
-}
-
 /// How a key goes into the brackets of a map whose keys are owned
 /// ([ADR-293](../../docs/specification/adr/adr-293.md) D27), handed from the
 /// checker to the emitter, which has no types.
@@ -4441,9 +4435,7 @@ impl<'a> Checker<'a> {
                 && let Some(how @ (Wrap::Widen(_) | Wrap::Unsigned(_))) =
                     self.widened_slot(&tail, expected, Some(value), &span)
             {
-                self.checked
-                    .wrapped
-                    .insert(value as *const Expr as usize, how);
+                self.checked.wrapped.insert(value_node(value), how);
             }
             self.expect_kept(
                 &tail,
@@ -8099,7 +8091,7 @@ impl<'a> Checker<'a> {
     /// is refused with the copy to write, where it reached `rustc` as
     /// *mismatched types* about a file nobody wrote.
     fn a_map_read_kept(&mut self, found: &Ty, want: &Ty, value: &Expr, span: &Span) {
-        if !self.map_read_sites.contains(&address(value)) {
+        if !self.map_read_sites.contains(&value_node(value)) {
             return;
         }
         let (Ty::Nullable(inner), Ty::Nullable(read)) = (want, found) else {
@@ -8334,7 +8326,7 @@ impl<'a> Checker<'a> {
             _ => {
                 self.checked
                     .wrapped
-                    .insert(side as *const Expr as usize, Wrap::Widen(into));
+                    .insert(value_node(side), Wrap::Widen(into));
             }
         }
     }
@@ -8374,7 +8366,7 @@ impl<'a> Checker<'a> {
             {
                 self.checked
                     .wrapped
-                    .insert(item as *const Expr as usize, Wrap::Widen(widened));
+                    .insert(value_node(item), Wrap::Widen(widened));
             }
         }
         Some(want.clone())
@@ -8397,7 +8389,7 @@ impl<'a> Checker<'a> {
             return;
         };
         if !self.s.jumps(&self.world, fallback)
-            || !self.map_read_sites.contains(&address(read))
+            || !self.map_read_sites.contains(&value_node(read))
             || into.is_a_view()
             || into.is_unknown()
         {
@@ -10106,7 +10098,7 @@ impl<'a> Checker<'a> {
                 || matches!(expr, Expr::MethodCall { method, .. }
                     if self.parsed.text(*method) == "get"))
         {
-            self.map_read_sites.insert(address(expr));
+            self.map_read_sites.insert(value_node(expr));
         }
         // **A value with a cleanup made here may die in this function**
         // (ADR-297 D2): by a call or a literal, which is where one comes from.
@@ -10692,9 +10684,7 @@ impl<'a> Checker<'a> {
                     && self.s.takes_away(&self.world, &typed)
                 {
                     true => {
-                        self.checked
-                            .lent_scrutinees
-                            .insert(&**value as *const Expr as usize);
+                        self.checked.lent_scrutinees.insert(value_node(value));
                         // And read as the view it is below, so a part that
                         // copies is copied out at the head of the arm.
                         view_of(&typed)
@@ -12666,7 +12656,7 @@ impl<'a> Checker<'a> {
                     {
                         Some(opened) => self.pending_coalesces.push(PendingCoalesce {
                             key: (span.at() as i64, argument_shape(expr)),
-                            left: address(value) as i64,
+                            left: value_node(value) as i64,
                             ty: left.clone(),
                             span: *span,
                             opened: opened.to_string(),
@@ -13582,7 +13572,7 @@ impl<'a> Checker<'a> {
                 {
                     self.checked
                         .wrapped
-                        .insert(value as *const Expr as usize, Wrap::Widen(common));
+                        .insert(value_node(value), Wrap::Widen(common));
                 }
             }
             Some(common) => {
@@ -13647,7 +13637,7 @@ impl<'a> Checker<'a> {
             if ty != into && ty != "u64" {
                 self.checked
                     .wrapped
-                    .insert(side as *const Expr as usize, Wrap::Widen(into));
+                    .insert(value_node(side), Wrap::Widen(into));
             }
         }
         if let Some(unsigned_left) = unsigned_left {
@@ -13699,7 +13689,7 @@ impl<'a> Checker<'a> {
                 if ty != common {
                     self.checked
                         .wrapped
-                        .insert(side as *const Expr as usize, Wrap::Widen(common));
+                        .insert(value_node(side), Wrap::Widen(common));
                 }
             }
             return Some(common);
@@ -14638,9 +14628,7 @@ impl<'a> Checker<'a> {
                 // **A part that holds a `T?` takes a plain value as `Some`**,
                 // as a parameter does (Part I 2.3).
                 if let Some(how) = self.widened_slot(ty, want, Some(arg), span) {
-                    self.checked
-                        .wrapped
-                        .insert(arg as *const Expr as usize, how);
+                    self.checked.wrapped.insert(value_node(arg), how);
                 }
             }
             let owner = name
@@ -14968,10 +14956,7 @@ impl<'a> Checker<'a> {
                 Some(declared) => declared.clone(),
                 None => Ty::named(ty),
             });
-        self.option_values = config
-            .iter()
-            .map(|a| &a.value as *const Expr as usize)
-            .collect();
+        self.option_values = config.iter().map(|a| value_node(&a.value)).collect();
         let result = self.arguments(&key, &name, &contract, args, &found, &passed, span);
         self.option_values.clear();
         // **What the arguments tell the signature**
@@ -16581,7 +16566,7 @@ impl<'a> Checker<'a> {
         {
             return self.hands_over(receiver, ty, to, span);
         }
-        let Some(&at) = self.read_index.get(&(address(value), span.at())) else {
+        let Some(&at) = self.read_index.get(&(value_node(value), span.at())) else {
             return;
         };
         if !matches!(value, Expr::Variable(_, _) | Expr::Field { .. }) {
@@ -16740,7 +16725,7 @@ impl<'a> Checker<'a> {
 
     /// A read of a name, recorded once per expression and statement.
     fn a_read(&mut self, expr: &Expr, path: String, span: &Span) {
-        let key = (address(expr), span.at());
+        let key = (value_node(expr), span.at());
         if self.read_index.contains_key(&key) {
             return;
         }
@@ -16761,16 +16746,16 @@ impl<'a> Checker<'a> {
     fn a_read_of_a_part(&mut self, base: &Expr, expr: &Expr, field: &str, span: &Span) {
         // Once per expression, as the read it extends: an argument walked a
         // second time would otherwise read `self.path.path`.
-        if self.read_index.contains_key(&(address(expr), span.at())) {
+        if self.read_index.contains_key(&(value_node(expr), span.at())) {
             return;
         }
-        let Some(&at) = self.read_index.get(&(address(base), span.at())) else {
+        let Some(&at) = self.read_index.get(&(value_node(base), span.at())) else {
             return;
         };
         let read = &mut self.reads_on_paths[at];
         read.path.push('.');
         read.path.push_str(field);
-        self.read_index.insert((address(expr), span.at()), at);
+        self.read_index.insert((value_node(expr), span.at()), at);
     }
 
     /// A taking, where it stands.
@@ -19429,7 +19414,7 @@ impl<'a> Checker<'a> {
                 {
                     self.checked
                         .wrapped
-                        .insert(item as *const Expr as usize, Wrap::Widen(common));
+                        .insert(value_node(item), Wrap::Widen(common));
                 }
             }
         }
@@ -20148,7 +20133,7 @@ impl<'a> Checker<'a> {
                     match tail_of(block) {
                         Some(tail) => self.some_at_the_tails(tail),
                         None => {
-                            self.checked.some_tails.insert(arm as *const Expr as usize);
+                            self.checked.some_tails.insert(value_node(arm));
                             return;
                         }
                     }
@@ -20166,7 +20151,7 @@ impl<'a> Checker<'a> {
             }
             Expr::LitNull(_) => {}
             _ => {
-                self.checked.some_tails.insert(arm as *const Expr as usize);
+                self.checked.some_tails.insert(value_node(arm));
             }
         }
     }
@@ -22716,9 +22701,7 @@ impl<'a> Checker<'a> {
                 false => self.wraps_into_nullable(&found, &expected, value, span),
                 true => {
                     if let Some(how) = self.widened_slot(&found, &expected, Some(value), span) {
-                        self.checked
-                            .wrapped
-                            .insert(value as *const Expr as usize, how);
+                        self.checked.wrapped.insert(value_node(value), how);
                     }
                 }
             }
