@@ -44,7 +44,7 @@ use anyhow::{Result, anyhow};
 
 use crate::ast::{Expr, Item, Stmt};
 use crate::contracts::ty::TyOps;
-use crate::emit::{borrowing_structs_beside, holds_view, names_borrowing, package_borrowing};
+use crate::emit::{borrowing_structs_beside, holds_view, package_borrowing};
 use crate::parser::Parsed;
 
 /// **The ledger's small records are declared in Nikaia**
@@ -394,6 +394,10 @@ impl LedgerOps for Ledger {
             // Per unit, and it has to be: a `Symbol` is interned by the parse
             // of one file, so a set of them means nothing to another.
             let borrowing = borrowing_structs_beside(parsed, &package_borrowing);
+            let borrowing_names: BTreeSet<String> = borrowing
+                .iter()
+                .map(|s| parsed.text(*s).to_string())
+                .collect();
 
             for item in &parsed.program.items {
                 match &item.node {
@@ -500,94 +504,16 @@ impl LedgerOps for Ledger {
                         is_public,
                         ..
                     } => {
-                        // An `enum` takes no type parameters in this language
-                        // (Part I 4.4), so there is nothing to erase and the
-                        // payload types travel as they were written.
-                        let cases = variants
-                            .iter()
-                            .map(|variant| VariantContract {
-                                name: parsed.text(variant.name).to_string(),
-                                holds: match &variant.fields {
-                                    crate::ast::VariantFields::Unit => Vec::new(),
-                                    // Positional, so the names are the positions —
-                                    // the arrangement the checker's own map uses
-                                    // for a variant's payload.
-                                    crate::ast::VariantFields::Tuple(types) => types
-                                        .iter()
-                                        .enumerate()
-                                        .map(|(at, ty)| FieldContract {
-                                            name: at.to_string(),
-                                            ty: ty::Ty::from_ast(parsed, ty),
-                                            public: true,
-                                            default: String::new(),
-                                            attributes: Vec::new(),
-                                        })
-                                        .collect(),
-                                    crate::ast::VariantFields::Named(fields) => fields
-                                        .iter()
-                                        .map(|f| FieldContract {
-                                            name: parsed.text(f.name).to_string(),
-                                            ty: ty::Ty::from_ast(parsed, &f.ty),
-                                            // A variant carries no visibility word,
-                                            // so its fields are as reachable as the
-                                            // `enum` is (Part I 9.2).
-                                            public: true,
-                                            default: String::new(),
-                                            attributes: Vec::new(),
-                                        })
-                                        .collect(),
-                                },
-                                positional: matches!(
-                                    variant.fields,
-                                    crate::ast::VariantFields::Tuple(_)
-                                ),
-                                // `attribute_values` fills them.
-                                attributes: Vec::new(),
-                            })
-                            .collect();
+                        // **In Nikaia** (`tools/declared.nika`, ADR-294, #125).
                         ledger.types.insert(
                             parsed.text(*name).to_string(),
-                            TypeContract {
-                                public: *is_public,
-                                // A `struct` has fields and an `enum` has cases,
-                                // and neither has the other's.
-                                fields: Vec::new(),
-                                variants: cases,
-                                crosses: Crosses::Undecided,
-                                iterates_fallibly: false,
-                                // A declared type's own parts decide whether it
-                                // compares, so nothing is written here: this
-                                // column is for a type whose parts are Rust.
-                                compares: false,
-                                copies: false,
-                                touches: Vec::new(),
-                                // **The cases whose payload holds a view** (#544):
-                                // a struct in another file that holds this `enum`
-                                // is lowered with the lifetime the `enum` has, and
-                                // that file reads it here by name.
-                                tethered: variants
-                                    .iter()
-                                    .filter(|v| match &v.fields {
-                                        crate::ast::VariantFields::Unit => false,
-                                        crate::ast::VariantFields::Tuple(types) => {
-                                            types.iter().any(|t| {
-                                                holds_view(t) || names_borrowing(t, &borrowing)
-                                            })
-                                        }
-                                        crate::ast::VariantFields::Named(fields) => {
-                                            fields.iter().any(|f| {
-                                                holds_view(&f.ty)
-                                                    || names_borrowing(&f.ty, &borrowing)
-                                            })
-                                        }
-                                    })
-                                    .map(|v| parsed.text(v.name).to_string())
-                                    .collect(),
-                                // A declared type is walked by its parts.
-                                constant: String::new(),
-                                mark: String::new(),
-                                attributes: Vec::new(),
-                            },
+                            nikaia_std::tools::declared::declared_enum(
+                                &parsed.interner,
+                                &parsed.aliases,
+                                variants,
+                                *is_public,
+                                &borrowing_names,
+                            ),
                         );
                     }
                     Item::Struct {
@@ -597,50 +523,40 @@ impl LedgerOps for Ledger {
                         is_public,
                         is_extern,
                     } => {
-                        let parameters: BTreeSet<String> = generics
-                            .iter()
-                            .map(|g| parsed.text(g.name).to_string())
-                            .collect();
-                        let tethered = fields
-                            .iter()
-                            .filter(|f| holds_view(&f.ty) || names_borrowing(&f.ty, &borrowing))
-                            .map(|f| parsed.text(f.name).to_string())
-                            .collect();
+                        let tethered = nikaia_std::tools::declared::tethered_fields(
+                            &parsed.interner,
+                            fields,
+                            &borrowing_names,
+                        );
                         let key = parsed.text(*name).to_string();
-                        let field_types = fields
-                            .iter()
-                            .enumerate()
-                            .map(|(at, f)| FieldContract {
-                                name: parsed.text(f.name).to_string(),
-                                ty: ty::Ty::from_ast(parsed, &f.ty).parameterise(&parameters),
-                                // Every field of an `extern` struct is `pub` (ADR-284 D15).
-                                public: f.is_public || *is_extern,
-                                // A literal is its own text; anything else is
-                                // computed with the options' defaults below
-                                // (ADR-331 D5, ADR-318 D1-D3).
-                                default: match &f.default {
-                                    Some(d) if a_literal(&d.value) => {
-                                        nikaia_std::tools::declared::default_text(&d.value)
-                                    }
-                                    Some(d) => {
-                                        defaults.push(Computed {
-                                            key: key.clone(),
-                                            at,
-                                            parsed,
-                                            default: &d.value,
-                                            option: parsed.text(f.name).to_string(),
-                                            ty: &f.ty,
-                                            field: true,
-                                        });
-                                        String::new()
-                                    }
-                                    None => String::new(),
-                                },
-                                // Filled once the defaults are known, which an
-                                // attribute's fields may have (`attribute_values`).
-                                attributes: Vec::new(),
-                            })
-                            .collect();
+                        let mut field_types = nikaia_std::tools::declared::declared_fields(
+                            &parsed.interner,
+                            &parsed.aliases,
+                            generics,
+                            fields,
+                            *is_extern,
+                        );
+                        for (at, f) in fields.iter().enumerate() {
+                            // A literal is its own text; anything else is
+                            // computed with the options' defaults below
+                            // (ADR-331 D5, ADR-318 D1-D3).
+                            match &f.default {
+                                Some(d) if a_literal(&d.value) => {
+                                    field_types[at].default =
+                                        nikaia_std::tools::declared::default_text(&d.value);
+                                }
+                                Some(d) => defaults.push(Computed {
+                                    key: key.clone(),
+                                    at,
+                                    parsed,
+                                    default: &d.value,
+                                    option: parsed.text(f.name).to_string(),
+                                    ty: &f.ty,
+                                    field: true,
+                                }),
+                                None => {}
+                            }
+                        }
                         ledger.types.insert(
                             parsed.text(*name).to_string(),
                             TypeContract {

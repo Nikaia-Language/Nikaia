@@ -6191,6 +6191,56 @@ fn optional_ty(names: &winnow_grammar::InternerContext, aliases: &collections::B
     Some(written_ty(names, aliases, written))
 }
 
+pub fn declared_enum(names: &winnow_grammar::InternerContext, aliases: &collections::BTreeMap<String, String>, variants: &[EnumVariant], is_public: bool, borrowing: &collections::BTreeSet<String>) -> TypeContract {
+    let mut cases: Vec<VariantContract> = vec![];
+    let mut tethered: Vec<String> = vec![];
+    for variant in variants.iter() {
+        let mut holds: Vec<FieldContract> = vec![];
+        let mut positional = false;
+        let mut views = false;
+        match &variant.fields {
+            VariantFields::Unit => { },
+            VariantFields::Tuple(types) => {
+                positional = true;
+                let mut at = 0;
+                for ty in types.iter() {
+                    holds.push(FieldContract { name: format!("{}", at), ty: written_ty(names, aliases, ty), public: true, default: String::from(""), attributes: vec![] });
+                    if holds_view(ty) || names_borrowing(names, ty, borrowing) { views = true; }
+                    at = at + 1;
+                }
+            },
+            VariantFields::Named(fields) => {
+                for field in fields.iter() {
+                    holds.push(FieldContract { name: names.resolve(field.name).to_owned(), ty: written_ty(names, aliases, &field.ty), public: true, default: String::from(""), attributes: vec![] });
+                    if holds_view(&field.ty) || names_borrowing(names, &field.ty, borrowing) { views = true; }
+                }
+            },
+        }
+        let name = names.resolve(variant.name).to_owned();
+        if views { tethered.push(name.to_owned()); }
+        cases.push(VariantContract { name, holds, positional, attributes: vec![] });
+    }
+    let mut contract = TypeContract::empty();
+    contract.public = is_public;
+    contract.variants = cases;
+    contract.tethered = tethered;
+    contract
+}
+
+pub fn declared_fields(names: &winnow_grammar::InternerContext, aliases: &collections::BTreeMap<String, String>, generics: &[GenericParam], fields: &[FieldDef], is_extern: bool) -> Vec<FieldContract> {
+    let mut parameters: collections::BTreeSet<String> = collections::BTreeSet::new();
+    for generic in generics.iter() { parameters.insert(names.resolve(generic.name).to_owned()); }
+    let mut out: Vec<FieldContract> = vec![];
+    for field in fields.iter() { out.push(FieldContract { name: names.resolve(field.name).to_owned(), ty: written_ty(names, aliases, &field.ty).parameterise(&parameters), public: field.is_public || is_extern, default: String::from(""), attributes: vec![] }); }
+    out
+}
+
+pub fn tethered_fields(names: &winnow_grammar::InternerContext, fields: &[FieldDef], borrowing: &collections::BTreeSet<String>) -> Vec<String> {
+    let mut out: Vec<String> = vec![];
+    for field in fields.iter() { if holds_view(&field.ty) || names_borrowing(names, &field.ty, borrowing) { out.push(names.resolve(field.name).to_owned()); } }
+    out
+}
+
 
 // --- describe.nika ---
 
@@ -23636,7 +23686,7 @@ pub mod crossing {
 }
 pub mod declared {
     #[allow(unused_imports)]
-    pub use super::{DeclaredFn, written_ty, declared_function, default_text, declared_trait_method};
+    pub use super::{DeclaredFn, written_ty, declared_function, default_text, declared_trait_method, declared_enum, declared_fields, tethered_fields};
 }
 pub mod describe {
     #[allow(unused_imports)]

@@ -8,6 +8,11 @@ or the specification. A change only to the guide, the notes, the README, the
 website, the tests, the examples or the tooling around them raises nothing and
 has no heading here; `CLAUDE.md` draws the line.
 
+## [0.0.745] — 2026-10-10
+
+**More of the toolchain is Nikaia** (ADR-294, #125).
+- `contracts`: an enum's cases and a struct's fields, as the ledger records them, are `tools/declared.nika`.
+
 ## [0.0.744] — 2026-10-10
 
 **More of the toolchain is Nikaia**

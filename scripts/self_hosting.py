@@ -83,7 +83,7 @@ COMPILER_NIKA = {
     "buffers.nika": "contracts::keep: where each buffer lives - the walk that follows a view to every place it leaves, and the plan of keeps and refusals (0.0.404)",
     "text_tiers.nika": "text_tiers: what a declared `String` is below - the walk of every value's kind of text into the positions it reaches, the fixpoint over them, and where a value is handed into a mixed one; and a name's alias spelled out (0.0.405)",
     "ledger_text.nika": "contracts: a ledger as it is written out - `nikaia.contracts`, the record of what it was derived from, and a description's header - and the `throws` list a diagnostic quotes (0.0.406)",
-    "declared.nika": "contracts: what a declaration says before any body is read - the type a `.nika` declaration names, and the entry a function's and a trait method's declaration makes (0.0.407, 0.0.408)",
+    "declared.nika": "contracts: what a declaration says before any body is read - the type a `.nika` declaration names, and the entry a function's and a trait method's declaration makes (0.0.407, 0.0.408), and an enum's cases and a struct's fields (0.0.745)",
     "ledger_ops.nika": "contracts: what a build does with a package's ledger as a whole - the entries it publishes, whether it may be believed against its sources, and taking it in under the names a caller writes (0.0.408)",
     "written.nika": "check: an expression or a pattern written back the way the source wrote it, for an `assert`'s failure and a refusal's quote (0.0.410)",
     "check_words.nika": "check: the words its refusals are made of - an article, a count, a list of names, the nearest spelling, the note on a word another language reserves - and which lookups lend their key (0.0.411)",

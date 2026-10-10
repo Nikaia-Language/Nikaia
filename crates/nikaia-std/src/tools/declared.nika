@@ -279,3 +279,81 @@ fn optional_ty(names: ref winnow_grammar::InternerContext, aliases: ref collecti
     let written = ty ?? return null
     return written_ty(names, aliases, written)
 }
+
+/// **An `enum` is a type a consumer has to know the cases of** (Part I 3.4: a
+/// `match` handles every possible case). It takes no type parameters (4.4), so
+/// the payload types travel as they were written; a tuple case is positional,
+/// its fields named by their places, and a variant carries no visibility word,
+/// so its fields are as reachable as the `enum` is (9.2). `tethered` names the
+/// cases whose payload holds a view (#544): a struct in another file that holds
+/// this `enum` is lowered with the lifetime the `enum` has, and reads it here
+/// by name. `borrowing` is the types known to hold one.
+pub fn declared_enum(names: ref winnow_grammar::InternerContext, aliases: ref collections::BTreeMap[String, String], variants: ref Vec[EnumVariant], is_public: bool, borrowing: ref collections::BTreeSet[String]) -> TypeContract {
+    let mut cases: Vec[VariantContract] = []
+    let mut tethered: Vec[String] = []
+    for variant in variants {
+        let mut holds: Vec[FieldContract] = []
+        let mut positional = false
+        let mut views = false
+        match variant.fields {
+            VariantFields::Unit => {},
+            VariantFields::Tuple(types) => {
+                positional = true
+                let mut at = 0
+                for ty in types {
+                    holds.push(FieldContract { name: f"{at}", ty: written_ty(names, aliases, ty), public: true, default: "", attributes: [] })
+                    if holds_view(ty) || names_borrowing(names, ty, borrowing) {
+                        views = true
+                    }
+                    at = at + 1
+                }
+            },
+            VariantFields::Named(fields) => {
+                for field in fields {
+                    holds.push(FieldContract { name: names.resolve(field.name).clone(), ty: written_ty(names, aliases, field.ty), public: true, default: "", attributes: [] })
+                    if holds_view(field.ty) || names_borrowing(names, field.ty, borrowing) {
+                        views = true
+                    }
+                }
+            },
+        }
+        let name = names.resolve(variant.name).clone()
+        if views {
+            tethered.push(name.clone())
+        }
+        // `attribute_values` fills the attributes.
+        cases.push(VariantContract { name: name, holds: holds, positional: positional, attributes: [] })
+    }
+    let mut contract = TypeContract::empty()
+    contract.public = is_public
+    contract.variants = cases
+    contract.tethered = tethered
+    return contract
+}
+
+/// A `struct`'s fields as the ledger records them: the generics erased to
+/// variables, and every field of an `extern` struct `pub` (ADR-284 D15). The
+/// default of a field is the compiler's to fill (ADR-331 D5, ADR-318 D1-D3), and
+/// so are the attributes.
+pub fn declared_fields(names: ref winnow_grammar::InternerContext, aliases: ref collections::BTreeMap[String, String], generics: ref Vec[GenericParam], fields: ref Vec[FieldDef], is_extern: bool) -> Vec[FieldContract] {
+    let mut parameters: collections::BTreeSet[String] = collections::BTreeSet()
+    for generic in generics {
+        parameters.insert(names.resolve(generic.name).clone())
+    }
+    let mut out: Vec[FieldContract] = []
+    for field in fields {
+        out.push(FieldContract { name: names.resolve(field.name).clone(), ty: written_ty(names, aliases, field.ty).parameterise(parameters), public: field.is_public || is_extern, default: "", attributes: [] })
+    }
+    return out
+}
+
+/// The fields of a `struct` that hold a view, or a type that does (#544).
+pub fn tethered_fields(names: ref winnow_grammar::InternerContext, fields: ref Vec[FieldDef], borrowing: ref collections::BTreeSet[String]) -> Vec[String] {
+    let mut out: Vec[String] = []
+    for field in fields {
+        if holds_view(field.ty) || names_borrowing(names, field.ty, borrowing) {
+            out.push(names.resolve(field.name).clone())
+        }
+    }
+    return out
+}
