@@ -288,9 +288,9 @@ pub fn literal_type(expr: ref Expr) -> String? {
         Expr::LitStr { .. } => "String",
         Expr::LitInterpolated { .. } => "String",
         Expr::LitInt { .. } => "i64",
-        Expr::LitFloat(_) => "f64",
-        Expr::LitBool(_) => "bool",
-        Expr::LitChar(_) => "scalar",
+        Expr::LitFloat(_, _) => "f64",
+        Expr::LitBool(_, _) => "bool",
+        Expr::LitChar(_, _) => "scalar",
         Expr::Unary { expr, .. } => literal_type(expr),
         else => null,
     }
@@ -806,12 +806,12 @@ fn method_name(names: ref winnow_grammar::InternerContext, item: ref Item) -> St
 pub fn allocates_here(expr: ref Expr, asked: ref Asked) -> bool {
     return match expr {
         Expr::LitInt { .. } => true,
-        Expr::LitFloat(_) => true,
+        Expr::LitFloat(_, _) => true,
         Expr::LitStr { .. } => true,
         Expr::LitInterpolated { .. } => true,
-        Expr::LitChar(_) => true,
-        Expr::LitBool(_) => true,
-        Expr::LitNull => true,
+        Expr::LitChar(_, _) => true,
+        Expr::LitBool(_, _) => true,
+        Expr::LitNull(_) => true,
         Expr::StructLit { .. } => true,
         Expr::Call { func, .. } => a_call_that_allocates(call_path(func, asked.names), asked),
         Expr::MethodCall { method, .. } => hands_back_a_plain_value(asked.names.resolve(method), asked),
@@ -895,8 +895,8 @@ fn a_call_that_hands_it_back(path: ref String?) -> String {
 /// type holds a `Shared`, or the tail of a block that is one.
 pub fn named_handle(expr: ref Expr, names: ref winnow_grammar::InternerContext, scope: ref collections::BTreeMap[String, Ty]) -> String? {
     return match expr {
-        Expr::Variable(name) => a_handle_in_scope(names.resolve(name), scope),
-        Expr::Block(block) => a_handle_at_the_tail(block, names, scope),
+        Expr::Variable(name, _) => a_handle_in_scope(names.resolve(name), scope),
+        Expr::Block(block, _) => a_handle_at_the_tail(block, names, scope),
         else => null,
     }
 }
@@ -922,7 +922,7 @@ fn a_handle_at_the_tail(block: ref Block, names: ref winnow_grammar::InternerCon
 /// The name of the type a name in scope has, without its view.
 pub fn named_type(expr: ref Expr, names: ref winnow_grammar::InternerContext, scope: ref collections::BTreeMap[String, Ty]) -> String? {
     return match expr {
-        Expr::Variable(name) => scope_type_name(names.resolve(name), scope),
+        Expr::Variable(name, _) => scope_type_name(names.resolve(name), scope),
         else => null,
     }
 }
@@ -936,7 +936,7 @@ fn scope_type_name(name: ref String, scope: ref collections::BTreeMap[String, Ty
 /// `par_iter()`, a name bound to one, or a walk chained onto either.
 pub fn walks_in_parallel(receiver: ref Expr, names: ref winnow_grammar::InternerContext, parallel: ref collections::BTreeSet[String]) -> bool {
     return match receiver {
-        Expr::Variable(name) => parallel.contains(names.resolve(name)),
+        Expr::Variable(name, _) => parallel.contains(names.resolve(name)),
         Expr::MethodCall { receiver, method, .. } => a_parallel_method(names.resolve(method)) || walks_in_parallel(receiver, names, parallel),
         else => false,
     }
@@ -954,8 +954,8 @@ pub fn a_parallel_method(method: ref String) -> bool {
 /// The name a call is written with: a bare name, or a path joined by `::`.
 pub fn call_path(func: ref Expr, names: ref winnow_grammar::InternerContext) -> String? {
     return match func {
-        Expr::Variable(name) => names.resolve(name).clone(),
-        Expr::Path(segments) => joined_segments(segments, names),
+        Expr::Variable(name, _) => names.resolve(name).clone(),
+        Expr::Path(segments, _) => joined_segments(segments, names),
         else => null,
     }
 }
@@ -1174,7 +1174,7 @@ fn binding_type(written: ref Type?, aliased: ref String?, value: ref Expr, asked
 // unsaid type is never a word.
 fn hull_written(func: ref Expr, args: ref Vec[Expr], asked: ref Asked) -> Ty? {
     let named = match func {
-        Expr::Variable(name) => asked.names.resolve(name).clone(),
+        Expr::Variable(name, _) => asked.names.resolve(name).clone(),
         else => return null,
     }
     if !is_hull(named) {
@@ -1225,7 +1225,7 @@ fn slot_of(expr: ref Expr, asked: ref Asked, mut walk: SharingWalk) -> String? {
         return slot(walk.function, handle ?? "")
     }
     return match expr {
-        Expr::Field { base, name } => field_slot(base, asked.names.resolve(name), asked, walk),
+        Expr::Field { base, name, .. } => field_slot(base, asked.names.resolve(name), asked, walk),
         else => null,
     }
 }
@@ -1254,7 +1254,7 @@ fn sharing_expression(expr: ref Expr, asked: ref Asked, holes_of: fn(ref Expr) -
             }
             sharing_expression(body, asked, holes_of, ty_of, walk)
         }
-        Expr::Call { func, args, config } => {
+        Expr::Call { func, args, config, .. } => {
             let callee = call_path(func, asked.names)
             // A door over several locks names the handles it holds together
             // (ADR-281 D18).
@@ -1274,7 +1274,7 @@ fn sharing_expression(expr: ref Expr, asked: ref Asked, holes_of: fn(ref Expr) -
         Expr::SafeMethod { .. } => sharing_method(expr, asked, holes_of, ty_of, walk),
         // A `Shared` put into a struct is the struct's field's allocation, and
         // the field is where a crossing of the struct lands.
-        Expr::StructLit { name, fields } => {
+        Expr::StructLit { name, fields, .. } => {
             let owner = asked.names.resolve(name).clone()
             for field in fields {
                 struct_field(owner, field, asked, holes_of, ty_of, walk)
@@ -1298,14 +1298,14 @@ fn sharing_expression(expr: ref Expr, asked: ref Asked, holes_of: fn(ref Expr) -
             a_kept_lambda_uses(expr, asked, walk)
             sharing_block(body, asked, holes_of, ty_of, walk)
         }
-        Expr::Block(block) => sharing_block(block, asked, holes_of, ty_of, walk),
-        Expr::Overlap(block) => sharing_block(block, asked, holes_of, ty_of, walk),
-        Expr::If { cond, then_branch, else_branch } => {
+        Expr::Block(block, _) => sharing_block(block, asked, holes_of, ty_of, walk),
+        Expr::Overlap(block, _) => sharing_block(block, asked, holes_of, ty_of, walk),
+        Expr::If { cond, then_branch, else_branch, .. } => {
             sharing_expression(cond, asked, holes_of, ty_of, walk)
             sharing_block(then_branch, asked, holes_of, ty_of, walk)
             sharing_block(else_branch ?? return, asked, holes_of, ty_of, walk)
         }
-        Expr::Match { value, arms } => {
+        Expr::Match { value, arms, .. } => {
             sharing_expression(value, asked, holes_of, ty_of, walk)
             for arm in arms {
                 sharing_expression(arm.body, asked, holes_of, ty_of, walk)
@@ -1316,24 +1316,24 @@ fn sharing_expression(expr: ref Expr, asked: ref Asked, holes_of: fn(ref Expr) -
             sharing_expression(rhs, asked, holes_of, ty_of, walk)
         }
         Expr::Unary { expr, .. } => sharing_expression(expr, asked, holes_of, ty_of, walk),
-        Expr::Try(inner) => sharing_expression(inner, asked, holes_of, ty_of, walk),
-        Expr::Throw(inner) => sharing_expression(inner, asked, holes_of, ty_of, walk),
+        Expr::Try(inner, _) => sharing_expression(inner, asked, holes_of, ty_of, walk),
+        Expr::Throw(inner, _) => sharing_expression(inner, asked, holes_of, ty_of, walk),
         Expr::Cast { expr, .. } => sharing_expression(expr, asked, holes_of, ty_of, walk),
         Expr::Field { base, .. } => sharing_expression(base, asked, holes_of, ty_of, walk),
         Expr::SafeField { base, .. } => sharing_expression(base, asked, holes_of, ty_of, walk),
-        Expr::Index { base, index } => {
+        Expr::Index { base, index, .. } => {
             sharing_expression(base, asked, holes_of, ty_of, walk)
             sharing_expression(index, asked, holes_of, ty_of, walk)
         }
-        Expr::Coalesce { value, fallback } => {
+        Expr::Coalesce { value, fallback, .. } => {
             sharing_expression(value, asked, holes_of, ty_of, walk)
             sharing_expression(fallback, asked, holes_of, ty_of, walk)
         }
-        Expr::TryCatch { expr, handler } => {
+        Expr::TryCatch { expr, handler, .. } => {
             sharing_expression(expr, asked, holes_of, ty_of, walk)
             sharing_block(handler, asked, holes_of, ty_of, walk)
         }
-        Expr::Tuple(parts) => {
+        Expr::Tuple(parts, _) => {
             for part in parts {
                 sharing_expression(part, asked, holes_of, ty_of, walk)
             }
@@ -1379,7 +1379,7 @@ fn a_handle_by_value(named: ref String, walk: ref SharingWalk) -> bool {
 // field filled from something this walk cannot follow holds the floor.
 fn struct_field(owner: ref String, field: ref FieldInit, asked: ref Asked, holes_of: fn(ref Expr) -> Vec[Expr] sync, ty_of: fn(ref Type) -> Ty sync, mut walk: SharingWalk) {
     let field_name = asked.names.resolve(field.name).clone()
-    let value = field.value?.clone() ?? Expr::Variable(field.name)
+    let value = field.value?.clone() ?? Expr::Variable(field.name, fresh_id())
     let key = f"{owner}.{field_name}"
     let handle = named_handle(value, asked.names, walk.scope)
     if handle != null {
@@ -1409,8 +1409,8 @@ fn struct_field(owner: ref String, field: ref FieldInit, asked: ref Asked, holes
 // see the end of (ADR-296 D17).
 fn sharing_method(call: ref Expr, asked: ref Asked, holes_of: fn(ref Expr) -> Vec[Expr] sync, ty_of: fn(ref Type) -> Ty sync, mut walk: SharingWalk) {
     let (receiver, method, args, config) = match call {
-        Expr::MethodCall { receiver, method, args, config } => (receiver, asked.names.resolve(method).clone(), args, config),
-        Expr::SafeMethod { receiver, method, args, config } => (receiver, asked.names.resolve(method).clone(), args, config),
+        Expr::MethodCall { receiver, method, args, config, .. } => (receiver, asked.names.resolve(method).clone(), args, config),
+        Expr::SafeMethod { receiver, method, args, config, .. } => (receiver, asked.names.resolve(method).clone(), args, config),
         else => return,
     }
     if method == "get" && args.len() == 0 {

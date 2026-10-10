@@ -256,7 +256,7 @@ pub fn accounted(stmt: ref Stmt, words: ref winnow_grammar::InternerContext, wal
 // this one (ADR-292).
 fn accounted_value(binds: String?, value: ref Expr, names: ref winnow_grammar::InternerContext, walking: ref Walking) -> Accounted {
     return match value {
-        Expr::TryCatch { expr, handler } => {
+        Expr::TryCatch { expr, handler, .. } => {
             if diverts_within(handler.stmts, false) {
                 return Accounted::DivertingHandler
             }
@@ -486,12 +486,12 @@ fn reduce_handler(block: ref Block, names: ref winnow_grammar::InternerContext, 
 fn reduce(node: ref Expr, names: ref winnow_grammar::InternerContext, mut reduced: Reduced) {
     match node {
         Expr::LitInt { .. } => {}
-        Expr::LitFloat(_) => {}
-        Expr::LitBool(_) => {}
-        Expr::LitNull => {}
-        Expr::LitChar(_) => {}
+        Expr::LitFloat(_, _) => {}
+        Expr::LitBool(_, _) => {}
+        Expr::LitNull(_) => {}
+        Expr::LitChar(_, _) => {}
         Expr::LitStr { .. } => {}
-        Expr::Call { func, args, config } => {
+        Expr::Call { func, args, config, .. } => {
             // Kap 5.1's options would have to be matched against the callee's
             // declaration order first.
             if config.len() > 0 {
@@ -515,7 +515,7 @@ fn reduce(node: ref Expr, names: ref winnow_grammar::InternerContext, mut reduce
             reduce(lhs, names, reduced)
             reduce(rhs, names, reduced)
         }
-        Expr::Tuple(parts) => {
+        Expr::Tuple(parts, _) => {
             for part in parts {
                 reduce(part, names, reduced)
             }
@@ -526,12 +526,12 @@ fn reduce(node: ref Expr, names: ref winnow_grammar::InternerContext, mut reduce
             }
         }
         // A jump ends the sequence (ADR-276 D20).
-        Expr::Return(_) => stopped(reduced, Accounted::Opaque("a `return`, a `break` or a `continue`")),
-        Expr::Break => stopped(reduced, Accounted::Opaque("a `return`, a `break` or a `continue`")),
-        Expr::Continue => stopped(reduced, Accounted::Opaque("a `return`, a `break` or a `continue`")),
+        Expr::Return(_, _) => stopped(reduced, Accounted::Opaque("a `return`, a `break` or a `continue`")),
+        Expr::Break(_) => stopped(reduced, Accounted::Opaque("a `return`, a `break` or a `continue`")),
+        Expr::Continue(_) => stopped(reduced, Accounted::Opaque("a `return`, a `break` or a `continue`")),
         // A name is a value from somewhere else, which the closure would have
         // to capture.
-        Expr::Variable(name) => noted(reduced, Accounted::NonLiteralArgument(names.resolve(name).clone())),
+        Expr::Variable(name, _) => noted(reduced, Accounted::NonLiteralArgument(names.resolve(name).clone())),
         Expr::Field { base, .. } => {
             noted(reduced, Accounted::Opaque("a value read from somewhere else"))
             reduce(base, names, reduced)
@@ -540,14 +540,14 @@ fn reduce(node: ref Expr, names: ref winnow_grammar::InternerContext, mut reduce
             noted(reduced, Accounted::Opaque("a value read from somewhere else"))
             reduce(base, names, reduced)
         }
-        Expr::Index { base, index } => {
+        Expr::Index { base, index, .. } => {
             noted(reduced, Accounted::Opaque("a value read from somewhere else"))
             reduce(base, names, reduced)
             reduce(index, names, reduced)
         }
         // **A path names an item, and an item is not a place**: nothing to
         // read, capture or carry.
-        Expr::Path(_) => {}
+        Expr::Path(_, _) => {}
         Expr::StructLit { fields, .. } => {
             noted(reduced, Accounted::Opaque("a value read from somewhere else"))
             for field in fields {
@@ -560,7 +560,7 @@ fn reduce(node: ref Expr, names: ref winnow_grammar::InternerContext, mut reduce
             reduce(end, names, reduced)
         }
         // `a ?? b` runs `b` only when `a` had nothing (D5).
-        Expr::Coalesce { value, fallback } => {
+        Expr::Coalesce { value, fallback, .. } => {
             noted(reduced, Accounted::Opaque("a `??`, whose fallback runs only sometimes"))
             reduce(value, names, reduced)
             reduce(fallback, names, reduced)
@@ -569,8 +569,8 @@ fn reduce(node: ref Expr, names: ref winnow_grammar::InternerContext, mut reduce
         // *Which* entry `xs.len()` is needs the type checker (ADR-288); the
         // name is recorded and `accounted` asks whether every entry of it
         // reaches nothing. A `?.m()` is accounted for exactly as a `.m()`.
-        Expr::MethodCall { receiver, method, args, config } => reduce_method(receiver, method, args, config, names, reduced),
-        Expr::SafeMethod { receiver, method, args, config } => reduce_method(receiver, method, args, config, names, reduced),
+        Expr::MethodCall { receiver, method, args, config, .. } => reduce_method(receiver, method, args, config, names, reduced),
+        Expr::SafeMethod { receiver, method, args, config, .. } => reduce_method(receiver, method, args, config, names, reduced),
         // A lambda's body is in the function and not in this value, and the
         // touch set has to be complete for the statement (D4).
         Expr::Closure { .. } => stopped(reduced, Accounted::Opaque("a lambda, whose body this analysis does not read")),
@@ -607,8 +607,8 @@ fn a_short_circuit(op: ref BinaryOp) -> bool {
 // joined by `::`.
 fn called_key(func: ref Expr, names: ref winnow_grammar::InternerContext) -> String? {
     return match func {
-        Expr::Variable(name) => names.resolve(name).clone(),
-        Expr::Path(segments) => joined_segments(segments, names),
+        Expr::Variable(name, _) => names.resolve(name).clone(),
+        Expr::Path(segments, _) => joined_segments(segments, names),
         else => null,
     }
 }
@@ -648,9 +648,9 @@ pub fn diverts_within(stmts: ref Vec[Spanned[Stmt]], bound: bool) -> bool {
 // Whether an expression can leave the block it is in.
 fn holds_throw(expr: ref Expr, bound: bool) -> bool {
     return match expr {
-        Expr::Throw(_) => true,
-        Expr::Block(block) => diverts_within(block.stmts, bound),
-        Expr::Overlap(block) => diverts_within(block.stmts, bound),
+        Expr::Throw(_, _) => true,
+        Expr::Block(block, _) => diverts_within(block.stmts, bound),
+        Expr::Overlap(block, _) => diverts_within(block.stmts, bound),
         Expr::If { then_branch, else_branch, .. } => diverts_within(then_branch.stmts, bound) || else_diverts(else_branch, bound),
         Expr::Match { arms, .. } => an_arm_throws(arms, bound),
         else => false,

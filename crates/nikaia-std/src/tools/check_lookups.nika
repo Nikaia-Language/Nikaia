@@ -100,7 +100,7 @@ impl CheckState {
         return match expr {
             Expr::MethodCall { method, .. } => self.dsl_drivers.contains(world.words.resolve(method)),
             Expr::Call { func, .. } => match func {
-                Expr::Variable(name) => self.dsl_drivers.contains(world.words.resolve(name)),
+                Expr::Variable(name, _) => self.dsl_drivers.contains(world.words.resolve(name)),
                 else => false,
             },
             else => false,
@@ -116,7 +116,7 @@ impl CheckState {
         return match expr {
             Expr::Dsl { .. } => true,
             Expr::Call { func, .. } => match func {
-                Expr::Path(segments) => self.names_a_grammar_rule(world, segments),
+                Expr::Path(segments, _) => self.names_a_grammar_rule(world, segments),
                 else => false,
             },
             else => false,
@@ -147,7 +147,7 @@ impl CheckState {
             else => return false,
         }
         return match base {
-            Expr::Variable(name) => self.has_an_open_argument(world.words.resolve(name)),
+            Expr::Variable(name, _) => self.has_an_open_argument(world.words.resolve(name)),
             else => false,
         }
     }
@@ -164,12 +164,12 @@ impl CheckState {
     /// call, method, path or operator over such.
     pub fn names_something_here(ref self, world: ref CheckWorld, expr: ref Expr) -> bool sync {
         return match expr {
-            Expr::Variable(name) => self.names_a_binding_or_a_function(world, world.words.resolve(name)),
+            Expr::Variable(name, _) => self.names_a_binding_or_a_function(world, world.words.resolve(name)),
             Expr::Field { base, .. } => self.names_something_here(world, base),
             Expr::MethodCall { receiver, .. } => self.names_something_here(world, receiver),
             Expr::SafeMethod { receiver, .. } => self.names_something_here(world, receiver),
             Expr::Call { func, args, .. } => self.names_something_here(world, func) || self.any_names_something(world, args),
-            Expr::Path(segments) => self.names_a_function_by_path(world, segments),
+            Expr::Path(segments, _) => self.names_a_function_by_path(world, segments),
             Expr::Binary { lhs, rhs, .. } => self.names_something_here(world, lhs) || self.names_something_here(world, rhs),
             Expr::Unary { expr, .. } => self.names_something_here(world, expr),
             else => false,
@@ -206,8 +206,8 @@ impl CheckState {
     pub fn is_a_number(ref self, world: ref CheckWorld, expr: ref Expr) -> bool sync {
         return match expr {
             Expr::LitInt { .. } => true,
-            Expr::LitFloat(_) => true,
-            Expr::Variable(name) => self.folds_to_a_number(world.words.resolve(name)),
+            Expr::LitFloat(_, _) => true,
+            Expr::Variable(name, _) => self.folds_to_a_number(world.words.resolve(name)),
             else => false,
         }
     }
@@ -259,7 +259,7 @@ fn any_unknown(types: ref Vec[Ty]) -> bool sync {
 /// to be pointed at, and the message says so instead of inventing one.
 pub fn names_of(world: ref CheckWorld, expr: ref Expr) -> String? sync {
     return match expr {
-        Expr::Variable(name) => world.words.resolve(name).clone(),
+        Expr::Variable(name, _) => world.words.resolve(name).clone(),
         else => null,
     }
 }

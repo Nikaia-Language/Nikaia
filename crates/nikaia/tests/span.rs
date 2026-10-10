@@ -55,7 +55,10 @@ fn an_integer_literal_is_a_magnitude_and_a_sign() {
     use nikaia::ast::{Expr, Stmt, int_literal, int_value};
 
     for n in [0i128, 7, -7, i64::MIN as i128, u64::MAX as i128] {
-        let Expr::LitInt { value, negative } = int_literal(n) else {
+        let Expr::LitInt {
+            value, negative, ..
+        } = int_literal(n)
+        else {
             panic!("an integer literal")
         };
         assert_eq!(int_value(value, negative), n);
@@ -74,7 +77,8 @@ fn an_integer_literal_is_a_magnitude_and_a_sign() {
             value,
             Expr::LitInt {
                 value: 9223372036854775808,
-                negative: true
+                negative: true,
+                ..
             }
         ),
         "{value:?}"

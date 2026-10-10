@@ -32,7 +32,7 @@ pub fn is_a_parameter(name: ref String, params: ref collections::BTreeSet[String
 
 fn collect_names(expr: ref Expr, words: ref winnow_grammar::InternerContext, holes_of: fn(ref Expr) -> Vec[Expr] sync, mut names: collections::BTreeSet[String]) {
     match expr {
-        Expr::Variable(name) => {
+        Expr::Variable(name, _) => {
             names.insert(words.resolve(name).clone())
         },
         else => {},
@@ -41,7 +41,7 @@ fn collect_names(expr: ref Expr, words: ref winnow_grammar::InternerContext, hol
         collect_names(hole, words, holes_of, names)
     }
     match expr {
-        Expr::Call { func, args, config } => {
+        Expr::Call { func, args, config, .. } => {
             collect_names(func, words, holes_of, names)
             each_name(args, words, holes_of, names)
             for c in config {
@@ -67,12 +67,12 @@ fn collect_names(expr: ref Expr, words: ref winnow_grammar::InternerContext, hol
             collect_names(rhs, words, holes_of, names)
         },
         Expr::Unary { expr, .. } => collect_names(expr, words, holes_of, names),
-        Expr::Try(inner) => collect_names(inner, words, holes_of, names),
-        Expr::Throw(inner) => collect_names(inner, words, holes_of, names),
+        Expr::Try(inner, _) => collect_names(inner, words, holes_of, names),
+        Expr::Throw(inner, _) => collect_names(inner, words, holes_of, names),
         Expr::Cast { expr, .. } => collect_names(expr, words, holes_of, names),
         Expr::Field { base, .. } => collect_names(base, words, holes_of, names),
         Expr::SafeField { base, .. } => collect_names(base, words, holes_of, names),
-        Expr::Index { base, index } => {
+        Expr::Index { base, index, .. } => {
             collect_names(base, words, holes_of, names)
             collect_names(index, words, holes_of, names)
         },
@@ -80,14 +80,14 @@ fn collect_names(expr: ref Expr, words: ref winnow_grammar::InternerContext, hol
             collect_names(start, words, holes_of, names)
             collect_names(end, words, holes_of, names)
         },
-        Expr::Tuple(parts) => each_name(parts, words, holes_of, names),
-        Expr::Coalesce { value, fallback } => {
+        Expr::Tuple(parts, _) => each_name(parts, words, holes_of, names),
+        Expr::Coalesce { value, fallback, .. } => {
             collect_names(value, words, holes_of, names)
             collect_names(fallback, words, holes_of, names)
         },
         Expr::TryCatch { expr, .. } => collect_names(expr, words, holes_of, names),
         Expr::If { cond, .. } => collect_names(cond, words, holes_of, names),
-        Expr::Match { value, arms } => {
+        Expr::Match { value, arms, .. } => {
             collect_names(value, words, holes_of, names)
             for arm in arms {
                 collect_maybe(arm.guard, words, holes_of, names)
@@ -106,8 +106,8 @@ fn collect_names(expr: ref Expr, words: ref winnow_grammar::InternerContext, hol
                 collect_maybe(field.value, words, holes_of, names)
             }
         },
-        Expr::Return(value) => collect_maybe(value, words, holes_of, names),
-        Expr::Select(arms) => {
+        Expr::Return(value, _) => collect_maybe(value, words, holes_of, names),
+        Expr::Select(arms, _) => {
             for arm in arms {
                 collect_names(arm.value, words, holes_of, names)
             }

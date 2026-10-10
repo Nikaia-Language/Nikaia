@@ -57,8 +57,8 @@ pub fn params_of(receiver: Receiver?, args: Vec[FnArg], zone: ConfigZone?) -> Fn
 
 /// `jump if cond` as the tree has always written it: `if cond { jump }`
 /// (ADR-276 D23).
-pub fn guarded(jump: Stmt, cond: Expr, span: Span) -> Stmt {
-    return Stmt::Expr(Expr::If { cond: cond, then_branch: Block { stmts: [Spanned { node: jump, span: span, doc: null, attributes: [] }] }, else_branch: null })
+pub fn guarded(jump: Stmt, cond: Expr, span: Span, id: node_id::NodeId) -> Stmt {
+    return Stmt::Expr(Expr::If { cond: cond, then_branch: Block { stmts: [Spanned { node: jump, span: span, doc: null, attributes: [] }] }, else_branch: null, id: id })
 }
 
 /// Left-associative: `a - b - c` is `(a - b) - c`.
@@ -68,10 +68,16 @@ pub fn guarded(jump: Stmt, cond: Expr, span: Span) -> Stmt {
 /// than of the whole expression, because uniqueness is the only property a key
 /// needs: two `+`s in one statement have two spans, which is exactly what a
 /// statement-keyed channel could not give (ADR-081 D1).
-pub fn fold_binary(head: Expr, tail: Vec[(BinaryOp, Expr, Span)]) -> Expr {
+///
+/// **`first` is the first of the numbers the parser set aside** for the nodes
+/// this makes, one for each step ([ADR-340](../../docs/specification/adr/adr-340.md)
+/// D1), so the ids follow the order the nodes were made in.
+pub fn fold_binary(head: Expr, tail: Vec[(BinaryOp, Expr, Span)], first: u32) -> Expr {
     let mut lhs = head
+    let mut next = first
     for step in tail.drain() {
-        lhs = Expr::Binary { op: step.0, lhs: lhs, rhs: step.1, span: step.2, grouped: false }
+        lhs = Expr::Binary { op: step.0, lhs: lhs, rhs: step.1, span: step.2, grouped: false, id: numbered_id(next) }
+        next = next + 1
     }
     return lhs
 }
@@ -81,8 +87,9 @@ pub fn fold_binary(head: Expr, tail: Vec[(BinaryOp, Expr, Span)]) -> Expr {
 /// has to remember a parenthesis.
 pub fn grouped(e: Expr) -> Expr {
     match e {
-        Expr::Binary { op, lhs, rhs, span, .. } => {
-            return Expr::Binary { op: op, lhs: lhs, rhs: rhs, span: span, grouped: true }
+        // The same node, so the same id (ADR-340 D2).
+        Expr::Binary { op, lhs, rhs, span, id, .. } => {
+            return Expr::Binary { op: op, lhs: lhs, rhs: rhs, span: span, grouped: true, id: id }
         },
         other => {
             return other
@@ -91,20 +98,27 @@ pub fn grouped(e: Expr) -> Expr {
 }
 
 /// Every postfix step put onto what it follows, in the order written.
-pub fn fold_postfix(base: Expr, tail: Vec[Postfix]) -> Expr {
+///
+/// **`first` starts the numbers the parser set aside**, three for each step
+/// (`xs[a..]` makes three nodes), so the ids follow the order the nodes were
+/// made in ([ADR-340](../../docs/specification/adr/adr-340.md) D1).
+pub fn fold_postfix(base: Expr, tail: Vec[Postfix], first: u32) -> Expr {
     let mut recv = base
+    let mut next = first
     for step in tail.drain() {
+        let id = numbered_id(next)
         recv = match step {
-            Postfix::Field(name) => Expr::Field { base: recv, name: name },
-            Postfix::SafeField(name) => Expr::SafeField { base: recv, name: name },
-            Postfix::SafeMethod(method, args, config) => Expr::SafeMethod { receiver: recv, method: method, args: args, config: config },
-            Postfix::Method(method, args, config) => Expr::MethodCall { receiver: recv, method: method, args: args, config: config },
-            Postfix::Index(index) => Expr::Index { base: recv, index: index },
+            Postfix::Field(name) => Expr::Field { base: recv, name: name, id: id },
+            Postfix::SafeField(name) => Expr::SafeField { base: recv, name: name, id: id },
+            Postfix::SafeMethod(method, args, config) => Expr::SafeMethod { receiver: recv, method: method, args: args, config: config, id: id },
+            Postfix::Method(method, args, config) => Expr::MethodCall { receiver: recv, method: method, args: args, config: config, id: id },
+            Postfix::Index(index) => Expr::Index { base: recv, index: index, id: id },
             // **`xs[a..]` is `xs[a..<xs.len()]`** (#527). The emitter writes
             // the language below's `a..` for it, so the base is evaluated once.
-            Postfix::IndexFrom(start, len) => Expr::Index { base: recv.clone(), index: Expr::Range { start: start, end: Expr::MethodCall { receiver: recv, method: len, args: [], config: [] }, inclusive: false } },
-            Postfix::With(fields, at) => Expr::With { base: recv, fields: fields, at: at },
+            Postfix::IndexFrom(start, len) => Expr::Index { base: recv.clone(), index: Expr::Range { start: start, end: Expr::MethodCall { receiver: recv, method: len, args: [], config: [], id: numbered_id(next + 1) }, inclusive: false, id: numbered_id(next + 2) }, id: id },
+            Postfix::With(fields, at) => Expr::With { base: recv, fields: fields, at: at, id: id },
         }
+        next = next + 3
     }
     return recv
 }

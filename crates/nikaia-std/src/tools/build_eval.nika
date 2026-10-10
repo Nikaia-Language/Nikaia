@@ -157,9 +157,9 @@ fn bt_float(written: ref String) -> f64 throws {
 
 fn bt_expr[H: BtHost](expr: ref Expr, frame: ref collections::BTreeMap[String, BuildValue], host: ref H, mut state: BtState) -> BuildValue sync throws {
     return match expr {
-        Expr::LitInt { value, negative } => BuildValue::Int(integer(value, negative)),
-        Expr::LitFloat(written) => BuildValue::Float(bt_float(written)),
-        Expr::LitBool(value) => BuildValue::Bool(value),
+        Expr::LitInt { value, negative, .. } => BuildValue::Int(integer(value, negative)),
+        Expr::LitFloat(written, _) => BuildValue::Float(bt_float(written)),
+        Expr::LitBool(value, _) => BuildValue::Bool(value),
         Expr::LitStr { text, .. } => {
             let decoded = decoded(text) fn(n) { host.char_of(n) }
             if decoded == null {
@@ -167,7 +167,7 @@ fn bt_expr[H: BtHost](expr: ref Expr, frame: ref collections::BTreeMap[String, B
             }
             BuildValue::Text(decoded ?? "")
         },
-        Expr::Tuple(parts) => {
+        Expr::Tuple(parts, _) => {
             let mut held: Vec[BuildValue] = []
             for part in parts {
                 held.push(bt_expr(part, frame, host, state))
@@ -176,10 +176,10 @@ fn bt_expr[H: BtHost](expr: ref Expr, frame: ref collections::BTreeMap[String, B
         },
         // **`f"…"` is text with code in it** (ADR-309), and the code is Nikaia,
         // so this evaluator can read it.
-        Expr::LitInterpolated { parts } => bt_interpolated(parts, frame, host, state),
+        Expr::LitInterpolated { parts, .. } => bt_interpolated(parts, frame, host, state),
         // **A variant that carries nothing**: `Shade::Odd`, which is a value and
         // not a call.
-        Expr::Path(path) => {
+        Expr::Path(path, _) => {
             if path.len() != 2 {
                 throw BtRefusal::Unevaluable
             }
@@ -190,11 +190,11 @@ fn bt_expr[H: BtHost](expr: ref Expr, frame: ref collections::BTreeMap[String, B
             }
             BuildValue::Variant { ty: ty, variant: variant, payload: [] }
         },
-        Expr::Variable(symbol) => bt_variable(symbol, frame, host, state),
+        Expr::Variable(symbol, _) => bt_variable(symbol, frame, host, state),
         Expr::Unary { .. } => bt_unary_expr(expr, frame, host, state),
         Expr::Binary { .. } => bt_binary_expr(expr, frame, host, state),
         // **An `if` is an expression always** (Part I 3.1), so it is one here too.
-        Expr::If { cond, then_branch, else_branch } => bt_if_value(cond, then_branch, else_branch, frame, host, state),
+        Expr::If { cond, then_branch, else_branch, .. } => bt_if_value(cond, then_branch, else_branch, frame, host, state),
         // **A list literal is the aggregate's only constructor here** (ADR-135).
         Expr::ListLit { items, .. } => {
             let mut values: Vec[BuildValue] = []
@@ -203,7 +203,7 @@ fn bt_expr[H: BtHost](expr: ref Expr, frame: ref collections::BTreeMap[String, B
             }
             BuildValue::List(values)
         },
-        Expr::Index { base, index } => {
+        Expr::Index { base, index, .. } => {
             let on = bt_expr(base, frame, host, state)
             let at = bt_expr(index, frame, host, state)
             bt_element(on, at)
@@ -211,14 +211,14 @@ fn bt_expr[H: BtHost](expr: ref Expr, frame: ref collections::BTreeMap[String, B
         // Kap 4.2's literal, and the shorthand with it: `Point { x, y }` is
         // `Point { x: x, y: y }`, which the parser leaves as a field with no
         // value of its own.
-        Expr::StructLit { name, fields } => {
+        Expr::StructLit { name, fields, .. } => {
             let ty = host.text(state.unit, name)
             let mut held: collections::BTreeMap[String, BuildValue] = collections::BTreeMap()
             for field in fields {
                 let written = host.text(state.unit, field.name)
                 let given = field.value?.clone()
                 if given != null {
-                    held.insert(written, bt_expr(given ?? Expr::LitNull, frame, host, state))
+                    held.insert(written, bt_expr(given ?? Expr::LitNull(fresh_id()), frame, host, state))
                 } else {
                     let found = frame.get(written)
                     if found == null {
@@ -229,9 +229,9 @@ fn bt_expr[H: BtHost](expr: ref Expr, frame: ref collections::BTreeMap[String, B
             }
             BuildValue::Struct { name: ty, fields: held }
         },
-        Expr::Field { base, name } => bt_field(base, name, frame, host, state),
-        Expr::MethodCall { receiver, method, args, config } => bt_method(receiver, method, args, config, frame, host, state),
-        Expr::Call { func, args, config } => bt_call_expr(func, args, config, frame, host, state),
+        Expr::Field { base, name, .. } => bt_field(base, name, frame, host, state),
+        Expr::MethodCall { receiver, method, args, config, .. } => bt_method(receiver, method, args, config, frame, host, state),
+        Expr::Call { func, args, config, .. } => bt_call_expr(func, args, config, frame, host, state),
         else => {
             throw BtRefusal::Unevaluable
         },
@@ -261,7 +261,7 @@ fn bt_variable[H: BtHost](symbol: winnow_grammar::Symbol, frame: ref collections
 
 fn bt_unary_expr[H: BtHost](whole: ref Expr, frame: ref collections::BTreeMap[String, BuildValue], host: ref H, mut state: BtState) -> BuildValue sync throws {
     return match whole {
-        Expr::Unary { op, expr } => bt_unary(op, bt_expr(expr, frame, host, state)),
+        Expr::Unary { op, expr, .. } => bt_unary(op, bt_expr(expr, frame, host, state)),
         else => {
             throw BtRefusal::Unevaluable
         },
@@ -403,7 +403,7 @@ fn bt_call_expr[H: BtHost](func: ref Expr, args: ref Vec[Expr], config: ref Vec[
     return match func {
         // **A grammar's entry, run by compiling the parser it generates** (issue
         // #178), or a variant with a payload, which is written the same way.
-        Expr::Path(path) => {
+        Expr::Path(path, _) => {
             if config.len() > 0 || path.len() != 2 {
                 throw BtRefusal::Unevaluable
             }
@@ -438,7 +438,7 @@ fn bt_call_expr[H: BtHost](func: ref Expr, args: ref Vec[Expr], config: ref Vec[
             }
             value ?? BuildValue::Bool(false)
         },
-        Expr::Variable(symbol) => {
+        Expr::Variable(symbol, _) => {
             let name = host.text(state.unit, symbol)
             // **`asset("…")` is answered before the arguments are** (ADR-310 D3,
             // D7). A name that folds to `"config.json"` is a path that was
@@ -923,7 +923,7 @@ fn bt_expression_statement[H: BtHost](expr: ref Expr, last: bool, mut frame: col
         // **An `if` is read as a statement here whatever its position**, which
         // is what a loop's body needs: `if i > n { break }` is the last statement
         // of its block and hands back no value at all.
-        Expr::If { cond, then_branch, else_branch } => {
+        Expr::If { cond, then_branch, else_branch, .. } => {
             let verdict = bt_expr(cond, frame, host, state)
             let taken = bt_taken(verdict, then_branch, else_branch)
             if taken != null {
@@ -940,7 +940,7 @@ fn bt_expression_statement[H: BtHost](expr: ref Expr, last: bool, mut frame: col
         // **`xs.push(v)`, which is how a table is *grown* rather than filled**
         // (ADR-311): a statement and not an expression, because that is what it
         // is.
-        Expr::MethodCall { receiver, method, args, config } => {
+        Expr::MethodCall { receiver, method, args, config, .. } => {
             let word = host.text(state.unit, method)
             if word == "push" && args.len() == 1 && config.len() == 0 {
                 return bt_push(receiver, args[0], frame, host, state)
@@ -961,7 +961,7 @@ fn bt_expression_statement[H: BtHost](expr: ref Expr, last: bool, mut frame: col
 
 fn bt_push[H: BtHost](receiver: ref Expr, arg: ref Expr, mut frame: collections::BTreeMap[String, BuildValue], host: ref H, mut state: BtState) -> BtFlow sync throws {
     let name = match receiver {
-        Expr::Variable(symbol) => host.text(state.unit, symbol),
+        Expr::Variable(symbol, _) => host.text(state.unit, symbol),
         else => {
             throw BtRefusal::Unevaluable
         },
@@ -986,9 +986,9 @@ fn bt_assign[H: BtHost](target: ref Expr, op: ref BinaryOp?, value: ref Expr, mu
     // Before the name, because an index is a target this evaluator reads and
     // `Expr::Variable` is not what it looks like.
     match target {
-        Expr::Index { base, index } => {
+        Expr::Index { base, index, .. } => {
             let name = match base {
-                Expr::Variable(symbol) => host.text(state.unit, symbol),
+                Expr::Variable(symbol, _) => host.text(state.unit, symbol),
                 else => {
                     throw BtRefusal::Unevaluable
                 },
@@ -1021,7 +1021,7 @@ fn bt_assign[H: BtHost](target: ref Expr, op: ref BinaryOp?, value: ref Expr, mu
             items[counted ?? 0] = next
             frame.insert(name, BuildValue::List(items))
         },
-        Expr::Variable(symbol) => {
+        Expr::Variable(symbol, _) => {
             let name = host.text(state.unit, symbol)
             let given = bt_expr(value, frame, host, state)
             let mut next = given.clone()
@@ -1050,7 +1050,7 @@ struct BtRange {
 
 fn bt_range[H: BtHost](iter: ref Expr, frame: ref collections::BTreeMap[String, BuildValue], host: ref H, mut state: BtState) -> BtRange sync throws {
     return match iter {
-        Expr::Range { start, end, inclusive } => {
+        Expr::Range { start, end, inclusive, .. } => {
             let first = bt_expr(start, frame, host, state)
             let second = bt_expr(end, frame, host, state)
             let low = match first {

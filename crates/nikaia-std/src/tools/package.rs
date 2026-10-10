@@ -9,6 +9,8 @@ use nikaia_std::collections;
 #[allow(unused_imports)]
 use nikaia_std::fs;
 #[allow(unused_imports)]
+use nikaia_std::node_id;
+#[allow(unused_imports)]
 use nikaia_std::text;
 
 // --- assets.nika ---
@@ -139,47 +141,102 @@ pub enum Stmt {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
-    LitInt { value: u64, negative: bool },
-    Match { value: Box<Expr>, arms: Vec<MatchArm> },
-    Range { start: Box<Expr>, end: Box<Expr>, inclusive: bool },
-    Tuple(Vec<Expr>),
-    ListLit { items: Vec<Expr>, at: u32 },
-    LitStr { text: String, at: u32 },
-    LitInterpolated { parts: Vec<FPart> },
-    LitChar(String),
-    LitBool(bool),
-    LitNull,
-    Variable(winnow_grammar::Symbol),
-    Block(Block),
-    Overlap(Block),
-    Select(Vec<SelectArm>),
-    If { cond: Box<Expr>, then_branch: Block, else_branch: Option<Block> },
-    Call { func: Box<Expr>, args: Vec<Expr>, config: Vec<ConfigArg> },
-    Spawn { body: Box<Expr>, is_move: bool },
-    Dsl { target: winnow_grammar::Symbol, package: Option<winnow_grammar::Symbol>, context: Option<winnow_grammar::Symbol>, content: String },
-    Path(Vec<winnow_grammar::Symbol>),
-    MethodCall { receiver: Box<Expr>, method: winnow_grammar::Symbol, args: Vec<Expr>, config: Vec<ConfigArg> },
-    Field { base: Box<Expr>, name: winnow_grammar::Symbol },
-    StructLit { name: winnow_grammar::Symbol, fields: Vec<FieldInit> },
-    With { base: Box<Expr>, fields: Vec<FieldInit>, at: u32 },
-    Closure { params: Vec<winnow_grammar::Symbol>, mutable: Vec<winnow_grammar::Symbol>, body: Block },
-    Unary { op: UnaryOp, expr: Box<Expr> },
-    Binary { op: BinaryOp, lhs: Box<Expr>, rhs: Box<Expr>, span: Span, grouped: bool },
-    SafeField { base: Box<Expr>, name: winnow_grammar::Symbol },
-    SafeMethod { receiver: Box<Expr>, method: winnow_grammar::Symbol, args: Vec<Expr>, config: Vec<ConfigArg> },
-    Try(Box<Expr>),
-    Throw(Box<Expr>),
-    Return(Box<Option<Expr>>),
-    Break,
-    Continue,
-    LitFloat(String),
-    Index { base: Box<Expr>, index: Box<Expr> },
-    Cast { expr: Box<Expr>, ty: Type },
-    Coalesce { value: Box<Expr>, fallback: Box<Expr> },
-    Asm { bindings: Vec<AsmBinding>, code: String },
-    Unsafe(Block),
-    TryCatch { expr: Box<Expr>, handler: Block },
+    LitInt { value: u64, negative: bool, id: node_id::NodeId },
+    Match { value: Box<Expr>, arms: Vec<MatchArm>, id: node_id::NodeId },
+    Range { start: Box<Expr>, end: Box<Expr>, inclusive: bool, id: node_id::NodeId },
+    Tuple(Vec<Expr>, node_id::NodeId),
+    ListLit { items: Vec<Expr>, at: u32, id: node_id::NodeId },
+    LitStr { text: String, at: u32, id: node_id::NodeId },
+    LitInterpolated { parts: Vec<FPart>, id: node_id::NodeId },
+    LitChar(String, node_id::NodeId),
+    LitBool(bool, node_id::NodeId),
+    LitNull(node_id::NodeId),
+    Variable(winnow_grammar::Symbol, node_id::NodeId),
+    Block(Block, node_id::NodeId),
+    Overlap(Block, node_id::NodeId),
+    Select(Vec<SelectArm>, node_id::NodeId),
+    If { cond: Box<Expr>, then_branch: Block, else_branch: Option<Block>, id: node_id::NodeId },
+    Call { func: Box<Expr>, args: Vec<Expr>, config: Vec<ConfigArg>, id: node_id::NodeId },
+    Spawn { body: Box<Expr>, is_move: bool, id: node_id::NodeId },
+    Dsl { target: winnow_grammar::Symbol, package: Option<winnow_grammar::Symbol>, context: Option<winnow_grammar::Symbol>, content: String, id: node_id::NodeId },
+    Path(Vec<winnow_grammar::Symbol>, node_id::NodeId),
+    MethodCall { receiver: Box<Expr>, method: winnow_grammar::Symbol, args: Vec<Expr>, config: Vec<ConfigArg>, id: node_id::NodeId },
+    Field { base: Box<Expr>, name: winnow_grammar::Symbol, id: node_id::NodeId },
+    StructLit { name: winnow_grammar::Symbol, fields: Vec<FieldInit>, id: node_id::NodeId },
+    With { base: Box<Expr>, fields: Vec<FieldInit>, at: u32, id: node_id::NodeId },
+    Closure { params: Vec<winnow_grammar::Symbol>, mutable: Vec<winnow_grammar::Symbol>, body: Block, id: node_id::NodeId },
+    Unary { op: UnaryOp, expr: Box<Expr>, id: node_id::NodeId },
+    Binary { op: BinaryOp, lhs: Box<Expr>, rhs: Box<Expr>, span: Span, grouped: bool, id: node_id::NodeId },
+    SafeField { base: Box<Expr>, name: winnow_grammar::Symbol, id: node_id::NodeId },
+    SafeMethod { receiver: Box<Expr>, method: winnow_grammar::Symbol, args: Vec<Expr>, config: Vec<ConfigArg>, id: node_id::NodeId },
+    Try(Box<Expr>, node_id::NodeId),
+    Throw(Box<Expr>, node_id::NodeId),
+    Return(Box<Option<Expr>>, node_id::NodeId),
+    Break(node_id::NodeId),
+    Continue(node_id::NodeId),
+    LitFloat(String, node_id::NodeId),
+    Index { base: Box<Expr>, index: Box<Expr>, id: node_id::NodeId },
+    Cast { expr: Box<Expr>, ty: Type, id: node_id::NodeId },
+    Coalesce { value: Box<Expr>, fallback: Box<Expr>, id: node_id::NodeId },
+    Asm { bindings: Vec<AsmBinding>, code: String, id: node_id::NodeId },
+    Unsafe(Block, node_id::NodeId),
+    TryCatch { expr: Box<Expr>, handler: Block, id: node_id::NodeId },
 }
+
+// sync (Part II, 12.1): pure CPU, cannot pause. Checked before
+// this was written - see `contracts::sync`.
+pub fn id_of(expr: &Expr) -> u32 {
+    match expr {
+        Expr::LitInt { id, .. } => { let id = *id; id.get() },
+        Expr::Match { id, .. } => { let id = *id; id.get() },
+        Expr::Range { id, .. } => { let id = *id; id.get() },
+        Expr::ListLit { id, .. } => { let id = *id; id.get() },
+        Expr::LitStr { id, .. } => { let id = *id; id.get() },
+        Expr::LitInterpolated { id, .. } => { let id = *id; id.get() },
+        Expr::If { id, .. } => { let id = *id; id.get() },
+        Expr::Call { id, .. } => { let id = *id; id.get() },
+        Expr::Spawn { id, .. } => { let id = *id; id.get() },
+        Expr::Dsl { id, .. } => { let id = *id; id.get() },
+        Expr::MethodCall { id, .. } => { let id = *id; id.get() },
+        Expr::Field { id, .. } => { let id = *id; id.get() },
+        Expr::StructLit { id, .. } => { let id = *id; id.get() },
+        Expr::With { id, .. } => { let id = *id; id.get() },
+        Expr::Closure { id, .. } => { let id = *id; id.get() },
+        Expr::Unary { id, .. } => { let id = *id; id.get() },
+        Expr::Binary { id, .. } => { let id = *id; id.get() },
+        Expr::SafeField { id, .. } => { let id = *id; id.get() },
+        Expr::SafeMethod { id, .. } => { let id = *id; id.get() },
+        Expr::Index { id, .. } => { let id = *id; id.get() },
+        Expr::Cast { id, .. } => { let id = *id; id.get() },
+        Expr::Coalesce { id, .. } => { let id = *id; id.get() },
+        Expr::Asm { id, .. } => { let id = *id; id.get() },
+        Expr::TryCatch { id, .. } => { let id = *id; id.get() },
+        Expr::Tuple(_, id) => { let id = *id; id.get() },
+        Expr::LitChar(_, id) => { let id = *id; id.get() },
+        Expr::LitBool(_, id) => { let id = *id; id.get() },
+        Expr::Variable(_, id) => { let id = *id; id.get() },
+        Expr::Block(_, id) => { let id = *id; id.get() },
+        Expr::Overlap(_, id) => { let id = *id; id.get() },
+        Expr::Select(_, id) => { let id = *id; id.get() },
+        Expr::Path(_, id) => { let id = *id; id.get() },
+        Expr::Try(_, id) => { let id = *id; id.get() },
+        Expr::Throw(_, id) => { let id = *id; id.get() },
+        Expr::Return(_, id) => { let id = *id; id.get() },
+        Expr::LitFloat(_, id) => { let id = *id; id.get() },
+        Expr::Unsafe(_, id) => { let id = *id; id.get() },
+        Expr::LitNull(id) => { let id = *id; id.get() },
+        Expr::Break(id) => { let id = *id; id.get() },
+        Expr::Continue(id) => { let id = *id; id.get() },
+    }
+}
+
+// sync (Part II, 12.1): pure CPU, cannot pause. Checked before
+// this was written - see `contracts::sync`.
+pub fn fresh_id() -> node_id::NodeId { node_id::NodeId::fresh() }
+
+// sync (Part II, 12.1): pure CPU, cannot pause. Checked before
+// this was written - see `contracts::sync`.
+pub fn numbered_id(number: u32) -> node_id::NodeId { node_id::NodeId::numbered(number) }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum FPart {
@@ -594,7 +651,7 @@ fn counted_statement(stmt: &Stmt, over: &mut Vec<CountedLoop>, words: &winnow_gr
 
 fn loop_over_length(binding: winnow_grammar::Symbol, iter: &Expr, body: &Block, over: &[CountedLoop], words: &winnow_grammar::InternerContext) -> Option<CountedLoop> {
     let (start, end) = match iter {
-        Expr::Range { start, end, inclusive } => {
+        Expr::Range { start, end, inclusive, .. } => {
             let start = nikaia_std::boxed::open(start); let end = nikaia_std::boxed::open(end); let inclusive = *inclusive;
             if inclusive { return None; }
             (start, end)
@@ -606,7 +663,7 @@ fn loop_over_length(binding: winnow_grammar::Symbol, iter: &Expr, body: &Block, 
             let receiver = nikaia_std::boxed::open(receiver); let method = *method;
             if !args.is_empty() || words.resolve(method) != "len" { return None; }
             match receiver {
-                Expr::Variable(list) => { let list = *list; words.resolve(list).to_owned() },
+                Expr::Variable(list, _) => { let list = *list; words.resolve(list).to_owned() },
                 _ => return None,
             }
         },
@@ -620,7 +677,7 @@ fn loop_over_length(binding: winnow_grammar::Symbol, iter: &Expr, body: &Block, 
 fn starts_not_negative(start: &Expr, over: &[CountedLoop], words: &winnow_grammar::InternerContext) -> bool {
     match start {
         Expr::LitInt { negative, .. } => { let negative = *negative; !negative },
-        Expr::Variable(name) => { let name = *name; counts(over, words.resolve(name)) },
+        Expr::Variable(name, _) => { let name = *name; counts(over, words.resolve(name)) },
         _ => false,
     }
 }
@@ -637,11 +694,11 @@ fn indexes_its_loop(over: &[CountedLoop], list: &str, at: &str) -> bool {
 
 fn counted_expr(expr: &Expr, over: &[CountedLoop], words: &winnow_grammar::InternerContext, node_of: &impl Fn(&Expr) -> i64, out: &mut collections::BTreeSet<i64>) {
     match expr {
-        Expr::Index { base, index } => {
+        Expr::Index { base, index, .. } => {
             let base = nikaia_std::boxed::open(base); let index = nikaia_std::boxed::open(index);
             match base {
-                Expr::Variable(list) => { let list = *list; match index {
-                    Expr::Variable(at) => {
+                Expr::Variable(list, _) => { let list = *list; match index {
+                    Expr::Variable(at, _) => {
                         let at = *at;
                         if indexes_its_loop(over, words.resolve(list), words.resolve(at)) { out.insert(node_of(base)); }
                     },
@@ -670,7 +727,7 @@ fn counted_maybe_block(block: Option<&Block>, over: &[CountedLoop], words: &winn
 
 fn counted_children(expr: &Expr, over: &[CountedLoop], words: &winnow_grammar::InternerContext, node_of: &impl Fn(&Expr) -> i64, out: &mut collections::BTreeSet<i64>) {
     match expr {
-        Expr::Match { value, arms } => {
+        Expr::Match { value, arms, .. } => {
             let value = nikaia_std::boxed::open(value);
             counted_expr(value, over, words, node_of, out);
             for arm in arms.iter() {
@@ -683,9 +740,9 @@ fn counted_children(expr: &Expr, over: &[CountedLoop], words: &winnow_grammar::I
             counted_expr(start, over, words, node_of, out);
             counted_expr(end, over, words, node_of, out);
         },
-        Expr::Tuple(items) => counted_all(items, over, words, node_of, out),
+        Expr::Tuple(items, _) => counted_all(items, over, words, node_of, out),
         Expr::ListLit { items, .. } => counted_all(items, over, words, node_of, out),
-        Expr::LitInterpolated { parts } => {
+        Expr::LitInterpolated { parts, .. } => {
             for part in parts.iter() {
                 match part {
                     FPart::Hole { expr, .. } => counted_expr(expr, over, words, node_of, out),
@@ -694,7 +751,7 @@ fn counted_children(expr: &Expr, over: &[CountedLoop], words: &winnow_grammar::I
             }
         },
         Expr::If { cond, .. } => { let cond = nikaia_std::boxed::open(cond); counted_expr(cond, over, words, node_of, out) },
-        Expr::Call { func, args, config } => {
+        Expr::Call { func, args, config, .. } => {
             let func = nikaia_std::boxed::open(func);
             counted_expr(func, over, words, node_of, out);
             counted_all(args, over, words, node_of, out);
@@ -721,8 +778,8 @@ fn counted_children(expr: &Expr, over: &[CountedLoop], words: &winnow_grammar::I
             for field in fields.iter() { counted_maybe((field.value).as_ref(), over, words, node_of, out); }
         },
         Expr::Unary { expr, .. } => { let expr = nikaia_std::boxed::open(expr); counted_expr(expr, over, words, node_of, out) },
-        Expr::Try(inner) => { let inner = nikaia_std::boxed::open(inner); counted_expr(inner, over, words, node_of, out) },
-        Expr::Throw(inner) => { let inner = nikaia_std::boxed::open(inner); counted_expr(inner, over, words, node_of, out) },
+        Expr::Try(inner, _) => { let inner = nikaia_std::boxed::open(inner); counted_expr(inner, over, words, node_of, out) },
+        Expr::Throw(inner, _) => { let inner = nikaia_std::boxed::open(inner); counted_expr(inner, over, words, node_of, out) },
         Expr::Cast { expr, .. } => { let expr = nikaia_std::boxed::open(expr); counted_expr(expr, over, words, node_of, out) },
         Expr::TryCatch { expr, .. } => { let expr = nikaia_std::boxed::open(expr); counted_expr(expr, over, words, node_of, out) },
         Expr::Binary { lhs, rhs, .. } => {
@@ -730,36 +787,36 @@ fn counted_children(expr: &Expr, over: &[CountedLoop], words: &winnow_grammar::I
             counted_expr(lhs, over, words, node_of, out);
             counted_expr(rhs, over, words, node_of, out);
         },
-        Expr::Return(value) => {
+        Expr::Return(value, _) => {
             let value = nikaia_std::boxed::open(value);
             counted_maybe((value).as_ref(), over, words, node_of, out);
         },
-        Expr::Index { base, index } => {
+        Expr::Index { base, index, .. } => {
             let base = nikaia_std::boxed::open(base); let index = nikaia_std::boxed::open(index);
             counted_expr(base, over, words, node_of, out);
             counted_expr(index, over, words, node_of, out);
         },
-        Expr::Coalesce { value, fallback } => {
+        Expr::Coalesce { value, fallback, .. } => {
             let value = nikaia_std::boxed::open(value); let fallback = nikaia_std::boxed::open(fallback);
             counted_expr(value, over, words, node_of, out);
             counted_expr(fallback, over, words, node_of, out);
         },
-        Expr::Select(arms) => { for arm in arms.iter() { counted_expr(&arm.value, over, words, node_of, out); } },
+        Expr::Select(arms, _) => { for arm in arms.iter() { counted_expr(&arm.value, over, words, node_of, out); } },
         _ => { },
     }
 }
 
 fn counted_blocks(expr: &Expr, over: &[CountedLoop], words: &winnow_grammar::InternerContext, node_of: &impl Fn(&Expr) -> i64, out: &mut collections::BTreeSet<i64>) {
     match expr {
-        Expr::Block(b) => counted_block(b, &mut copied(over), words, node_of, out),
-        Expr::Overlap(b) => counted_block(b, &mut copied(over), words, node_of, out),
-        Expr::Unsafe(b) => counted_block(b, &mut copied(over), words, node_of, out),
+        Expr::Block(b, _) => counted_block(b, &mut copied(over), words, node_of, out),
+        Expr::Overlap(b, _) => counted_block(b, &mut copied(over), words, node_of, out),
+        Expr::Unsafe(b, _) => counted_block(b, &mut copied(over), words, node_of, out),
         Expr::If { then_branch, else_branch, .. } => {
             counted_block(then_branch, &mut copied(over), words, node_of, out);
             counted_maybe_block((else_branch).as_ref(), over, words, node_of, out);
         },
         Expr::TryCatch { handler, .. } => counted_block(handler, &mut copied(over), words, node_of, out),
-        Expr::Select(arms) => { for arm in arms.iter() { counted_block(&arm.body, &mut copied(over), words, node_of, out); } },
+        Expr::Select(arms, _) => { for arm in arms.iter() { counted_block(&arm.body, &mut copied(over), words, node_of, out); } },
         _ => { },
     }
 }
@@ -779,7 +836,7 @@ pub fn rebinds(body: &Block, name: &str, words: &winnow_grammar::InternerContext
 
 fn is_variable(expr: &Expr, name: &str, words: &winnow_grammar::InternerContext) -> bool {
     match expr {
-        Expr::Variable(n) => { let n = *n; words.resolve(n) == name },
+        Expr::Variable(n, _) => { let n = *n; words.resolve(n) == name },
         _ => false,
     }
 }
@@ -875,13 +932,13 @@ fn seek_maybe(expr: Option<&Expr>, seek: &Seek, words: &winnow_grammar::Interner
 fn seek_expr(expr: &Expr, seek: &Seek, words: &winnow_grammar::InternerContext) -> bool {
     if expression_says(expr, seek, words) { return true; }
     match expr {
-        Expr::Match { value, arms } => { let value = nikaia_std::boxed::open(value); seek_expr(value, seek, words) || seek_arms(arms, seek, words) },
+        Expr::Match { value, arms, .. } => { let value = nikaia_std::boxed::open(value); seek_expr(value, seek, words) || seek_arms(arms, seek, words) },
         Expr::Range { start, end, .. } => { let start = nikaia_std::boxed::open(start); let end = nikaia_std::boxed::open(end); seek_expr(start, seek, words) || seek_expr(end, seek, words) },
-        Expr::Tuple(items) => seek_all(items, seek, words),
+        Expr::Tuple(items, _) => seek_all(items, seek, words),
         Expr::ListLit { items, .. } => seek_all(items, seek, words),
-        Expr::LitInterpolated { parts } => seek_holes(parts, seek, words),
-        Expr::If { cond, then_branch, else_branch } => { let cond = nikaia_std::boxed::open(cond); seek_expr(cond, seek, words) || seek_block(then_branch, seek, words) || seek_maybe_block((else_branch).as_ref(), seek, words) },
-        Expr::Call { func, args, config } => { let func = nikaia_std::boxed::open(func); seek_expr(func, seek, words) || seek_all(args, seek, words) || seek_config(config, seek, words) },
+        Expr::LitInterpolated { parts, .. } => seek_holes(parts, seek, words),
+        Expr::If { cond, then_branch, else_branch, .. } => { let cond = nikaia_std::boxed::open(cond); seek_expr(cond, seek, words) || seek_block(then_branch, seek, words) || seek_maybe_block((else_branch).as_ref(), seek, words) },
+        Expr::Call { func, args, config, .. } => { let func = nikaia_std::boxed::open(func); seek_expr(func, seek, words) || seek_all(args, seek, words) || seek_config(config, seek, words) },
         Expr::Spawn { body, .. } => { let body = nikaia_std::boxed::open(body); seek_expr(body, seek, words) },
         Expr::MethodCall { receiver, args, config, .. } => { let receiver = nikaia_std::boxed::open(receiver); seek_expr(receiver, seek, words) || seek_all(args, seek, words) || seek_config(config, seek, words) },
         Expr::SafeMethod { receiver, args, config, .. } => { let receiver = nikaia_std::boxed::open(receiver); seek_expr(receiver, seek, words) || seek_all(args, seek, words) || seek_config(config, seek, words) },
@@ -890,18 +947,18 @@ fn seek_expr(expr: &Expr, seek: &Seek, words: &winnow_grammar::InternerContext) 
         Expr::StructLit { fields, .. } => seek_fields(fields, seek, words),
         Expr::With { base, fields, .. } => { let base = nikaia_std::boxed::open(base); seek_expr(base, seek, words) || seek_fields(fields, seek, words) },
         Expr::Unary { expr, .. } => { let expr = nikaia_std::boxed::open(expr); seek_expr(expr, seek, words) },
-        Expr::Try(inner) => { let inner = nikaia_std::boxed::open(inner); seek_expr(inner, seek, words) },
-        Expr::Throw(inner) => { let inner = nikaia_std::boxed::open(inner); seek_expr(inner, seek, words) },
+        Expr::Try(inner, _) => { let inner = nikaia_std::boxed::open(inner); seek_expr(inner, seek, words) },
+        Expr::Throw(inner, _) => { let inner = nikaia_std::boxed::open(inner); seek_expr(inner, seek, words) },
         Expr::Cast { expr, .. } => { let expr = nikaia_std::boxed::open(expr); seek_expr(expr, seek, words) },
-        Expr::TryCatch { expr, handler } => { let expr = nikaia_std::boxed::open(expr); seek_expr(expr, seek, words) || seek_block(handler, seek, words) },
+        Expr::TryCatch { expr, handler, .. } => { let expr = nikaia_std::boxed::open(expr); seek_expr(expr, seek, words) || seek_block(handler, seek, words) },
         Expr::Binary { lhs, rhs, .. } => { let lhs = nikaia_std::boxed::open(lhs); let rhs = nikaia_std::boxed::open(rhs); seek_expr(lhs, seek, words) || seek_expr(rhs, seek, words) },
-        Expr::Return(value) => { let value = nikaia_std::boxed::open(value); seek_maybe((value).as_ref(), seek, words) },
-        Expr::Index { base, index } => { let base = nikaia_std::boxed::open(base); let index = nikaia_std::boxed::open(index); seek_expr(base, seek, words) || seek_expr(index, seek, words) },
-        Expr::Coalesce { value, fallback } => { let value = nikaia_std::boxed::open(value); let fallback = nikaia_std::boxed::open(fallback); seek_expr(value, seek, words) || seek_expr(fallback, seek, words) },
-        Expr::Select(arms) => seek_select(arms, seek, words),
-        Expr::Block(b) => seek_block(b, seek, words),
-        Expr::Overlap(b) => seek_block(b, seek, words),
-        Expr::Unsafe(b) => seek_block(b, seek, words),
+        Expr::Return(value, _) => { let value = nikaia_std::boxed::open(value); seek_maybe((value).as_ref(), seek, words) },
+        Expr::Index { base, index, .. } => { let base = nikaia_std::boxed::open(base); let index = nikaia_std::boxed::open(index); seek_expr(base, seek, words) || seek_expr(index, seek, words) },
+        Expr::Coalesce { value, fallback, .. } => { let value = nikaia_std::boxed::open(value); let fallback = nikaia_std::boxed::open(fallback); seek_expr(value, seek, words) || seek_expr(fallback, seek, words) },
+        Expr::Select(arms, _) => seek_select(arms, seek, words),
+        Expr::Block(b, _) => seek_block(b, seek, words),
+        Expr::Overlap(b, _) => seek_block(b, seek, words),
+        Expr::Unsafe(b, _) => seek_block(b, seek, words),
         Expr::Closure { body, .. } => seek_block(body, seek, words),
         _ => false,
     }
@@ -1000,7 +1057,7 @@ fn pushed_onto(stmt: &Stmt, words: &winnow_grammar::InternerContext) -> Option<S
 
 fn variable_text(expr: &Expr, words: &winnow_grammar::InternerContext) -> Option<String> {
     match expr {
-        Expr::Variable(name) => { let name = *name; Some(words.resolve(name).to_owned()) },
+        Expr::Variable(name, _) => { let name = *name; Some(words.resolve(name).to_owned()) },
         _ => None,
     }
 }
@@ -1009,7 +1066,7 @@ fn assigned_root(target: &Expr, words: &winnow_grammar::InternerContext) -> Opti
     match target {
         Expr::Index { base, .. } => { let base = nikaia_std::boxed::open(base); assigned_root(base, words) },
         Expr::Field { base, .. } => { let base = nikaia_std::boxed::open(base); assigned_root(base, words) },
-        Expr::Variable(name) => { let name = *name; Some(words.resolve(name).to_owned()) },
+        Expr::Variable(name, _) => { let name = *name; Some(words.resolve(name).to_owned()) },
         _ => None,
     }
 }
@@ -1094,15 +1151,15 @@ fn tally_fields(fields: &[FieldInit], ask: &Ask, deferred: bool, words: &winnow_
 fn tally_here(expr: &Expr, ask: &Ask, deferred: bool, words: &winnow_grammar::InternerContext, tally: &mut Tally) {
     match ask {
         Ask::Leaves => match expr {
-            Expr::Break => { tally.found = true; },
-            Expr::Continue => { tally.found = true; },
-            Expr::Return(_) => { tally.found = true; },
-            Expr::Throw(_) => { tally.found = true; },
-            Expr::Try(_) => { tally.found = true; },
+            Expr::Break(_) => { tally.found = true; },
+            Expr::Continue(_) => { tally.found = true; },
+            Expr::Return(_, _) => { tally.found = true; },
+            Expr::Throw(_, _) => { tally.found = true; },
+            Expr::Try(_, _) => { tally.found = true; },
             _ => { },
         },
         Ask::Breaks => match expr {
-            Expr::Break => { tally.found = true; },
+            Expr::Break(_) => { tally.found = true; },
             _ => { },
         },
         Ask::Changes(list) => match expr {
@@ -1151,7 +1208,7 @@ fn tally_expr(expr: &Expr, ask: &Ask, deferred: bool, words: &winnow_grammar::In
     }
     if stops { return; }
     match expr {
-        Expr::Match { value, arms } => {
+        Expr::Match { value, arms, .. } => {
             let value = nikaia_std::boxed::open(value);
             tally_expr(value, ask, deferred, words, tally);
             for arm in arms.iter() {
@@ -1164,9 +1221,9 @@ fn tally_expr(expr: &Expr, ask: &Ask, deferred: bool, words: &winnow_grammar::In
             tally_expr(start, ask, deferred, words, tally);
             tally_expr(end, ask, deferred, words, tally);
         },
-        Expr::Tuple(items) => tally_all(items, ask, deferred, words, tally),
+        Expr::Tuple(items, _) => tally_all(items, ask, deferred, words, tally),
         Expr::ListLit { items, .. } => tally_all(items, ask, deferred, words, tally),
-        Expr::LitInterpolated { parts } => {
+        Expr::LitInterpolated { parts, .. } => {
             for part in parts.iter() {
                 match part {
                     FPart::Hole { expr, .. } => tally_expr(expr, ask, deferred, words, tally),
@@ -1174,13 +1231,13 @@ fn tally_expr(expr: &Expr, ask: &Ask, deferred: bool, words: &winnow_grammar::In
                 }
             }
         },
-        Expr::If { cond, then_branch, else_branch } => {
+        Expr::If { cond, then_branch, else_branch, .. } => {
             let cond = nikaia_std::boxed::open(cond);
             tally_expr(cond, ask, deferred, words, tally);
             tally_block(then_branch, ask, deferred, words, tally);
             tally_maybe_block((else_branch).as_ref(), ask, deferred, words, tally);
         },
-        Expr::Call { func, args, config } => {
+        Expr::Call { func, args, config, .. } => {
             let func = nikaia_std::boxed::open(func);
             tally_expr(func, ask, deferred, words, tally);
             tally_all(args, ask, deferred, words, tally);
@@ -1208,10 +1265,10 @@ fn tally_expr(expr: &Expr, ask: &Ask, deferred: bool, words: &winnow_grammar::In
             tally_fields(fields, ask, deferred, words, tally);
         },
         Expr::Unary { expr, .. } => { let expr = nikaia_std::boxed::open(expr); tally_expr(expr, ask, deferred, words, tally) },
-        Expr::Try(inner) => { let inner = nikaia_std::boxed::open(inner); tally_expr(inner, ask, deferred, words, tally) },
-        Expr::Throw(inner) => { let inner = nikaia_std::boxed::open(inner); tally_expr(inner, ask, deferred, words, tally) },
+        Expr::Try(inner, _) => { let inner = nikaia_std::boxed::open(inner); tally_expr(inner, ask, deferred, words, tally) },
+        Expr::Throw(inner, _) => { let inner = nikaia_std::boxed::open(inner); tally_expr(inner, ask, deferred, words, tally) },
         Expr::Cast { expr, .. } => { let expr = nikaia_std::boxed::open(expr); tally_expr(expr, ask, deferred, words, tally) },
-        Expr::TryCatch { expr, handler } => {
+        Expr::TryCatch { expr, handler, .. } => {
             let expr = nikaia_std::boxed::open(expr);
             tally_expr(expr, ask, deferred, words, tally);
             tally_block(handler, ask, deferred, words, tally);
@@ -1221,26 +1278,26 @@ fn tally_expr(expr: &Expr, ask: &Ask, deferred: bool, words: &winnow_grammar::In
             tally_expr(lhs, ask, deferred, words, tally);
             tally_expr(rhs, ask, deferred, words, tally);
         },
-        Expr::Return(value) => { let value = nikaia_std::boxed::open(value); tally_maybe((value).as_ref(), ask, deferred, words, tally) },
-        Expr::Index { base, index } => {
+        Expr::Return(value, _) => { let value = nikaia_std::boxed::open(value); tally_maybe((value).as_ref(), ask, deferred, words, tally) },
+        Expr::Index { base, index, .. } => {
             let base = nikaia_std::boxed::open(base); let index = nikaia_std::boxed::open(index);
             tally_expr(base, ask, deferred, words, tally);
             tally_expr(index, ask, deferred, words, tally);
         },
-        Expr::Coalesce { value, fallback } => {
+        Expr::Coalesce { value, fallback, .. } => {
             let value = nikaia_std::boxed::open(value); let fallback = nikaia_std::boxed::open(fallback);
             tally_expr(value, ask, deferred, words, tally);
             tally_expr(fallback, ask, deferred, words, tally);
         },
-        Expr::Select(arms) => {
+        Expr::Select(arms, _) => {
             for arm in arms.iter() {
                 tally_expr(&arm.value, ask, deferred, words, tally);
                 tally_block(&arm.body, ask, true, words, tally);
             }
         },
-        Expr::Block(b) => tally_block(b, ask, deferred, words, tally),
-        Expr::Overlap(b) => tally_block(b, ask, true, words, tally),
-        Expr::Unsafe(b) => tally_block(b, ask, deferred, words, tally),
+        Expr::Block(b, _) => tally_block(b, ask, deferred, words, tally),
+        Expr::Overlap(b, _) => tally_block(b, ask, true, words, tally),
+        Expr::Unsafe(b, _) => tally_block(b, ask, deferred, words, tally),
         Expr::Closure { body, .. } => tally_block(body, ask, true, words, tally),
         _ => { },
     }
@@ -1729,7 +1786,7 @@ fn site_reads(expr: &Expr, read: &mut SiteReads) {
             site_reads(receiver, read);
             for arg in args.iter() { site_reads(arg, read); }
         },
-        Expr::Index { base, index } => {
+        Expr::Index { base, index, .. } => {
             let base = nikaia_std::boxed::open(base); let index = nikaia_std::boxed::open(index);
             match base {
                 Expr::Index { .. } => { read.nested = true; },
@@ -1820,7 +1877,7 @@ pub fn shape_of(args: &[FnArg], body: &Block, pinned: &collections::BTreeSet<Str
 
 pub fn elements_key(shape: &BodyShape, expr: &Expr, words: &winnow_grammar::InternerContext) -> Option<String> {
     match expr {
-        Expr::Variable(n) => {
+        Expr::Variable(n, _) => {
             let n = *n;
             let name = words.resolve(n);
             if shape.roots.contains(name) { return Some(name.to_owned()); }
@@ -1857,7 +1914,7 @@ pub fn key_root(key: &str) -> String {
 
 pub fn root_name(expr: &Expr, words: &winnow_grammar::InternerContext) -> Option<String> {
     match expr {
-        Expr::Variable(n) => { let n = *n; Some(words.resolve(n).to_owned()) },
+        Expr::Variable(n, _) => { let n = *n; Some(words.resolve(n).to_owned()) },
         Expr::Index { base, .. } => { let base = nikaia_std::boxed::open(base); root_name(base, words) },
         Expr::Field { base, .. } => { let base = nikaia_std::boxed::open(base); root_name(base, words) },
         _ => None,
@@ -1903,7 +1960,7 @@ fn bind_pattern(pattern: &MatchPattern, words: &winnow_grammar::InternerContext,
 
 fn literal_count(expr: &Expr) -> Option<i64> {
     match expr {
-        Expr::LitInt { value, negative } => { let negative = *negative; let value = *value; integer_as_count(&integer(value, negative)) },
+        Expr::LitInt { value, negative, .. } => { let negative = *negative; let value = *value; integer_as_count(&integer(value, negative)) },
         _ => None,
     }
 }
@@ -1957,7 +2014,7 @@ fn lose_by_call(func: &Expr, args: &[Expr], around: &Around, words: &winnow_gram
 
 fn callee_params(func: &Expr, around: &Around, words: &winnow_grammar::InternerContext) -> Option<Vec<bool>> {
     match func {
-        Expr::Variable(name) => {
+        Expr::Variable(name, _) => {
             let name = *name;
             let params = match around.functions.get(words.resolve(name)) { Some(__nikaia_value) => __nikaia_value, None => return None };
             Some(params.to_owned())
@@ -2010,7 +2067,7 @@ fn look_expr_here(expr: &Expr, look: &Look, deferred: bool, around: &Around, wor
         Look::Bound => match expr {
             Expr::Closure { params, .. } => bind_all(params, words, seen),
             Expr::Match { arms, .. } => { for arm in arms.iter() { bind_pattern(&arm.pattern, words, seen); } },
-            Expr::Select(arms) => {
+            Expr::Select(arms, _) => {
                 for arm in arms.iter() {
                     let n = match arm.binding { Some(__nikaia_value) => __nikaia_value, None => continue };
                     bind_name(words.resolve(n), seen);
@@ -2022,7 +2079,7 @@ fn look_expr_here(expr: &Expr, look: &Look, deferred: bool, around: &Around, wor
         Look::Lost => {
             if deferred {
                 match expr {
-                    Expr::Variable(n) => {
+                    Expr::Variable(n, _) => {
                         let n = *n;
                         seen.lost.insert(words.resolve(n).to_owned());
                     },
@@ -2076,7 +2133,7 @@ fn look_fields(fields: &[FieldInit], look: &Look, deferred: bool, around: &Aroun
 fn look_expr(expr: &Expr, look: &Look, deferred: bool, around: &Around, words: &winnow_grammar::InternerContext, seen: &mut ShapeSeen) {
     look_expr_here(expr, look, deferred, around, words, seen);
     match expr {
-        Expr::Match { value, arms } => {
+        Expr::Match { value, arms, .. } => {
             let value = nikaia_std::boxed::open(value);
             look_expr(value, look, deferred, around, words, seen);
             for arm in arms.iter() {
@@ -2089,9 +2146,9 @@ fn look_expr(expr: &Expr, look: &Look, deferred: bool, around: &Around, words: &
             look_expr(start, look, deferred, around, words, seen);
             look_expr(end, look, deferred, around, words, seen);
         },
-        Expr::Tuple(items) => look_all(items, look, deferred, around, words, seen),
+        Expr::Tuple(items, _) => look_all(items, look, deferred, around, words, seen),
         Expr::ListLit { items, .. } => look_all(items, look, deferred, around, words, seen),
-        Expr::LitInterpolated { parts } => {
+        Expr::LitInterpolated { parts, .. } => {
             for part in parts.iter() {
                 match part {
                     FPart::Hole { expr, .. } => look_expr(expr, look, deferred, around, words, seen),
@@ -2099,14 +2156,14 @@ fn look_expr(expr: &Expr, look: &Look, deferred: bool, around: &Around, words: &
                 }
             }
         },
-        Expr::If { cond, then_branch, else_branch } => {
+        Expr::If { cond, then_branch, else_branch, .. } => {
             let cond = nikaia_std::boxed::open(cond);
             look_expr(cond, look, deferred, around, words, seen);
             look_block(then_branch, look, deferred, around, words, seen);
             let other = match else_branch { Some(__nikaia_value) => __nikaia_value, None => return };
             look_block(other, look, deferred, around, words, seen);
         },
-        Expr::Call { func, args, config } => {
+        Expr::Call { func, args, config, .. } => {
             let func = nikaia_std::boxed::open(func);
             look_expr(func, look, deferred, around, words, seen);
             look_all(args, look, deferred, around, words, seen);
@@ -2134,10 +2191,10 @@ fn look_expr(expr: &Expr, look: &Look, deferred: bool, around: &Around, words: &
             look_fields(fields, look, deferred, around, words, seen);
         },
         Expr::Unary { expr, .. } => { let expr = nikaia_std::boxed::open(expr); look_expr(expr, look, deferred, around, words, seen) },
-        Expr::Try(inner) => { let inner = nikaia_std::boxed::open(inner); look_expr(inner, look, deferred, around, words, seen) },
-        Expr::Throw(inner) => { let inner = nikaia_std::boxed::open(inner); look_expr(inner, look, deferred, around, words, seen) },
+        Expr::Try(inner, _) => { let inner = nikaia_std::boxed::open(inner); look_expr(inner, look, deferred, around, words, seen) },
+        Expr::Throw(inner, _) => { let inner = nikaia_std::boxed::open(inner); look_expr(inner, look, deferred, around, words, seen) },
         Expr::Cast { expr, .. } => { let expr = nikaia_std::boxed::open(expr); look_expr(expr, look, deferred, around, words, seen) },
-        Expr::TryCatch { expr, handler } => {
+        Expr::TryCatch { expr, handler, .. } => {
             let expr = nikaia_std::boxed::open(expr);
             look_expr(expr, look, deferred, around, words, seen);
             look_block(handler, look, deferred, around, words, seen);
@@ -2147,24 +2204,24 @@ fn look_expr(expr: &Expr, look: &Look, deferred: bool, around: &Around, words: &
             look_expr(lhs, look, deferred, around, words, seen);
             look_expr(rhs, look, deferred, around, words, seen);
         },
-        Expr::Return(value) => { let value = nikaia_std::boxed::open(value); look_maybe((value).as_ref(), look, deferred, around, words, seen) },
-        Expr::Index { base, index } => {
+        Expr::Return(value, _) => { let value = nikaia_std::boxed::open(value); look_maybe((value).as_ref(), look, deferred, around, words, seen) },
+        Expr::Index { base, index, .. } => {
             let base = nikaia_std::boxed::open(base); let index = nikaia_std::boxed::open(index);
             look_expr(base, look, deferred, around, words, seen);
             look_expr(index, look, deferred, around, words, seen);
         },
-        Expr::Coalesce { value, fallback } => {
+        Expr::Coalesce { value, fallback, .. } => {
             let value = nikaia_std::boxed::open(value); let fallback = nikaia_std::boxed::open(fallback);
             look_expr(value, look, deferred, around, words, seen);
             look_expr(fallback, look, deferred, around, words, seen);
         },
-        Expr::Select(arms) => {
+        Expr::Select(arms, _) => {
             for arm in arms.iter() { look_expr(&arm.value, look, deferred, around, words, seen); }
             for arm in arms.iter() { look_block(&arm.body, look, true, around, words, seen); }
         },
-        Expr::Block(b) => look_block(b, look, deferred, around, words, seen),
-        Expr::Overlap(b) => look_block(b, look, true, around, words, seen),
-        Expr::Unsafe(b) => look_block(b, look, deferred, around, words, seen),
+        Expr::Block(b, _) => look_block(b, look, deferred, around, words, seen),
+        Expr::Overlap(b, _) => look_block(b, look, true, around, words, seen),
+        Expr::Unsafe(b, _) => look_block(b, look, deferred, around, words, seen),
         Expr::Closure { body, .. } => look_block(body, look, true, around, words, seen),
         _ => { },
     }
@@ -2409,7 +2466,7 @@ fn bounding_range(walk: &mut BoundsWalk, expr: &Expr, facts: &BoundsFacts, conte
     if term.is_some() { return Some(bounding_term(walk, nikaia_std::index::or(term, || 0), facts, ask)); }
     match expr {
         Expr::Binary { op, lhs, rhs, .. } => { let lhs = nikaia_std::boxed::open(lhs); let rhs = nikaia_std::boxed::open(rhs); return bounding_range_of(walk, op, lhs, rhs, facts, context, program, words, node_of, ask) },
-        Expr::Unary { op, expr } => {
+        Expr::Unary { op, expr, .. } => {
             let expr = nikaia_std::boxed::open(expr);
             match op {
                 UnaryOp::Neg => {
@@ -2419,7 +2476,7 @@ fn bounding_range(walk: &mut BoundsWalk, expr: &Expr, facts: &BoundsFacts, conte
                 _ => { },
             }
         },
-        Expr::Cast { expr, ty } => {
+        Expr::Cast { expr, ty, .. } => {
             let expr = nikaia_std::boxed::open(expr);
             if ty.generics.is_empty() {
                 let into = match Range::of_type(words.resolve(ty.name)) { Some(__nikaia_value) => __nikaia_value, None => return None };
@@ -2623,12 +2680,12 @@ fn bounding_after_change(walk: &mut BoundsWalk, facts: &mut BoundsFacts, changed
 
 fn bounding_lin(walk: &mut BoundsWalk, expr: &Expr, facts: &BoundsFacts, context: &BoundsContext, program: &Program, words: &winnow_grammar::InternerContext, node_of: &impl Fn(&Expr) -> i64) -> Option<i64> {
     match expr {
-        Expr::LitInt { value, negative } => {
+        Expr::LitInt { value, negative, .. } => {
             let negative = *negative; let value = *value;
             let n = match integer_as_count(&integer(value, negative)) { Some(__nikaia_value) => __nikaia_value, None => return None };
             return Some(walk.arena.int(n));
         },
-        Expr::Variable(name) => {
+        Expr::Variable(name, _) => {
             let name = *name;
             let text = words.resolve(name);
             if walk.shape.constants.contains_key(text) {
@@ -2641,12 +2698,12 @@ fn bounding_lin(walk: &mut BoundsWalk, expr: &Expr, facts: &BoundsFacts, context
             let receiver = nikaia_std::boxed::open(receiver); let method = *method;
             if args.is_empty() && words.resolve(method) == "len" {
                 match receiver {
-                    Expr::Variable(name) => { let name = *name; return bounding_length(walk, receiver, words.resolve(name), context, node_of) },
+                    Expr::Variable(name, _) => { let name = *name; return bounding_length(walk, receiver, words.resolve(name), context, node_of) },
                     _ => { },
                 }
             }
         },
-        Expr::Unary { op, expr } => {
+        Expr::Unary { op, expr, .. } => {
             let expr = nikaia_std::boxed::open(expr);
             match op {
                 UnaryOp::Neg => {
@@ -2656,14 +2713,14 @@ fn bounding_lin(walk: &mut BoundsWalk, expr: &Expr, facts: &BoundsFacts, context
                 _ => { },
             }
         },
-        Expr::Cast { expr, ty } => {
+        Expr::Cast { expr, ty, .. } => {
             let expr = nikaia_std::boxed::open(expr);
             if ty.generics.is_empty() && is_whole_number(words.resolve(ty.name)) {
                 if context.char_codes.contains(&node_of(expr)) { return Some(bounding_code_of(walk, expr, context, words)); }
                 return bounding_lin(walk, expr, facts, context, program, words, node_of);
             }
         },
-        Expr::Call { func, args, config } => {
+        Expr::Call { func, args, config, .. } => {
             let func = nikaia_std::boxed::open(func);
             if config.is_empty() {
                 let callee = match bounding_callee(func, words) { Some(__nikaia_value) => __nikaia_value, None => return None };
@@ -2723,7 +2780,7 @@ fn bounding_negation(walk: &mut BoundsWalk, expr: &Expr, facts: &BoundsFacts, co
     let node = node_of(expr);
     let ty = match *nikaia_std::index::get(&context.negations, &node) { Some(__nikaia_value) => __nikaia_value, None => return };
     let operand = match expr {
-        Expr::Unary { op, expr } => { let expr = nikaia_std::boxed::open(expr); match op {
+        Expr::Unary { op, expr, .. } => { let expr = nikaia_std::boxed::open(expr); match op {
             UnaryOp::Neg => expr,
             _ => return,
         } },
@@ -2757,8 +2814,8 @@ fn bounding_chars_of(iter: &Expr, words: &winnow_grammar::InternerContext) -> Op
 
 fn bounding_callee(func: &Expr, words: &winnow_grammar::InternerContext) -> Option<String> {
     match func {
-        Expr::Variable(name) => { let name = *name; Some(words.resolve(name).to_owned()) },
-        Expr::Path(parts) => {
+        Expr::Variable(name, _) => { let name = *name; Some(words.resolve(name).to_owned()) },
+        Expr::Path(parts, _) => {
             let mut out: String = String::from("");
             for part in parts.iter() {
                 if !out.is_empty() { out.push_str("::"); }
@@ -2795,7 +2852,7 @@ fn bounding_ensured(walk: &mut BoundsWalk, ensured: &Ensured, args: &[Expr], fac
 
 fn bounding_variable(expr: &Expr, words: &winnow_grammar::InternerContext) -> Option<String> {
     match expr {
-        Expr::Variable(name) => { let name = *name; Some(words.resolve(name).to_owned()) },
+        Expr::Variable(name, _) => { let name = *name; Some(words.resolve(name).to_owned()) },
         _ => None,
     }
 }
@@ -2877,17 +2934,17 @@ fn bounding_called(walk: &mut BoundsWalk, wanted: &str, given: &[i64], depth: i6
 
 fn bounding_inline(walk: &mut BoundsWalk, expr: &Expr, env: &collections::BTreeMap<String, i64>, depth: i64, program: &Program, words: &winnow_grammar::InternerContext) -> Option<i64> {
     match expr {
-        Expr::LitInt { value, negative } => {
+        Expr::LitInt { value, negative, .. } => {
             let negative = *negative; let value = *value;
             let n = match integer_as_count(&integer(value, negative)) { Some(__nikaia_value) => __nikaia_value, None => return None };
             return Some(walk.arena.int(n));
         },
-        Expr::Variable(name) => {
+        Expr::Variable(name, _) => {
             let name = *name;
             let term = match *nikaia_std::index::get(&env, words.resolve(name)) { Some(__nikaia_value) => nikaia_std::num::value(__nikaia_value), None => return None };
             return Some(term);
         },
-        Expr::Unary { op, expr } => {
+        Expr::Unary { op, expr, .. } => {
             let expr = nikaia_std::boxed::open(expr);
             match op {
                 UnaryOp::Neg => {
@@ -2897,11 +2954,11 @@ fn bounding_inline(walk: &mut BoundsWalk, expr: &Expr, env: &collections::BTreeM
                 _ => { },
             }
         },
-        Expr::Cast { expr, ty } => {
+        Expr::Cast { expr, ty, .. } => {
             let expr = nikaia_std::boxed::open(expr);
             if ty.generics.is_empty() && is_whole_number(words.resolve(ty.name)) { return bounding_inline(walk, expr, env, depth, program, words); }
         },
-        Expr::Call { func, args, config } => {
+        Expr::Call { func, args, config, .. } => {
             let func = nikaia_std::boxed::open(func);
             if config.is_empty() {
                 let callee = match bounding_variable(func, words) { Some(__nikaia_value) => __nikaia_value, None => return None };
@@ -2926,8 +2983,8 @@ fn bounding_inline(walk: &mut BoundsWalk, expr: &Expr, env: &collections::BTreeM
 
 fn bounding_claim(walk: &mut BoundsWalk, expr: &Expr, facts: &BoundsFacts, context: &BoundsContext, program: &Program, words: &winnow_grammar::InternerContext, node_of: &impl Fn(&Expr) -> i64) -> Option<i64> {
     match expr {
-        Expr::LitBool(b) => { let b = *b; return Some(walk.arena.boolean(b)) },
-        Expr::Unary { op, expr } => {
+        Expr::LitBool(b, _) => { let b = *b; return Some(walk.arena.boolean(b)) },
+        Expr::Unary { op, expr, .. } => {
             let expr = nikaia_std::boxed::open(expr);
             match op {
                 UnaryOp::Not => return bounding_denial(walk, expr, facts, context, program, words, node_of),
@@ -2959,8 +3016,8 @@ fn bounding_claim(walk: &mut BoundsWalk, expr: &Expr, facts: &BoundsFacts, conte
 
 fn bounding_denial(walk: &mut BoundsWalk, expr: &Expr, facts: &BoundsFacts, context: &BoundsContext, program: &Program, words: &winnow_grammar::InternerContext, node_of: &impl Fn(&Expr) -> i64) -> Option<i64> {
     match expr {
-        Expr::LitBool(b) => { let b = *b; return Some(walk.arena.boolean(!b)) },
-        Expr::Unary { op, expr } => {
+        Expr::LitBool(b, _) => { let b = *b; return Some(walk.arena.boolean(!b)) },
+        Expr::Unary { op, expr, .. } => {
             let expr = nikaia_std::boxed::open(expr);
             match op {
                 UnaryOp::Not => return bounding_claim(walk, expr, facts, context, program, words, node_of),
@@ -3049,7 +3106,7 @@ fn bounding_inside(walk: &mut BoundsWalk, list: &str, index: &Expr, facts: &Boun
 #[allow(clippy::too_many_arguments)]
 fn bounding_index(walk: &mut BoundsWalk, base: &Expr, index: &Expr, facts: &BoundsFacts, context: &BoundsContext, program: &Program, words: &winnow_grammar::InternerContext, node_of: &impl Fn(&Expr) -> i64, ask: &impl Fn(&TermArena, &[i64], i64) -> bool) {
     match base {
-        Expr::Variable(list) => {
+        Expr::Variable(list, _) => {
             let list = *list;
             if bounding_inside(walk, words.resolve(list), index, facts, context, program, words, node_of, ask) { walk.proven.indices.insert(node_of(base)); }
         },
@@ -3119,7 +3176,7 @@ fn bounding_stmt(walk: &mut BoundsWalk, stmt: &Stmt, facts: &mut BoundsFacts, co
                 }
             }
             match target {
-                Expr::Variable(name) => { let name = *name; bounding_assign(walk, facts, words.resolve(name), (op).as_ref(), value, context, program, words, node_of, ask) },
+                Expr::Variable(name, _) => { let name = *name; bounding_assign(walk, facts, words.resolve(name), (op).as_ref(), value, context, program, words, node_of, ask) },
                 _ => { },
             }
             return false;
@@ -3205,7 +3262,7 @@ fn bounding_compound(walk: &mut BoundsWalk, op: Option<&BinaryOp>, target: &Expr
     let arithmetic = matches!(operation, BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul);
     if !arithmetic || walk.collecting { return; }
     match target {
-        Expr::Variable(_) => { },
+        Expr::Variable(_, _) => { },
         _ => return,
     }
     let ty = match *nikaia_std::index::get(&context.arithmetic, &at) { Some(__nikaia_value) => __nikaia_value, None => return };
@@ -3223,7 +3280,7 @@ fn bounding_for(walk: &mut BoundsWalk, bindings: &[winnow_grammar::Symbol], iter
     let mut closed = false;
     if bindings.len() == 1 {
         match iter {
-            Expr::Range { start, end, inclusive } => {
+            Expr::Range { start, end, inclusive, .. } => {
                 let start = nikaia_std::boxed::open(start); let end = nikaia_std::boxed::open(end); let inclusive = *inclusive;
                 low = bounding_lin(walk, start, &facts, context, program, words, node_of);
                 high = bounding_lin(walk, end, &facts, context, program, words, node_of);
@@ -3391,7 +3448,7 @@ fn bounding_built(walk: &mut BoundsWalk, facts: &mut BoundsFacts, name: &str, va
 #[allow(clippy::too_many_arguments)]
 fn bounding_place(walk: &mut BoundsWalk, target: &Expr, facts: &mut BoundsFacts, context: &BoundsContext, program: &Program, words: &winnow_grammar::InternerContext, node_of: &impl Fn(&Expr) -> i64, ask: &impl Fn(&TermArena, &[i64], i64) -> bool) {
     match target {
-        Expr::Index { base, index } => {
+        Expr::Index { base, index, .. } => {
             let base = nikaia_std::boxed::open(base); let index = nikaia_std::boxed::open(index);
             bounding_place(walk, base, facts, context, program, words, node_of, ask);
             bounding_expr(walk, index, facts, context, program, words, node_of, ask);
@@ -3405,16 +3462,16 @@ fn bounding_place(walk: &mut BoundsWalk, target: &Expr, facts: &mut BoundsFacts,
 #[allow(clippy::too_many_arguments)]
 fn bounding_expr_leaves(walk: &mut BoundsWalk, expr: &Expr, facts: &mut BoundsFacts, context: &BoundsContext, program: &Program, words: &winnow_grammar::InternerContext, node_of: &impl Fn(&Expr) -> i64, ask: &impl Fn(&TermArena, &[i64], i64) -> bool) -> bool {
     match expr {
-        Expr::If { cond, then_branch, else_branch } => { let cond = nikaia_std::boxed::open(cond); return bounding_if_leaves(walk, cond, then_branch, (else_branch).as_ref(), facts, context, program, words, node_of, ask) },
-        Expr::Return(value) => {
+        Expr::If { cond, then_branch, else_branch, .. } => { let cond = nikaia_std::boxed::open(cond); return bounding_if_leaves(walk, cond, then_branch, (else_branch).as_ref(), facts, context, program, words, node_of, ask) },
+        Expr::Return(value, _) => {
             let value = nikaia_std::boxed::open(value);
             let returned = match value { Some(__nikaia_value) => __nikaia_value, None => return true };
             bounding_expr(walk, returned, facts, context, program, words, node_of, ask);
             return true;
         },
-        Expr::Break => return true,
-        Expr::Continue => return true,
-        Expr::Throw(value) => {
+        Expr::Break(_) => return true,
+        Expr::Continue(_) => return true,
+        Expr::Throw(value, _) => {
             let value = nikaia_std::boxed::open(value);
             bounding_expr(walk, value, facts, context, program, words, node_of, ask);
             return true;
@@ -3462,14 +3519,14 @@ fn bounding_expr(walk: &mut BoundsWalk, expr: &Expr, facts: &mut BoundsFacts, co
     bounding_nonnegative(walk, expr, &facts, context, program, words, node_of, ask);
     bounding_negation(walk, expr, &facts, context, program, words, node_of, ask);
     match expr {
-        Expr::Index { base, index } => {
+        Expr::Index { base, index, .. } => {
             let base = nikaia_std::boxed::open(base); let index = nikaia_std::boxed::open(index);
             bounding_expr(walk, base, facts, context, program, words, node_of, ask);
             bounding_expr(walk, index, facts, context, program, words, node_of, ask);
             bounding_index(walk, base, index, &facts, context, program, words, node_of, ask);
         },
         Expr::Binary { op, lhs, rhs, span, .. } => { let lhs = nikaia_std::boxed::open(lhs); let rhs = nikaia_std::boxed::open(rhs); bounding_binary(walk, op, lhs, rhs, span.start as i64, facts, context, program, words, node_of, ask) },
-        Expr::If { cond, then_branch, else_branch } => {
+        Expr::If { cond, then_branch, else_branch, .. } => {
             let cond = nikaia_std::boxed::open(cond);
             bounding_expr(walk, cond, facts, context, program, words, node_of, ask);
             let mut then_facts = facts.clone();
@@ -3479,9 +3536,9 @@ fn bounding_expr(walk: &mut BoundsWalk, expr: &Expr, facts: &mut BoundsFacts, co
             bounding_else(walk, (else_branch).as_ref(), cond, &facts, &mut changed, context, program, words, node_of, ask);
             bounding_after_change(walk, facts, &changed);
         },
-        Expr::Block(block) => bounding_inner_block(walk, block, facts, context, program, words, node_of, ask),
-        Expr::Unsafe(block) => bounding_inner_block(walk, block, facts, context, program, words, node_of, ask),
-        Expr::Match { value, arms } => {
+        Expr::Block(block, _) => bounding_inner_block(walk, block, facts, context, program, words, node_of, ask),
+        Expr::Unsafe(block, _) => bounding_inner_block(walk, block, facts, context, program, words, node_of, ask),
+        Expr::Match { value, arms, .. } => {
             let value = nikaia_std::boxed::open(value);
             bounding_expr(walk, value, facts, context, program, words, node_of, ask);
             let mut changed = nothing_changed();
@@ -3495,11 +3552,11 @@ fn bounding_expr(walk: &mut BoundsWalk, expr: &Expr, facts: &mut BoundsFacts, co
         },
         Expr::Closure { .. } => { },
         Expr::Spawn { .. } => { },
-        Expr::Overlap(_) => { },
-        Expr::Select(_) => { },
+        Expr::Overlap(_, _) => { },
+        Expr::Select(_, _) => { },
         Expr::MethodCall { receiver, method, args, .. } => { let receiver = nikaia_std::boxed::open(receiver); let method = *method; bounding_method_call(walk, receiver, words.resolve(method), args, facts, context, program, words, node_of, ask) },
         Expr::SafeMethod { receiver, method, args, .. } => { let receiver = nikaia_std::boxed::open(receiver); let method = *method; bounding_method_call(walk, receiver, words.resolve(method), args, facts, context, program, words, node_of, ask) },
-        Expr::Call { func, args, config } => {
+        Expr::Call { func, args, config, .. } => {
             let func = nikaia_std::boxed::open(func);
             bounding_expr(walk, func, facts, context, program, words, node_of, ask);
             for arg in args.iter() { bounding_expr(walk, arg, facts, context, program, words, node_of, ask); }
@@ -3508,7 +3565,7 @@ fn bounding_expr(walk: &mut BoundsWalk, expr: &Expr, facts: &mut BoundsFacts, co
             let callee = callee_params(func, &context.around, words);
             for at in 0..args.len() as i64 {
                 match nikaia_std::index::get(&args, nikaia_std::index::at(at)) {
-                    Expr::Variable(name) => {
+                    Expr::Variable(name, _) => {
                         let name = *name;
                         if hands_on((callee).as_ref(), at) { bounding_forget(&walk, facts, words.resolve(name)); }
                     },
@@ -3595,13 +3652,13 @@ fn bounding_method_call(walk: &mut BoundsWalk, receiver: &Expr, method: &str, ar
         if key.is_some() { bounding_write(walk, nikaia_std::index::or(key.as_deref(), || ""), nikaia_std::index::get(&args, nikaia_std::index::at(nikaia_std::index::or(written, || 0))), &facts, context, program, words, node_of, ask); }
     }
     match receiver {
-        Expr::Variable(name) => { let name = *name; bounding_method(walk, facts, words.resolve(name), method, args, context, program, words, node_of, ask) },
+        Expr::Variable(name, _) => { let name = *name; bounding_method(walk, facts, words.resolve(name), method, args, context, program, words, node_of, ask) },
         _ => { },
     }
     let changes_its_arguments = context.around.changing_methods.contains(method);
     for arg in args.iter() {
         match arg {
-            Expr::Variable(name) => {
+            Expr::Variable(name, _) => {
                 let name = *name;
                 let text = words.resolve(name);
                 if changes_its_arguments { bounding_forget(&walk, facts, text); } else if !facts.ints.contains(text) { bounding_forget_length(&walk, facts, text); }
@@ -3683,9 +3740,9 @@ fn bounding_children(walk: &mut BoundsWalk, expr: &Expr, facts: &mut BoundsFacts
             bounding_expr(walk, start, facts, context, program, words, node_of, ask);
             bounding_expr(walk, end, facts, context, program, words, node_of, ask);
         },
-        Expr::Tuple(items) => { for item in items.iter() { bounding_expr(walk, item, facts, context, program, words, node_of, ask); } },
+        Expr::Tuple(items, _) => { for item in items.iter() { bounding_expr(walk, item, facts, context, program, words, node_of, ask); } },
         Expr::ListLit { items, .. } => { for item in items.iter() { bounding_expr(walk, item, facts, context, program, words, node_of, ask); } },
-        Expr::LitInterpolated { parts } => {
+        Expr::LitInterpolated { parts, .. } => {
             for part in parts.iter() {
                 match part {
                     FPart::Hole { expr, .. } => bounding_expr(walk, expr, facts, context, program, words, node_of, ask),
@@ -3702,16 +3759,16 @@ fn bounding_children(walk: &mut BoundsWalk, expr: &Expr, facts: &mut BoundsFacts
             for field in fields.iter() { bounding_maybe_expr(walk, (field.value).as_ref(), facts, context, program, words, node_of, ask); }
         },
         Expr::Unary { expr, .. } => { let expr = nikaia_std::boxed::open(expr); bounding_expr(walk, expr, facts, context, program, words, node_of, ask) },
-        Expr::Try(inner) => { let inner = nikaia_std::boxed::open(inner); bounding_expr(walk, inner, facts, context, program, words, node_of, ask) },
-        Expr::Throw(inner) => { let inner = nikaia_std::boxed::open(inner); bounding_expr(walk, inner, facts, context, program, words, node_of, ask) },
+        Expr::Try(inner, _) => { let inner = nikaia_std::boxed::open(inner); bounding_expr(walk, inner, facts, context, program, words, node_of, ask) },
+        Expr::Throw(inner, _) => { let inner = nikaia_std::boxed::open(inner); bounding_expr(walk, inner, facts, context, program, words, node_of, ask) },
         Expr::Cast { expr, .. } => { let expr = nikaia_std::boxed::open(expr); bounding_expr(walk, expr, facts, context, program, words, node_of, ask) },
-        Expr::TryCatch { expr, handler } => {
+        Expr::TryCatch { expr, handler, .. } => {
             let expr = nikaia_std::boxed::open(expr);
             bounding_expr(walk, expr, facts, context, program, words, node_of, ask);
             bounding_inner_block(walk, handler, facts, context, program, words, node_of, ask);
         },
-        Expr::Return(value) => { let value = nikaia_std::boxed::open(value); bounding_maybe_expr(walk, (value).as_ref(), facts, context, program, words, node_of, ask) },
-        Expr::Coalesce { value, fallback } => {
+        Expr::Return(value, _) => { let value = nikaia_std::boxed::open(value); bounding_maybe_expr(walk, (value).as_ref(), facts, context, program, words, node_of, ask) },
+        Expr::Coalesce { value, fallback, .. } => {
             let value = nikaia_std::boxed::open(value); let fallback = nikaia_std::boxed::open(fallback);
             bounding_expr(walk, value, facts, context, program, words, node_of, ask);
             bounding_expr(walk, fallback, facts, context, program, words, node_of, ask);
@@ -3747,7 +3804,7 @@ fn changed_in_block(block: &Block, context: &BoundsContext, words: &winnow_gramm
         match &stmt.node {
             Stmt::Assign { target, value, .. } => {
                 match target {
-                    Expr::Variable(name) => {
+                    Expr::Variable(name, _) => {
                         let name = *name;
                         out.lengths.insert(words.resolve(name).to_owned());
                         out.values.insert(words.resolve(name).to_owned());
@@ -3784,7 +3841,7 @@ fn changed_in_all(exprs: &[Expr], context: &BoundsContext, words: &winnow_gramma
 fn changed_in_expr(expr: &Expr, context: &BoundsContext, words: &winnow_grammar::InternerContext, out: &mut BoundsChanged) {
     changed_by(expr, context, words, out);
     match expr {
-        Expr::Match { value, arms } => {
+        Expr::Match { value, arms, .. } => {
             let value = nikaia_std::boxed::open(value);
             changed_in_expr(value, context, words, out);
             for arm in arms.iter() {
@@ -3797,9 +3854,9 @@ fn changed_in_expr(expr: &Expr, context: &BoundsContext, words: &winnow_grammar:
             changed_in_expr(start, context, words, out);
             changed_in_expr(end, context, words, out);
         },
-        Expr::Tuple(items) => changed_in_all(items, context, words, out),
+        Expr::Tuple(items, _) => changed_in_all(items, context, words, out),
         Expr::ListLit { items, .. } => changed_in_all(items, context, words, out),
-        Expr::LitInterpolated { parts } => {
+        Expr::LitInterpolated { parts, .. } => {
             for part in parts.iter() {
                 match part {
                     FPart::Hole { expr, .. } => changed_in_expr(expr, context, words, out),
@@ -3807,13 +3864,13 @@ fn changed_in_expr(expr: &Expr, context: &BoundsContext, words: &winnow_grammar:
                 }
             }
         },
-        Expr::If { cond, then_branch, else_branch } => {
+        Expr::If { cond, then_branch, else_branch, .. } => {
             let cond = nikaia_std::boxed::open(cond);
             changed_in_expr(cond, context, words, out);
             changed_in_block(then_branch, context, words, out);
             changed_in_maybe_block((else_branch).as_ref(), context, words, out);
         },
-        Expr::Call { func, args, config } => {
+        Expr::Call { func, args, config, .. } => {
             let func = nikaia_std::boxed::open(func);
             changed_in_expr(func, context, words, out);
             changed_in_all(args, context, words, out);
@@ -3841,10 +3898,10 @@ fn changed_in_expr(expr: &Expr, context: &BoundsContext, words: &winnow_grammar:
             for field in fields.iter() { changed_in_maybe((field.value).as_ref(), context, words, out); }
         },
         Expr::Unary { expr, .. } => { let expr = nikaia_std::boxed::open(expr); changed_in_expr(expr, context, words, out) },
-        Expr::Try(inner) => { let inner = nikaia_std::boxed::open(inner); changed_in_expr(inner, context, words, out) },
-        Expr::Throw(inner) => { let inner = nikaia_std::boxed::open(inner); changed_in_expr(inner, context, words, out) },
+        Expr::Try(inner, _) => { let inner = nikaia_std::boxed::open(inner); changed_in_expr(inner, context, words, out) },
+        Expr::Throw(inner, _) => { let inner = nikaia_std::boxed::open(inner); changed_in_expr(inner, context, words, out) },
         Expr::Cast { expr, .. } => { let expr = nikaia_std::boxed::open(expr); changed_in_expr(expr, context, words, out) },
-        Expr::TryCatch { expr, handler } => {
+        Expr::TryCatch { expr, handler, .. } => {
             let expr = nikaia_std::boxed::open(expr);
             changed_in_expr(expr, context, words, out);
             changed_in_block(handler, context, words, out);
@@ -3854,26 +3911,26 @@ fn changed_in_expr(expr: &Expr, context: &BoundsContext, words: &winnow_grammar:
             changed_in_expr(lhs, context, words, out);
             changed_in_expr(rhs, context, words, out);
         },
-        Expr::Return(value) => { let value = nikaia_std::boxed::open(value); changed_in_maybe((value).as_ref(), context, words, out) },
-        Expr::Index { base, index } => {
+        Expr::Return(value, _) => { let value = nikaia_std::boxed::open(value); changed_in_maybe((value).as_ref(), context, words, out) },
+        Expr::Index { base, index, .. } => {
             let base = nikaia_std::boxed::open(base); let index = nikaia_std::boxed::open(index);
             changed_in_expr(base, context, words, out);
             changed_in_expr(index, context, words, out);
         },
-        Expr::Coalesce { value, fallback } => {
+        Expr::Coalesce { value, fallback, .. } => {
             let value = nikaia_std::boxed::open(value); let fallback = nikaia_std::boxed::open(fallback);
             changed_in_expr(value, context, words, out);
             changed_in_expr(fallback, context, words, out);
         },
-        Expr::Select(arms) => {
+        Expr::Select(arms, _) => {
             for arm in arms.iter() {
                 changed_in_expr(&arm.value, context, words, out);
                 changed_in_block(&arm.body, context, words, out);
             }
         },
-        Expr::Block(b) => changed_in_block(b, context, words, out),
-        Expr::Overlap(b) => changed_in_block(b, context, words, out),
-        Expr::Unsafe(b) => changed_in_block(b, context, words, out),
+        Expr::Block(b, _) => changed_in_block(b, context, words, out),
+        Expr::Overlap(b, _) => changed_in_block(b, context, words, out),
+        Expr::Unsafe(b, _) => changed_in_block(b, context, words, out),
         Expr::Closure { body, .. } => changed_in_block(body, context, words, out),
         _ => { },
     }
@@ -3893,7 +3950,7 @@ fn changed_by(expr: &Expr, context: &BoundsContext, words: &winnow_grammar::Inte
             let callee = callee_params(func, &context.around, words);
             for at in 0..args.len() as i64 {
                 match nikaia_std::index::get(&args, nikaia_std::index::at(at)) {
-                    Expr::Variable(name) => {
+                    Expr::Variable(name, _) => {
                         let name = *name;
                         if hands_on((callee).as_ref(), at) {
                             out.lengths.insert(words.resolve(name).to_owned());
@@ -3910,7 +3967,7 @@ fn changed_by(expr: &Expr, context: &BoundsContext, words: &winnow_grammar::Inte
 
 fn changed_by_method(receiver: &Expr, method: &str, args: &[Expr], context: &BoundsContext, words: &winnow_grammar::InternerContext, out: &mut BoundsChanged) {
     match receiver {
-        Expr::Variable(name) => {
+        Expr::Variable(name, _) => {
             let name = *name;
             if !keeps_length(method) { out.lengths.insert(words.resolve(name).to_owned()); }
         },
@@ -3919,7 +3976,7 @@ fn changed_by_method(receiver: &Expr, method: &str, args: &[Expr], context: &Bou
     let changes_its_arguments = context.around.changing_methods.contains(method);
     for arg in args.iter() {
         match arg {
-            Expr::Variable(name) => {
+            Expr::Variable(name, _) => {
                 let name = *name;
                 if changes_its_arguments { out.values.insert(words.resolve(name).to_owned()); }
                 out.lengths.insert(words.resolve(name).to_owned());
@@ -4177,7 +4234,7 @@ fn buffer_statement(stmt: &Stmt, span: &Span, ask: &BufferAsk<'_>, holes_of: &im
             nested_blocks(value, at, ask, holes_of, unaliased, walk);
             let origins = origins_of(value, ask, holes_of, unaliased, walk);
             let root = match root_of(ask.names, target) { Some(__nikaia_value) => __nikaia_value, None => return };
-            let whole = op.is_none() && matches!(target, Expr::Variable(_));
+            let whole = op.is_none() && matches!(target, Expr::Variable(_, _));
             if whole {
                 let bound = local_of(&root, &walk);
                 if bound.is_some() && nikaia_std::index::or(bound.as_ref().map(|__nikaia_it| __nikaia_it.buffer), || false) { walk.reassigned.insert(at, nikaia_std::index::or(bound.as_ref().map(|__nikaia_it| __nikaia_it.at), || 0)); }
@@ -4287,7 +4344,7 @@ fn copies_text(receiver: &Expr, ask: &BufferAsk<'_>, walk: &BufferWalk) -> bool 
     match receiver {
         Expr::LitStr { .. } => true,
         Expr::LitInterpolated { .. } => true,
-        Expr::Variable(name) => { let name = *name; text_local(ask.names.resolve(name), ask, walk) },
+        Expr::Variable(name, _) => { let name = *name; text_local(ask.names.resolve(name), ask, walk) },
         Expr::MethodCall { receiver, method, .. } => { let receiver = nikaia_std::boxed::open(receiver); let method = *method; match ask.names.resolve(method) == "trim" || ask.names.resolve(method) == "trim_start" || ask.names.resolve(method) == "trim_end" || ask.names.resolve(method) == "clone" {
             true => copies_text(receiver, ask, walk),
             false => false,
@@ -4306,7 +4363,7 @@ fn text_local(name: &str, ask: &BufferAsk<'_>, walk: &BufferWalk) -> bool {
 
 fn formats(receiver: &Expr, ask: &BufferAsk<'_>, walk: &BufferWalk) -> bool {
     match receiver {
-        Expr::Variable(name) => { let name = *name; formats_local(ask.names.resolve(name), ask, walk) },
+        Expr::Variable(name, _) => { let name = *name; formats_local(ask.names.resolve(name), ask, walk) },
         _ => false,
     }
 }
@@ -4320,7 +4377,7 @@ fn formats_local(name: &str, ask: &BufferAsk<'_>, walk: &BufferWalk) -> bool {
 
 fn is_the_buffer(expr: &Expr, ask: &BufferAsk<'_>, walk: &BufferWalk) -> bool {
     match expr {
-        Expr::Variable(name) => { let name = *name; a_buffer_local(ask.names.resolve(name), walk) },
+        Expr::Variable(name, _) => { let name = *name; a_buffer_local(ask.names.resolve(name), walk) },
         Expr::MethodCall { receiver, method, .. } => { let receiver = nikaia_std::boxed::open(receiver); let method = *method; match ask.names.resolve(method) == "clone" || ask.names.resolve(method) == "to_owned" || ask.names.resolve(method) == "to_string" {
             true => is_the_buffer(receiver, ask, walk),
             false => false,
@@ -4332,7 +4389,7 @@ fn is_the_buffer(expr: &Expr, ask: &BufferAsk<'_>, walk: &BufferWalk) -> bool {
 fn struct_of(expr: &Expr, ask: &BufferAsk<'_>, walk: &BufferWalk) -> Option<String> {
     let name = match expr {
         Expr::StructLit { name, .. } => { let name = *name; ask.names.resolve(name).to_owned() },
-        Expr::Variable(name) => { let name = *name; match written_type_of(ask.names.resolve(name), ask, walk) { Some(__nikaia_value) => __nikaia_value, None => return None } },
+        Expr::Variable(name, _) => { let name = *name; match written_type_of(ask.names.resolve(name), ask, walk) { Some(__nikaia_value) => __nikaia_value, None => return None } },
         _ => return None,
     };
     if ask.context.borrowing.contains(&name) { return Some(name); }
@@ -4412,11 +4469,11 @@ fn escape_word(escaping: &Escape) -> String {
 
 fn nested_blocks(expr: &Expr, at: i64, ask: &BufferAsk<'_>, holes_of: &impl Fn(&Expr) -> Vec<Expr>, unaliased: &impl Fn(&str) -> String, walk: &mut BufferWalk) {
     match expr {
-        Expr::Block(block) => nested_keeping_statement(at, block, ask, holes_of, unaliased, walk),
-        Expr::Unsafe(block) => nested_keeping_statement(at, block, ask, holes_of, unaliased, walk),
-        Expr::Overlap(block) => nested_keeping_statement(at, block, ask, holes_of, unaliased, walk),
+        Expr::Block(block, _) => nested_keeping_statement(at, block, ask, holes_of, unaliased, walk),
+        Expr::Unsafe(block, _) => nested_keeping_statement(at, block, ask, holes_of, unaliased, walk),
+        Expr::Overlap(block, _) => nested_keeping_statement(at, block, ask, holes_of, unaliased, walk),
         Expr::Closure { body, .. } => nested_keeping_statement(at, body, ask, holes_of, unaliased, walk),
-        Expr::Call { func, args, config } => {
+        Expr::Call { func, args, config, .. } => {
             let func = nikaia_std::boxed::open(func);
             nested_blocks(func, at, ask, holes_of, unaliased, walk);
             for arg in args.iter() { nested_blocks(arg, at, ask, holes_of, unaliased, walk); }
@@ -4438,13 +4495,13 @@ fn nested_blocks(expr: &Expr, at: i64, ask: &BufferAsk<'_>, holes_of: &impl Fn(&
             nested_keeping_statement(at, then_branch, ask, holes_of, unaliased, walk);
             nested_keeping_statement(at, match else_branch { Some(__nikaia_value) => __nikaia_value, None => return }, ask, holes_of, unaliased, walk);
         },
-        Expr::TryCatch { expr, handler } => {
+        Expr::TryCatch { expr, handler, .. } => {
             let expr = nikaia_std::boxed::open(expr);
             nested_blocks(expr, at, ask, holes_of, unaliased, walk);
             nested_keeping_statement(at, handler, ask, holes_of, unaliased, walk);
         },
         Expr::Match { arms, .. } => { for arm in arms.iter() { nested_blocks(&arm.body, at, ask, holes_of, unaliased, walk); } },
-        Expr::Select(arms) => { for arm in arms.iter() { nested_keeping_statement(at, &arm.body, ask, holes_of, unaliased, walk); } },
+        Expr::Select(arms, _) => { for arm in arms.iter() { nested_keeping_statement(at, &arm.body, ask, holes_of, unaliased, walk); } },
         _ => { },
     }
 }
@@ -4502,7 +4559,7 @@ fn spawn_bodies(expr: &Expr, holes_of: &impl Fn(&Expr) -> Vec<Expr>, out: &mut V
     }
     for hole in holes_of(expr) { spawn_bodies(&hole, holes_of, out); }
     match expr {
-        Expr::Call { func, args, config } => {
+        Expr::Call { func, args, config, .. } => {
             let func = nikaia_std::boxed::open(func);
             spawn_bodies(func, holes_of, out);
             for arg in args.iter() { spawn_bodies(arg, holes_of, out); }
@@ -4526,12 +4583,12 @@ fn spawn_bodies(expr: &Expr, holes_of: &impl Fn(&Expr) -> Vec<Expr>, out: &mut V
             spawn_bodies(rhs, holes_of, out);
         },
         Expr::Unary { expr, .. } => { let expr = nikaia_std::boxed::open(expr); spawn_bodies(expr, holes_of, out) },
-        Expr::Try(inner) => { let inner = nikaia_std::boxed::open(inner); spawn_bodies(inner, holes_of, out) },
-        Expr::Throw(inner) => { let inner = nikaia_std::boxed::open(inner); spawn_bodies(inner, holes_of, out) },
+        Expr::Try(inner, _) => { let inner = nikaia_std::boxed::open(inner); spawn_bodies(inner, holes_of, out) },
+        Expr::Throw(inner, _) => { let inner = nikaia_std::boxed::open(inner); spawn_bodies(inner, holes_of, out) },
         Expr::Cast { expr, .. } => { let expr = nikaia_std::boxed::open(expr); spawn_bodies(expr, holes_of, out) },
         Expr::Field { base, .. } => { let base = nikaia_std::boxed::open(base); spawn_bodies(base, holes_of, out) },
         Expr::SafeField { base, .. } => { let base = nikaia_std::boxed::open(base); spawn_bodies(base, holes_of, out) },
-        Expr::Index { base, index } => {
+        Expr::Index { base, index, .. } => {
             let base = nikaia_std::boxed::open(base); let index = nikaia_std::boxed::open(index);
             spawn_bodies(base, holes_of, out);
             spawn_bodies(index, holes_of, out);
@@ -4541,15 +4598,15 @@ fn spawn_bodies(expr: &Expr, holes_of: &impl Fn(&Expr) -> Vec<Expr>, out: &mut V
             spawn_bodies(start, holes_of, out);
             spawn_bodies(end, holes_of, out);
         },
-        Expr::Tuple(parts) => { for part in parts.iter() { spawn_bodies(part, holes_of, out); } },
-        Expr::Coalesce { value, fallback } => {
+        Expr::Tuple(parts, _) => { for part in parts.iter() { spawn_bodies(part, holes_of, out); } },
+        Expr::Coalesce { value, fallback, .. } => {
             let value = nikaia_std::boxed::open(value); let fallback = nikaia_std::boxed::open(fallback);
             spawn_bodies(value, holes_of, out);
             spawn_bodies(fallback, holes_of, out);
         },
         Expr::TryCatch { expr, .. } => { let expr = nikaia_std::boxed::open(expr); spawn_bodies(expr, holes_of, out) },
         Expr::If { cond, .. } => { let cond = nikaia_std::boxed::open(cond); spawn_bodies(cond, holes_of, out) },
-        Expr::Match { value, arms } => {
+        Expr::Match { value, arms, .. } => {
             let value = nikaia_std::boxed::open(value);
             spawn_bodies(value, holes_of, out);
             for arm in arms.iter() {
@@ -4564,8 +4621,8 @@ fn spawn_bodies(expr: &Expr, holes_of: &impl Fn(&Expr) -> Vec<Expr>, out: &mut V
             spawn_bodies(base, holes_of, out);
             for field in fields.iter() { spawn_bodies(match field.value.as_ref() { Some(__nikaia_value) => __nikaia_value, None => continue }, holes_of, out); }
         },
-        Expr::Return(value) => { let value = nikaia_std::boxed::open(value); spawn_bodies(match value { Some(__nikaia_value) => __nikaia_value, None => return }, holes_of, out) },
-        Expr::Select(arms) => { for arm in arms.iter() { spawn_bodies(&arm.value, holes_of, out); } },
+        Expr::Return(value, _) => { let value = nikaia_std::boxed::open(value); spawn_bodies(match value { Some(__nikaia_value) => __nikaia_value, None => return }, holes_of, out) },
+        Expr::Select(arms, _) => { for arm in arms.iter() { spawn_bodies(&arm.value, holes_of, out); } },
         _ => { },
     }
 }
@@ -4579,7 +4636,7 @@ fn effects(expr: &Expr, ask: &BufferAsk<'_>, holes_of: &impl Fn(&Expr) -> Vec<Ex
             origins_of(expr, ask, holes_of, unaliased, walk);
         },
         Expr::TryCatch { expr, .. } => { let expr = nikaia_std::boxed::open(expr); effects(expr, ask, holes_of, unaliased, walk) },
-        Expr::Try(expr) => { let expr = nikaia_std::boxed::open(expr); effects(expr, ask, holes_of, unaliased, walk) },
+        Expr::Try(expr, _) => { let expr = nikaia_std::boxed::open(expr); effects(expr, ask, holes_of, unaliased, walk) },
         _ => { origins_of(expr, ask, holes_of, unaliased, walk); },
     }
 }
@@ -4619,13 +4676,13 @@ fn put_into(root: &str, at: i64, of: &collections::BTreeSet<(i64, String)>, walk
 fn origins_of(expr: &Expr, ask: &BufferAsk<'_>, holes_of: &impl Fn(&Expr) -> Vec<Expr>, unaliased: &impl Fn(&str) -> String, walk: &mut BufferWalk) -> collections::BTreeSet<(i64, String)> {
     let none: collections::BTreeSet<(i64, String)> = collections::BTreeSet::new();
     match expr {
-        Expr::Variable(name) => { let name = *name; origins_of_local(ask.names.resolve(name), &walk) },
+        Expr::Variable(name, _) => { let name = *name; origins_of_local(ask.names.resolve(name), &walk) },
         Expr::MethodCall { .. } => method_origins(expr, ask, holes_of, unaliased, walk),
         Expr::SafeMethod { .. } => method_origins(expr, ask, holes_of, unaliased, walk),
         Expr::Call { func, args, .. } => { let func = nikaia_std::boxed::open(func); call_origins(func, args, ask, holes_of, unaliased, walk) },
         Expr::Field { base, .. } => { let base = nikaia_std::boxed::open(base); origins_of(base, ask, holes_of, unaliased, walk) },
         Expr::SafeField { base, .. } => { let base = nikaia_std::boxed::open(base); origins_of(base, ask, holes_of, unaliased, walk) },
-        Expr::Index { base, index } => {
+        Expr::Index { base, index, .. } => {
             let base = nikaia_std::boxed::open(base); let index = nikaia_std::boxed::open(index);
             origins_of(index, ask, holes_of, unaliased, walk);
             origins_of(base, ask, holes_of, unaliased, walk)
@@ -4651,33 +4708,33 @@ fn origins_of(expr: &Expr, ask: &BufferAsk<'_>, holes_of: &impl Fn(&Expr) -> Vec
             out
         },
         Expr::ListLit { items, .. } => items_origins(items, ask, holes_of, unaliased, walk),
-        Expr::Tuple(items) => items_origins(items, ask, holes_of, unaliased, walk),
-        Expr::If { cond, then_branch, else_branch } => {
+        Expr::Tuple(items, _) => items_origins(items, ask, holes_of, unaliased, walk),
+        Expr::If { cond, then_branch, else_branch, .. } => {
             let cond = nikaia_std::boxed::open(cond);
             origins_of(cond, ask, holes_of, unaliased, walk);
             let mut out = tail_origins(then_branch, ask, holes_of, unaliased, walk);
             if else_branch.is_some() { add_all(&tail_origins(match else_branch { Some(__nikaia_value) => __nikaia_value, None => return out }, ask, holes_of, unaliased, walk), &mut out); }
             out
         },
-        Expr::Match { value, arms } => {
+        Expr::Match { value, arms, .. } => {
             let value = nikaia_std::boxed::open(value);
             origins_of(value, ask, holes_of, unaliased, walk);
             let mut out: collections::BTreeSet<(i64, String)> = collections::BTreeSet::new();
             for arm in arms.iter() { add_all(&origins_of(&arm.body, ask, holes_of, unaliased, walk), &mut out); }
             out
         },
-        Expr::Block(block) => tail_origins(block, ask, holes_of, unaliased, walk),
-        Expr::Unsafe(block) => tail_origins(block, ask, holes_of, unaliased, walk),
+        Expr::Block(block, _) => tail_origins(block, ask, holes_of, unaliased, walk),
+        Expr::Unsafe(block, _) => tail_origins(block, ask, holes_of, unaliased, walk),
         Expr::Unary { expr, .. } => { let expr = nikaia_std::boxed::open(expr); origins_of(expr, ask, holes_of, unaliased, walk) },
-        Expr::Try(inner) => { let inner = nikaia_std::boxed::open(inner); origins_of(inner, ask, holes_of, unaliased, walk) },
+        Expr::Try(inner, _) => { let inner = nikaia_std::boxed::open(inner); origins_of(inner, ask, holes_of, unaliased, walk) },
         Expr::Cast { expr, .. } => { let expr = nikaia_std::boxed::open(expr); origins_of(expr, ask, holes_of, unaliased, walk) },
-        Expr::TryCatch { expr, handler } => {
+        Expr::TryCatch { expr, handler, .. } => {
             let expr = nikaia_std::boxed::open(expr);
             let mut out = origins_of(expr, ask, holes_of, unaliased, walk);
             add_all(&tail_origins(handler, ask, holes_of, unaliased, walk), &mut out);
             out
         },
-        Expr::Coalesce { value, fallback } => {
+        Expr::Coalesce { value, fallback, .. } => {
             let value = nikaia_std::boxed::open(value); let fallback = nikaia_std::boxed::open(fallback);
             let mut out = origins_of(value, ask, holes_of, unaliased, walk);
             add_all(&origins_of(fallback, ask, holes_of, unaliased, walk), &mut out);
@@ -4730,7 +4787,7 @@ fn method_origins(call: &Expr, ask: &BufferAsk<'_>, holes_of: &impl Fn(&Expr) ->
     }
     let mut out: collections::BTreeSet<(i64, String)> = collections::BTreeSet::new();
     let on_self = match receiver {
-        Expr::Variable(name) => { let name = *name; ask.names.resolve(name) == "self" },
+        Expr::Variable(name, _) => { let name = *name; ask.names.resolve(name) == "self" },
         _ => false,
     };
     let keeping = keeping_method_key(ask.own, (walk.target).as_deref(), on_self, &method);
@@ -4828,7 +4885,7 @@ fn made_arguments(contract: &FnContract, named: &str, args: &[Expr], ask: &Buffe
     }
 }
 
-fn made_in_the_call(arg: &Expr) -> bool { !matches!(arg, Expr::Variable(_) | Expr::Field { .. } | Expr::SafeField { .. } | Expr::Index { .. } | Expr::Path(_) | Expr::LitStr { .. } | Expr::LitInt { .. } | Expr::LitFloat { .. } | Expr::LitBool(_) | Expr::LitNull) }
+fn made_in_the_call(arg: &Expr) -> bool { !matches!(arg, Expr::Variable(_, _) | Expr::Field { .. } | Expr::SafeField { .. } | Expr::Index { .. } | Expr::Path(_, _) | Expr::LitStr { .. } | Expr::LitInt { .. } | Expr::LitFloat { .. } | Expr::LitBool(_, _) | Expr::LitNull(_)) }
 
 fn parameter_index(contract: &FnContract, position: &str) -> i64 {
     let signature = match contract.signature.as_ref() { Some(__nikaia_value) => __nikaia_value, None => return -1 };
@@ -5222,43 +5279,43 @@ fn bt_float(written: &str) -> Result<f64, nikaia_std::error::Thrown<BtRefusal>> 
 // this was written - see `contracts::sync`.
 fn bt_expr<H: BtHost>(expr: &Expr, frame: &collections::BTreeMap<String, BuildValue>, host: &H, state: &mut BtState) -> Result<BuildValue, nikaia_std::error::Thrown<BtRefusal>> {
     Ok(match expr {
-        Expr::LitInt { value, negative } => { let negative = *negative; let value = *value; BuildValue::Int(integer(value, negative)) },
-        Expr::LitFloat(written) => BuildValue::Float(bt_float(written)?),
-        Expr::LitBool(value) => { let value = *value; BuildValue::Bool(value) },
+        Expr::LitInt { value, negative, .. } => { let negative = *negative; let value = *value; BuildValue::Int(integer(value, negative)) },
+        Expr::LitFloat(written, _) => BuildValue::Float(bt_float(written)?),
+        Expr::LitBool(value, _) => { let value = *value; BuildValue::Bool(value) },
         Expr::LitStr { text, .. } => {
             let decoded = decoded(text, &|n| { host.char_of(n) });
             if decoded.is_none() { return Err(nikaia_std::error::throwing(BtRefusal::Unevaluable, &"bt_expr")); }
             BuildValue::Text(nikaia_std::index::or(decoded, || "".into()))
         },
-        Expr::Tuple(parts) => {
+        Expr::Tuple(parts, _) => {
             let mut held: Vec<BuildValue> = vec![];
             for part in parts.iter() { held.push(bt_expr(part, frame, host, state)?); }
             BuildValue::Tuple(held)
         },
-        Expr::LitInterpolated { parts } => bt_interpolated(parts, frame, host, state)?,
-        Expr::Path(path) => {
+        Expr::LitInterpolated { parts, .. } => bt_interpolated(parts, frame, host, state)?,
+        Expr::Path(path, _) => {
             if path.len() != 2 { return Err(nikaia_std::error::throwing(BtRefusal::Unevaluable, &"bt_expr")); }
             let ty = host.text(state.unit, *nikaia_std::index::get(&path, 0));
             let variant = host.text(state.unit, *nikaia_std::index::get(&path, 1));
             if !host.variant_of(state.unit, &ty, &variant) { return Err(nikaia_std::error::throwing(BtRefusal::Unevaluable, &"bt_expr")); }
             BuildValue::Variant { ty, variant, payload: vec![] }
         },
-        Expr::Variable(symbol) => { let symbol = *symbol; bt_variable(symbol, frame, host, state)? },
+        Expr::Variable(symbol, _) => { let symbol = *symbol; bt_variable(symbol, frame, host, state)? },
         Expr::Unary { .. } => bt_unary_expr(expr, frame, host, state)?,
         Expr::Binary { .. } => bt_binary_expr(expr, frame, host, state)?,
-        Expr::If { cond, then_branch, else_branch } => { let cond = nikaia_std::boxed::open(cond); bt_if_value(cond, then_branch, (else_branch).as_ref(), frame, host, state)? },
+        Expr::If { cond, then_branch, else_branch, .. } => { let cond = nikaia_std::boxed::open(cond); bt_if_value(cond, then_branch, (else_branch).as_ref(), frame, host, state)? },
         Expr::ListLit { items, .. } => {
             let mut values: Vec<BuildValue> = vec![];
             for item in items.iter() { values.push(bt_expr(item, frame, host, state)?); }
             BuildValue::List(values)
         },
-        Expr::Index { base, index } => {
+        Expr::Index { base, index, .. } => {
             let base = nikaia_std::boxed::open(base); let index = nikaia_std::boxed::open(index);
             let on = bt_expr(base, frame, host, state)?;
             let at = bt_expr(index, frame, host, state)?;
             bt_element(&on, &at)?
         },
-        Expr::StructLit { name, fields } => {
+        Expr::StructLit { name, fields, .. } => {
             let name = *name;
             let ty = host.text(state.unit, name);
             let mut held: collections::BTreeMap<String, BuildValue> = collections::BTreeMap::new();
@@ -5268,7 +5325,7 @@ fn bt_expr<H: BtHost>(expr: &Expr, frame: &collections::BTreeMap<String, BuildVa
                     Some(__nikaia_it) => Some(__nikaia_it.clone()),
                     None => None,
                 };
-                if given.is_some() { held.insert(written, bt_expr(nikaia_std::index::or(given.as_ref(), || &Expr::LitNull), frame, host, state)?); } else {
+                if given.is_some() { held.insert(written, bt_expr(&nikaia_std::index::or(given, || Expr::LitNull(fresh_id())), frame, host, state)?); } else {
                     let found = frame.get(&written);
                     if found.is_none() { return Err(nikaia_std::error::throwing(BtRefusal::Unevaluable, &"bt_expr")); }
                     held.insert(written, nikaia_std::index::or(match found {
@@ -5279,9 +5336,9 @@ fn bt_expr<H: BtHost>(expr: &Expr, frame: &collections::BTreeMap<String, BuildVa
             }
             BuildValue::Struct { name: ty, fields: held }
         },
-        Expr::Field { base, name } => { let base = nikaia_std::boxed::open(base); let name = *name; bt_field(base, name, frame, host, state)? },
-        Expr::MethodCall { receiver, method, args, config } => { let receiver = nikaia_std::boxed::open(receiver); let method = *method; bt_method(receiver, method, args, config, frame, host, state)? },
-        Expr::Call { func, args, config } => { let func = nikaia_std::boxed::open(func); bt_call_expr(func, args, config, frame, host, state)? },
+        Expr::Field { base, name, .. } => { let base = nikaia_std::boxed::open(base); let name = *name; bt_field(base, name, frame, host, state)? },
+        Expr::MethodCall { receiver, method, args, config, .. } => { let receiver = nikaia_std::boxed::open(receiver); let method = *method; bt_method(receiver, method, args, config, frame, host, state)? },
+        Expr::Call { func, args, config, .. } => { let func = nikaia_std::boxed::open(func); bt_call_expr(func, args, config, frame, host, state)? },
         _ => { return Err(nikaia_std::error::throwing(BtRefusal::Unevaluable, &"bt_expr")) },
     })
 }
@@ -5308,7 +5365,7 @@ fn bt_variable<H: BtHost>(symbol: winnow_grammar::Symbol, frame: &collections::B
 // this was written - see `contracts::sync`.
 fn bt_unary_expr<H: BtHost>(whole: &Expr, frame: &collections::BTreeMap<String, BuildValue>, host: &H, state: &mut BtState) -> Result<BuildValue, nikaia_std::error::Thrown<BtRefusal>> {
     Ok(match whole {
-        Expr::Unary { op, expr } => { let expr = nikaia_std::boxed::open(expr); bt_unary(op, &bt_expr(expr, frame, host, state)?)? },
+        Expr::Unary { op, expr, .. } => { let expr = nikaia_std::boxed::open(expr); bt_unary(op, &bt_expr(expr, frame, host, state)?)? },
         _ => { return Err(nikaia_std::error::throwing(BtRefusal::Unevaluable, &"bt_unary_expr")) },
     })
 }
@@ -5412,7 +5469,7 @@ fn bt_method<H: BtHost>(receiver: &Expr, method: winnow_grammar::Symbol, args: &
 // this was written - see `contracts::sync`.
 fn bt_call_expr<H: BtHost>(func: &Expr, args: &[Expr], config: &[ConfigArg], frame: &collections::BTreeMap<String, BuildValue>, host: &H, state: &mut BtState) -> Result<BuildValue, nikaia_std::error::Thrown<BtRefusal>> {
     Ok(match func {
-        Expr::Path(path) => {
+        Expr::Path(path, _) => {
             if !config.is_empty() || path.len() != 2 { return Err(nikaia_std::error::throwing(BtRefusal::Unevaluable, &"bt_call_expr")); }
             let parser = host.text(state.unit, *nikaia_std::index::get(&path, 0));
             let rule = host.text(state.unit, *nikaia_std::index::get(&path, 1));
@@ -5435,7 +5492,7 @@ fn bt_call_expr<H: BtHost>(func: &Expr, args: &[Expr], config: &[ConfigArg], fra
             if value.is_none() { return Err(nikaia_std::error::throwing(BtRefusal::Host(ran.slot), &"bt_call_expr")); }
             nikaia_std::index::or(value, || BuildValue::Bool(false))
         },
-        Expr::Variable(symbol) => {
+        Expr::Variable(symbol, _) => {
             let symbol = *symbol;
             let name = host.text(state.unit, symbol);
             if name == BT_ASSET { return Ok(bt_asset(args, host)?); }
@@ -5765,7 +5822,7 @@ fn bt_block<H: BtHost>(block: &Block, frame: &mut collections::BTreeMap<String, 
 // this was written - see `contracts::sync`.
 fn bt_expression_statement<H: BtHost>(expr: &Expr, last: bool, frame: &mut collections::BTreeMap<String, BuildValue>, host: &H, state: &mut BtState) -> Result<BtFlow, nikaia_std::error::Thrown<BtRefusal>> {
     Ok(match expr {
-        Expr::If { cond, then_branch, else_branch } => {
+        Expr::If { cond, then_branch, else_branch, .. } => {
             let cond = nikaia_std::boxed::open(cond);
             let verdict = bt_expr(cond, &frame, host, state)?;
             let taken = bt_taken(&verdict, then_branch, (else_branch).as_ref())?;
@@ -5778,7 +5835,7 @@ fn bt_expression_statement<H: BtHost>(expr: &Expr, last: bool, frame: &mut colle
             }
             BtFlow::Fell
         },
-        Expr::MethodCall { receiver, method, args, config } => {
+        Expr::MethodCall { receiver, method, args, config, .. } => {
             let receiver = nikaia_std::boxed::open(receiver); let method = *method;
             let word = host.text(state.unit, method);
             if word == "push" && args.len() == 1 && config.is_empty() { return Ok(bt_push(receiver, nikaia_std::index::get(&args, 0), frame, host, state)?); }
@@ -5796,7 +5853,7 @@ fn bt_expression_statement<H: BtHost>(expr: &Expr, last: bool, frame: &mut colle
 // this was written - see `contracts::sync`.
 fn bt_push<H: BtHost>(receiver: &Expr, arg: &Expr, frame: &mut collections::BTreeMap<String, BuildValue>, host: &H, state: &mut BtState) -> Result<BtFlow, nikaia_std::error::Thrown<BtRefusal>> {
     let name = match receiver {
-        Expr::Variable(symbol) => { let symbol = *symbol; host.text(state.unit, symbol) },
+        Expr::Variable(symbol, _) => { let symbol = *symbol; host.text(state.unit, symbol) },
         _ => { return Err(nikaia_std::error::throwing(BtRefusal::Unevaluable, &"bt_push")) },
     };
     let given = bt_expr(arg, &frame, host, state)?;
@@ -5816,10 +5873,10 @@ fn bt_push<H: BtHost>(receiver: &Expr, arg: &Expr, frame: &mut collections::BTre
 // this was written - see `contracts::sync`.
 fn bt_assign<H: BtHost>(target: &Expr, op: Option<&BinaryOp>, value: &Expr, frame: &mut collections::BTreeMap<String, BuildValue>, host: &H, state: &mut BtState) -> Result<(), nikaia_std::error::Thrown<BtRefusal>> {
     match target {
-        Expr::Index { base, index } => {
+        Expr::Index { base, index, .. } => {
             let base = nikaia_std::boxed::open(base); let index = nikaia_std::boxed::open(index);
             let name = match base {
-                Expr::Variable(symbol) => { let symbol = *symbol; host.text(state.unit, symbol) },
+                Expr::Variable(symbol, _) => { let symbol = *symbol; host.text(state.unit, symbol) },
                 _ => { return Err(nikaia_std::error::throwing(BtRefusal::Unevaluable, &"bt_assign")) },
             };
             let at = bt_expr(index, &frame, host, state)?;
@@ -5844,7 +5901,7 @@ fn bt_assign<H: BtHost>(target: &Expr, op: Option<&BinaryOp>, value: &Expr, fram
             { let __nikaia_stored = next; nikaia_std::index::set(&mut items, nikaia_std::index::at(nikaia_std::index::or(counted, || 0)), __nikaia_stored); }
             frame.insert(name, BuildValue::List(items));
         },
-        Expr::Variable(symbol) => {
+        Expr::Variable(symbol, _) => {
             let symbol = *symbol;
             let name = host.text(state.unit, symbol);
             let given = bt_expr(value, &frame, host, state)?;
@@ -5873,7 +5930,7 @@ struct BtRange {
 // this was written - see `contracts::sync`.
 fn bt_range<H: BtHost>(iter: &Expr, frame: &collections::BTreeMap<String, BuildValue>, host: &H, state: &mut BtState) -> Result<BtRange, nikaia_std::error::Thrown<BtRefusal>> {
     Ok(match iter {
-        Expr::Range { start, end, inclusive } => {
+        Expr::Range { start, end, inclusive, .. } => {
             let start = nikaia_std::boxed::open(start); let end = nikaia_std::boxed::open(end); let inclusive = *inclusive;
             let first = bt_expr(start, frame, host, state)?;
             let second = bt_expr(end, frame, host, state)?;
@@ -6078,8 +6135,8 @@ pub fn callee_named(names: &winnow_grammar::InternerContext, name: String, own: 
 
 fn called_name(names: &winnow_grammar::InternerContext, func: &Expr) -> Option<String> {
     match func {
-        Expr::Variable(symbol) => { let symbol = *symbol; Some(names.resolve(symbol).to_owned()) },
-        Expr::Path(segments) => Some(written_path(names, segments)),
+        Expr::Variable(symbol, _) => { let symbol = *symbol; Some(names.resolve(symbol).to_owned()) },
+        Expr::Path(segments, _) => Some(written_path(names, segments)),
         _ => None,
     }
 }
@@ -9545,7 +9602,7 @@ impl CheckState {
 // this was written - see `contracts::sync`.
 pub fn names_the_argument(world: &CheckWorld<'_>, expr: &Expr, at: i64) -> (String, Option<String>) {
     let prose: String = match expr {
-        Expr::Variable(name) => { let name = *name; format!("`{}`", world.words.resolve(name)) },
+        Expr::Variable(name, _) => { let name = *name; format!("`{}`", world.words.resolve(name)) },
         Expr::Field { name, .. } => { let name = *name; format!("the `{}` this passes", world.words.resolve(name)) },
         _ => format!("argument {}", at + 1),
     };
@@ -9556,8 +9613,8 @@ pub fn names_the_argument(world: &CheckWorld<'_>, expr: &Expr, at: i64) -> (Stri
 // this was written - see `contracts::sync`.
 pub fn dotted_path(world: &CheckWorld<'_>, expr: &Expr) -> Option<String> {
     match expr {
-        Expr::Variable(name) => { let name = *name; Some(world.words.resolve(name).to_owned()) },
-        Expr::Field { base, name } => { let base = nikaia_std::boxed::open(base); let name = *name; dotted_field(world, base, name) },
+        Expr::Variable(name, _) => { let name = *name; Some(world.words.resolve(name).to_owned()) },
+        Expr::Field { base, name, .. } => { let base = nikaia_std::boxed::open(base); let name = *name; dotted_field(world, base, name) },
         _ => None,
     }
 }
@@ -9714,8 +9771,8 @@ impl CheckState {
         };
         let viewable = match fallback {
             Expr::LitStr { .. } => text,
-            Expr::Variable(_) => text || !other.is_a_view(),
-            Expr::Path(segments) => !text && segments.len() == 2 && self.is_variant(world.words.resolve(*nikaia_std::index::get(&segments, 0)), world.words.resolve(*nikaia_std::index::get(&segments, 1))),
+            Expr::Variable(_, _) => text || !other.is_a_view(),
+            Expr::Path(segments, _) => !text && segments.len() == 2 && self.is_variant(world.words.resolve(*nikaia_std::index::get(&segments, 0)), world.words.resolve(*nikaia_std::index::get(&segments, 1))),
             _ => false,
         };
         if !viewable { return None; }
@@ -9726,7 +9783,7 @@ impl CheckState {
     // this was written - see `contracts::sync`.
     pub fn rooted_at(&self, world: &CheckWorld<'_>, place: &Expr) -> Option<String> {
         match place {
-            Expr::Variable(name) => { let name = *name; Some(world.words.resolve(name).to_owned()) },
+            Expr::Variable(name, _) => { let name = *name; Some(world.words.resolve(name).to_owned()) },
             Expr::Field { base, .. } => { let base = nikaia_std::boxed::open(base); self.rooted_at(world, base) },
             Expr::SafeField { base, .. } => { let base = nikaia_std::boxed::open(base); self.rooted_at(world, base) },
             Expr::Index { base, .. } => { let base = nikaia_std::boxed::open(base); self.rooted_at(world, base) },
@@ -10204,7 +10261,7 @@ impl CheckState {
     // this was written - see `contracts::sync`.
     pub fn grammar_entry(&self, world: &CheckWorld<'_>, receiver: &Expr, method: winnow_grammar::Symbol) -> Option<String> {
         match receiver {
-            Expr::Variable(name) => { let name = *name; self.grammar_rule(world.words.resolve(name), world.words.resolve(method)) },
+            Expr::Variable(name, _) => { let name = *name; self.grammar_rule(world.words.resolve(name), world.words.resolve(method)) },
             _ => None,
         }
     }
@@ -10604,7 +10661,7 @@ impl CheckState {
     // this was written - see `contracts::sync`.
     pub fn a_length_that_may_not_fit(&mut self, world: &CheckWorld<'_>, written: &str, buffer: &Expr, span: &Span) {
         let named = match buffer {
-            Expr::Variable(name) => { let name = *name; world.words.resolve(name).to_owned() },
+            Expr::Variable(name, _) => { let name = *name; world.words.resolve(name).to_owned() },
             _ => String::from("the buffer"),
         };
         self.findings.push(check_refusal("NK1159", span, format!("`{}` takes this as the length of `{}`, but it might be longer than the buffer.", written, named), vec!["C trusts the count completely, so a count longer than the buffer would read or write past its end.".to_owned()], Some(format!("Pass `{}.len()`, or a constant no bigger than the buffer. An `Array[T, N]` knows its length; a `Vec[T]` doesn't until the program runs.", named))));
@@ -10616,11 +10673,11 @@ impl CheckState {
 pub fn element_kind(expr: &Expr, ty: &Ty) -> Option<String> {
     match expr {
         Expr::LitInt { .. } => return Some(String::from("a number")),
-        Expr::LitFloat(_) => return Some(String::from("a number")),
+        Expr::LitFloat(_, _) => return Some(String::from("a number")),
         Expr::LitStr { .. } => return Some(String::from("text")),
         Expr::LitInterpolated { .. } => return Some(String::from("text")),
-        Expr::LitChar(_) => return Some(String::from("a character")),
-        Expr::LitBool(_) => return Some(String::from("a `bool`")),
+        Expr::LitChar(_, _) => return Some(String::from("a character")),
+        Expr::LitBool(_, _) => return Some(String::from("a `bool`")),
         _ => { },
     }
     match ty {
@@ -10699,7 +10756,7 @@ impl CheckState {
         match expr {
             Expr::MethodCall { method, .. } => { let method = *method; self.dsl_drivers.contains(world.words.resolve(method)) },
             Expr::Call { func, .. } => { let func = nikaia_std::boxed::open(func); match func {
-                Expr::Variable(name) => { let name = *name; self.dsl_drivers.contains(world.words.resolve(name)) },
+                Expr::Variable(name, _) => { let name = *name; self.dsl_drivers.contains(world.words.resolve(name)) },
                 _ => false,
             } },
             _ => false,
@@ -10711,7 +10768,7 @@ impl CheckState {
         match expr {
             Expr::Dsl { .. } => true,
             Expr::Call { func, .. } => { let func = nikaia_std::boxed::open(func); match func {
-                Expr::Path(segments) => self.names_a_grammar_rule(world, segments),
+                Expr::Path(segments, _) => self.names_a_grammar_rule(world, segments),
                 _ => false,
             } },
             _ => false,
@@ -10737,7 +10794,7 @@ impl CheckState {
             _ => return false,
         };
         match base {
-            Expr::Variable(name) => { let name = *name; self.has_an_open_argument(world.words.resolve(name)) },
+            Expr::Variable(name, _) => { let name = *name; self.has_an_open_argument(world.words.resolve(name)) },
             _ => false,
         }
     }
@@ -10754,12 +10811,12 @@ impl CheckState {
     // this was written - see `contracts::sync`.
     pub fn names_something_here(&self, world: &CheckWorld<'_>, expr: &Expr) -> bool {
         match expr {
-            Expr::Variable(name) => { let name = *name; self.names_a_binding_or_a_function(world, world.words.resolve(name)) },
+            Expr::Variable(name, _) => { let name = *name; self.names_a_binding_or_a_function(world, world.words.resolve(name)) },
             Expr::Field { base, .. } => { let base = nikaia_std::boxed::open(base); self.names_something_here(world, base) },
             Expr::MethodCall { receiver, .. } => { let receiver = nikaia_std::boxed::open(receiver); self.names_something_here(world, receiver) },
             Expr::SafeMethod { receiver, .. } => { let receiver = nikaia_std::boxed::open(receiver); self.names_something_here(world, receiver) },
             Expr::Call { func, args, .. } => { let func = nikaia_std::boxed::open(func); self.names_something_here(world, func) || self.any_names_something(world, args) },
-            Expr::Path(segments) => self.names_a_function_by_path(world, segments),
+            Expr::Path(segments, _) => self.names_a_function_by_path(world, segments),
             Expr::Binary { lhs, rhs, .. } => { let lhs = nikaia_std::boxed::open(lhs); let rhs = nikaia_std::boxed::open(rhs); self.names_something_here(world, lhs) || self.names_something_here(world, rhs) },
             Expr::Unary { expr, .. } => { let expr = nikaia_std::boxed::open(expr); self.names_something_here(world, expr) },
             _ => false,
@@ -10786,8 +10843,8 @@ impl CheckState {
     pub fn is_a_number(&self, world: &CheckWorld<'_>, expr: &Expr) -> bool {
         match expr {
             Expr::LitInt { .. } => true,
-            Expr::LitFloat(_) => true,
-            Expr::Variable(name) => { let name = *name; self.folds_to_a_number(world.words.resolve(name)) },
+            Expr::LitFloat(_, _) => true,
+            Expr::Variable(name, _) => { let name = *name; self.folds_to_a_number(world.words.resolve(name)) },
             _ => false,
         }
     }
@@ -10824,7 +10881,7 @@ fn any_unknown(types: &[Ty]) -> bool {
 // this was written - see `contracts::sync`.
 pub fn names_of(world: &CheckWorld<'_>, expr: &Expr) -> Option<String> {
     match expr {
-        Expr::Variable(name) => { let name = *name; Some(world.words.resolve(name).to_owned()) },
+        Expr::Variable(name, _) => { let name = *name; Some(world.words.resolve(name).to_owned()) },
         _ => None,
     }
 }
@@ -10972,7 +11029,7 @@ pub fn integer_named(ty: &Ty) -> Option<String> {
 
 // sync (Part II, 12.1): pure CPU, cannot pause. Checked before
 // this was written - see `contracts::sync`.
-pub fn is_a_literal(expr: &Expr) -> bool { matches!(expr, Expr::LitInt { .. } | Expr::LitFloat(_) | Expr::LitStr { .. } | Expr::LitInterpolated { .. } | Expr::LitChar(_) | Expr::LitBool(_)) }
+pub fn is_a_literal(expr: &Expr) -> bool { matches!(expr, Expr::LitInt { .. } | Expr::LitFloat(_, _) | Expr::LitStr { .. } | Expr::LitInterpolated { .. } | Expr::LitChar(_, _) | Expr::LitBool(_, _)) }
 
 
 // --- check_numbers.nika ---
@@ -11335,7 +11392,7 @@ impl CheckState {
     // this was written - see `contracts::sync`.
     pub fn nothing_declares_it(&mut self, world: &CheckWorld<'_>, expr: &Expr, span: &Span) {
         let name = match expr {
-            Expr::Variable(symbol) => { let symbol = *symbol; world.words.resolve(symbol).to_owned() },
+            Expr::Variable(symbol, _) => { let symbol = *symbol; world.words.resolve(symbol).to_owned() },
             _ => return,
         };
         let declared = self.lookup(&name).is_some() || resolve_call(world, &name).is_some() || self.structs.contains_key(&name) || self.enums.contains_key(&name) || world.own.types.contains_key(&name) || self.modules.contains(&name) || self.grammars.contains_key(&name);
@@ -11503,11 +11560,11 @@ pub fn resolve_method(world: &CheckWorld<'_>, key: &str) -> Option<CheckResolved
 // this was written - see `contracts::sync`.
 pub fn roots_in_a_binding(expr: &Expr) -> bool {
     match expr {
-        Expr::Variable(_) => true,
+        Expr::Variable(_, _) => true,
         Expr::Field { base, .. } => { let base = nikaia_std::boxed::open(base); roots_in_a_binding(base) },
         Expr::SafeField { base, .. } => { let base = nikaia_std::boxed::open(base); roots_in_a_binding(base) },
         Expr::Index { base, .. } => { let base = nikaia_std::boxed::open(base); roots_in_a_binding(base) },
-        Expr::Try(inner) => { let inner = nikaia_std::boxed::open(inner); roots_in_a_binding(inner) },
+        Expr::Try(inner, _) => { let inner = nikaia_std::boxed::open(inner); roots_in_a_binding(inner) },
         Expr::Cast { expr, .. } => { let expr = nikaia_std::boxed::open(expr); roots_in_a_binding(expr) },
         _ => false,
     }
@@ -11533,7 +11590,7 @@ fn any_catches_everything(alternatives: &[MatchPattern]) -> bool {
 
 // sync (Part II, 12.1): pure CPU, cannot pause. Checked before
 // this was written - see `contracts::sync`.
-pub fn plainly_a_value(expr: &Expr) -> bool { matches!(expr, Expr::Variable(_) | Expr::LitInt { .. } | Expr::LitFloat(_) | Expr::LitStr { .. } | Expr::LitBool(_) | Expr::Binary { .. } | Expr::Field { .. } | Expr::Index { .. } | Expr::Tuple(_)) }
+pub fn plainly_a_value(expr: &Expr) -> bool { matches!(expr, Expr::Variable(_, _) | Expr::LitInt { .. } | Expr::LitFloat(_, _) | Expr::LitStr { .. } | Expr::LitBool(_, _) | Expr::Binary { .. } | Expr::Field { .. } | Expr::Index { .. } | Expr::Tuple(_, _)) }
 
 // sync (Part II, 12.1): pure CPU, cannot pause. Checked before
 // this was written - see `contracts::sync`.
@@ -11640,7 +11697,7 @@ impl CheckState {
     pub fn a_panic(&self, world: &CheckWorld<'_>, expr: &Expr) -> bool {
         match expr {
             Expr::Call { func, .. } => { let func = nikaia_std::boxed::open(func); match func {
-                Expr::Variable(name) => { let name = *name; world.words.resolve(name) == "panic" && self.lookup("panic").is_none() && !world.own.functions.contains_key("panic") },
+                Expr::Variable(name, _) => { let name = *name; world.words.resolve(name) == "panic" && self.lookup("panic").is_none() && !world.own.functions.contains_key("panic") },
                 _ => false,
             } },
             _ => false,
@@ -11650,9 +11707,9 @@ impl CheckState {
     // this was written - see `contracts::sync`.
     pub fn exits(&self, world: &CheckWorld<'_>, expr: &Expr) -> bool {
         match expr {
-            Expr::Throw(_) => true,
-            Expr::Return(_) => true,
-            Expr::Block(block) => self.block_exits(world, block),
+            Expr::Throw(_, _) => true,
+            Expr::Return(_, _) => true,
+            Expr::Block(block, _) => self.block_exits(world, block),
             _ => self.a_panic(world, expr),
         }
     }
@@ -11671,7 +11728,7 @@ impl CheckState {
     pub fn leaves(&self, world: &CheckWorld<'_>, expr: &Expr) -> bool {
         if self.jumps(world, expr) { return true; }
         match expr {
-            Expr::Block(block) => self.block_leaves(world, block),
+            Expr::Block(block, _) => self.block_leaves(world, block),
             _ => false,
         }
     }
@@ -11690,7 +11747,7 @@ impl CheckState {
     // sync (Part II, 12.1): pure CPU, cannot pause. Checked before
     // this was written - see `contracts::sync`.
     pub fn jumps(&self, world: &CheckWorld<'_>, expr: &Expr) -> bool {
-        let plain = matches!(expr, Expr::Throw(_) | Expr::Return(_) | Expr::Break | Expr::Continue);
+        let plain = matches!(expr, Expr::Throw(_, _) | Expr::Return(_, _) | Expr::Break(_) | Expr::Continue(_));
         plain || self.a_panic(world, expr)
     }
 }
@@ -11852,7 +11909,7 @@ fn what_a_loop_does(words: &winnow_grammar::InternerContext, block: &Block, foun
             Stmt::Return(_) => { found.leaves = true; },
             Stmt::Assign { target, .. } => {
                 match target {
-                    Expr::Variable(name) => {
+                    Expr::Variable(name, _) => {
                         let name = *name;
                         found.revived.insert(words.resolve(name).to_owned());
                     },
@@ -11876,7 +11933,7 @@ pub fn a_body_never_ends(body: &Block) -> bool {
 
 fn a_true_literal(expr: &Expr) -> bool {
     match expr {
-        Expr::LitBool(value) => { let value = *value; value },
+        Expr::LitBool(value, _) => { let value = *value; value },
         _ => false,
     }
 }
@@ -12282,7 +12339,7 @@ impl CheckState {
         let written = world.words.resolve(method).to_owned();
         if !args.is_empty() || written != "to_owned" || !ledger_candidates(world.own, &written).is_empty() { return; }
         let shown: String = match receiver {
-            Expr::Variable(name) => { let name = *name; world.words.resolve(name).to_owned() },
+            Expr::Variable(name, _) => { let name = *name; world.words.resolve(name).to_owned() },
             _ => String::from("…"),
         };
         self.findings.push(check_refusal("NK1189", span, format!("To copy a value, write `.clone()`, not `.{}()`.", written), vec!["Nikaia has one word for a copy, for text and for everything else.".to_owned()], Some(format!("Write `{}.clone()`.", shown))));
@@ -12310,7 +12367,7 @@ pub fn ledger_candidates(ledger: &Ledger, method: &str) -> Vec<String> {
 pub fn child_exprs_of(expr: &Expr) -> Vec<&Expr> {
     let mut out: Vec<&Expr> = vec![];
     match expr {
-        Expr::Call { func, args, config } => {
+        Expr::Call { func, args, config, .. } => {
             let func = nikaia_std::boxed::open(func);
             out.push(func);
             for arg in args.iter() { out.push(arg); }
@@ -12334,12 +12391,12 @@ pub fn child_exprs_of(expr: &Expr) -> Vec<&Expr> {
             out.push(rhs);
         },
         Expr::Unary { expr, .. } => { let expr = nikaia_std::boxed::open(expr); out.push(expr) },
-        Expr::Try(inner) => { let inner = nikaia_std::boxed::open(inner); out.push(inner) },
-        Expr::Throw(inner) => { let inner = nikaia_std::boxed::open(inner); out.push(inner) },
+        Expr::Try(inner, _) => { let inner = nikaia_std::boxed::open(inner); out.push(inner) },
+        Expr::Throw(inner, _) => { let inner = nikaia_std::boxed::open(inner); out.push(inner) },
         Expr::Cast { expr, .. } => { let expr = nikaia_std::boxed::open(expr); out.push(expr) },
         Expr::Field { base, .. } => { let base = nikaia_std::boxed::open(base); out.push(base) },
         Expr::SafeField { base, .. } => { let base = nikaia_std::boxed::open(base); out.push(base) },
-        Expr::Index { base, index } => {
+        Expr::Index { base, index, .. } => {
             let base = nikaia_std::boxed::open(base); let index = nikaia_std::boxed::open(index);
             out.push(base);
             out.push(index);
@@ -12349,15 +12406,15 @@ pub fn child_exprs_of(expr: &Expr) -> Vec<&Expr> {
             out.push(start);
             out.push(end);
         },
-        Expr::Tuple(parts) => { for part in parts.iter() { out.push(part); } },
-        Expr::Coalesce { value, fallback } => {
+        Expr::Tuple(parts, _) => { for part in parts.iter() { out.push(part); } },
+        Expr::Coalesce { value, fallback, .. } => {
             let value = nikaia_std::boxed::open(value); let fallback = nikaia_std::boxed::open(fallback);
             out.push(value);
             out.push(fallback);
         },
         Expr::TryCatch { expr, .. } => { let expr = nikaia_std::boxed::open(expr); out.push(expr) },
         Expr::If { cond, .. } => { let cond = nikaia_std::boxed::open(cond); out.push(cond) },
-        Expr::Match { value, arms } => {
+        Expr::Match { value, arms, .. } => {
             let value = nikaia_std::boxed::open(value);
             out.push(value);
             for arm in arms.iter() {
@@ -12372,11 +12429,11 @@ pub fn child_exprs_of(expr: &Expr) -> Vec<&Expr> {
             out.push(base);
             for field in fields.iter() { if field.value.is_some() { out.push(match field.value.as_ref() { Some(__nikaia_value) => __nikaia_value, None => return out }); } }
         },
-        Expr::Return(value) => {
+        Expr::Return(value, _) => {
             let value = nikaia_std::boxed::open(value);
             if value.is_some() { out.push(match value { Some(__nikaia_value) => __nikaia_value, None => return out }); }
         },
-        Expr::Select(arms) => { for arm in arms.iter() { out.push(select_value(arm)); } },
+        Expr::Select(arms, _) => { for arm in arms.iter() { out.push(select_value(arm)); } },
         _ => { },
     }
     out
@@ -12385,15 +12442,15 @@ pub fn child_exprs_of(expr: &Expr) -> Vec<&Expr> {
 pub fn blocks_of_expr(expr: &Expr) -> Vec<&Block> {
     let mut out: Vec<&Block> = vec![];
     match expr {
-        Expr::Block(block) => {
+        Expr::Block(block, _) => {
             out.push(block);
             return out;
         },
-        Expr::Unsafe(block) => {
+        Expr::Unsafe(block, _) => {
             out.push(block);
             return out;
         },
-        Expr::Overlap(block) => {
+        Expr::Overlap(block, _) => {
             out.push(block);
             return out;
         },
@@ -12407,7 +12464,7 @@ pub fn blocks_of_expr(expr: &Expr) -> Vec<&Block> {
             if else_branch.is_some() { out.push(match else_branch { Some(__nikaia_value) => __nikaia_value, None => return out }); }
         },
         Expr::TryCatch { handler, .. } => out.push(handler),
-        Expr::Select(arms) => { for arm in arms.iter() { out.push(select_body(arm)); } },
+        Expr::Select(arms, _) => { for arm in arms.iter() { out.push(select_body(arm)); } },
         _ => { },
     }
     for child in child_exprs_of(expr) { for block in blocks_of_expr(child) { out.push(block); } }
@@ -12684,7 +12741,7 @@ pub fn is_a_parameter(name: &str, params: &collections::BTreeSet<String>) -> boo
 
 fn collect_names(expr: &Expr, words: &winnow_grammar::InternerContext, holes_of: &impl Fn(&Expr) -> Vec<Expr>, names: &mut collections::BTreeSet<String>) {
     match expr {
-        Expr::Variable(name) => {
+        Expr::Variable(name, _) => {
             let name = *name;
             names.insert(words.resolve(name).to_owned());
         },
@@ -12692,7 +12749,7 @@ fn collect_names(expr: &Expr, words: &winnow_grammar::InternerContext, holes_of:
     }
     for hole in holes_of(expr) { collect_names(&hole, words, holes_of, names); }
     match expr {
-        Expr::Call { func, args, config } => {
+        Expr::Call { func, args, config, .. } => {
             let func = nikaia_std::boxed::open(func);
             collect_names(func, words, holes_of, names);
             each_name(args, words, holes_of, names);
@@ -12716,12 +12773,12 @@ fn collect_names(expr: &Expr, words: &winnow_grammar::InternerContext, holes_of:
             collect_names(rhs, words, holes_of, names);
         },
         Expr::Unary { expr, .. } => { let expr = nikaia_std::boxed::open(expr); collect_names(expr, words, holes_of, names) },
-        Expr::Try(inner) => { let inner = nikaia_std::boxed::open(inner); collect_names(inner, words, holes_of, names) },
-        Expr::Throw(inner) => { let inner = nikaia_std::boxed::open(inner); collect_names(inner, words, holes_of, names) },
+        Expr::Try(inner, _) => { let inner = nikaia_std::boxed::open(inner); collect_names(inner, words, holes_of, names) },
+        Expr::Throw(inner, _) => { let inner = nikaia_std::boxed::open(inner); collect_names(inner, words, holes_of, names) },
         Expr::Cast { expr, .. } => { let expr = nikaia_std::boxed::open(expr); collect_names(expr, words, holes_of, names) },
         Expr::Field { base, .. } => { let base = nikaia_std::boxed::open(base); collect_names(base, words, holes_of, names) },
         Expr::SafeField { base, .. } => { let base = nikaia_std::boxed::open(base); collect_names(base, words, holes_of, names) },
-        Expr::Index { base, index } => {
+        Expr::Index { base, index, .. } => {
             let base = nikaia_std::boxed::open(base); let index = nikaia_std::boxed::open(index);
             collect_names(base, words, holes_of, names);
             collect_names(index, words, holes_of, names);
@@ -12731,15 +12788,15 @@ fn collect_names(expr: &Expr, words: &winnow_grammar::InternerContext, holes_of:
             collect_names(start, words, holes_of, names);
             collect_names(end, words, holes_of, names);
         },
-        Expr::Tuple(parts) => each_name(parts, words, holes_of, names),
-        Expr::Coalesce { value, fallback } => {
+        Expr::Tuple(parts, _) => each_name(parts, words, holes_of, names),
+        Expr::Coalesce { value, fallback, .. } => {
             let value = nikaia_std::boxed::open(value); let fallback = nikaia_std::boxed::open(fallback);
             collect_names(value, words, holes_of, names);
             collect_names(fallback, words, holes_of, names);
         },
         Expr::TryCatch { expr, .. } => { let expr = nikaia_std::boxed::open(expr); collect_names(expr, words, holes_of, names) },
         Expr::If { cond, .. } => { let cond = nikaia_std::boxed::open(cond); collect_names(cond, words, holes_of, names) },
-        Expr::Match { value, arms } => {
+        Expr::Match { value, arms, .. } => {
             let value = nikaia_std::boxed::open(value);
             collect_names(value, words, holes_of, names);
             for arm in arms.iter() {
@@ -12754,8 +12811,8 @@ fn collect_names(expr: &Expr, words: &winnow_grammar::InternerContext, holes_of:
             collect_names(base, words, holes_of, names);
             for field in fields.iter() { collect_maybe((field.value).as_ref(), words, holes_of, names); }
         },
-        Expr::Return(value) => { let value = nikaia_std::boxed::open(value); collect_maybe((value).as_ref(), words, holes_of, names) },
-        Expr::Select(arms) => { for arm in arms.iter() { collect_names(&arm.value, words, holes_of, names); } },
+        Expr::Return(value, _) => { let value = nikaia_std::boxed::open(value); collect_maybe((value).as_ref(), words, holes_of, names) },
+        Expr::Select(arms, _) => { for arm in arms.iter() { collect_names(&arm.value, words, holes_of, names); } },
         _ => { },
     }
 }
@@ -13281,11 +13338,11 @@ fn returns_a_view(ret_type: Option<&Type>) -> bool {
 
 pub fn default_text(expr: &Expr) -> String {
     match expr {
-        Expr::LitBool(value) => { let value = *value; if value { String::from("true") } else { String::from("false") } },
-        Expr::LitNull => String::from("None"),
-        Expr::LitInt { value, negative } => { let negative = *negative; let value = *value; if negative { format!("-{}", value) } else { format!("{}", value) } },
-        Expr::LitFloat(written) => written.to_owned(),
-        Expr::LitChar(written) => format!("'{}'", written),
+        Expr::LitBool(value, _) => { let value = *value; if value { String::from("true") } else { String::from("false") } },
+        Expr::LitNull(_) => String::from("None"),
+        Expr::LitInt { value, negative, .. } => { let negative = *negative; let value = *value; if negative { format!("-{}", value) } else { format!("{}", value) } },
+        Expr::LitFloat(written, _) => written.to_owned(),
+        Expr::LitChar(written, _) => format!("'{}'", written),
         Expr::LitStr { text, .. } => format!("\"{}\"", text),
         Expr::Unary { expr, .. } => { let expr = nikaia_std::boxed::open(expr); format!("-{}", default_text(expr)) },
         _ => String::from(""),
@@ -13751,9 +13808,9 @@ fn calls_in(expr: &Expr, span: &Span, words: &winnow_grammar::InternerContext, b
             calls_in(func, span, words, bound, takers, found);
             for arg in args.iter() { calls_in(arg, span, words, bound, takers, found); }
         },
-        Expr::Block(block) => calls_in_block(block, span, words, bound, takers, found),
-        Expr::Overlap(block) => calls_in_block(block, span, words, bound, takers, found),
-        Expr::If { cond, then_branch, else_branch } => {
+        Expr::Block(block, _) => calls_in_block(block, span, words, bound, takers, found),
+        Expr::Overlap(block, _) => calls_in_block(block, span, words, bound, takers, found),
+        Expr::If { cond, then_branch, else_branch, .. } => {
             let cond = nikaia_std::boxed::open(cond);
             calls_in(cond, span, words, bound, takers, found);
             calls_in_block(then_branch, span, words, bound, takers, found);
@@ -13765,10 +13822,10 @@ fn calls_in(expr: &Expr, span: &Span, words: &winnow_grammar::InternerContext, b
             calls_in(rhs, span, words, bound, takers, found);
         },
         Expr::Unary { expr, .. } => { let expr = nikaia_std::boxed::open(expr); calls_in(expr, span, words, bound, takers, found) },
-        Expr::Try(inner) => { let inner = nikaia_std::boxed::open(inner); calls_in(inner, span, words, bound, takers, found) },
+        Expr::Try(inner, _) => { let inner = nikaia_std::boxed::open(inner); calls_in(inner, span, words, bound, takers, found) },
         Expr::Field { base, .. } => { let base = nikaia_std::boxed::open(base); calls_in(base, span, words, bound, takers, found) },
         Expr::SafeField { base, .. } => { let base = nikaia_std::boxed::open(base); calls_in(base, span, words, bound, takers, found) },
-        Expr::TryCatch { expr, handler } => {
+        Expr::TryCatch { expr, handler, .. } => {
             let expr = nikaia_std::boxed::open(expr);
             calls_in(expr, span, words, bound, takers, found);
             calls_in_block(handler, span, words, bound, takers, found);
@@ -13822,9 +13879,9 @@ fn statements_in(expr: &Expr, words: &winnow_grammar::InternerContext, out: &mut
             statements_in(func, words, out);
             for arg in args.iter() { statements_in(arg, words, out); }
         },
-        Expr::Block(block) => statements_in_block(block, words, out),
-        Expr::Overlap(block) => statements_in_block(block, words, out),
-        Expr::If { cond, then_branch, else_branch } => {
+        Expr::Block(block, _) => statements_in_block(block, words, out),
+        Expr::Overlap(block, _) => statements_in_block(block, words, out),
+        Expr::If { cond, then_branch, else_branch, .. } => {
             let cond = nikaia_std::boxed::open(cond);
             statements_in(cond, words, out);
             statements_in_block(then_branch, words, out);
@@ -13836,10 +13893,10 @@ fn statements_in(expr: &Expr, words: &winnow_grammar::InternerContext, out: &mut
             statements_in(rhs, words, out);
         },
         Expr::Unary { expr, .. } => { let expr = nikaia_std::boxed::open(expr); statements_in(expr, words, out) },
-        Expr::Try(inner) => { let inner = nikaia_std::boxed::open(inner); statements_in(inner, words, out) },
+        Expr::Try(inner, _) => { let inner = nikaia_std::boxed::open(inner); statements_in(inner, words, out) },
         Expr::Field { base, .. } => { let base = nikaia_std::boxed::open(base); statements_in(base, words, out) },
         Expr::SafeField { base, .. } => { let base = nikaia_std::boxed::open(base); statements_in(base, words, out) },
-        Expr::TryCatch { expr, handler } => {
+        Expr::TryCatch { expr, handler, .. } => {
             let expr = nikaia_std::boxed::open(expr);
             statements_in(expr, words, out);
             statements_in_block(handler, words, out);
@@ -13852,17 +13909,17 @@ fn a_statement(target: &str, content: &str) -> (String, String) { (target.to_own
 
 fn a_call(expr: &Expr, span: &Span, words: &winnow_grammar::InternerContext, bound: &collections::BTreeMap<String, Vec<String>>, takers: &[String], found: &mut Vec<Finding>) {
     match expr {
-        Expr::MethodCall { receiver, method, args, config } => {
+        Expr::MethodCall { receiver, method, args, config, .. } => {
             let receiver = nikaia_std::boxed::open(receiver); let method = *method;
             let subject = nikaia_std::index::or_maybe(bound_subject(receiver, words, bound), || bound_argument(args, words, bound));
             a_parameter_call(words.resolve(method), &option_names(config, words), subject, span, bound, takers, found);
         },
-        Expr::SafeMethod { receiver, method, args, config } => {
+        Expr::SafeMethod { receiver, method, args, config, .. } => {
             let receiver = nikaia_std::boxed::open(receiver); let method = *method;
             let subject = nikaia_std::index::or_maybe(bound_subject(receiver, words, bound), || bound_argument(args, words, bound));
             a_parameter_call(words.resolve(method), &option_names(config, words), subject, span, bound, takers, found);
         },
-        Expr::Call { func, args, config } => {
+        Expr::Call { func, args, config, .. } => {
             let func = nikaia_std::boxed::open(func);
             a_parameter_call(&callee_name(func, words), &option_names(config, words), bound_argument(args, words, bound), span, bound, takers, found);
         },
@@ -13872,14 +13929,14 @@ fn a_call(expr: &Expr, span: &Span, words: &winnow_grammar::InternerContext, bou
 
 fn callee_name(func: &Expr, words: &winnow_grammar::InternerContext) -> String {
     match func {
-        Expr::Variable(name) => { let name = *name; words.resolve(name).to_owned() },
+        Expr::Variable(name, _) => { let name = *name; words.resolve(name).to_owned() },
         _ => String::from(""),
     }
 }
 
 fn bound_subject(subject: &Expr, words: &winnow_grammar::InternerContext, bound: &collections::BTreeMap<String, Vec<String>>) -> Option<String> {
     match subject {
-        Expr::Variable(name) => { let name = *name; if bound.contains_key(words.resolve(name)) { Some(words.resolve(name).to_owned()) } else { None } },
+        Expr::Variable(name, _) => { let name = *name; if bound.contains_key(words.resolve(name)) { Some(words.resolve(name).to_owned()) } else { None } },
         _ => None,
     }
 }
@@ -14467,9 +14524,9 @@ fn stepped(n: Option<Integer>, heading: bool, pinned: String) -> Folded {
 
 pub fn constant_of(expr: &Expr, name_is: &impl Fn(winnow_grammar::Symbol) -> Folded) -> Folded {
     match expr {
-        Expr::LitInt { value, negative } => { let negative = *negative; let value = *value; Folded::Value(Constant { value: integer(value, negative), pinned: String::from("") }) },
-        Expr::Variable(name) => { let name = *name; name_is(name) },
-        Expr::Unary { op, expr } => { let expr = nikaia_std::boxed::open(expr); negated(op, expr, name_is) },
+        Expr::LitInt { value, negative, .. } => { let negative = *negative; let value = *value; Folded::Value(Constant { value: integer(value, negative), pinned: String::from("") }) },
+        Expr::Variable(name, _) => { let name = *name; name_is(name) },
+        Expr::Unary { op, expr, .. } => { let expr = nikaia_std::boxed::open(expr); negated(op, expr, name_is) },
         Expr::Binary { op, lhs, rhs, .. } => { let lhs = nikaia_std::boxed::open(lhs); let rhs = nikaia_std::boxed::open(rhs); combined(op, lhs, rhs, name_is) },
         _ => Folded::Nothing,
     }
@@ -14619,19 +14676,19 @@ fn expression_paths(expr: &Expr, span: &Span, names: &winnow_grammar::InternerCo
     match expr {
         Expr::Spawn { .. } => found.seen.push(Seen::Spawn { span: span.clone() }),
         Expr::Dsl { .. } => found.seen.push(Seen::Opaque { span: span.clone() }),
-        Expr::Overlap(_) => found.seen.push(Seen::Joins { construct: String::from("overlap"), span: span.clone() }),
-        Expr::Select(_) => found.seen.push(Seen::Joins { construct: String::from("select"), span: span.clone() }),
+        Expr::Overlap(_, _) => found.seen.push(Seen::Joins { construct: String::from("overlap"), span: span.clone() }),
+        Expr::Select(_, _) => found.seen.push(Seen::Joins { construct: String::from("select"), span: span.clone() }),
         Expr::Call { func, args, .. } => { let func = nikaia_std::boxed::open(func); a_named_call(func, args, span, names, root_at, found) },
         _ => { },
     }
     for hole in holes_of(expr) { expression_paths(&hole, span, names, unaliased, holes_of, root_at, found); }
     match expr {
-        Expr::Path(segments) => { if !segments.is_empty() { found.seen.push(named_at(path_name(segments, names, unaliased), span)); } },
-        Expr::Variable(name) => {
+        Expr::Path(segments, _) => { if !segments.is_empty() { found.seen.push(named_at(path_name(segments, names, unaliased), span)); } },
+        Expr::Variable(name, _) => {
             let name = *name;
             if found.with_names { found.seen.push(Seen::Name(names.resolve(name).to_owned())); }
         },
-        Expr::Call { func, args, config } => {
+        Expr::Call { func, args, config, .. } => {
             let func = nikaia_std::boxed::open(func);
             expression_paths(func, span, names, unaliased, holes_of, root_at, found);
             for arg in args.iter() { expression_paths(arg, span, names, unaliased, holes_of, root_at, found); }
@@ -14655,12 +14712,12 @@ fn expression_paths(expr: &Expr, span: &Span, names: &winnow_grammar::InternerCo
             expression_paths(rhs, span, names, unaliased, holes_of, root_at, found);
         },
         Expr::Unary { expr, .. } => { let expr = nikaia_std::boxed::open(expr); expression_paths(expr, span, names, unaliased, holes_of, root_at, found) },
-        Expr::Try(inner) => { let inner = nikaia_std::boxed::open(inner); expression_paths(inner, span, names, unaliased, holes_of, root_at, found) },
-        Expr::Throw(inner) => { let inner = nikaia_std::boxed::open(inner); expression_paths(inner, span, names, unaliased, holes_of, root_at, found) },
+        Expr::Try(inner, _) => { let inner = nikaia_std::boxed::open(inner); expression_paths(inner, span, names, unaliased, holes_of, root_at, found) },
+        Expr::Throw(inner, _) => { let inner = nikaia_std::boxed::open(inner); expression_paths(inner, span, names, unaliased, holes_of, root_at, found) },
         Expr::Cast { expr, .. } => { let expr = nikaia_std::boxed::open(expr); expression_paths(expr, span, names, unaliased, holes_of, root_at, found) },
         Expr::Field { base, .. } => { let base = nikaia_std::boxed::open(base); expression_paths(base, span, names, unaliased, holes_of, root_at, found) },
         Expr::SafeField { base, .. } => { let base = nikaia_std::boxed::open(base); expression_paths(base, span, names, unaliased, holes_of, root_at, found) },
-        Expr::Index { base, index } => {
+        Expr::Index { base, index, .. } => {
             let base = nikaia_std::boxed::open(base); let index = nikaia_std::boxed::open(index);
             expression_paths(base, span, names, unaliased, holes_of, root_at, found);
             expression_paths(index, span, names, unaliased, holes_of, root_at, found);
@@ -14670,15 +14727,15 @@ fn expression_paths(expr: &Expr, span: &Span, names: &winnow_grammar::InternerCo
             expression_paths(start, span, names, unaliased, holes_of, root_at, found);
             expression_paths(end, span, names, unaliased, holes_of, root_at, found);
         },
-        Expr::Tuple(parts) => { for part in parts.iter() { expression_paths(part, span, names, unaliased, holes_of, root_at, found); } },
-        Expr::Coalesce { value, fallback } => {
+        Expr::Tuple(parts, _) => { for part in parts.iter() { expression_paths(part, span, names, unaliased, holes_of, root_at, found); } },
+        Expr::Coalesce { value, fallback, .. } => {
             let value = nikaia_std::boxed::open(value); let fallback = nikaia_std::boxed::open(fallback);
             expression_paths(value, span, names, unaliased, holes_of, root_at, found);
             expression_paths(fallback, span, names, unaliased, holes_of, root_at, found);
         },
         Expr::TryCatch { expr, .. } => { let expr = nikaia_std::boxed::open(expr); expression_paths(expr, span, names, unaliased, holes_of, root_at, found) },
         Expr::If { cond, .. } => { let cond = nikaia_std::boxed::open(cond); expression_paths(cond, span, names, unaliased, holes_of, root_at, found) },
-        Expr::Match { value, arms } => {
+        Expr::Match { value, arms, .. } => {
             let value = nikaia_std::boxed::open(value);
             expression_paths(value, span, names, unaliased, holes_of, root_at, found);
             for arm in arms.iter() {
@@ -14693,8 +14750,8 @@ fn expression_paths(expr: &Expr, span: &Span, names: &winnow_grammar::InternerCo
             expression_paths(base, span, names, unaliased, holes_of, root_at, found);
             for field in fields.iter() { maybe_expression_paths((field.value).as_ref(), span, names, unaliased, holes_of, root_at, found); }
         },
-        Expr::Return(value) => { let value = nikaia_std::boxed::open(value); maybe_expression_paths((value).as_ref(), span, names, unaliased, holes_of, root_at, found) },
-        Expr::Select(arms) => { for arm in arms.iter() { expression_paths(&arm.value, span, names, unaliased, holes_of, root_at, found); } },
+        Expr::Return(value, _) => { let value = nikaia_std::boxed::open(value); maybe_expression_paths((value).as_ref(), span, names, unaliased, holes_of, root_at, found) },
+        Expr::Select(arms, _) => { for arm in arms.iter() { expression_paths(&arm.value, span, names, unaliased, holes_of, root_at, found); } },
         _ => { },
     }
 }
@@ -14717,11 +14774,11 @@ fn statement_blocks(stmt: &Stmt, names: &winnow_grammar::InternerContext, unalia
 
 fn expression_blocks(expr: &Expr, names: &winnow_grammar::InternerContext, unaliased: &impl Fn(&str) -> String, holes_of: &impl Fn(&Expr) -> Vec<Expr>, root_at: &impl Fn(&str) -> i64, found: &mut Walked) {
     match expr {
-        Expr::Block(block) => block_names(block, names, unaliased, holes_of, root_at, found),
-        Expr::Unsafe(block) => block_names(block, names, unaliased, holes_of, root_at, found),
-        Expr::Overlap(block) => block_names(block, names, unaliased, holes_of, root_at, found),
+        Expr::Block(block, _) => block_names(block, names, unaliased, holes_of, root_at, found),
+        Expr::Unsafe(block, _) => block_names(block, names, unaliased, holes_of, root_at, found),
+        Expr::Overlap(block, _) => block_names(block, names, unaliased, holes_of, root_at, found),
         Expr::Closure { body, .. } => block_names(body, names, unaliased, holes_of, root_at, found),
-        Expr::Call { func, args, config } => {
+        Expr::Call { func, args, config, .. } => {
             let func = nikaia_std::boxed::open(func);
             expression_blocks(func, names, unaliased, holes_of, root_at, found);
             for arg in args.iter() { expression_blocks(arg, names, unaliased, holes_of, root_at, found); }
@@ -14739,18 +14796,18 @@ fn expression_blocks(expr: &Expr, names: &winnow_grammar::InternerContext, unali
             for arg in args.iter() { expression_blocks(arg, names, unaliased, holes_of, root_at, found); }
             for setting in config.iter() { expression_blocks(&setting.value, names, unaliased, holes_of, root_at, found); }
         },
-        Expr::If { cond, then_branch, else_branch } => {
+        Expr::If { cond, then_branch, else_branch, .. } => {
             let cond = nikaia_std::boxed::open(cond);
             expression_blocks(cond, names, unaliased, holes_of, root_at, found);
             block_names(then_branch, names, unaliased, holes_of, root_at, found);
             block_names(match else_branch { Some(__nikaia_value) => __nikaia_value, None => return }, names, unaliased, holes_of, root_at, found);
         },
-        Expr::TryCatch { expr, handler } => {
+        Expr::TryCatch { expr, handler, .. } => {
             let expr = nikaia_std::boxed::open(expr);
             expression_blocks(expr, names, unaliased, holes_of, root_at, found);
             block_names(handler, names, unaliased, holes_of, root_at, found);
         },
-        Expr::Match { value, arms } => {
+        Expr::Match { value, arms, .. } => {
             let value = nikaia_std::boxed::open(value);
             expression_blocks(value, names, unaliased, holes_of, root_at, found);
             for arm in arms.iter() {
@@ -14758,7 +14815,7 @@ fn expression_blocks(expr: &Expr, names: &winnow_grammar::InternerContext, unali
                 expression_blocks(&arm.body, names, unaliased, holes_of, root_at, found);
             }
         },
-        Expr::Select(arms) => {
+        Expr::Select(arms, _) => {
             for arm in arms.iter() {
                 expression_blocks(&arm.value, names, unaliased, holes_of, root_at, found);
                 block_names(&arm.body, names, unaliased, holes_of, root_at, found);
@@ -14770,12 +14827,12 @@ fn expression_blocks(expr: &Expr, names: &winnow_grammar::InternerContext, unali
             expression_blocks(rhs, names, unaliased, holes_of, root_at, found);
         },
         Expr::Unary { expr, .. } => { let expr = nikaia_std::boxed::open(expr); expression_blocks(expr, names, unaliased, holes_of, root_at, found) },
-        Expr::Try(inner) => { let inner = nikaia_std::boxed::open(inner); expression_blocks(inner, names, unaliased, holes_of, root_at, found) },
-        Expr::Throw(inner) => { let inner = nikaia_std::boxed::open(inner); expression_blocks(inner, names, unaliased, holes_of, root_at, found) },
+        Expr::Try(inner, _) => { let inner = nikaia_std::boxed::open(inner); expression_blocks(inner, names, unaliased, holes_of, root_at, found) },
+        Expr::Throw(inner, _) => { let inner = nikaia_std::boxed::open(inner); expression_blocks(inner, names, unaliased, holes_of, root_at, found) },
         Expr::Cast { expr, .. } => { let expr = nikaia_std::boxed::open(expr); expression_blocks(expr, names, unaliased, holes_of, root_at, found) },
         Expr::Field { base, .. } => { let base = nikaia_std::boxed::open(base); expression_blocks(base, names, unaliased, holes_of, root_at, found) },
         Expr::SafeField { base, .. } => { let base = nikaia_std::boxed::open(base); expression_blocks(base, names, unaliased, holes_of, root_at, found) },
-        Expr::Index { base, index } => {
+        Expr::Index { base, index, .. } => {
             let base = nikaia_std::boxed::open(base); let index = nikaia_std::boxed::open(index);
             expression_blocks(base, names, unaliased, holes_of, root_at, found);
             expression_blocks(index, names, unaliased, holes_of, root_at, found);
@@ -14785,8 +14842,8 @@ fn expression_blocks(expr: &Expr, names: &winnow_grammar::InternerContext, unali
             expression_blocks(start, names, unaliased, holes_of, root_at, found);
             expression_blocks(end, names, unaliased, holes_of, root_at, found);
         },
-        Expr::Tuple(parts) => { for part in parts.iter() { expression_blocks(part, names, unaliased, holes_of, root_at, found); } },
-        Expr::Coalesce { value, fallback } => {
+        Expr::Tuple(parts, _) => { for part in parts.iter() { expression_blocks(part, names, unaliased, holes_of, root_at, found); } },
+        Expr::Coalesce { value, fallback, .. } => {
             let value = nikaia_std::boxed::open(value); let fallback = nikaia_std::boxed::open(fallback);
             expression_blocks(value, names, unaliased, holes_of, root_at, found);
             expression_blocks(fallback, names, unaliased, holes_of, root_at, found);
@@ -14798,7 +14855,7 @@ fn expression_blocks(expr: &Expr, names: &winnow_grammar::InternerContext, unali
             expression_blocks(base, names, unaliased, holes_of, root_at, found);
             for field in fields.iter() { maybe_expression_blocks((field.value).as_ref(), names, unaliased, holes_of, root_at, found); }
         },
-        Expr::Return(value) => { let value = nikaia_std::boxed::open(value); maybe_expression_blocks((value).as_ref(), names, unaliased, holes_of, root_at, found) },
+        Expr::Return(value, _) => { let value = nikaia_std::boxed::open(value); maybe_expression_blocks((value).as_ref(), names, unaliased, holes_of, root_at, found) },
         _ => { },
     }
 }
@@ -14818,8 +14875,8 @@ fn named_at(name: String, span: &Span) -> Seen { Seen::Path { name, span: span.c
 
 fn a_named_call(func: &Expr, args: &[Expr], span: &Span, names: &winnow_grammar::InternerContext, root_at: &impl Fn(&str) -> i64, found: &mut Walked) {
     let name = match func {
-        Expr::Variable(name) => { let name = *name; names.resolve(name).to_owned() },
-        Expr::Path(segments) => written_path(names, segments),
+        Expr::Variable(name, _) => { let name = *name; names.resolve(name).to_owned() },
+        Expr::Path(segments, _) => written_path(names, segments),
         _ => String::from(""),
     };
     if name.is_empty() {
@@ -15313,7 +15370,7 @@ fn expression(e: &Expr, words: &winnow_grammar::InternerContext, debug: &impl Fn
         Expr::Call { func, args, .. } => {
             let func = nikaia_std::boxed::open(func);
             match func {
-                Expr::Variable(name) => {
+                Expr::Variable(name, _) => {
                     let name = *name;
                     if words.resolve(name) == "println" {
                         printed(args, "", format_of, out);
@@ -15332,13 +15389,13 @@ fn expression(e: &Expr, words: &winnow_grammar::InternerContext, debug: &impl Fn
             let body = nikaia_std::boxed::open(body);
             out.push(String::from("[Nikaia Runtime] Spawning Task (Async -> Sync Simulation)..."));
             match body {
-                Expr::Block(b) => block(b, words, debug, format_of, out),
+                Expr::Block(b, _) => block(b, words, debug, format_of, out),
                 _ => expression(body, words, debug, format_of, out),
             }
         },
         Expr::LitStr { .. } => { },
         Expr::LitInterpolated { .. } => { },
-        Expr::Block(b) => block(b, words, debug, format_of, out),
+        Expr::Block(b, _) => block(b, words, debug, format_of, out),
         Expr::Dsl { target, .. } => { let target = *target; out.push(format!("[Nikaia Runtime] DSL Block '{}' (Skipped)", words.resolve(target))) },
         _ => out.push(format!("[Nikaia Runtime] Eval: {}", debug(e))),
     }
@@ -15348,7 +15405,7 @@ fn printed(args: &[Expr], lead: &str, format_of: &impl Fn(&[FPart]) -> String, o
     for arg in args.iter() {
         match arg {
             Expr::LitStr { text, .. } => out.push(format!("{}{}", lead, text)),
-            Expr::LitInterpolated { parts } => out.push(format!("{}{}", lead, format_of(parts))),
+            Expr::LitInterpolated { parts, .. } => out.push(format!("{}{}", lead, format_of(parts))),
             _ => { if lead.is_empty() { out.push(String::from("<expression>")); } },
         }
     }
@@ -15481,15 +15538,15 @@ pub fn keeping_method_key(ledger: &Ledger, target: Option<&str>, on_self: bool, 
 
 pub fn written_callee(names: &winnow_grammar::InternerContext, func: &Expr, unaliased: &impl Fn(&str) -> String) -> Option<String> {
     match func {
-        Expr::Variable(name) => { let name = *name; Some(names.resolve(name).to_owned()) },
-        Expr::Path(segments) => Some(unaliased(&joined_segments(segments, names))),
+        Expr::Variable(name, _) => { let name = *name; Some(names.resolve(name).to_owned()) },
+        Expr::Path(segments, _) => Some(unaliased(&joined_segments(segments, names))),
         _ => None,
     }
 }
 
 pub fn root_of(names: &winnow_grammar::InternerContext, expr: &Expr) -> Option<String> {
     match expr {
-        Expr::Variable(name) => { let name = *name; Some(names.resolve(name).to_owned()) },
+        Expr::Variable(name, _) => { let name = *name; Some(names.resolve(name).to_owned()) },
         Expr::Field { base, .. } => { let base = nikaia_std::boxed::open(base); root_of(names, base) },
         Expr::Index { base, .. } => { let base = nikaia_std::boxed::open(base); root_of(names, base) },
         Expr::SafeField { base, .. } => { let base = nikaia_std::boxed::open(base); root_of(names, base) },
@@ -15501,7 +15558,7 @@ pub fn root_of(names: &winnow_grammar::InternerContext, expr: &Expr) -> Option<S
 pub fn taken_from(names: &winnow_grammar::InternerContext, value: &Expr) -> Option<String> {
     match value {
         Expr::MethodCall { receiver, method, .. } => { let receiver = nikaia_std::boxed::open(receiver); let method = *method; if hands_back_what_it_removes(names.resolve(method)) { root_of(names, receiver) } else { None } },
-        Expr::Try(inner) => { let inner = nikaia_std::boxed::open(inner); taken_from(names, inner) },
+        Expr::Try(inner, _) => { let inner = nikaia_std::boxed::open(inner); taken_from(names, inner) },
         Expr::TryCatch { expr, .. } => { let expr = nikaia_std::boxed::open(expr); taken_from(names, expr) },
         _ => None,
     }
@@ -15665,15 +15722,15 @@ fn reached_of(expr: &Expr, interner: &winnow_grammar::InternerContext, context: 
             reached_by_last(otherwise, interner, context, aliases, &mut found);
         },
         Expr::Match { arms, .. } => { for arm in arms.iter() { for name in reached_of(&arm.body, interner, context, aliases) { found.insert(name); } } },
-        Expr::Block(block) => reached_by_last(block, interner, context, aliases, &mut found),
-        Expr::Variable(ident) => {
+        Expr::Block(block, _) => reached_by_last(block, interner, context, aliases, &mut found),
+        Expr::Variable(ident, _) => {
             let ident = *ident;
             let name = interner.resolve(ident).to_owned();
             if context.parameters.contains(&name) { found.insert(name.to_owned()); }
             let aliased = match *nikaia_std::index::get(&aliases, &name) { Some(__nikaia_value) => __nikaia_value, None => return found };
             for one in aliased.iter() { found.insert(one.to_owned()); }
         },
-        Expr::Field { base, name } => {
+        Expr::Field { base, name, .. } => {
             let base = nikaia_std::boxed::open(base); let name = *name;
             let parameter = match parameter_named(base, interner, context) { Some(__nikaia_value) => __nikaia_value, None => return found };
             if parameter != "self" && !a_field_that_copies(&parameter, interner.resolve(name), context) { found.insert(parameter); }
@@ -15695,7 +15752,7 @@ fn keeps_expression(expr: &Expr, interner: &winnow_grammar::InternerContext, hol
     classify(expr, interner, holes_of, context, own, library, uses);
     for hole in holes_of(expr) { keeps_expression(&hole, interner, holes_of, context, own, library, uses); }
     match expr {
-        Expr::Call { func, args, config } => {
+        Expr::Call { func, args, config, .. } => {
             let func = nikaia_std::boxed::open(func);
             keeps_expression(func, interner, holes_of, context, own, library, uses);
             keeps_expressions(args, interner, holes_of, context, own, library, uses);
@@ -15719,12 +15776,12 @@ fn keeps_expression(expr: &Expr, interner: &winnow_grammar::InternerContext, hol
             keeps_expression(rhs, interner, holes_of, context, own, library, uses);
         },
         Expr::Unary { expr, .. } => { let expr = nikaia_std::boxed::open(expr); keeps_expression(expr, interner, holes_of, context, own, library, uses) },
-        Expr::Try(inner) => { let inner = nikaia_std::boxed::open(inner); keeps_expression(inner, interner, holes_of, context, own, library, uses) },
-        Expr::Throw(inner) => { let inner = nikaia_std::boxed::open(inner); keeps_expression(inner, interner, holes_of, context, own, library, uses) },
+        Expr::Try(inner, _) => { let inner = nikaia_std::boxed::open(inner); keeps_expression(inner, interner, holes_of, context, own, library, uses) },
+        Expr::Throw(inner, _) => { let inner = nikaia_std::boxed::open(inner); keeps_expression(inner, interner, holes_of, context, own, library, uses) },
         Expr::Cast { expr, .. } => { let expr = nikaia_std::boxed::open(expr); keeps_expression(expr, interner, holes_of, context, own, library, uses) },
         Expr::Field { base, .. } => { let base = nikaia_std::boxed::open(base); keeps_expression(base, interner, holes_of, context, own, library, uses) },
         Expr::SafeField { base, .. } => { let base = nikaia_std::boxed::open(base); keeps_expression(base, interner, holes_of, context, own, library, uses) },
-        Expr::Index { base, index } => {
+        Expr::Index { base, index, .. } => {
             let base = nikaia_std::boxed::open(base); let index = nikaia_std::boxed::open(index);
             keeps_expression(base, interner, holes_of, context, own, library, uses);
             keeps_expression(index, interner, holes_of, context, own, library, uses);
@@ -15734,15 +15791,15 @@ fn keeps_expression(expr: &Expr, interner: &winnow_grammar::InternerContext, hol
             keeps_expression(start, interner, holes_of, context, own, library, uses);
             keeps_expression(end, interner, holes_of, context, own, library, uses);
         },
-        Expr::Tuple(items) => keeps_expressions(items, interner, holes_of, context, own, library, uses),
-        Expr::Coalesce { value, fallback } => {
+        Expr::Tuple(items, _) => keeps_expressions(items, interner, holes_of, context, own, library, uses),
+        Expr::Coalesce { value, fallback, .. } => {
             let value = nikaia_std::boxed::open(value); let fallback = nikaia_std::boxed::open(fallback);
             keeps_expression(value, interner, holes_of, context, own, library, uses);
             keeps_expression(fallback, interner, holes_of, context, own, library, uses);
         },
         Expr::TryCatch { expr, .. } => { let expr = nikaia_std::boxed::open(expr); keeps_expression(expr, interner, holes_of, context, own, library, uses) },
         Expr::If { cond, .. } => { let cond = nikaia_std::boxed::open(cond); keeps_expression(cond, interner, holes_of, context, own, library, uses) },
-        Expr::Match { value, arms } => {
+        Expr::Match { value, arms, .. } => {
             let value = nikaia_std::boxed::open(value);
             keeps_expression(value, interner, holes_of, context, own, library, uses);
             for arm in arms.iter() {
@@ -15757,8 +15814,8 @@ fn keeps_expression(expr: &Expr, interner: &winnow_grammar::InternerContext, hol
             keeps_expression(base, interner, holes_of, context, own, library, uses);
             for field in fields.iter() { keeps_maybe((field.value).as_ref(), interner, holes_of, context, own, library, uses); }
         },
-        Expr::Return(value) => { let value = nikaia_std::boxed::open(value); keeps_maybe((value).as_ref(), interner, holes_of, context, own, library, uses) },
-        Expr::Select(arms) => { for arm in arms.iter() { keeps_expression(&arm.value, interner, holes_of, context, own, library, uses); } },
+        Expr::Return(value, _) => { let value = nikaia_std::boxed::open(value); keeps_maybe((value).as_ref(), interner, holes_of, context, own, library, uses) },
+        Expr::Select(arms, _) => { for arm in arms.iter() { keeps_expression(&arm.value, interner, holes_of, context, own, library, uses); } },
         _ => { },
     }
 }
@@ -15769,11 +15826,11 @@ fn keeps_maybe(expr: Option<&Expr>, interner: &winnow_grammar::InternerContext, 
 
 fn keeps_blocks_in(expr: &Expr, interner: &winnow_grammar::InternerContext, holes_of: &impl Fn(&Expr) -> Vec<Expr>, context: &KeepsBody, own: &Ledger, library: &Ledger, walk: &mut KeepsWalk) {
     match expr {
-        Expr::Block(block) => keeps_block(block, interner, holes_of, context, own, library, walk),
-        Expr::Unsafe(block) => keeps_block(block, interner, holes_of, context, own, library, walk),
-        Expr::Overlap(block) => keeps_block(block, interner, holes_of, context, own, library, walk),
+        Expr::Block(block, _) => keeps_block(block, interner, holes_of, context, own, library, walk),
+        Expr::Unsafe(block, _) => keeps_block(block, interner, holes_of, context, own, library, walk),
+        Expr::Overlap(block, _) => keeps_block(block, interner, holes_of, context, own, library, walk),
         Expr::Closure { body, .. } => keeps_block(body, interner, holes_of, context, own, library, walk),
-        Expr::Call { func, args, config } => {
+        Expr::Call { func, args, config, .. } => {
             let func = nikaia_std::boxed::open(func);
             keeps_blocks_in(func, interner, holes_of, context, own, library, walk);
             for arg in args.iter() { keeps_blocks_in(arg, interner, holes_of, context, own, library, walk); }
@@ -15795,13 +15852,13 @@ fn keeps_blocks_in(expr: &Expr, interner: &winnow_grammar::InternerContext, hole
             keeps_block(then_branch, interner, holes_of, context, own, library, walk);
             keeps_block(match else_branch { Some(__nikaia_value) => __nikaia_value, None => return }, interner, holes_of, context, own, library, walk);
         },
-        Expr::TryCatch { expr, handler } => {
+        Expr::TryCatch { expr, handler, .. } => {
             let expr = nikaia_std::boxed::open(expr);
             keeps_blocks_in(expr, interner, holes_of, context, own, library, walk);
             keeps_block(handler, interner, holes_of, context, own, library, walk);
         },
         Expr::Match { arms, .. } => { for arm in arms.iter() { keeps_blocks_in(&arm.body, interner, holes_of, context, own, library, walk); } },
-        Expr::Select(arms) => { for arm in arms.iter() { keeps_block(&arm.body, interner, holes_of, context, own, library, walk); } },
+        Expr::Select(arms, _) => { for arm in arms.iter() { keeps_block(&arm.body, interner, holes_of, context, own, library, walk); } },
         _ => { },
     }
 }
@@ -15817,10 +15874,10 @@ fn classify(expr: &Expr, interner: &winnow_grammar::InternerContext, holes_of: &
             }
         },
         Expr::ListLit { items, .. } => { for item in items.iter() { keep_part(Some(item), interner, context, uses); } },
-        Expr::Tuple(items) => { for item in items.iter() { keep_part(Some(item), interner, context, uses); } },
+        Expr::Tuple(items, _) => { for item in items.iter() { keep_part(Some(item), interner, context, uses); } },
         Expr::Coalesce { value, .. } => { let value = nikaia_std::boxed::open(value); keep_named(value, interner, context, uses) },
         Expr::SafeField { base, .. } => { let base = nikaia_std::boxed::open(base); keep_named(base, interner, context, uses) },
-        Expr::Try(value) => { let value = nikaia_std::boxed::open(value); keep_named(value, interner, context, uses) },
+        Expr::Try(value, _) => { let value = nikaia_std::boxed::open(value); keep_named(value, interner, context, uses) },
         Expr::Match { value, .. } => {
             let value = nikaia_std::boxed::open(value);
             let name = match parameter_named(value, interner, context) { Some(__nikaia_value) => __nikaia_value, None => return };
@@ -15930,7 +15987,7 @@ fn takes_self(contract: &FnContract) -> bool {
 fn keep_what_a_task_names(body: &Expr, interner: &winnow_grammar::InternerContext, holes_of: &impl Fn(&Expr) -> Vec<Expr>, context: &KeepsBody, uses: &mut Uses) {
     let seen = match body {
         Expr::Closure { body, .. } => seen_in(body, interner, &name_as_it_is, holes_of, &no_root, true),
-        Expr::Block(block) => seen_in(block, interner, &name_as_it_is, holes_of, &no_root, true),
+        Expr::Block(block, _) => seen_in(block, interner, &name_as_it_is, holes_of, &no_root, true),
         _ => {
             for name in context.parameters.iter() { uses.kept.insert(name.to_owned()); }
             return;
@@ -15961,7 +16018,7 @@ fn keep_part(expr: Option<&Expr>, interner: &winnow_grammar::InternerContext, co
 
 fn parameter_named(expr: &Expr, interner: &winnow_grammar::InternerContext, context: &KeepsBody) -> Option<String> {
     match expr {
-        Expr::Variable(ident) => { let ident = *ident; match context.parameters.contains(interner.resolve(ident)) {
+        Expr::Variable(ident, _) => { let ident = *ident; match context.parameters.contains(interner.resolve(ident)) {
             true => Some(interner.resolve(ident).to_owned()),
             false => None,
         } },
@@ -15971,7 +16028,7 @@ fn parameter_named(expr: &Expr, interner: &winnow_grammar::InternerContext, cont
 
 fn part_of_a_parameter(expr: &Expr, interner: &winnow_grammar::InternerContext, context: &KeepsBody) -> Option<String> {
     match expr {
-        Expr::Field { base, name } => {
+        Expr::Field { base, name, .. } => {
             let base = nikaia_std::boxed::open(base); let name = *name;
             if parameter_named(base, interner, context).is_none() {
                 let deeper = match part_of_a_parameter(base, interner, context) { Some(__nikaia_value) => __nikaia_value, None => return None };
@@ -15998,8 +16055,8 @@ fn a_field_that_copies(parameter: &str, field: &str, context: &KeepsBody) -> boo
 
 fn resolved_callee(func: &Expr, interner: &winnow_grammar::InternerContext, own: &Ledger, library: &Ledger) -> Option<String> {
     let written = match func {
-        Expr::Variable(ident) => { let ident = *ident; interner.resolve(ident).to_owned() },
-        Expr::Path(segments) => written_path(interner, segments),
+        Expr::Variable(ident, _) => { let ident = *ident; interner.resolve(ident).to_owned() },
+        Expr::Path(segments, _) => written_path(interner, segments),
         _ => return None,
     };
     if own.functions.contains_key(&written) || library.functions.contains_key(&written) { return Some(written); }
@@ -16052,11 +16109,11 @@ pub fn leaves_expr(expr: &Expr, throwing: &impl Fn(&Expr) -> bool, holes_of: &im
 
 fn leaves_here(e: &Expr, throwing: &impl Fn(&Expr) -> bool, with_continue: bool) -> bool {
     match e {
-        Expr::Throw(_) => true,
-        Expr::Return(_) => true,
-        Expr::Break => true,
-        Expr::Try(_) => true,
-        Expr::Continue => with_continue,
+        Expr::Throw(_, _) => true,
+        Expr::Return(_, _) => true,
+        Expr::Break(_) => true,
+        Expr::Try(_, _) => true,
+        Expr::Continue(_) => with_continue,
         Expr::Call { .. } => throwing(e),
         Expr::MethodCall { .. } => throwing(e),
         Expr::SafeMethod { .. } => throwing(e),
@@ -16068,7 +16125,7 @@ fn leaves_within(expr: &Expr, throwing: &impl Fn(&Expr) -> bool, holes_of: &impl
     if leaves_here(expr, throwing, with_continue) { return true; }
     for hole in holes_of(expr) { if leaves_within(&hole, throwing, holes_of, with_continue) { return true; } }
     match expr {
-        Expr::Call { func, args, config } => {
+        Expr::Call { func, args, config, .. } => {
             let func = nikaia_std::boxed::open(func);
             if leaves_within(func, throwing, holes_of, with_continue) { return true; }
             any_leaves_within(args, throwing, holes_of, with_continue) || config_leaves_within(config, throwing, holes_of, with_continue)
@@ -16077,18 +16134,18 @@ fn leaves_within(expr: &Expr, throwing: &impl Fn(&Expr) -> bool, holes_of: &impl
         Expr::SafeMethod { receiver, args, config, .. } => { let receiver = nikaia_std::boxed::open(receiver); leaves_within(receiver, throwing, holes_of, with_continue) || any_leaves_within(args, throwing, holes_of, with_continue) || config_leaves_within(config, throwing, holes_of, with_continue) },
         Expr::Binary { lhs, rhs, .. } => { let lhs = nikaia_std::boxed::open(lhs); let rhs = nikaia_std::boxed::open(rhs); leaves_within(lhs, throwing, holes_of, with_continue) || leaves_within(rhs, throwing, holes_of, with_continue) },
         Expr::Unary { expr, .. } => { let expr = nikaia_std::boxed::open(expr); leaves_within(expr, throwing, holes_of, with_continue) },
-        Expr::Try(inner) => { let inner = nikaia_std::boxed::open(inner); leaves_within(inner, throwing, holes_of, with_continue) },
-        Expr::Throw(inner) => { let inner = nikaia_std::boxed::open(inner); leaves_within(inner, throwing, holes_of, with_continue) },
+        Expr::Try(inner, _) => { let inner = nikaia_std::boxed::open(inner); leaves_within(inner, throwing, holes_of, with_continue) },
+        Expr::Throw(inner, _) => { let inner = nikaia_std::boxed::open(inner); leaves_within(inner, throwing, holes_of, with_continue) },
         Expr::Cast { expr, .. } => { let expr = nikaia_std::boxed::open(expr); leaves_within(expr, throwing, holes_of, with_continue) },
         Expr::Field { base, .. } => { let base = nikaia_std::boxed::open(base); leaves_within(base, throwing, holes_of, with_continue) },
         Expr::SafeField { base, .. } => { let base = nikaia_std::boxed::open(base); leaves_within(base, throwing, holes_of, with_continue) },
-        Expr::Index { base, index } => { let base = nikaia_std::boxed::open(base); let index = nikaia_std::boxed::open(index); leaves_within(base, throwing, holes_of, with_continue) || leaves_within(index, throwing, holes_of, with_continue) },
+        Expr::Index { base, index, .. } => { let base = nikaia_std::boxed::open(base); let index = nikaia_std::boxed::open(index); leaves_within(base, throwing, holes_of, with_continue) || leaves_within(index, throwing, holes_of, with_continue) },
         Expr::Range { start, end, .. } => { let start = nikaia_std::boxed::open(start); let end = nikaia_std::boxed::open(end); leaves_within(start, throwing, holes_of, with_continue) || leaves_within(end, throwing, holes_of, with_continue) },
-        Expr::Tuple(parts) => any_leaves_within(parts, throwing, holes_of, with_continue),
-        Expr::Coalesce { value, fallback } => { let value = nikaia_std::boxed::open(value); let fallback = nikaia_std::boxed::open(fallback); leaves_within(value, throwing, holes_of, with_continue) || leaves_within(fallback, throwing, holes_of, with_continue) },
+        Expr::Tuple(parts, _) => any_leaves_within(parts, throwing, holes_of, with_continue),
+        Expr::Coalesce { value, fallback, .. } => { let value = nikaia_std::boxed::open(value); let fallback = nikaia_std::boxed::open(fallback); leaves_within(value, throwing, holes_of, with_continue) || leaves_within(fallback, throwing, holes_of, with_continue) },
         Expr::TryCatch { expr, .. } => { let expr = nikaia_std::boxed::open(expr); leaves_within(expr, throwing, holes_of, with_continue) },
         Expr::If { cond, .. } => { let cond = nikaia_std::boxed::open(cond); leaves_within(cond, throwing, holes_of, with_continue) },
-        Expr::Match { value, arms } => {
+        Expr::Match { value, arms, .. } => {
             let value = nikaia_std::boxed::open(value);
             if leaves_within(value, throwing, holes_of, with_continue) { return true; }
             for arm in arms.iter() { if maybe_leaves_within((arm.guard).as_ref(), throwing, holes_of, with_continue) || leaves_within(&arm.body, throwing, holes_of, with_continue) { return true; } }
@@ -16097,8 +16154,8 @@ fn leaves_within(expr: &Expr, throwing: &impl Fn(&Expr) -> bool, holes_of: &impl
         Expr::StructLit { fields, .. } => fields_leave_within(fields, throwing, holes_of, with_continue),
         Expr::ListLit { items, .. } => any_leaves_within(items, throwing, holes_of, with_continue),
         Expr::With { base, fields, .. } => { let base = nikaia_std::boxed::open(base); leaves_within(base, throwing, holes_of, with_continue) || fields_leave_within(fields, throwing, holes_of, with_continue) },
-        Expr::Return(value) => { let value = nikaia_std::boxed::open(value); maybe_leaves_within((value).as_ref(), throwing, holes_of, with_continue) },
-        Expr::Select(arms) => {
+        Expr::Return(value, _) => { let value = nikaia_std::boxed::open(value); maybe_leaves_within((value).as_ref(), throwing, holes_of, with_continue) },
+        Expr::Select(arms, _) => {
             for arm in arms.iter() { if leaves_within(&arm.value, throwing, holes_of, with_continue) { return true; } }
             false
         },
@@ -16133,11 +16190,11 @@ fn fields_leave_within(fields: &[FieldInit], throwing: &impl Fn(&Expr) -> bool, 
 
 fn blocks_leave(expr: &Expr, throwing: &impl Fn(&Expr) -> bool, holes_of: &impl Fn(&Expr) -> Vec<Expr>, with_continue: bool) -> bool {
     match expr {
-        Expr::Block(block) => leaves_block(block, throwing, holes_of, with_continue),
-        Expr::Unsafe(block) => leaves_block(block, throwing, holes_of, with_continue),
-        Expr::Overlap(block) => leaves_block(block, throwing, holes_of, with_continue),
+        Expr::Block(block, _) => leaves_block(block, throwing, holes_of, with_continue),
+        Expr::Unsafe(block, _) => leaves_block(block, throwing, holes_of, with_continue),
+        Expr::Overlap(block, _) => leaves_block(block, throwing, holes_of, with_continue),
         Expr::Closure { body, .. } => leaves_block(body, throwing, holes_of, with_continue),
-        Expr::Call { func, args, config } => {
+        Expr::Call { func, args, config, .. } => {
             let func = nikaia_std::boxed::open(func);
             if blocks_leave(func, throwing, holes_of, with_continue) { return true; }
             any_blocks_leave(args, throwing, holes_of, with_continue) || config_blocks_leave(config, throwing, holes_of, with_continue)
@@ -16149,12 +16206,12 @@ fn blocks_leave(expr: &Expr, throwing: &impl Fn(&Expr) -> bool, holes_of: &impl 
             let otherwise = match else_branch { Some(__nikaia_value) => __nikaia_value, None => return false };
             leaves_block(otherwise, throwing, holes_of, with_continue)
         },
-        Expr::TryCatch { expr, handler } => { let expr = nikaia_std::boxed::open(expr); blocks_leave(expr, throwing, holes_of, with_continue) || leaves_block(handler, throwing, holes_of, with_continue) },
+        Expr::TryCatch { expr, handler, .. } => { let expr = nikaia_std::boxed::open(expr); blocks_leave(expr, throwing, holes_of, with_continue) || leaves_block(handler, throwing, holes_of, with_continue) },
         Expr::Match { arms, .. } => {
             for arm in arms.iter() { if blocks_leave(&arm.body, throwing, holes_of, with_continue) { return true; } }
             false
         },
-        Expr::Select(arms) => {
+        Expr::Select(arms, _) => {
             for arm in arms.iter() { if leaves_block(&arm.body, throwing, holes_of, with_continue) { return true; } }
             false
         },
@@ -17358,12 +17415,12 @@ pub fn impl_parameters(words: &winnow_grammar::InternerContext, target: &Type, d
 pub fn a_literal(expr: &Expr) -> bool {
     match expr {
         Expr::LitInt { .. } => true,
-        Expr::LitFloat(_) => true,
-        Expr::LitBool(_) => true,
+        Expr::LitFloat(_, _) => true,
+        Expr::LitBool(_, _) => true,
         Expr::LitStr { .. } => true,
-        Expr::LitChar(_) => true,
-        Expr::LitNull => true,
-        Expr::Unary { op, expr } => {
+        Expr::LitChar(_, _) => true,
+        Expr::LitNull(_) => true,
+        Expr::Unary { op, expr, .. } => {
             let expr = nikaia_std::boxed::open(expr);
             let negated = matches!(op, UnaryOp::Neg);
             negated && is_a_number(expr)
@@ -17372,7 +17429,7 @@ pub fn a_literal(expr: &Expr) -> bool {
     }
 }
 
-fn is_a_number(expr: &Expr) -> bool { matches!(expr, Expr::LitInt { .. } | Expr::LitFloat(_)) }
+fn is_a_number(expr: &Expr) -> bool { matches!(expr, Expr::LitInt { .. } | Expr::LitFloat(_, _)) }
 
 pub fn declared_extern(words: &winnow_grammar::InternerContext, aliases: &collections::BTreeMap<String, String>, declarations: &[Spanned<TraitMethod>]) -> Vec<DeclaredFn> {
     let mut out: Vec<DeclaredFn> = vec![];
@@ -20661,25 +20718,25 @@ pub fn test_dispatcher(cli: &str, with_use: bool, count: i64, dispatch: &str) ->
 
 pub fn names_in(expr: &Expr, words: &winnow_grammar::InternerContext, out: &mut collections::BTreeSet<String>) {
     match expr {
-        Expr::Variable(name) => {
+        Expr::Variable(name, _) => {
             let name = *name;
             out.insert(words.resolve(name).to_owned());
         },
-        Expr::Path(segments) => { if !segments.is_empty() { out.insert(words.resolve(*nikaia_std::index::get(&segments, 0)).to_owned()); } },
-        Expr::Call { func, args, config } => {
+        Expr::Path(segments, _) => { if !segments.is_empty() { out.insert(words.resolve(*nikaia_std::index::get(&segments, 0)).to_owned()); } },
+        Expr::Call { func, args, config, .. } => {
             let func = nikaia_std::boxed::open(func);
             names_in(func, words, out);
             for arg in args.iter() { names_in(arg, words, out); }
             for setting in config.iter() { names_in(&setting.value, words, out); }
         },
-        Expr::MethodCall { receiver, method, args, config } => {
+        Expr::MethodCall { receiver, method, args, config, .. } => {
             let receiver = nikaia_std::boxed::open(receiver); let method = *method;
             names_in(receiver, words, out);
             out.insert(words.resolve(method).to_owned());
             for arg in args.iter() { names_in(arg, words, out); }
             for setting in config.iter() { names_in(&setting.value, words, out); }
         },
-        Expr::SafeMethod { receiver, method, args, config } => {
+        Expr::SafeMethod { receiver, method, args, config, .. } => {
             let receiver = nikaia_std::boxed::open(receiver); let method = *method;
             names_in(receiver, words, out);
             out.insert(words.resolve(method).to_owned());
@@ -20694,16 +20751,16 @@ pub fn names_in(expr: &Expr, words: &winnow_grammar::InternerContext, out: &mut 
             names_in(rhs, words, out);
         },
         Expr::Unary { expr, .. } => { let expr = nikaia_std::boxed::open(expr); names_in(expr, words, out) },
-        Expr::Try(inner) => { let inner = nikaia_std::boxed::open(inner); names_in(inner, words, out) },
+        Expr::Try(inner, _) => { let inner = nikaia_std::boxed::open(inner); names_in(inner, words, out) },
         Expr::Cast { expr, .. } => { let expr = nikaia_std::boxed::open(expr); names_in(expr, words, out) },
-        Expr::Index { base, index } => {
+        Expr::Index { base, index, .. } => {
             let base = nikaia_std::boxed::open(base); let index = nikaia_std::boxed::open(index);
             names_in(base, words, out);
             names_in(index, words, out);
         },
-        Expr::Tuple(parts) => { for part in parts.iter() { names_in(part, words, out); } },
+        Expr::Tuple(parts, _) => { for part in parts.iter() { names_in(part, words, out); } },
         Expr::ListLit { items, .. } => { for item in items.iter() { names_in(item, words, out); } },
-        Expr::Coalesce { value, fallback } => {
+        Expr::Coalesce { value, fallback, .. } => {
             let value = nikaia_std::boxed::open(value); let fallback = nikaia_std::boxed::open(fallback);
             names_in(value, words, out);
             names_in(fallback, words, out);
@@ -20713,7 +20770,7 @@ pub fn names_in(expr: &Expr, words: &winnow_grammar::InternerContext, out: &mut 
             names_in(start, words, out);
             names_in(end, words, out);
         },
-        Expr::StructLit { name, fields } => {
+        Expr::StructLit { name, fields, .. } => {
             let name = *name;
             out.insert(words.resolve(name).to_owned());
             for field in fields.iter() {
@@ -20729,24 +20786,24 @@ pub fn names_in(expr: &Expr, words: &winnow_grammar::InternerContext, out: &mut 
                 maybe_names_in((field.value).as_ref(), words, out);
             }
         },
-        Expr::Block(block) => names_in_block(block, words, out),
-        Expr::Unsafe(block) => names_in_block(block, words, out),
-        Expr::Overlap(block) => names_in_block(block, words, out),
+        Expr::Block(block, _) => names_in_block(block, words, out),
+        Expr::Unsafe(block, _) => names_in_block(block, words, out),
+        Expr::Overlap(block, _) => names_in_block(block, words, out),
         Expr::Closure { body, .. } => names_in_block(body, words, out),
-        Expr::Select(arms) => {
+        Expr::Select(arms, _) => {
             for arm in arms.iter() {
                 a_symbol(arm.binding, words, out);
                 names_in(&arm.value, words, out);
                 names_in_block(&arm.body, words, out);
             }
         },
-        Expr::If { cond, then_branch, else_branch } => {
+        Expr::If { cond, then_branch, else_branch, .. } => {
             let cond = nikaia_std::boxed::open(cond);
             names_in(cond, words, out);
             names_in_block(then_branch, words, out);
             maybe_names_in_block((else_branch).as_ref(), words, out);
         },
-        Expr::Match { value, arms } => {
+        Expr::Match { value, arms, .. } => {
             let value = nikaia_std::boxed::open(value);
             names_in(value, words, out);
             for arm in arms.iter() {
@@ -20758,16 +20815,16 @@ pub fn names_in(expr: &Expr, words: &winnow_grammar::InternerContext, out: &mut 
             }
         },
         Expr::Spawn { body, .. } => { let body = nikaia_std::boxed::open(body); names_in(body, words, out) },
-        Expr::Throw(thrown) => { let thrown = nikaia_std::boxed::open(thrown); names_in(thrown, words, out) },
-        Expr::Return(value) => { let value = nikaia_std::boxed::open(value); maybe_names_in((value).as_ref(), words, out) },
-        Expr::Break => { },
-        Expr::Continue => { },
-        Expr::TryCatch { expr, handler } => {
+        Expr::Throw(thrown, _) => { let thrown = nikaia_std::boxed::open(thrown); names_in(thrown, words, out) },
+        Expr::Return(value, _) => { let value = nikaia_std::boxed::open(value); maybe_names_in((value).as_ref(), words, out) },
+        Expr::Break(_) => { },
+        Expr::Continue(_) => { },
+        Expr::TryCatch { expr, handler, .. } => {
             let expr = nikaia_std::boxed::open(expr);
             names_in(expr, words, out);
             names_in_block(handler, words, out);
         },
-        Expr::LitInterpolated { parts } => {
+        Expr::LitInterpolated { parts, .. } => {
             for part in parts.iter() {
                 match part {
                     FPart::Hole { expr, .. } => names_in(expr, words, out),
@@ -20775,22 +20832,22 @@ pub fn names_in(expr: &Expr, words: &winnow_grammar::InternerContext, out: &mut 
                 }
             }
         },
-        Expr::Dsl { target, package, context, content } => {
+        Expr::Dsl { target, package, context, content, .. } => {
             let context = *context; let package = *package; let target = *target;
             out.insert(words.resolve(target).to_owned());
             a_symbol(package, words, out);
             a_symbol(context, words, out);
             words_of(content, out);
         },
-        Expr::Asm { bindings, code } => {
+        Expr::Asm { bindings, code, .. } => {
             for binding in bindings.iter() { out.insert(words.resolve(binding.variable).to_owned()); }
             words_of(code, out);
         },
         Expr::LitInt { .. } => { },
-        Expr::LitFloat(_) => { },
-        Expr::LitBool(_) => { },
-        Expr::LitNull => { },
-        Expr::LitChar(_) => { },
+        Expr::LitFloat(_, _) => { },
+        Expr::LitBool(_, _) => { },
+        Expr::LitNull(_) => { },
+        Expr::LitChar(_, _) => { },
         Expr::LitStr { .. } => { },
     }
 }
@@ -20987,7 +21044,7 @@ pub fn accounted(stmt: &Stmt, words: &winnow_grammar::InternerContext, walking: 
 
 fn accounted_value(binds: Option<String>, value: &Expr, names: &winnow_grammar::InternerContext, walking: &Walking<'_>) -> Accounted {
     match value {
-        Expr::TryCatch { expr, handler } => {
+        Expr::TryCatch { expr, handler, .. } => {
             let expr = nikaia_std::boxed::open(expr);
             if diverts_within(&handler.stmts, false) { return Accounted::DivertingHandler; }
             let mut reduced = Reduced { calls: vec![], performs: false, methods: vec![], refused: None };
@@ -21145,12 +21202,12 @@ fn reduce_handler(block: &Block, names: &winnow_grammar::InternerContext, reduce
 fn reduce(node: &Expr, names: &winnow_grammar::InternerContext, reduced: &mut Reduced) {
     match node {
         Expr::LitInt { .. } => { },
-        Expr::LitFloat(_) => { },
-        Expr::LitBool(_) => { },
-        Expr::LitNull => { },
-        Expr::LitChar(_) => { },
+        Expr::LitFloat(_, _) => { },
+        Expr::LitBool(_, _) => { },
+        Expr::LitNull(_) => { },
+        Expr::LitChar(_, _) => { },
         Expr::LitStr { .. } => { },
-        Expr::Call { func, args, config } => {
+        Expr::Call { func, args, config, .. } => {
             let func = nikaia_std::boxed::open(func);
             if !config.is_empty() {
                 stopped(reduced, Accounted::Opaque(String::from("a call with options, which nothing matches against the callee's order yet")));
@@ -21171,12 +21228,12 @@ fn reduce(node: &Expr, names: &winnow_grammar::InternerContext, reduced: &mut Re
             reduce(lhs, names, reduced);
             reduce(rhs, names, reduced);
         },
-        Expr::Tuple(parts) => { for part in parts.iter() { reduce(part, names, reduced); } },
+        Expr::Tuple(parts, _) => { for part in parts.iter() { reduce(part, names, reduced); } },
         Expr::ListLit { items, .. } => { for item in items.iter() { reduce(item, names, reduced); } },
-        Expr::Return(_) => stopped(reduced, Accounted::Opaque(String::from("a `return`, a `break` or a `continue`"))),
-        Expr::Break => stopped(reduced, Accounted::Opaque(String::from("a `return`, a `break` or a `continue`"))),
-        Expr::Continue => stopped(reduced, Accounted::Opaque(String::from("a `return`, a `break` or a `continue`"))),
-        Expr::Variable(name) => { let name = *name; noted(reduced, Accounted::NonLiteralArgument(names.resolve(name).to_owned())) },
+        Expr::Return(_, _) => stopped(reduced, Accounted::Opaque(String::from("a `return`, a `break` or a `continue`"))),
+        Expr::Break(_) => stopped(reduced, Accounted::Opaque(String::from("a `return`, a `break` or a `continue`"))),
+        Expr::Continue(_) => stopped(reduced, Accounted::Opaque(String::from("a `return`, a `break` or a `continue`"))),
+        Expr::Variable(name, _) => { let name = *name; noted(reduced, Accounted::NonLiteralArgument(names.resolve(name).to_owned())) },
         Expr::Field { base, .. } => {
             let base = nikaia_std::boxed::open(base);
             noted(reduced, Accounted::Opaque(String::from("a value read from somewhere else")));
@@ -21187,13 +21244,13 @@ fn reduce(node: &Expr, names: &winnow_grammar::InternerContext, reduced: &mut Re
             noted(reduced, Accounted::Opaque(String::from("a value read from somewhere else")));
             reduce(base, names, reduced);
         },
-        Expr::Index { base, index } => {
+        Expr::Index { base, index, .. } => {
             let base = nikaia_std::boxed::open(base); let index = nikaia_std::boxed::open(index);
             noted(reduced, Accounted::Opaque(String::from("a value read from somewhere else")));
             reduce(base, names, reduced);
             reduce(index, names, reduced);
         },
-        Expr::Path(_) => { },
+        Expr::Path(_, _) => { },
         Expr::StructLit { fields, .. } => {
             noted(reduced, Accounted::Opaque(String::from("a value read from somewhere else")));
             for field in fields.iter() { reduce_maybe((field.value).as_ref(), names, reduced); }
@@ -21204,15 +21261,15 @@ fn reduce(node: &Expr, names: &winnow_grammar::InternerContext, reduced: &mut Re
             reduce(start, names, reduced);
             reduce(end, names, reduced);
         },
-        Expr::Coalesce { value, fallback } => {
+        Expr::Coalesce { value, fallback, .. } => {
             let value = nikaia_std::boxed::open(value); let fallback = nikaia_std::boxed::open(fallback);
             noted(reduced, Accounted::Opaque(String::from("a `??`, whose fallback runs only sometimes")));
             reduce(value, names, reduced);
             reduce(fallback, names, reduced);
         },
         Expr::LitInterpolated { .. } => stopped(reduced, Accounted::Opaque(String::from("text with code in it, whose holes this has not parsed"))),
-        Expr::MethodCall { receiver, method, args, config } => { let receiver = nikaia_std::boxed::open(receiver); let method = *method; reduce_method(receiver, method, args, config, names, reduced) },
-        Expr::SafeMethod { receiver, method, args, config } => { let receiver = nikaia_std::boxed::open(receiver); let method = *method; reduce_method(receiver, method, args, config, names, reduced) },
+        Expr::MethodCall { receiver, method, args, config, .. } => { let receiver = nikaia_std::boxed::open(receiver); let method = *method; reduce_method(receiver, method, args, config, names, reduced) },
+        Expr::SafeMethod { receiver, method, args, config, .. } => { let receiver = nikaia_std::boxed::open(receiver); let method = *method; reduce_method(receiver, method, args, config, names, reduced) },
         Expr::Closure { .. } => stopped(reduced, Accounted::Opaque(String::from("a lambda, whose body this analysis does not read"))),
         _ => stopped(reduced, Accounted::Opaque(String::from("something with its own control flow"))),
     }
@@ -21231,8 +21288,8 @@ fn a_short_circuit(op: &BinaryOp) -> bool { matches!(op, BinaryOp::And | BinaryO
 
 fn called_key(func: &Expr, names: &winnow_grammar::InternerContext) -> Option<String> {
     match func {
-        Expr::Variable(name) => { let name = *name; Some(names.resolve(name).to_owned()) },
-        Expr::Path(segments) => Some(joined_segments(segments, names)),
+        Expr::Variable(name, _) => { let name = *name; Some(names.resolve(name).to_owned()) },
+        Expr::Path(segments, _) => Some(joined_segments(segments, names)),
         _ => None,
     }
 }
@@ -21263,9 +21320,9 @@ pub fn diverts_within(stmts: &[Spanned<Stmt>], bound: bool) -> bool {
 
 fn holds_throw(expr: &Expr, bound: bool) -> bool {
     match expr {
-        Expr::Throw(_) => true,
-        Expr::Block(block) => diverts_within(&block.stmts, bound),
-        Expr::Overlap(block) => diverts_within(&block.stmts, bound),
+        Expr::Throw(_, _) => true,
+        Expr::Block(block, _) => diverts_within(&block.stmts, bound),
+        Expr::Overlap(block, _) => diverts_within(&block.stmts, bound),
         Expr::If { then_branch, else_branch, .. } => diverts_within(&then_branch.stmts, bound) || else_diverts((else_branch).as_ref(), bound),
         Expr::Match { arms, .. } => an_arm_throws(arms, bound),
         _ => false,
@@ -22312,12 +22369,12 @@ pub fn pb_render(entries: &[PbLine], limit: i64) -> PbRendered {
 
 pub fn lin_term(expr: &Expr, words: &winnow_grammar::InternerContext, var: &impl Fn(&str) -> bool, out: &mut Vec<SolverTerm>) -> Option<i64> {
     match expr {
-        Expr::LitInt { value, negative } => {
+        Expr::LitInt { value, negative, .. } => {
             let negative = *negative; let value = *value;
             let n = match literal_value(value, negative) { Some(__nikaia_value) => __nikaia_value, None => return None };
             Some(built(SolverTerm::Int(n), out))
         },
-        Expr::Variable(name) => {
+        Expr::Variable(name, _) => {
             let name = *name;
             let text = words.resolve(name);
             if !var(text) { return None; }
@@ -22327,19 +22384,19 @@ pub fn lin_term(expr: &Expr, words: &winnow_grammar::InternerContext, var: &impl
             let receiver = nikaia_std::boxed::open(receiver); let method = *method;
             if !args.is_empty() || words.resolve(method) != "len" { return None; }
             let length = match receiver {
-                Expr::Variable(name) => { let name = *name; format!("{}.len()", words.resolve(name)) },
+                Expr::Variable(name, _) => { let name = *name; format!("{}.len()", words.resolve(name)) },
                 _ => return None,
             };
             if !var(&length) { return None; }
             Some(built(SolverTerm::Var(length), out))
         },
-        Expr::Unary { op, expr } => {
+        Expr::Unary { op, expr, .. } => {
             let expr = nikaia_std::boxed::open(expr);
             if *op != UnaryOp::Neg { return None; }
             let a = match lin_term(expr, words, var, out) { Some(__nikaia_value) => __nikaia_value, None => return None };
             Some(built(SolverTerm::Neg(a), out))
         },
-        Expr::Cast { expr, ty } => {
+        Expr::Cast { expr, ty, .. } => {
             let expr = nikaia_std::boxed::open(expr);
             if !ty.generics.is_empty() || !is_whole_number(words.resolve(ty.name)) { return None; }
             lin_term(expr, words, var, out)
@@ -22364,8 +22421,8 @@ pub fn lin_term(expr: &Expr, words: &winnow_grammar::InternerContext, var: &impl
 
 pub fn claim_term(expr: &Expr, words: &winnow_grammar::InternerContext, var: &impl Fn(&str) -> bool, out: &mut Vec<SolverTerm>) -> Option<i64> {
     match expr {
-        Expr::LitBool(b) => { let b = *b; Some(built(SolverTerm::Bool(b), out)) },
-        Expr::Unary { op, expr } => {
+        Expr::LitBool(b, _) => { let b = *b; Some(built(SolverTerm::Bool(b), out)) },
+        Expr::Unary { op, expr, .. } => {
             let expr = nikaia_std::boxed::open(expr);
             if *op != UnaryOp::Not { return None; }
             let a = match claim_term(expr, words, var, out) { Some(__nikaia_value) => __nikaia_value, None => return None };
@@ -22944,8 +23001,8 @@ pub fn may_throw(call: &Expr, in_throwing: bool, program: &Program, words: &winn
 fn thrower_named(call: &Expr, words: &winnow_grammar::InternerContext, unaliased: &impl Fn(&str) -> String) -> Option<String> {
     match call {
         Expr::Call { func, .. } => { let func = nikaia_std::boxed::open(func); match func {
-            Expr::Variable(name) => { let name = *name; Some(words.resolve(name).to_owned()) },
-            Expr::Path(segments) => {
+            Expr::Variable(name, _) => { let name = *name; Some(words.resolve(name).to_owned()) },
+            Expr::Path(segments, _) => {
                 let mut joined: String = String::from("");
                 for segment in segments.iter() {
                     if !joined.is_empty() { joined.push_str("::"); }
@@ -22961,7 +23018,7 @@ fn thrower_named(call: &Expr, words: &winnow_grammar::InternerContext, unaliased
 
 pub fn from_outside(expr: &Expr, tainted: &collections::BTreeSet<String>, words: &winnow_grammar::InternerContext, library: &Ledger, holes_of: &impl Fn(&Expr) -> Vec<Expr>) -> bool {
     match expr {
-        Expr::Variable(name) => {
+        Expr::Variable(name, _) => {
             let name = *name;
             if tainted.contains(words.resolve(name)) { return true; }
         },
@@ -22974,23 +23031,23 @@ pub fn from_outside(expr: &Expr, tainted: &collections::BTreeSet<String>, words:
     }
     for hole in holes_of(expr) { if from_outside(&hole, tainted, words, library, holes_of) { return true; } }
     match expr {
-        Expr::Call { func, args, config } => { let func = nikaia_std::boxed::open(func); from_outside(func, tainted, words, library, holes_of) || any_from_outside(args, tainted, words, library, holes_of) || config_from_outside(config, tainted, words, library, holes_of) },
+        Expr::Call { func, args, config, .. } => { let func = nikaia_std::boxed::open(func); from_outside(func, tainted, words, library, holes_of) || any_from_outside(args, tainted, words, library, holes_of) || config_from_outside(config, tainted, words, library, holes_of) },
         Expr::MethodCall { receiver, args, config, .. } => { let receiver = nikaia_std::boxed::open(receiver); from_outside(receiver, tainted, words, library, holes_of) || any_from_outside(args, tainted, words, library, holes_of) || config_from_outside(config, tainted, words, library, holes_of) },
         Expr::SafeMethod { receiver, args, config, .. } => { let receiver = nikaia_std::boxed::open(receiver); from_outside(receiver, tainted, words, library, holes_of) || any_from_outside(args, tainted, words, library, holes_of) || config_from_outside(config, tainted, words, library, holes_of) },
         Expr::Binary { lhs, rhs, .. } => { let lhs = nikaia_std::boxed::open(lhs); let rhs = nikaia_std::boxed::open(rhs); from_outside(lhs, tainted, words, library, holes_of) || from_outside(rhs, tainted, words, library, holes_of) },
         Expr::Unary { expr, .. } => { let expr = nikaia_std::boxed::open(expr); from_outside(expr, tainted, words, library, holes_of) },
-        Expr::Try(inner) => { let inner = nikaia_std::boxed::open(inner); from_outside(inner, tainted, words, library, holes_of) },
-        Expr::Throw(inner) => { let inner = nikaia_std::boxed::open(inner); from_outside(inner, tainted, words, library, holes_of) },
+        Expr::Try(inner, _) => { let inner = nikaia_std::boxed::open(inner); from_outside(inner, tainted, words, library, holes_of) },
+        Expr::Throw(inner, _) => { let inner = nikaia_std::boxed::open(inner); from_outside(inner, tainted, words, library, holes_of) },
         Expr::Cast { expr, .. } => { let expr = nikaia_std::boxed::open(expr); from_outside(expr, tainted, words, library, holes_of) },
         Expr::Field { base, .. } => { let base = nikaia_std::boxed::open(base); from_outside(base, tainted, words, library, holes_of) },
         Expr::SafeField { base, .. } => { let base = nikaia_std::boxed::open(base); from_outside(base, tainted, words, library, holes_of) },
-        Expr::Index { base, index } => { let base = nikaia_std::boxed::open(base); let index = nikaia_std::boxed::open(index); from_outside(base, tainted, words, library, holes_of) || from_outside(index, tainted, words, library, holes_of) },
+        Expr::Index { base, index, .. } => { let base = nikaia_std::boxed::open(base); let index = nikaia_std::boxed::open(index); from_outside(base, tainted, words, library, holes_of) || from_outside(index, tainted, words, library, holes_of) },
         Expr::Range { start, end, .. } => { let start = nikaia_std::boxed::open(start); let end = nikaia_std::boxed::open(end); from_outside(start, tainted, words, library, holes_of) || from_outside(end, tainted, words, library, holes_of) },
-        Expr::Tuple(parts) => any_from_outside(parts, tainted, words, library, holes_of),
-        Expr::Coalesce { value, fallback } => { let value = nikaia_std::boxed::open(value); let fallback = nikaia_std::boxed::open(fallback); from_outside(value, tainted, words, library, holes_of) || from_outside(fallback, tainted, words, library, holes_of) },
+        Expr::Tuple(parts, _) => any_from_outside(parts, tainted, words, library, holes_of),
+        Expr::Coalesce { value, fallback, .. } => { let value = nikaia_std::boxed::open(value); let fallback = nikaia_std::boxed::open(fallback); from_outside(value, tainted, words, library, holes_of) || from_outside(fallback, tainted, words, library, holes_of) },
         Expr::TryCatch { expr, .. } => { let expr = nikaia_std::boxed::open(expr); from_outside(expr, tainted, words, library, holes_of) },
         Expr::If { cond, .. } => { let cond = nikaia_std::boxed::open(cond); from_outside(cond, tainted, words, library, holes_of) },
-        Expr::Match { value, arms } => {
+        Expr::Match { value, arms, .. } => {
             let value = nikaia_std::boxed::open(value);
             if from_outside(value, tainted, words, library, holes_of) { return true; }
             for arm in arms.iter() { if maybe_from_outside((arm.guard).as_ref(), tainted, words, library, holes_of) || from_outside(&arm.body, tainted, words, library, holes_of) { return true; } }
@@ -23007,8 +23064,8 @@ pub fn from_outside(expr: &Expr, tainted: &collections::BTreeSet<String>, words:
             for field in fields.iter() { if maybe_from_outside((field.value).as_ref(), tainted, words, library, holes_of) { return true; } }
             false
         },
-        Expr::Return(value) => { let value = nikaia_std::boxed::open(value); maybe_from_outside((value).as_ref(), tainted, words, library, holes_of) },
-        Expr::Select(arms) => {
+        Expr::Return(value, _) => { let value = nikaia_std::boxed::open(value); maybe_from_outside((value).as_ref(), tainted, words, library, holes_of) },
+        Expr::Select(arms, _) => {
             for arm in arms.iter() { if from_outside(&arm.value, tainted, words, library, holes_of) { return true; } }
             false
         },
@@ -23033,8 +23090,8 @@ fn config_from_outside(config: &[ConfigArg], tainted: &collections::BTreeSet<Str
 
 fn outside_source_named(func: &Expr, words: &winnow_grammar::InternerContext) -> Option<String> {
     match func {
-        Expr::Variable(name) => { let name = *name; Some(words.resolve(name).to_owned()) },
-        Expr::Path(segments) => {
+        Expr::Variable(name, _) => { let name = *name; Some(words.resolve(name).to_owned()) },
+        Expr::Path(segments, _) => {
             let mut joined: String = String::from("");
             for segment in segments.iter() {
                 if !joined.is_empty() { joined.push_str("::"); }
@@ -23755,7 +23812,7 @@ impl ProverState {
                 let term = lin_term(arg, words, &|name| { scope.ints.contains(name) }, &mut arena.nodes);
                 if term.is_some() { given_by.insert(param.to_owned(), nikaia_std::index::or(term, || 0)); }
                 match arg {
-                    Expr::Variable(name) => {
+                    Expr::Variable(name, _) => {
                         let name = *name;
                         let length = length_of(words.resolve(name));
                         if scope.ints.contains(&length) {
@@ -23849,7 +23906,7 @@ pub fn postconditions_for(arena: &mut TermArena, posts: &[PostClaim], params: &[
         let term = lin_term(arg, words, &|name| { scope.ints.contains(name) }, &mut arena.nodes);
         if term.is_some() { args_given.insert(param.to_owned(), nikaia_std::index::or(term, || 0)); }
         match arg {
-            Expr::Variable(name) => {
+            Expr::Variable(name, _) => {
                 let name = *name;
                 let length = length_of(words.resolve(name));
                 if scope.ints.contains(&length) {
@@ -24079,7 +24136,7 @@ fn prover_stmt(walk: &mut ProverWalk, stmt: &Spanned<Stmt>, scope: &mut ProverSc
             prover_expr(walk, target, span, &scope, &nested, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition);
             prover_expr(walk, value, span, &scope, &nested, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition);
             match target {
-                Expr::Variable(name) => {
+                Expr::Variable(name, _) => {
                     let name = *name;
                     let n = words.resolve(name).to_owned();
                     let tainted = from_outside(value, &scope.tainted, words, library, holes_of);
@@ -24195,7 +24252,7 @@ fn prover_for(walk: &mut ProverWalk, bindings: &[winnow_grammar::Symbol], iter: 
     let mut ranged = false;
     if bindings.len() == 1 {
         match iter {
-            Expr::Range { start, end, inclusive } => {
+            Expr::Range { start, end, inclusive, .. } => {
                 let start = nikaia_std::boxed::open(start); let end = nikaia_std::boxed::open(end); let inclusive = *inclusive;
                 let low = lin_term(start, words, &|name| { scope.ints.contains(name) }, &mut walk.arena.nodes);
                 let high = lin_term(end, words, &|name| { scope.ints.contains(name) }, &mut walk.arena.nodes);
@@ -24241,7 +24298,7 @@ fn prover_return(walk: &mut ProverWalk, value: Option<&Expr>, span: Span, scope:
 fn prover_expr_stmt(walk: &mut ProverWalk, expr: &Expr, span: Span, scope: &mut ProverScope, at: &ProverWhere, program: &Program, words: &winnow_grammar::InternerContext, own: &Ledger, library: &Ledger, ask: &impl Fn(&TermArena, &[i64], i64) -> SolverAnswer, model: &impl Fn(&TermArena, &[i64], i64) -> Option<collections::BTreeMap<String, i64>>, escape: &impl Fn(&str) -> String, holes_of: &impl Fn(&Expr) -> Vec<Expr>, unaliased: &impl Fn(&str) -> String, written_of: &impl Fn(&Expr) -> String, shape_of: &impl Fn(&Expr) -> String, condition: &impl Fn(&str, &collections::BTreeSet<String>) -> Vec<SolverTerm>) -> bool {
     let nested = at.inside(false);
     match expr {
-        Expr::Call { func, args, config } => {
+        Expr::Call { func, args, config, .. } => {
             let func = nikaia_std::boxed::open(func);
             if prover_an_assert_call(func, args, &span, &walk.claims, shape_of) {
                 let cond = nikaia_std::index::get(&args, 0);
@@ -24254,22 +24311,22 @@ fn prover_expr_stmt(walk: &mut ProverWalk, expr: &Expr, span: Span, scope: &mut 
                 return false;
             }
         },
-        Expr::If { cond, then_branch, else_branch } => {
+        Expr::If { cond, then_branch, else_branch, .. } => {
             let cond = nikaia_std::boxed::open(cond);
             return prover_if(walk, cond, then_branch, (else_branch).as_ref(), span, scope, at, &nested, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition);
         },
-        Expr::Throw(value) => {
+        Expr::Throw(value, _) => {
             let value = nikaia_std::boxed::open(value);
             prover_expr(walk, value, span, &scope, &nested, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition);
             return true;
         },
-        Expr::Return(value) => {
+        Expr::Return(value, _) => {
             let value = nikaia_std::boxed::open(value);
             prover_return(walk, (value).as_ref(), span, &scope, at, &nested, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition);
             return true;
         },
-        Expr::Break => return true,
-        Expr::Continue => return true,
+        Expr::Break(_) => return true,
+        Expr::Continue(_) => return true,
         _ => { },
     }
     prover_expr(walk, expr, span, &scope, &nested, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition);
@@ -24337,7 +24394,7 @@ fn prover_calls_in(walk: &mut ProverWalk, expr: &Expr, span: Span, scope: &Prove
     }
     for hole in holes_of(expr) { prover_calls_in(walk, &hole, span, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition); }
     match expr {
-        Expr::Call { func, args, config } => {
+        Expr::Call { func, args, config, .. } => {
             let func = nikaia_std::boxed::open(func);
             prover_calls_in(walk, func, span, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition);
             for arg in args.iter() { prover_calls_in(walk, arg, span, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition); }
@@ -24361,12 +24418,12 @@ fn prover_calls_in(walk: &mut ProverWalk, expr: &Expr, span: Span, scope: &Prove
             prover_calls_in(walk, rhs, span, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition);
         },
         Expr::Unary { expr, .. } => { let expr = nikaia_std::boxed::open(expr); prover_calls_in(walk, expr, span, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition) },
-        Expr::Try(inner) => { let inner = nikaia_std::boxed::open(inner); prover_calls_in(walk, inner, span, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition) },
-        Expr::Throw(inner) => { let inner = nikaia_std::boxed::open(inner); prover_calls_in(walk, inner, span, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition) },
+        Expr::Try(inner, _) => { let inner = nikaia_std::boxed::open(inner); prover_calls_in(walk, inner, span, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition) },
+        Expr::Throw(inner, _) => { let inner = nikaia_std::boxed::open(inner); prover_calls_in(walk, inner, span, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition) },
         Expr::Cast { expr, .. } => { let expr = nikaia_std::boxed::open(expr); prover_calls_in(walk, expr, span, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition) },
         Expr::Field { base, .. } => { let base = nikaia_std::boxed::open(base); prover_calls_in(walk, base, span, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition) },
         Expr::SafeField { base, .. } => { let base = nikaia_std::boxed::open(base); prover_calls_in(walk, base, span, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition) },
-        Expr::Index { base, index } => {
+        Expr::Index { base, index, .. } => {
             let base = nikaia_std::boxed::open(base); let index = nikaia_std::boxed::open(index);
             prover_calls_in(walk, base, span, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition);
             prover_calls_in(walk, index, span, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition);
@@ -24376,15 +24433,15 @@ fn prover_calls_in(walk: &mut ProverWalk, expr: &Expr, span: Span, scope: &Prove
             prover_calls_in(walk, start, span, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition);
             prover_calls_in(walk, end, span, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition);
         },
-        Expr::Tuple(parts) => { for part in parts.iter() { prover_calls_in(walk, part, span, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition); } },
-        Expr::Coalesce { value, fallback } => {
+        Expr::Tuple(parts, _) => { for part in parts.iter() { prover_calls_in(walk, part, span, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition); } },
+        Expr::Coalesce { value, fallback, .. } => {
             let value = nikaia_std::boxed::open(value); let fallback = nikaia_std::boxed::open(fallback);
             prover_calls_in(walk, value, span, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition);
             prover_calls_in(walk, fallback, span, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition);
         },
         Expr::TryCatch { expr, .. } => { let expr = nikaia_std::boxed::open(expr); prover_calls_in(walk, expr, span, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition) },
         Expr::If { cond, .. } => { let cond = nikaia_std::boxed::open(cond); prover_calls_in(walk, cond, span, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition) },
-        Expr::Match { value, arms } => {
+        Expr::Match { value, arms, .. } => {
             let value = nikaia_std::boxed::open(value);
             prover_calls_in(walk, value, span, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition);
             for arm in arms.iter() {
@@ -24399,8 +24456,8 @@ fn prover_calls_in(walk: &mut ProverWalk, expr: &Expr, span: Span, scope: &Prove
             prover_calls_in(walk, base, span, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition);
             for field in fields.iter() { prover_calls_in_maybe(walk, (field.value).as_ref(), span, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition); }
         },
-        Expr::Return(value) => { let value = nikaia_std::boxed::open(value); prover_calls_in_maybe(walk, (value).as_ref(), span, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition) },
-        Expr::Select(arms) => { for arm in arms.iter() { prover_calls_in(walk, &arm.value, span, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition); } },
+        Expr::Return(value, _) => { let value = nikaia_std::boxed::open(value); prover_calls_in_maybe(walk, (value).as_ref(), span, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition) },
+        Expr::Select(arms, _) => { for arm in arms.iter() { prover_calls_in(walk, &arm.value, span, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition); } },
         _ => { },
     }
 }
@@ -24414,16 +24471,16 @@ fn prover_calls_in_maybe(walk: &mut ProverWalk, expr: Option<&Expr>, span: Span,
 #[allow(clippy::too_many_arguments)]
 fn prover_blocks_in(walk: &mut ProverWalk, expr: &Expr, scope: &ProverScope, at: &ProverWhere, program: &Program, words: &winnow_grammar::InternerContext, own: &Ledger, library: &Ledger, ask: &impl Fn(&TermArena, &[i64], i64) -> SolverAnswer, model: &impl Fn(&TermArena, &[i64], i64) -> Option<collections::BTreeMap<String, i64>>, escape: &impl Fn(&str) -> String, holes_of: &impl Fn(&Expr) -> Vec<Expr>, unaliased: &impl Fn(&str) -> String, written_of: &impl Fn(&Expr) -> String, shape_of: &impl Fn(&Expr) -> String, condition: &impl Fn(&str, &collections::BTreeSet<String>) -> Vec<SolverTerm>) {
     match expr {
-        Expr::Block(block) => prover_nested(walk, block, None, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition),
-        Expr::Unsafe(block) => prover_nested(walk, block, None, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition),
-        Expr::Overlap(block) => prover_nested(walk, block, None, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition),
-        Expr::Closure { params, mutable, body } => {
+        Expr::Block(block, _) => prover_nested(walk, block, None, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition),
+        Expr::Unsafe(block, _) => prover_nested(walk, block, None, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition),
+        Expr::Overlap(block, _) => prover_nested(walk, block, None, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition),
+        Expr::Closure { params, mutable, body, .. } => {
             let mut names: Vec<String> = vec![];
             for p in params.iter() { names.push(words.resolve(*p).to_owned()); }
             for p in mutable.iter() { names.push(words.resolve(*p).to_owned()); }
             prover_nested(walk, body, Some(names), scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition);
         },
-        Expr::Call { func, args, config } => {
+        Expr::Call { func, args, config, .. } => {
             let func = nikaia_std::boxed::open(func);
             prover_blocks_in(walk, func, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition);
             for arg in args.iter() { prover_blocks_in(walk, arg, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition); }
@@ -24445,13 +24502,13 @@ fn prover_blocks_in(walk: &mut ProverWalk, expr: &Expr, scope: &ProverScope, at:
             prover_nested(walk, then_branch, None, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition);
             prover_nested_maybe(walk, (else_branch).as_ref(), scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition);
         },
-        Expr::TryCatch { expr, handler } => {
+        Expr::TryCatch { expr, handler, .. } => {
             let expr = nikaia_std::boxed::open(expr);
             prover_blocks_in(walk, expr, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition);
             prover_nested(walk, handler, None, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition);
         },
         Expr::Match { arms, .. } => { for arm in arms.iter() { prover_blocks_in(walk, &arm.body, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition); } },
-        Expr::Select(arms) => { for arm in arms.iter() { prover_nested(walk, &arm.body, None, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition); } },
+        Expr::Select(arms, _) => { for arm in arms.iter() { prover_nested(walk, &arm.body, None, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition); } },
         _ => { },
     }
 }
@@ -24555,21 +24612,21 @@ fn prover_throws(call: &Expr, at: &ProverWhere, program: &Program, words: &winno
 
 fn prover_called(func: &Expr, words: &winnow_grammar::InternerContext, unaliased: &impl Fn(&str) -> String) -> Option<String> {
     match func {
-        Expr::Variable(name) => { let name = *name; Some(words.resolve(name).to_owned()) },
-        Expr::Path(segments) => Some(prover_qualified(segments, words, unaliased)),
+        Expr::Variable(name, _) => { let name = *name; Some(words.resolve(name).to_owned()) },
+        Expr::Path(segments, _) => Some(prover_qualified(segments, words, unaliased)),
         _ => None,
     }
 }
 
 fn prover_bound_callee(func: &Expr, scope: &ProverScope, words: &winnow_grammar::InternerContext, unaliased: &impl Fn(&str) -> String) -> Option<String> {
     match func {
-        Expr::Variable(name) => {
+        Expr::Variable(name, _) => {
             let name = *name;
             let text = words.resolve(name);
             if scope.locals.contains(text) { return None; }
             Some(text.to_owned())
         },
-        Expr::Path(segments) => Some(prover_qualified(segments, words, unaliased)),
+        Expr::Path(segments, _) => Some(prover_qualified(segments, words, unaliased)),
         _ => None,
     }
 }
@@ -24584,7 +24641,7 @@ fn prover_qualified(segments: &[winnow_grammar::Symbol], words: &winnow_grammar:
 }
 
 fn prover_an_assert_call(func: &Expr, args: &[Expr], span: &Span, claims: &collections::BTreeSet<(i64, String)>, shape_of: &impl Fn(&Expr) -> String) -> bool {
-    let named = matches!(func, Expr::Variable(_));
+    let named = matches!(func, Expr::Variable(_, _));
     if !named || args.len() != 1 { return false; }
     claims.contains(&(span.start as i64, shape_of(nikaia_std::index::get(&args, 0))))
 }
@@ -24611,7 +24668,7 @@ fn prover_returned_name(stmt: &Stmt, words: &winnow_grammar::InternerContext) ->
 fn prover_variable_named(value: Option<&Expr>, words: &winnow_grammar::InternerContext) -> Option<String> {
     let present = match value { Some(__nikaia_value) => __nikaia_value, None => return None };
     match present {
-        Expr::Variable(name) => { let name = *name; Some(words.resolve(name).to_owned()) },
+        Expr::Variable(name, _) => { let name = *name; Some(words.resolve(name).to_owned()) },
         _ => None,
     }
 }
@@ -25917,9 +25974,9 @@ pub fn literal_type(expr: &Expr) -> Option<String> {
         Expr::LitStr { .. } => Some(String::from("String")),
         Expr::LitInterpolated { .. } => Some(String::from("String")),
         Expr::LitInt { .. } => Some(String::from("i64")),
-        Expr::LitFloat(_) => Some(String::from("f64")),
-        Expr::LitBool(_) => Some(String::from("bool")),
-        Expr::LitChar(_) => Some(String::from("scalar")),
+        Expr::LitFloat(_, _) => Some(String::from("f64")),
+        Expr::LitBool(_, _) => Some(String::from("bool")),
+        Expr::LitChar(_, _) => Some(String::from("scalar")),
         Expr::Unary { expr, .. } => { let expr = nikaia_std::boxed::open(expr); literal_type(expr) },
         _ => None,
     }
@@ -26289,12 +26346,12 @@ fn method_name(names: &winnow_grammar::InternerContext, item: &Item) -> String {
 pub fn allocates_here(expr: &Expr, asked: &Asked<'_>) -> bool {
     match expr {
         Expr::LitInt { .. } => true,
-        Expr::LitFloat(_) => true,
+        Expr::LitFloat(_, _) => true,
         Expr::LitStr { .. } => true,
         Expr::LitInterpolated { .. } => true,
-        Expr::LitChar(_) => true,
-        Expr::LitBool(_) => true,
-        Expr::LitNull => true,
+        Expr::LitChar(_, _) => true,
+        Expr::LitBool(_, _) => true,
+        Expr::LitNull(_) => true,
         Expr::StructLit { .. } => true,
         Expr::Call { func, .. } => { let func = nikaia_std::boxed::open(func); a_call_that_allocates((call_path(func, asked.names)).as_deref(), asked) },
         Expr::MethodCall { method, .. } => { let method = *method; hands_back_a_plain_value(asked.names.resolve(method), asked) },
@@ -26357,8 +26414,8 @@ fn a_call_that_hands_it_back(path: Option<&str>) -> String {
 
 pub fn named_handle(expr: &Expr, names: &winnow_grammar::InternerContext, scope: &collections::BTreeMap<String, Ty>) -> Option<String> {
     match expr {
-        Expr::Variable(name) => { let name = *name; a_handle_in_scope(names.resolve(name), scope) },
-        Expr::Block(block) => a_handle_at_the_tail(block, names, scope),
+        Expr::Variable(name, _) => { let name = *name; a_handle_in_scope(names.resolve(name), scope) },
+        Expr::Block(block, _) => a_handle_at_the_tail(block, names, scope),
         _ => None,
     }
 }
@@ -26379,7 +26436,7 @@ fn a_handle_at_the_tail(block: &Block, names: &winnow_grammar::InternerContext, 
 
 pub fn named_type(expr: &Expr, names: &winnow_grammar::InternerContext, scope: &collections::BTreeMap<String, Ty>) -> Option<String> {
     match expr {
-        Expr::Variable(name) => { let name = *name; scope_type_name(names.resolve(name), scope) },
+        Expr::Variable(name, _) => { let name = *name; scope_type_name(names.resolve(name), scope) },
         _ => None,
     }
 }
@@ -26391,7 +26448,7 @@ fn scope_type_name(name: &str, scope: &collections::BTreeMap<String, Ty>) -> Opt
 
 pub fn walks_in_parallel(receiver: &Expr, names: &winnow_grammar::InternerContext, parallel: &collections::BTreeSet<String>) -> bool {
     match receiver {
-        Expr::Variable(name) => { let name = *name; parallel.contains(names.resolve(name)) },
+        Expr::Variable(name, _) => { let name = *name; parallel.contains(names.resolve(name)) },
         Expr::MethodCall { receiver, method, .. } => { let receiver = nikaia_std::boxed::open(receiver); let method = *method; a_parallel_method(names.resolve(method)) || walks_in_parallel(receiver, names, parallel) },
         _ => false,
     }
@@ -26407,8 +26464,8 @@ pub fn a_parallel_method(method: &str) -> bool {
 
 pub fn call_path(func: &Expr, names: &winnow_grammar::InternerContext) -> Option<String> {
     match func {
-        Expr::Variable(name) => { let name = *name; Some(names.resolve(name).to_owned()) },
-        Expr::Path(segments) => Some(joined_segments(segments, names)),
+        Expr::Variable(name, _) => { let name = *name; Some(names.resolve(name).to_owned()) },
+        Expr::Path(segments, _) => Some(joined_segments(segments, names)),
         _ => None,
     }
 }
@@ -26560,7 +26617,7 @@ fn binding_type(written: Option<&Type>, aliased: Option<&str>, value: &Expr, ask
 
 fn hull_written(func: &Expr, args: &[Expr], asked: &Asked<'_>) -> Option<Ty> {
     let named = match func {
-        Expr::Variable(name) => { let name = *name; asked.names.resolve(name).to_owned() },
+        Expr::Variable(name, _) => { let name = *name; asked.names.resolve(name).to_owned() },
         _ => return None,
     };
     if !is_hull(&named) { return None; }
@@ -26596,7 +26653,7 @@ fn slot_of(expr: &Expr, asked: &Asked<'_>, walk: &mut SharingWalk) -> Option<Str
     let handle = named_handle(expr, asked.names, &walk.scope);
     if handle.is_some() { return Some(slot(&walk.function, nikaia_std::index::or(handle.as_deref(), || ""))); }
     match expr {
-        Expr::Field { base, name } => { let base = nikaia_std::boxed::open(base); let name = *name; field_slot(base, asked.names.resolve(name), asked, walk) },
+        Expr::Field { base, name, .. } => { let base = nikaia_std::boxed::open(base); let name = *name; field_slot(base, asked.names.resolve(name), asked, walk) },
         _ => None,
     }
 }
@@ -26620,7 +26677,7 @@ fn sharing_expression(expr: &Expr, asked: &Asked<'_>, holes_of: &impl Fn(&Expr) 
             }
             sharing_expression(body, asked, holes_of, ty_of, walk);
         },
-        Expr::Call { func, args, config } => {
+        Expr::Call { func, args, config, .. } => {
             let func = nikaia_std::boxed::open(func);
             let callee = call_path(func, asked.names);
             let path = nikaia_std::index::or(match callee.as_ref() {
@@ -26638,7 +26695,7 @@ fn sharing_expression(expr: &Expr, asked: &Asked<'_>, holes_of: &impl Fn(&Expr) 
         },
         Expr::MethodCall { .. } => sharing_method(expr, asked, holes_of, ty_of, walk),
         Expr::SafeMethod { .. } => sharing_method(expr, asked, holes_of, ty_of, walk),
-        Expr::StructLit { name, fields } => {
+        Expr::StructLit { name, fields, .. } => {
             let name = *name;
             let owner = asked.names.resolve(name).to_owned();
             for field in fields.iter() { struct_field(&owner, field, asked, holes_of, ty_of, walk); }
@@ -26648,15 +26705,15 @@ fn sharing_expression(expr: &Expr, asked: &Asked<'_>, holes_of: &impl Fn(&Expr) 
             a_kept_lambda_uses(expr, asked, walk);
             sharing_block(body, asked, holes_of, ty_of, walk);
         },
-        Expr::Block(block) => sharing_block(block, asked, holes_of, ty_of, walk),
-        Expr::Overlap(block) => sharing_block(block, asked, holes_of, ty_of, walk),
-        Expr::If { cond, then_branch, else_branch } => {
+        Expr::Block(block, _) => sharing_block(block, asked, holes_of, ty_of, walk),
+        Expr::Overlap(block, _) => sharing_block(block, asked, holes_of, ty_of, walk),
+        Expr::If { cond, then_branch, else_branch, .. } => {
             let cond = nikaia_std::boxed::open(cond);
             sharing_expression(cond, asked, holes_of, ty_of, walk);
             sharing_block(then_branch, asked, holes_of, ty_of, walk);
             sharing_block(match else_branch { Some(__nikaia_value) => __nikaia_value, None => return }, asked, holes_of, ty_of, walk);
         },
-        Expr::Match { value, arms } => {
+        Expr::Match { value, arms, .. } => {
             let value = nikaia_std::boxed::open(value);
             sharing_expression(value, asked, holes_of, ty_of, walk);
             for arm in arms.iter() { sharing_expression(&arm.body, asked, holes_of, ty_of, walk); }
@@ -26667,27 +26724,27 @@ fn sharing_expression(expr: &Expr, asked: &Asked<'_>, holes_of: &impl Fn(&Expr) 
             sharing_expression(rhs, asked, holes_of, ty_of, walk);
         },
         Expr::Unary { expr, .. } => { let expr = nikaia_std::boxed::open(expr); sharing_expression(expr, asked, holes_of, ty_of, walk) },
-        Expr::Try(inner) => { let inner = nikaia_std::boxed::open(inner); sharing_expression(inner, asked, holes_of, ty_of, walk) },
-        Expr::Throw(inner) => { let inner = nikaia_std::boxed::open(inner); sharing_expression(inner, asked, holes_of, ty_of, walk) },
+        Expr::Try(inner, _) => { let inner = nikaia_std::boxed::open(inner); sharing_expression(inner, asked, holes_of, ty_of, walk) },
+        Expr::Throw(inner, _) => { let inner = nikaia_std::boxed::open(inner); sharing_expression(inner, asked, holes_of, ty_of, walk) },
         Expr::Cast { expr, .. } => { let expr = nikaia_std::boxed::open(expr); sharing_expression(expr, asked, holes_of, ty_of, walk) },
         Expr::Field { base, .. } => { let base = nikaia_std::boxed::open(base); sharing_expression(base, asked, holes_of, ty_of, walk) },
         Expr::SafeField { base, .. } => { let base = nikaia_std::boxed::open(base); sharing_expression(base, asked, holes_of, ty_of, walk) },
-        Expr::Index { base, index } => {
+        Expr::Index { base, index, .. } => {
             let base = nikaia_std::boxed::open(base); let index = nikaia_std::boxed::open(index);
             sharing_expression(base, asked, holes_of, ty_of, walk);
             sharing_expression(index, asked, holes_of, ty_of, walk);
         },
-        Expr::Coalesce { value, fallback } => {
+        Expr::Coalesce { value, fallback, .. } => {
             let value = nikaia_std::boxed::open(value); let fallback = nikaia_std::boxed::open(fallback);
             sharing_expression(value, asked, holes_of, ty_of, walk);
             sharing_expression(fallback, asked, holes_of, ty_of, walk);
         },
-        Expr::TryCatch { expr, handler } => {
+        Expr::TryCatch { expr, handler, .. } => {
             let expr = nikaia_std::boxed::open(expr);
             sharing_expression(expr, asked, holes_of, ty_of, walk);
             sharing_block(handler, asked, holes_of, ty_of, walk);
         },
-        Expr::Tuple(parts) => { for part in parts.iter() { sharing_expression(part, asked, holes_of, ty_of, walk); } },
+        Expr::Tuple(parts, _) => { for part in parts.iter() { sharing_expression(part, asked, holes_of, ty_of, walk); } },
         Expr::Range { start, end, .. } => {
             let start = nikaia_std::boxed::open(start); let end = nikaia_std::boxed::open(end);
             sharing_expression(start, asked, holes_of, ty_of, walk);
@@ -26721,7 +26778,7 @@ fn struct_field(owner: &str, field: &FieldInit, asked: &Asked<'_>, holes_of: &im
     let value = nikaia_std::index::or(match field.value.as_ref() {
         Some(__nikaia_it) => Some(__nikaia_it.clone()),
         None => None,
-    }, || Expr::Variable(field.name));
+    }, || Expr::Variable(field.name, fresh_id()));
     let key = format!("{}.{}", owner, field_name);
     let handle = named_handle(&value, asked.names, &walk.scope);
     if handle.is_some() {
@@ -26745,8 +26802,8 @@ fn struct_field(owner: &str, field: &FieldInit, asked: &Asked<'_>, holes_of: &im
 
 fn sharing_method(call: &Expr, asked: &Asked<'_>, holes_of: &impl Fn(&Expr) -> Vec<Expr>, ty_of: &impl Fn(&Type) -> Ty, walk: &mut SharingWalk) {
     let (receiver, method, args, config) = match call {
-        Expr::MethodCall { receiver, method, args, config } => { let receiver = nikaia_std::boxed::open(receiver); let method = *method; (receiver, asked.names.resolve(method).to_owned(), args, config) },
-        Expr::SafeMethod { receiver, method, args, config } => { let receiver = nikaia_std::boxed::open(receiver); let method = *method; (receiver, asked.names.resolve(method).to_owned(), args, config) },
+        Expr::MethodCall { receiver, method, args, config, .. } => { let receiver = nikaia_std::boxed::open(receiver); let method = *method; (receiver, asked.names.resolve(method).to_owned(), args, config) },
+        Expr::SafeMethod { receiver, method, args, config, .. } => { let receiver = nikaia_std::boxed::open(receiver); let method = *method; (receiver, asked.names.resolve(method).to_owned(), args, config) },
         _ => return,
     };
     if method == "get" && args.is_empty() { a_copy_out_of_the_lock(receiver, asked, walk); }
@@ -28266,7 +28323,7 @@ fn a_method_buffer(method: &str, receiver: &Expr) -> Buffer {
             Expr::LitStr { .. } => Buffer::None,
             Expr::LitInterpolated { .. } => Buffer::Named(String::from("String")),
             Expr::LitInt { .. } => Buffer::Named(String::from("String")),
-            Expr::LitFloat(_) => Buffer::Named(String::from("String")),
+            Expr::LitFloat(_, _) => Buffer::Named(String::from("String")),
             _ => Buffer::Unknown,
         };
     }
@@ -28282,8 +28339,8 @@ fn a_method_buffer(method: &str, receiver: &Expr) -> Buffer {
 
 fn a_call_buffer(func: &Expr, asked: &Asked<'_>, unaliased: &impl Fn(&str) -> String) -> Buffer {
     let name = match func {
-        Expr::Variable(name) => { let name = *name; asked.names.resolve(name).to_owned() },
-        Expr::Path(segments) => unaliased(&joined_segments(segments, asked.names)),
+        Expr::Variable(name, _) => { let name = *name; asked.names.resolve(name).to_owned() },
+        Expr::Path(segments, _) => unaliased(&joined_segments(segments, asked.names)),
         _ => return Buffer::None,
     };
     let constructor = format!("{}::new", name);
@@ -28856,12 +28913,12 @@ struct TierGoing {
 
 fn going_into(owner: &TextOwner, ty: &Type, path: Vec<i64>, wrap: bool) -> TierGoing { TierGoing { owner: owner.clone(), ty: ty.clone(), path, wrap } }
 
-fn a_null(value: &Expr) -> bool { matches!(value, Expr::LitNull) }
+fn a_null(value: &Expr) -> bool { matches!(value, Expr::LitNull(_)) }
 
 fn handed_parameter(value: Option<&Expr>, ask: &TierAsk<'_>, walk: &TierWalk) -> Option<String> {
     let given = match value { Some(__nikaia_value) => __nikaia_value, None => return None };
     let name = match given {
-        Expr::Variable(name) => { let name = *name; ask.names.resolve(name).to_owned() },
+        Expr::Variable(name, _) => { let name = *name; ask.names.resolve(name).to_owned() },
         _ => return None,
     };
     let local = match tier_local(&name, walk) { Some(__nikaia_value) => __nikaia_value, None => return None };
@@ -28945,11 +29002,11 @@ fn mixed_part(going: &TierGoing, at: i64, ask: &TierAsk<'_>, walk: &mut TierWalk
 
 fn source_of(value: &Expr, ask: &TierAsk<'_>, walk: &TierWalk) -> Option<Declaring> {
     match value {
-        Expr::Variable(_) => place_of(value, ask, walk),
+        Expr::Variable(_, _) => place_of(value, ask, walk),
         Expr::Field { .. } => place_of(value, ask, walk),
         Expr::Call { func, .. } => { let func = nikaia_std::boxed::open(func); called_result(func, ask, walk) },
         Expr::MethodCall { method, .. } => { let method = *method; method_result(ask.names.resolve(method), walk) },
-        Expr::Try(inner) => { let inner = nikaia_std::boxed::open(inner); source_of(inner, ask, walk) },
+        Expr::Try(inner, _) => { let inner = nikaia_std::boxed::open(inner); source_of(inner, ask, walk) },
         _ => None,
     }
 }
@@ -29043,8 +29100,8 @@ fn element_kinds(declared: &Declaring, keys: bool, ask: &TierAsk<'_>, walk: &Tie
 
 fn place_of(expr: &Expr, ask: &TierAsk<'_>, walk: &TierWalk) -> Option<Declaring> {
     match expr {
-        Expr::Variable(name) => { let name = *name; declared_local(ask.names.resolve(name), walk) },
-        Expr::Field { base, name } => { let base = nikaia_std::boxed::open(base); let name = *name; field_place(base, ask.names.resolve(name), ask, walk) },
+        Expr::Variable(name, _) => { let name = *name; declared_local(ask.names.resolve(name), walk) },
+        Expr::Field { base, name, .. } => { let base = nikaia_std::boxed::open(base); let name = *name; field_place(base, ask.names.resolve(name), ask, walk) },
         _ => None,
     }
 }
@@ -29146,7 +29203,7 @@ fn container_source(source: Option<&Declaring>, ask: &TierAsk<'_>) -> bool {
 fn a_literal_text(value: &Expr) -> bool {
     match value {
         Expr::LitStr { .. } => true,
-        Expr::Block(block) => a_literal_tail(block),
+        Expr::Block(block, _) => a_literal_tail(block),
         Expr::If { then_branch, else_branch, .. } => {
             let otherwise = match else_branch { Some(__nikaia_value) => __nikaia_value, None => return false };
             a_literal_tail(then_branch) && a_literal_tail(otherwise)
@@ -29171,7 +29228,7 @@ fn a_literal_tail(block: &Block) -> bool {
 fn tier_assign(target: &Expr, value: &Expr, node_of: &impl Fn(&Expr) -> i64, ask: &TierAsk<'_>, walk: &mut TierWalk) {
     let kinds = tier_expr(value, node_of, ask, walk);
     match target {
-        Expr::Index { base, index } => {
+        Expr::Index { base, index, .. } => {
             let base = nikaia_std::boxed::open(base); let index = nikaia_std::boxed::open(index);
             let key = tier_expr(index, node_of, ask, walk);
             let place = match place_of(base, ask, &walk) { Some(__nikaia_value) => __nikaia_value, None => return };
@@ -29193,7 +29250,7 @@ fn tier_assign(target: &Expr, value: &Expr, node_of: &impl Fn(&Expr) -> i64, ask
                 flow_value(&going_into(&found.owner, &found.ty, vec![], true), Some(value), &kinds, node_of, ask, walk);
             }
             let name = match target {
-                Expr::Variable(name) => { let name = *name; ask.names.resolve(name).to_owned() },
+                Expr::Variable(name, _) => { let name = *name; ask.names.resolve(name).to_owned() },
                 _ => return,
             };
             let mut local = match tier_local(&name, &walk) { Some(__nikaia_value) => __nikaia_value, None => return };
@@ -29220,7 +29277,7 @@ fn flow_result(value: &Expr, kinds: &Kinds, node_of: &impl Fn(&Expr) -> i64, ask
 fn kept_literal(value: &Expr, owner: &TextOwner, path: &[i64], ty: &Type, ask: &TierAsk<'_>, walk: &mut TierWalk) {
     if !plain_string(ask.names, ty) { return; }
     let name = match value {
-        Expr::Variable(name) => { let name = *name; ask.names.resolve(name).to_owned() },
+        Expr::Variable(name, _) => { let name = *name; ask.names.resolve(name).to_owned() },
         _ => return,
     };
     let local = match tier_local(&name, &walk) { Some(__nikaia_value) => __nikaia_value, None => return };
@@ -29237,9 +29294,9 @@ fn kept_literal(value: &Expr, owner: &TextOwner, path: &[i64], ty: &Type, ask: &
 fn tier_struct_of(expr: &Expr, ask: &TierAsk<'_>, walk: &TierWalk) -> Option<String> {
     match expr {
         Expr::StructLit { name, .. } => { let name = *name; Some(ask.names.resolve(name).to_owned()) },
-        Expr::Variable(name) => { let name = *name; struct_of_local(ask.names.resolve(name), walk) },
+        Expr::Variable(name, _) => { let name = *name; struct_of_local(ask.names.resolve(name), walk) },
         Expr::Unary { expr, .. } => { let expr = nikaia_std::boxed::open(expr); tier_struct_of(expr, ask, walk) },
-        Expr::Try(inner) => { let inner = nikaia_std::boxed::open(inner); tier_struct_of(inner, ask, walk) },
+        Expr::Try(inner, _) => { let inner = nikaia_std::boxed::open(inner); tier_struct_of(inner, ask, walk) },
         _ => None,
     }
 }
@@ -29270,11 +29327,11 @@ fn flow_args(key: &str, args: &[Expr], given: &[Kinds], node_of: &impl Fn(&Expr)
 fn tier_expr(expr: &Expr, node_of: &impl Fn(&Expr) -> i64, ask: &TierAsk<'_>, walk: &mut TierWalk) -> Kinds {
     match expr {
         Expr::LitStr { .. } => lasting_kinds(),
-        Expr::LitNull => no_kinds(),
+        Expr::LitNull(_) => no_kinds(),
         Expr::LitInt { .. } => no_kinds(),
-        Expr::LitFloat(_) => no_kinds(),
-        Expr::LitBool(_) => no_kinds(),
-        Expr::LitInterpolated { parts } => {
+        Expr::LitFloat(_, _) => no_kinds(),
+        Expr::LitBool(_, _) => no_kinds(),
+        Expr::LitInterpolated { parts, .. } => {
             let outer = walk.in_hole;
             walk.in_hole = true;
             for part in parts.iter() {
@@ -29292,13 +29349,13 @@ fn tier_expr(expr: &Expr, node_of: &impl Fn(&Expr) -> i64, ask: &TierAsk<'_>, wa
             walk.in_hole = outer;
             owned_kinds()
         },
-        Expr::Variable(name) => { let name = *name; kinds_of_local(ask.names.resolve(name), &walk) },
+        Expr::Variable(name, _) => { let name = *name; kinds_of_local(ask.names.resolve(name), &walk) },
         Expr::MethodCall { receiver, method, args, .. } => { let receiver = nikaia_std::boxed::open(receiver); let method = *method; method_kinds(receiver, ask.names.resolve(method), args, node_of, ask, walk) },
         Expr::SafeMethod { receiver, method, args, .. } => { let receiver = nikaia_std::boxed::open(receiver); let method = *method; method_kinds(receiver, ask.names.resolve(method), args, node_of, ask, walk) },
         Expr::Call { func, args, .. } => { let func = nikaia_std::boxed::open(func); call_kinds(func, args, node_of, ask, walk) },
         Expr::Field { base, .. } => { let base = nikaia_std::boxed::open(base); field_kinds(expr, base, node_of, ask, walk) },
         Expr::SafeField { base, .. } => { let base = nikaia_std::boxed::open(base); field_kinds(expr, base, node_of, ask, walk) },
-        Expr::Index { base, index } => {
+        Expr::Index { base, index, .. } => {
             let base = nikaia_std::boxed::open(base); let index = nikaia_std::boxed::open(index);
             let received = tier_expr(base, node_of, ask, walk);
             tier_expr(index, node_of, ask, walk);
@@ -29306,7 +29363,7 @@ fn tier_expr(expr: &Expr, node_of: &impl Fn(&Expr) -> i64, ask: &TierAsk<'_>, wa
             let place = match place_of(base, ask, &walk) { Some(__nikaia_value) => __nikaia_value, None => return received };
             element_kinds(&place, false, ask, &walk)
         },
-        Expr::StructLit { name, fields } => {
+        Expr::StructLit { name, fields, .. } => {
             let name = *name;
             let owner = ask.names.resolve(name).to_owned();
             for field in fields.iter() { tier_struct_field(&owner, field, node_of, ask, walk); }
@@ -29333,7 +29390,7 @@ fn tier_expr(expr: &Expr, node_of: &impl Fn(&Expr) -> i64, ask: &TierAsk<'_>, wa
             }
             owned_kinds()
         },
-        Expr::If { cond, then_branch, else_branch } => {
+        Expr::If { cond, then_branch, else_branch, .. } => {
             let cond = nikaia_std::boxed::open(cond);
             tier_expr(cond, node_of, ask, walk);
             let mut out = tier_block(then_branch, node_of, ask, walk);
@@ -29343,7 +29400,7 @@ fn tier_expr(expr: &Expr, node_of: &impl Fn(&Expr) -> i64, ask: &TierAsk<'_>, wa
             }
             out
         },
-        Expr::Match { value, arms } => {
+        Expr::Match { value, arms, .. } => {
             let value = nikaia_std::boxed::open(value);
             tier_expr(value, node_of, ask, walk);
             let mut out = no_kinds();
@@ -29356,9 +29413,9 @@ fn tier_expr(expr: &Expr, node_of: &impl Fn(&Expr) -> i64, ask: &TierAsk<'_>, wa
             }
             out
         },
-        Expr::Block(block) => tier_block(block, node_of, ask, walk),
-        Expr::Unsafe(block) => tier_block(block, node_of, ask, walk),
-        Expr::Overlap(block) => tier_block(block, node_of, ask, walk),
+        Expr::Block(block, _) => tier_block(block, node_of, ask, walk),
+        Expr::Unsafe(block, _) => tier_block(block, node_of, ask, walk),
+        Expr::Overlap(block, _) => tier_block(block, node_of, ask, walk),
         Expr::Closure { body, .. } => {
             let held = match walk.result.as_ref() {
                 Some(__nikaia_it) => Some(__nikaia_it.clone()),
@@ -29380,24 +29437,24 @@ fn tier_expr(expr: &Expr, node_of: &impl Fn(&Expr) -> i64, ask: &TierAsk<'_>, wa
             walk.result = held;
             owned_kinds()
         },
-        Expr::Coalesce { value, fallback } => {
+        Expr::Coalesce { value, fallback, .. } => {
             let value = nikaia_std::boxed::open(value); let fallback = nikaia_std::boxed::open(fallback);
             let out = tier_expr(value, node_of, ask, walk);
             kinds_joined(&out, &tier_expr(fallback, node_of, ask, walk))
         },
-        Expr::TryCatch { expr, handler } => {
+        Expr::TryCatch { expr, handler, .. } => {
             let expr = nikaia_std::boxed::open(expr);
             let out = tier_expr(expr, node_of, ask, walk);
             kinds_joined(&out, &tier_block(handler, node_of, ask, walk))
         },
-        Expr::Try(inner) => { let inner = nikaia_std::boxed::open(inner); tier_expr(inner, node_of, ask, walk) },
+        Expr::Try(inner, _) => { let inner = nikaia_std::boxed::open(inner); tier_expr(inner, node_of, ask, walk) },
         Expr::Unary { expr, .. } => { let expr = nikaia_std::boxed::open(expr); tier_expr(expr, node_of, ask, walk) },
-        Expr::Throw(inner) => {
+        Expr::Throw(inner, _) => {
             let inner = nikaia_std::boxed::open(inner);
             tier_expr(inner, node_of, ask, walk);
             no_kinds()
         },
-        Expr::Return(value) => {
+        Expr::Return(value, _) => {
             let value = nikaia_std::boxed::open(value);
             let given = match value { Some(__nikaia_value) => __nikaia_value, None => return no_kinds() };
             let kinds = tier_expr(given, node_of, ask, walk);
@@ -29415,7 +29472,7 @@ fn tier_expr(expr: &Expr, node_of: &impl Fn(&Expr) -> i64, ask: &TierAsk<'_>, wa
             tier_expr(expr, node_of, ask, walk);
             owned_kinds()
         },
-        Expr::Tuple(items) => items_kinds(items, node_of, ask, walk),
+        Expr::Tuple(items, _) => items_kinds(items, node_of, ask, walk),
         Expr::ListLit { items, .. } => items_kinds(items, node_of, ask, walk),
         Expr::Range { start, end, .. } => {
             let start = nikaia_std::boxed::open(start); let end = nikaia_std::boxed::open(end);
@@ -29447,7 +29504,7 @@ fn field_kinds(expr: &Expr, base: &Expr, node_of: &impl Fn(&Expr) -> i64, ask: &
 }
 
 fn tier_struct_field(owner: &str, field: &FieldInit, node_of: &impl Fn(&Expr) -> i64, ask: &TierAsk<'_>, walk: &mut TierWalk) {
-    let shorthand = Expr::Variable(field.name);
+    let shorthand = Expr::Variable(field.name, fresh_id());
     let kinds = field_value_kinds(field, &shorthand, node_of, ask, walk);
     let name = ask.names.resolve(field.name).to_owned();
     let key = (owner.to_owned(), name.to_owned());
@@ -30065,7 +30122,7 @@ fn theirs(sets: &collections::BTreeMap<String, collections::BTreeSet<String>>, o
 
 pub fn error_type(names: &winnow_grammar::InternerContext, thrown: &Expr) -> Option<String> {
     match thrown {
-        Expr::Path(segments) => if segments.len() > 1 { Some(all_but_the_last(names, segments)) } else { None },
+        Expr::Path(segments, _) => if segments.len() > 1 { Some(all_but_the_last(names, segments)) } else { None },
         Expr::Call { func, .. } => { let func = nikaia_std::boxed::open(func); error_type(names, func) },
         Expr::StructLit { name, .. } => { let name = *name; Some(struct_type(names.resolve(name))) },
         _ => None,
@@ -30148,7 +30205,7 @@ fn thrown_in(expr: &Expr, names: &winnow_grammar::InternerContext, holes_of: &im
     a_contribution(expr, names, contribution_of, in_a_handler, caught, out);
     for hole in holes_of(expr) { thrown_in(&hole, names, holes_of, contribution_of, in_a_handler, caught, out); }
     match expr {
-        Expr::Call { func, args, config } => {
+        Expr::Call { func, args, config, .. } => {
             let func = nikaia_std::boxed::open(func);
             thrown_in(func, names, holes_of, contribution_of, in_a_handler, caught, out);
             for arg in args.iter() { thrown_in(arg, names, holes_of, contribution_of, in_a_handler, caught, out); }
@@ -30172,12 +30229,12 @@ fn thrown_in(expr: &Expr, names: &winnow_grammar::InternerContext, holes_of: &im
             thrown_in(rhs, names, holes_of, contribution_of, in_a_handler, caught, out);
         },
         Expr::Unary { expr, .. } => { let expr = nikaia_std::boxed::open(expr); thrown_in(expr, names, holes_of, contribution_of, in_a_handler, caught, out) },
-        Expr::Try(inner) => { let inner = nikaia_std::boxed::open(inner); thrown_in(inner, names, holes_of, contribution_of, in_a_handler, caught, out) },
-        Expr::Throw(inner) => { let inner = nikaia_std::boxed::open(inner); thrown_in(inner, names, holes_of, contribution_of, in_a_handler, caught, out) },
+        Expr::Try(inner, _) => { let inner = nikaia_std::boxed::open(inner); thrown_in(inner, names, holes_of, contribution_of, in_a_handler, caught, out) },
+        Expr::Throw(inner, _) => { let inner = nikaia_std::boxed::open(inner); thrown_in(inner, names, holes_of, contribution_of, in_a_handler, caught, out) },
         Expr::Cast { expr, .. } => { let expr = nikaia_std::boxed::open(expr); thrown_in(expr, names, holes_of, contribution_of, in_a_handler, caught, out) },
         Expr::Field { base, .. } => { let base = nikaia_std::boxed::open(base); thrown_in(base, names, holes_of, contribution_of, in_a_handler, caught, out) },
         Expr::SafeField { base, .. } => { let base = nikaia_std::boxed::open(base); thrown_in(base, names, holes_of, contribution_of, in_a_handler, caught, out) },
-        Expr::Index { base, index } => {
+        Expr::Index { base, index, .. } => {
             let base = nikaia_std::boxed::open(base); let index = nikaia_std::boxed::open(index);
             thrown_in(base, names, holes_of, contribution_of, in_a_handler, caught, out);
             thrown_in(index, names, holes_of, contribution_of, in_a_handler, caught, out);
@@ -30187,19 +30244,19 @@ fn thrown_in(expr: &Expr, names: &winnow_grammar::InternerContext, holes_of: &im
             thrown_in(start, names, holes_of, contribution_of, in_a_handler, caught, out);
             thrown_in(end, names, holes_of, contribution_of, in_a_handler, caught, out);
         },
-        Expr::Tuple(parts) => { for part in parts.iter() { thrown_in(part, names, holes_of, contribution_of, in_a_handler, caught, out); } },
-        Expr::Coalesce { value, fallback } => {
+        Expr::Tuple(parts, _) => { for part in parts.iter() { thrown_in(part, names, holes_of, contribution_of, in_a_handler, caught, out); } },
+        Expr::Coalesce { value, fallback, .. } => {
             let value = nikaia_std::boxed::open(value); let fallback = nikaia_std::boxed::open(fallback);
             thrown_in(value, names, holes_of, contribution_of, in_a_handler, caught, out);
             thrown_in(fallback, names, holes_of, contribution_of, in_a_handler, caught, out);
         },
-        Expr::TryCatch { expr, handler } => {
+        Expr::TryCatch { expr, handler, .. } => {
             let expr = nikaia_std::boxed::open(expr);
             let into_the_handler = caught || !passes_on(handler, names, holes_of, contribution_of);
             thrown_in(expr, names, holes_of, contribution_of, in_a_handler, into_the_handler, out);
         },
         Expr::If { cond, .. } => { let cond = nikaia_std::boxed::open(cond); thrown_in(cond, names, holes_of, contribution_of, in_a_handler, caught, out) },
-        Expr::Match { value, arms } => {
+        Expr::Match { value, arms, .. } => {
             let value = nikaia_std::boxed::open(value);
             thrown_in(value, names, holes_of, contribution_of, in_a_handler, caught, out);
             for arm in arms.iter() {
@@ -30214,8 +30271,8 @@ fn thrown_in(expr: &Expr, names: &winnow_grammar::InternerContext, holes_of: &im
             thrown_in(base, names, holes_of, contribution_of, in_a_handler, caught, out);
             for field in fields.iter() { maybe_thrown_in((field.value).as_ref(), names, holes_of, contribution_of, in_a_handler, caught, out); }
         },
-        Expr::Return(value) => { let value = nikaia_std::boxed::open(value); thrown_in(match value { Some(__nikaia_value) => __nikaia_value, None => return }, names, holes_of, contribution_of, in_a_handler, caught, out) },
-        Expr::Select(arms) => { for arm in arms.iter() { thrown_in(&arm.value, names, holes_of, contribution_of, in_a_handler, caught, out); } },
+        Expr::Return(value, _) => { let value = nikaia_std::boxed::open(value); thrown_in(match value { Some(__nikaia_value) => __nikaia_value, None => return }, names, holes_of, contribution_of, in_a_handler, caught, out) },
+        Expr::Select(arms, _) => { for arm in arms.iter() { thrown_in(&arm.value, names, holes_of, contribution_of, in_a_handler, caught, out); } },
         _ => { },
     }
 }
@@ -30224,11 +30281,11 @@ fn maybe_thrown_in(expr: Option<&Expr>, names: &winnow_grammar::InternerContext,
 
 fn thrown_in_blocks(expr: &Expr, names: &winnow_grammar::InternerContext, holes_of: &impl Fn(&Expr) -> Vec<Expr>, contribution_of: &impl Fn(&Expr) -> Contribution, in_a_handler: bool, out: &mut Thrown) {
     match expr {
-        Expr::Block(block) => thrown_in_block(block, names, holes_of, contribution_of, in_a_handler, out),
-        Expr::Unsafe(block) => thrown_in_block(block, names, holes_of, contribution_of, in_a_handler, out),
-        Expr::Overlap(block) => thrown_in_block(block, names, holes_of, contribution_of, in_a_handler, out),
+        Expr::Block(block, _) => thrown_in_block(block, names, holes_of, contribution_of, in_a_handler, out),
+        Expr::Unsafe(block, _) => thrown_in_block(block, names, holes_of, contribution_of, in_a_handler, out),
+        Expr::Overlap(block, _) => thrown_in_block(block, names, holes_of, contribution_of, in_a_handler, out),
         Expr::Closure { body, .. } => thrown_in_block(body, names, holes_of, contribution_of, in_a_handler, out),
-        Expr::Call { func, args, config } => {
+        Expr::Call { func, args, config, .. } => {
             let func = nikaia_std::boxed::open(func);
             thrown_in_blocks(func, names, holes_of, contribution_of, in_a_handler, out);
             for arg in args.iter() { thrown_in_blocks(arg, names, holes_of, contribution_of, in_a_handler, out); }
@@ -30250,13 +30307,13 @@ fn thrown_in_blocks(expr: &Expr, names: &winnow_grammar::InternerContext, holes_
             thrown_in_block(then_branch, names, holes_of, contribution_of, in_a_handler, out);
             thrown_in_block(match else_branch { Some(__nikaia_value) => __nikaia_value, None => return }, names, holes_of, contribution_of, in_a_handler, out);
         },
-        Expr::TryCatch { expr, handler } => {
+        Expr::TryCatch { expr, handler, .. } => {
             let expr = nikaia_std::boxed::open(expr);
             thrown_in_blocks(expr, names, holes_of, contribution_of, in_a_handler, out);
             thrown_in_block(handler, names, holes_of, contribution_of, true, out);
         },
         Expr::Match { arms, .. } => { for arm in arms.iter() { thrown_in_blocks(&arm.body, names, holes_of, contribution_of, in_a_handler, out); } },
-        Expr::Select(arms) => { for arm in arms.iter() { thrown_in_block(&arm.body, names, holes_of, contribution_of, in_a_handler, out); } },
+        Expr::Select(arms, _) => { for arm in arms.iter() { thrown_in_block(&arm.body, names, holes_of, contribution_of, in_a_handler, out); } },
         _ => { },
     }
 }
@@ -30266,7 +30323,7 @@ fn a_contribution(expr: &Expr, names: &winnow_grammar::InternerContext, contribu
     if passing { out.passes_on = true; }
     if caught || in_a_handler && passing { return; }
     match expr {
-        Expr::Throw(thrown) => {
+        Expr::Throw(thrown, _) => {
             let thrown = nikaia_std::boxed::open(thrown);
             out.direct.insert(nikaia_std::index::or(error_type(names, thrown), || "?".into()));
         },
@@ -30281,8 +30338,8 @@ fn a_contribution(expr: &Expr, names: &winnow_grammar::InternerContext, contribu
 
 fn the_caught_error(expr: &Expr, names: &winnow_grammar::InternerContext) -> bool {
     match expr {
-        Expr::Throw(thrown) => { let thrown = nikaia_std::boxed::open(thrown); match thrown {
-            Expr::Variable(name) => { let name = *name; names.resolve(name) == "error" },
+        Expr::Throw(thrown, _) => { let thrown = nikaia_std::boxed::open(thrown); match thrown {
+            Expr::Variable(name, _) => { let name = *name; names.resolve(name) == "error" },
             _ => false,
         } },
         _ => false,
@@ -30779,36 +30836,43 @@ pub fn params_of(receiver: Option<Receiver>, args: Vec<FnArg>, zone: Option<Conf
     }
 }
 
-pub fn guarded(jump: Stmt, cond: Expr, span: Span) -> Stmt { Stmt::Expr(Expr::If { cond: Box::new(cond), then_branch: Block { stmts: vec![Spanned { node: jump, span, doc: None, attributes: vec![] }] }, else_branch: None }) }
+pub fn guarded(jump: Stmt, cond: Expr, span: Span, id: node_id::NodeId) -> Stmt { Stmt::Expr(Expr::If { cond: Box::new(cond), then_branch: Block { stmts: vec![Spanned { node: jump, span, doc: None, attributes: vec![] }] }, else_branch: None, id }) }
 
-pub fn fold_binary(head: Expr, tail: Vec<(BinaryOp, Expr, Span)>) -> Expr {
+pub fn fold_binary(head: Expr, tail: Vec<(BinaryOp, Expr, Span)>, first: u32) -> Expr {
     let mut lhs = head;
-    for step in tail.into_iter() { lhs = Expr::Binary { op: step.0, lhs: Box::new(lhs), rhs: Box::new(step.1), span: step.2, grouped: false }; }
+    let mut next = first;
+    for step in tail.into_iter() {
+        lhs = Expr::Binary { op: step.0, lhs: Box::new(lhs), rhs: Box::new(step.1), span: step.2, grouped: false, id: numbered_id(next) };
+        next = next + 1u32;
+    }
     lhs
 }
 
 pub fn grouped(e: Expr) -> Expr {
     match e {
-        Expr::Binary { op, lhs, rhs, span, .. } => {
+        Expr::Binary { op, lhs, rhs, span, id, .. } => {
             let lhs = nikaia_std::boxed::open(lhs); let rhs = nikaia_std::boxed::open(rhs);
-            return Expr::Binary { op, lhs: Box::new(lhs), rhs: Box::new(rhs), span, grouped: true };
+            return Expr::Binary { op, lhs: Box::new(lhs), rhs: Box::new(rhs), span, grouped: true, id };
         },
         other => { return other; },
     }
 }
 
-pub fn fold_postfix(base: Expr, tail: Vec<Postfix>) -> Expr {
+pub fn fold_postfix(base: Expr, tail: Vec<Postfix>, first: u32) -> Expr {
     let mut recv = base;
+    let mut next = first;
     for step in tail.into_iter() {
+        let id = numbered_id(next);
         recv = match step {
-            Postfix::Field(name) => Expr::Field { base: Box::new(recv), name },
-            Postfix::SafeField(name) => Expr::SafeField { base: Box::new(recv), name },
-            Postfix::SafeMethod(method, args, config) => Expr::SafeMethod { receiver: Box::new(recv), method, args, config },
-            Postfix::Method(method, args, config) => Expr::MethodCall { receiver: Box::new(recv), method, args, config },
-            Postfix::Index(index) => Expr::Index { base: Box::new(recv), index: Box::new(index) },
-            Postfix::IndexFrom(start, len) => Expr::Index { base: Box::new(recv.clone()), index: Box::new(Expr::Range { start: Box::new(start), end: Box::new(Expr::MethodCall { receiver: Box::new(recv), method: len, args: vec![], config: vec![] }), inclusive: false }) },
-            Postfix::With(fields, at) => Expr::With { base: Box::new(recv), fields, at },
+            Postfix::Field(name) => Expr::Field { base: Box::new(recv), name, id },
+            Postfix::SafeField(name) => Expr::SafeField { base: Box::new(recv), name, id },
+            Postfix::SafeMethod(method, args, config) => Expr::SafeMethod { receiver: Box::new(recv), method, args, config, id },
+            Postfix::Method(method, args, config) => Expr::MethodCall { receiver: Box::new(recv), method, args, config, id },
+            Postfix::Index(index) => Expr::Index { base: Box::new(recv), index: Box::new(index), id },
+            Postfix::IndexFrom(start, len) => Expr::Index { base: Box::new(recv.clone()), index: Box::new(Expr::Range { start: Box::new(start), end: Box::new(Expr::MethodCall { receiver: Box::new(recv), method: len, args: vec![], config: vec![], id: numbered_id(next + 1u32) }), inclusive: false, id: numbered_id(next + 2u32) }), id },
+            Postfix::With(fields, at) => Expr::With { base: Box::new(recv), fields, at, id },
         };
+        next = next + 3u32;
     }
     recv
 }
@@ -30831,7 +30895,7 @@ pub fn spelled(wrote: &Wrote) -> String {
 
 pub fn written_root(names: &winnow_grammar::InternerContext, arg: &Expr) -> Option<Wrote> {
     match arg {
-        Expr::Path(segments) => if ends_with_variant(names, segments, "Anywhere") { Some(Wrote::Anywhere) } else { None },
+        Expr::Path(segments, _) => if ends_with_variant(names, segments, "Anywhere") { Some(Wrote::Anywhere) } else { None },
         Expr::Call { func, args, .. } => { let func = nikaia_std::boxed::open(func); the_whole_filesystem(names, func, args) },
         _ => None,
     }
@@ -30839,7 +30903,7 @@ pub fn written_root(names: &winnow_grammar::InternerContext, arg: &Expr) -> Opti
 
 fn the_whole_filesystem(names: &winnow_grammar::InternerContext, func: &Expr, args: &[Expr]) -> Option<Wrote> {
     let is_dir = match func {
-        Expr::Path(segments) => ends_with_variant(names, segments, "Dir"),
+        Expr::Path(segments, _) => ends_with_variant(names, segments, "Dir"),
         _ => false,
     };
     if !is_dir || args.is_empty() { return None; }
@@ -31090,7 +31154,7 @@ fn tm_walk_block(block: &Block, words: &winnow_grammar::InternerContext, library
                 tm_walk_expr(target, words, library, env, walk);
                 tm_walk_expr(value, words, library, env, walk);
                 match target {
-                    Expr::Variable(name) => {
+                    Expr::Variable(name, _) => {
                         let name = *name;
                         let given = tm_deps_of(value, words, library, env, &walk);
                         let id = tm_resolve(words.resolve(name), &walk);
@@ -31101,7 +31165,7 @@ fn tm_walk_block(block: &Block, words: &winnow_grammar::InternerContext, library
             },
             Stmt::For { bindings, iter, body } => {
                 match iter {
-                    Expr::Variable(name) => {
+                    Expr::Variable(name, _) => {
                         let name = *name;
                         let id = tm_resolve(words.resolve(name), &walk);
                         if id >= 0 { walk.kept.push(MapKept { id, deps: tm_nothing() }); }
@@ -31128,7 +31192,7 @@ fn tm_walk_block(block: &Block, words: &winnow_grammar::InternerContext, library
 
 fn map_named(receiver: &Expr, words: &winnow_grammar::InternerContext, walk: &MapWalk) -> i64 {
     match receiver {
-        Expr::Variable(name) => {
+        Expr::Variable(name, _) => {
             let name = *name;
             let id = tm_resolve(words.resolve(name), walk);
             if id >= 0 { id } else { -1 }
@@ -31139,15 +31203,15 @@ fn map_named(receiver: &Expr, words: &winnow_grammar::InternerContext, walk: &Ma
 
 fn tm_walk_expr(expr: &Expr, words: &winnow_grammar::InternerContext, library: &Ledger, env: &MapEnv, walk: &mut MapWalk) {
     match expr {
-        Expr::Block(b) => tm_walk_block(b, words, library, env, walk),
-        Expr::Unsafe(b) => tm_walk_block(b, words, library, env, walk),
-        Expr::If { cond, then_branch, else_branch } => {
+        Expr::Block(b, _) => tm_walk_block(b, words, library, env, walk),
+        Expr::Unsafe(b, _) => tm_walk_block(b, words, library, env, walk),
+        Expr::If { cond, then_branch, else_branch, .. } => {
             let cond = nikaia_std::boxed::open(cond);
             tm_walk_expr(cond, words, library, env, walk);
             tm_walk_block(then_branch, words, library, env, walk);
             if else_branch.is_some() { tm_walk_block(match else_branch { Some(__nikaia_value) => __nikaia_value, None => return }, words, library, env, walk); }
         },
-        Expr::MethodCall { receiver, method, args, config } => {
+        Expr::MethodCall { receiver, method, args, config, .. } => {
             let receiver = nikaia_std::boxed::open(receiver); let method = *method;
             let id = map_named(receiver, words, &walk);
             if id >= 0 && words.resolve(method) != "clone" {
@@ -31158,7 +31222,7 @@ fn tm_walk_expr(expr: &Expr, words: &winnow_grammar::InternerContext, library: &
             for a in args.iter() { tm_walk_expr(a, words, library, env, walk); }
             for c in config.iter() { tm_walk_expr(&c.value, words, library, env, walk); }
         },
-        Expr::Index { base, index } => {
+        Expr::Index { base, index, .. } => {
             let base = nikaia_std::boxed::open(base); let index = nikaia_std::boxed::open(index);
             let id = map_named(base, words, &walk);
             if id >= 0 {
@@ -31167,7 +31231,7 @@ fn tm_walk_expr(expr: &Expr, words: &winnow_grammar::InternerContext, library: &
             } else { tm_walk_expr(base, words, library, env, walk); }
             tm_walk_expr(index, words, library, env, walk);
         },
-        Expr::Call { func, args, config } => {
+        Expr::Call { func, args, config, .. } => {
             let func = nikaia_std::boxed::open(func);
             tm_walk_expr(func, words, library, env, walk);
             for a in args.iter() { tm_walk_expr(a, words, library, env, walk); }
@@ -31180,18 +31244,18 @@ fn tm_walk_expr(expr: &Expr, words: &winnow_grammar::InternerContext, library: &
         },
         Expr::Unary { expr, .. } => { let expr = nikaia_std::boxed::open(expr); tm_walk_expr(expr, words, library, env, walk) },
         Expr::Cast { expr, .. } => { let expr = nikaia_std::boxed::open(expr); tm_walk_expr(expr, words, library, env, walk) },
-        Expr::Try(inner) => { let inner = nikaia_std::boxed::open(inner); tm_walk_expr(inner, words, library, env, walk) },
-        Expr::Throw(inner) => { let inner = nikaia_std::boxed::open(inner); tm_walk_expr(inner, words, library, env, walk) },
+        Expr::Try(inner, _) => { let inner = nikaia_std::boxed::open(inner); tm_walk_expr(inner, words, library, env, walk) },
+        Expr::Throw(inner, _) => { let inner = nikaia_std::boxed::open(inner); tm_walk_expr(inner, words, library, env, walk) },
         Expr::Field { base, .. } => { let base = nikaia_std::boxed::open(base); tm_walk_expr(base, words, library, env, walk) },
         Expr::SafeField { base, .. } => { let base = nikaia_std::boxed::open(base); tm_walk_expr(base, words, library, env, walk) },
-        Expr::Coalesce { value, fallback } => {
+        Expr::Coalesce { value, fallback, .. } => {
             let value = nikaia_std::boxed::open(value); let fallback = nikaia_std::boxed::open(fallback);
             tm_walk_expr(value, words, library, env, walk);
             tm_walk_expr(fallback, words, library, env, walk);
         },
-        Expr::Tuple(items) => { for i in items.iter() { tm_walk_expr(i, words, library, env, walk); } },
+        Expr::Tuple(items, _) => { for i in items.iter() { tm_walk_expr(i, words, library, env, walk); } },
         Expr::ListLit { items, .. } => { for i in items.iter() { tm_walk_expr(i, words, library, env, walk); } },
-        Expr::LitInterpolated { parts } => {
+        Expr::LitInterpolated { parts, .. } => {
             for part in parts.iter() {
                 match part {
                     FPart::Hole { expr, .. } => tm_walk_expr(expr, words, library, env, walk),
@@ -31199,24 +31263,24 @@ fn tm_walk_expr(expr: &Expr, words: &winnow_grammar::InternerContext, library: &
                 }
             }
         },
-        Expr::Return(value) => {
+        Expr::Return(value, _) => {
             let value = nikaia_std::boxed::open(value);
             if value.is_some() { tm_walk_expr(match value { Some(__nikaia_value) => __nikaia_value, None => return }, words, library, env, walk); }
         },
-        Expr::Variable(name) => {
+        Expr::Variable(name, _) => {
             let name = *name;
             let id = tm_resolve(words.resolve(name), &walk);
             if id >= 0 { walk.escapes.insert(id); }
         },
-        Expr::Path(_) => { },
+        Expr::Path(_, _) => { },
         Expr::LitInt { .. } => { },
-        Expr::LitFloat(_) => { },
+        Expr::LitFloat(_, _) => { },
         Expr::LitStr { .. } => { },
-        Expr::LitChar(_) => { },
-        Expr::LitBool(_) => { },
-        Expr::LitNull => { },
-        Expr::Break => { },
-        Expr::Continue => { },
+        Expr::LitChar(_, _) => { },
+        Expr::LitBool(_, _) => { },
+        Expr::LitNull(_) => { },
+        Expr::Break(_) => { },
+        Expr::Continue(_) => { },
         _ => { walk.unread = true; },
     }
 }
@@ -31233,17 +31297,17 @@ fn tm_all_deps(items: &[Expr], words: &winnow_grammar::InternerContext, library:
 fn tm_deps_of(value: &Expr, words: &winnow_grammar::InternerContext, library: &Ledger, env: &MapEnv, walk: &MapWalk) -> KeyDeps {
     match value {
         Expr::LitInt { .. } => tm_nothing(),
-        Expr::LitFloat(_) => tm_nothing(),
+        Expr::LitFloat(_, _) => tm_nothing(),
         Expr::LitStr { .. } => tm_nothing(),
-        Expr::LitChar(_) => tm_nothing(),
-        Expr::LitBool(_) => tm_nothing(),
-        Expr::LitNull => tm_nothing(),
-        Expr::Variable(name) => {
+        Expr::LitChar(_, _) => tm_nothing(),
+        Expr::LitBool(_, _) => tm_nothing(),
+        Expr::LitNull(_) => tm_nothing(),
+        Expr::Variable(name, _) => {
             let name = *name;
             let id = tm_resolve(words.resolve(name), walk);
             if id >= 0 { tm_reading(id) } else { tm_never() }
         },
-        Expr::LitInterpolated { parts } => {
+        Expr::LitInterpolated { parts, .. } => {
             let mut all = tm_nothing();
             for part in parts.iter() {
                 match part {
@@ -31253,15 +31317,15 @@ fn tm_deps_of(value: &Expr, words: &winnow_grammar::InternerContext, library: &L
             }
             all
         },
-        Expr::Tuple(items) => tm_all_deps(items, words, library, env, walk),
+        Expr::Tuple(items, _) => tm_all_deps(items, words, library, env, walk),
         Expr::ListLit { items, .. } => tm_all_deps(items, words, library, env, walk),
         Expr::Unary { expr, .. } => { let expr = nikaia_std::boxed::open(expr); tm_deps_of(expr, words, library, env, walk) },
         Expr::Cast { expr, .. } => { let expr = nikaia_std::boxed::open(expr); tm_deps_of(expr, words, library, env, walk) },
         Expr::Binary { lhs, rhs, .. } => { let lhs = nikaia_std::boxed::open(lhs); let rhs = nikaia_std::boxed::open(rhs); tm_join(&tm_deps_of(lhs, words, library, env, walk), &tm_deps_of(rhs, words, library, env, walk)) },
         Expr::Field { base, .. } => { let base = nikaia_std::boxed::open(base); tm_deps_of(base, words, library, env, walk) },
-        Expr::Index { base, index } => { let base = nikaia_std::boxed::open(base); let index = nikaia_std::boxed::open(index); tm_join(&tm_deps_of(base, words, library, env, walk), &tm_deps_of(index, words, library, env, walk)) },
-        Expr::Coalesce { value, fallback } => { let value = nikaia_std::boxed::open(value); let fallback = nikaia_std::boxed::open(fallback); tm_join(&tm_deps_of(value, words, library, env, walk), &tm_deps_of(fallback, words, library, env, walk)) },
-        Expr::Call { func, args, config } => { let func = nikaia_std::boxed::open(func); tm_call_deps(func, args, config, words, library, env, walk) },
+        Expr::Index { base, index, .. } => { let base = nikaia_std::boxed::open(base); let index = nikaia_std::boxed::open(index); tm_join(&tm_deps_of(base, words, library, env, walk), &tm_deps_of(index, words, library, env, walk)) },
+        Expr::Coalesce { value, fallback, .. } => { let value = nikaia_std::boxed::open(value); let fallback = nikaia_std::boxed::open(fallback); tm_join(&tm_deps_of(value, words, library, env, walk), &tm_deps_of(fallback, words, library, env, walk)) },
+        Expr::Call { func, args, config, .. } => { let func = nikaia_std::boxed::open(func); tm_call_deps(func, args, config, words, library, env, walk) },
         Expr::MethodCall { receiver, method, args, .. } => {
             let receiver = nikaia_std::boxed::open(receiver); let method = *method;
             let name = words.resolve(method);
@@ -31273,7 +31337,7 @@ fn tm_deps_of(value: &Expr, words: &winnow_grammar::InternerContext, library: &L
 
 fn tm_call_deps(func: &Expr, args: &[Expr], config: &[ConfigArg], words: &winnow_grammar::InternerContext, library: &Ledger, env: &MapEnv, walk: &MapWalk) -> KeyDeps {
     let name = match func {
-        Expr::Path(segments) => {
+        Expr::Path(segments, _) => {
             let mut joined: String = String::from("");
             for segment in segments.iter() {
                 if !joined.is_empty() { joined.push_str("::"); }
@@ -31281,7 +31345,7 @@ fn tm_call_deps(func: &Expr, args: &[Expr], config: &[ConfigArg], words: &winnow
             }
             joined
         },
-        Expr::Variable(one) => { let one = *one; words.resolve(one).to_owned() },
+        Expr::Variable(one, _) => { let one = *one; words.resolve(one).to_owned() },
         _ => return tm_never(),
     };
     if env.own.contains(&name) { return tm_never(); }
@@ -31302,11 +31366,11 @@ fn is_a_map_made(value: &Expr, words: &winnow_grammar::InternerContext) -> bool 
             let func = nikaia_std::boxed::open(func);
             if !args.is_empty() { false } else {
                 match func {
-                    Expr::Path(segments) => {
+                    Expr::Path(segments, _) => {
                         let last = words.resolve(*nikaia_std::index::get(&segments, nikaia_std::index::at(segments.len() as i64 - 1)));
                         last == "HashMap" || last == "HashSet"
                     },
-                    Expr::Variable(one) => {
+                    Expr::Variable(one, _) => {
                         let one = *one;
                         let last = words.resolve(one);
                         last == "HashMap" || last == "HashSet"
@@ -32722,11 +32786,11 @@ fn block_types(names: &winnow_grammar::InternerContext, block: &Block, known: &c
 
 fn blocks_types(names: &winnow_grammar::InternerContext, expr: &Expr, known: &collections::BTreeSet<String>, out: &mut Vec<Finding>) {
     match expr {
-        Expr::Block(block) => block_types(names, block, known, out),
-        Expr::Unsafe(block) => block_types(names, block, known, out),
-        Expr::Overlap(block) => block_types(names, block, known, out),
+        Expr::Block(block, _) => block_types(names, block, known, out),
+        Expr::Unsafe(block, _) => block_types(names, block, known, out),
+        Expr::Overlap(block, _) => block_types(names, block, known, out),
         Expr::Closure { body, .. } => block_types(names, body, known, out),
-        Expr::Call { func, args, config } => {
+        Expr::Call { func, args, config, .. } => {
             let func = nikaia_std::boxed::open(func);
             blocks_types(names, func, known, out);
             for arg in args.iter() { blocks_types(names, arg, known, out); }
@@ -32748,13 +32812,13 @@ fn blocks_types(names: &winnow_grammar::InternerContext, expr: &Expr, known: &co
             block_types(names, then_branch, known, out);
             block_types(names, match else_branch { Some(__nikaia_value) => __nikaia_value, None => return }, known, out);
         },
-        Expr::TryCatch { expr, handler } => {
+        Expr::TryCatch { expr, handler, .. } => {
             let expr = nikaia_std::boxed::open(expr);
             blocks_types(names, expr, known, out);
             block_types(names, handler, known, out);
         },
         Expr::Match { arms, .. } => { for arm in arms.iter() { blocks_types(names, &arm.body, known, out); } },
-        Expr::Select(arms) => { for arm in arms.iter() { block_types(names, &arm.body, known, out); } },
+        Expr::Select(arms, _) => { for arm in arms.iter() { block_types(names, &arm.body, known, out); } },
         _ => { },
     }
 }
@@ -33222,7 +33286,7 @@ fn walk_block(unit: &Unit, asked: &Asked<'_>, block: &Block, tail: bool, own_buf
             Stmt::Assign { target, value, .. } => {
                 if mentions(unit, asked, &here, value) {
                     match target {
-                        Expr::Variable(name) => {
+                        Expr::Variable(name, _) => {
                             let name = *name;
                             here.carriers.insert(asked.names.resolve(name).to_owned());
                         },
@@ -33326,8 +33390,8 @@ fn hands_back_another_buffer(unit: &Unit, asked: &Asked<'_>, here: &Here, value:
         Expr::MethodCall { receiver, method, args, .. } => { let receiver = nikaia_std::boxed::open(receiver); let method = *method; a_method_borrows_elsewhere(unit, asked, here, receiver, method, args) },
         Expr::SafeMethod { receiver, method, args, .. } => { let receiver = nikaia_std::boxed::open(receiver); let method = *method; a_method_borrows_elsewhere(unit, asked, here, receiver, method, args) },
         Expr::Call { func, args, .. } => { let func = nikaia_std::boxed::open(func); match func {
-            Expr::Variable(name) => { let name = *name; borrows_elsewhere(unit, asked, here, asked.names.resolve(name), None, args) },
-            Expr::Path(parts) => borrows_elsewhere(unit, asked, here, &joined_path(asked, parts), None, args),
+            Expr::Variable(name, _) => { let name = *name; borrows_elsewhere(unit, asked, here, asked.names.resolve(name), None, args) },
+            Expr::Path(parts, _) => borrows_elsewhere(unit, asked, here, &joined_path(asked, parts), None, args),
             _ => false,
         } },
         _ => false,
@@ -33384,8 +33448,8 @@ fn receiver_clear(unit: &Unit, asked: &Asked<'_>, here: &Here, receiver: Option<
 
 fn type_of(unit: &Unit, asked: &Asked<'_>, here: &Here, receiver: &Expr) -> Option<Type> {
     match receiver {
-        Expr::Variable(name) => { let name = *name; variable_type(asked, here, asked.names.resolve(name)) },
-        Expr::Field { base, name } => { let base = nikaia_std::boxed::open(base); let name = *name; field_type(unit, asked, here, base, asked.names.resolve(name)) },
+        Expr::Variable(name, _) => { let name = *name; variable_type(asked, here, asked.names.resolve(name)) },
+        Expr::Field { base, name, .. } => { let base = nikaia_std::boxed::open(base); let name = *name; field_type(unit, asked, here, base, asked.names.resolve(name)) },
         _ => None,
     }
 }
@@ -33418,7 +33482,7 @@ fn fields_reached(unit: &Unit, asked: &Asked<'_>, here: &Here, base: &Expr) -> O
 
 fn is_self(asked: &Asked<'_>, expr: &Expr) -> bool {
     match expr {
-        Expr::Variable(name) => { let name = *name; asked.names.resolve(name) == "self" },
+        Expr::Variable(name, _) => { let name = *name; asked.names.resolve(name) == "self" },
         _ => false,
     }
 }
@@ -33435,7 +33499,7 @@ fn stores(unit: &Unit, asked: &Asked<'_>, expr: &Expr, span: &Span, own_buffer: 
             handed_to(unit, asked, receiver, args, config, span, here);
             descend(unit, asked, expr, span, own_buffer, here);
         },
-        Expr::StructLit { name, fields } => {
+        Expr::StructLit { name, fields, .. } => {
             let name = *name;
             let owner = asked.names.resolve(name).to_owned();
             if unit.borrowing.contains(&owner) {
@@ -33515,8 +33579,8 @@ fn field_of_subject(unit: &Unit, asked: &Asked<'_>, field: &str, span: &Span, he
 
 fn root(unit: &Unit, asked: &Asked<'_>, here: &Here, expr: &Expr) -> Root {
     match expr {
-        Expr::Variable(name) => { let name = *name; a_variable_root(unit, asked, here, name) },
-        Expr::Field { base, name } => { let base = nikaia_std::boxed::open(base); let name = *name; match root(unit, asked, here, base) {
+        Expr::Variable(name, _) => { let name = *name; a_variable_root(unit, asked, here, name) },
+        Expr::Field { base, name, .. } => { let base = nikaia_std::boxed::open(base); let name = *name; match root(unit, asked, here, base) {
             Root::Subject => Root::SubjectField(asked.names.resolve(name).to_owned()),
             Root::Param(param) => Root::ParamField(param, asked.names.resolve(name).to_owned()),
             Root::SubjectField(field) => Root::SubjectField(field),
@@ -33526,7 +33590,7 @@ fn root(unit: &Unit, asked: &Asked<'_>, here: &Here, expr: &Expr) -> Root {
         Expr::MethodCall { receiver, .. } => { let receiver = nikaia_std::boxed::open(receiver); root(unit, asked, here, receiver) },
         Expr::SafeMethod { receiver, .. } => { let receiver = nikaia_std::boxed::open(receiver); root(unit, asked, here, receiver) },
         Expr::Index { base, .. } => { let base = nikaia_std::boxed::open(base); root(unit, asked, here, base) },
-        Expr::Try(inner) => { let inner = nikaia_std::boxed::open(inner); root(unit, asked, here, inner) },
+        Expr::Try(inner, _) => { let inner = nikaia_std::boxed::open(inner); root(unit, asked, here, inner) },
         _ => Root::Elsewhere,
     }
 }
@@ -33539,46 +33603,46 @@ fn a_variable_root(unit: &Unit, asked: &Asked<'_>, here: &Here, name: winnow_gra
 
 fn mentions(unit: &Unit, asked: &Asked<'_>, here: &Here, node: &Expr) -> bool {
     match node {
-        Expr::Variable(name) => { let name = *name; here.carriers.contains(asked.names.resolve(name)) },
+        Expr::Variable(name, _) => { let name = *name; here.carriers.contains(asked.names.resolve(name)) },
         Expr::MethodCall { receiver, args, config, .. } => { let receiver = nikaia_std::boxed::open(receiver); mentions(unit, asked, here, receiver) || any_mentions(unit, asked, here, args) || config_mentions(unit, asked, here, config) },
         Expr::SafeMethod { receiver, args, config, .. } => { let receiver = nikaia_std::boxed::open(receiver); mentions(unit, asked, here, receiver) || any_mentions(unit, asked, here, args) || config_mentions(unit, asked, here, config) },
-        Expr::Call { func, args, config } => { let func = nikaia_std::boxed::open(func); mentions(unit, asked, here, func) || any_mentions(unit, asked, here, args) || config_mentions(unit, asked, here, config) },
+        Expr::Call { func, args, config, .. } => { let func = nikaia_std::boxed::open(func); mentions(unit, asked, here, func) || any_mentions(unit, asked, here, args) || config_mentions(unit, asked, here, config) },
         Expr::Field { base, .. } => { let base = nikaia_std::boxed::open(base); mentions(unit, asked, here, base) },
         Expr::SafeField { base, .. } => { let base = nikaia_std::boxed::open(base); mentions(unit, asked, here, base) },
-        Expr::Index { base, index } => { let base = nikaia_std::boxed::open(base); let index = nikaia_std::boxed::open(index); mentions(unit, asked, here, base) || mentions(unit, asked, here, index) },
+        Expr::Index { base, index, .. } => { let base = nikaia_std::boxed::open(base); let index = nikaia_std::boxed::open(index); mentions(unit, asked, here, base) || mentions(unit, asked, here, index) },
         Expr::Binary { lhs, rhs, .. } => { let lhs = nikaia_std::boxed::open(lhs); let rhs = nikaia_std::boxed::open(rhs); mentions(unit, asked, here, lhs) || mentions(unit, asked, here, rhs) },
         Expr::Unary { expr, .. } => { let expr = nikaia_std::boxed::open(expr); mentions(unit, asked, here, expr) },
-        Expr::Try(inner) => { let inner = nikaia_std::boxed::open(inner); mentions(unit, asked, here, inner) },
-        Expr::Throw(inner) => { let inner = nikaia_std::boxed::open(inner); mentions(unit, asked, here, inner) },
+        Expr::Try(inner, _) => { let inner = nikaia_std::boxed::open(inner); mentions(unit, asked, here, inner) },
+        Expr::Throw(inner, _) => { let inner = nikaia_std::boxed::open(inner); mentions(unit, asked, here, inner) },
         Expr::Cast { expr, .. } => { let expr = nikaia_std::boxed::open(expr); mentions(unit, asked, here, expr) },
         Expr::Spawn { body, .. } => { let body = nikaia_std::boxed::open(body); mentions(unit, asked, here, body) },
-        Expr::Coalesce { value, fallback } => { let value = nikaia_std::boxed::open(value); let fallback = nikaia_std::boxed::open(fallback); mentions(unit, asked, here, value) || mentions(unit, asked, here, fallback) },
+        Expr::Coalesce { value, fallback, .. } => { let value = nikaia_std::boxed::open(value); let fallback = nikaia_std::boxed::open(fallback); mentions(unit, asked, here, value) || mentions(unit, asked, here, fallback) },
         Expr::Range { start, end, .. } => { let start = nikaia_std::boxed::open(start); let end = nikaia_std::boxed::open(end); mentions(unit, asked, here, start) || mentions(unit, asked, here, end) },
-        Expr::Tuple(parts) => any_mentions(unit, asked, here, parts),
+        Expr::Tuple(parts, _) => any_mentions(unit, asked, here, parts),
         Expr::ListLit { items, .. } => any_mentions(unit, asked, here, items),
-        Expr::Return(value) => { let value = nikaia_std::boxed::open(value); maybe_mentions(unit, asked, here, (value).as_ref()) },
+        Expr::Return(value, _) => { let value = nikaia_std::boxed::open(value); maybe_mentions(unit, asked, here, (value).as_ref()) },
         Expr::StructLit { fields, .. } => fields_mention(unit, asked, here, fields),
         Expr::With { base, fields, .. } => { let base = nikaia_std::boxed::open(base); mentions(unit, asked, here, base) || fields_mention(unit, asked, here, fields) },
-        Expr::Match { value, arms } => { let value = nikaia_std::boxed::open(value); mentions(unit, asked, here, value) || arms_mention(unit, asked, here, arms) },
-        Expr::If { cond, then_branch, else_branch } => { let cond = nikaia_std::boxed::open(cond); mentions(unit, asked, here, cond) || block_mentions(unit, asked, here, then_branch) || maybe_block_mentions(unit, asked, here, (else_branch).as_ref()) },
-        Expr::Block(block) => block_mentions(unit, asked, here, block),
-        Expr::Unsafe(block) => block_mentions(unit, asked, here, block),
-        Expr::Overlap(block) => block_mentions(unit, asked, here, block),
+        Expr::Match { value, arms, .. } => { let value = nikaia_std::boxed::open(value); mentions(unit, asked, here, value) || arms_mention(unit, asked, here, arms) },
+        Expr::If { cond, then_branch, else_branch, .. } => { let cond = nikaia_std::boxed::open(cond); mentions(unit, asked, here, cond) || block_mentions(unit, asked, here, then_branch) || maybe_block_mentions(unit, asked, here, (else_branch).as_ref()) },
+        Expr::Block(block, _) => block_mentions(unit, asked, here, block),
+        Expr::Unsafe(block, _) => block_mentions(unit, asked, here, block),
+        Expr::Overlap(block, _) => block_mentions(unit, asked, here, block),
         Expr::Closure { body, .. } => block_mentions(unit, asked, here, body),
-        Expr::Select(arms) => select_mentions(unit, asked, here, arms),
-        Expr::TryCatch { expr, handler } => { let expr = nikaia_std::boxed::open(expr); mentions(unit, asked, here, expr) || block_mentions(unit, asked, here, handler) },
-        Expr::Break => false,
-        Expr::Continue => false,
+        Expr::Select(arms, _) => select_mentions(unit, asked, here, arms),
+        Expr::TryCatch { expr, handler, .. } => { let expr = nikaia_std::boxed::open(expr); mentions(unit, asked, here, expr) || block_mentions(unit, asked, here, handler) },
+        Expr::Break(_) => false,
+        Expr::Continue(_) => false,
         Expr::Asm { .. } => false,
         Expr::Dsl { .. } => false,
-        Expr::Path(_) => false,
+        Expr::Path(_, _) => false,
         Expr::LitInt { .. } => false,
-        Expr::LitFloat(_) => false,
+        Expr::LitFloat(_, _) => false,
         Expr::LitStr { .. } => false,
         Expr::LitInterpolated { .. } => false,
-        Expr::LitChar(_) => false,
-        Expr::LitBool(_) => false,
-        Expr::LitNull => false,
+        Expr::LitChar(_, _) => false,
+        Expr::LitBool(_, _) => false,
+        Expr::LitNull(_) => false,
     }
 }
 
@@ -33644,7 +33708,7 @@ fn descend(unit: &Unit, asked: &Asked<'_>, node: &Expr, span: &Span, own_buffer:
             stores_all(unit, asked, args, span, own_buffer, here);
             stores_config(unit, asked, config, span, own_buffer, here);
         },
-        Expr::Call { func, args, config } => {
+        Expr::Call { func, args, config, .. } => {
             let func = nikaia_std::boxed::open(func);
             stores(unit, asked, func, span, own_buffer, here);
             stores_all(unit, asked, args, span, own_buffer, here);
@@ -33652,7 +33716,7 @@ fn descend(unit: &Unit, asked: &Asked<'_>, node: &Expr, span: &Span, own_buffer:
         },
         Expr::Field { base, .. } => { let base = nikaia_std::boxed::open(base); stores(unit, asked, base, span, own_buffer, here) },
         Expr::SafeField { base, .. } => { let base = nikaia_std::boxed::open(base); stores(unit, asked, base, span, own_buffer, here) },
-        Expr::Index { base, index } => {
+        Expr::Index { base, index, .. } => {
             let base = nikaia_std::boxed::open(base); let index = nikaia_std::boxed::open(index);
             stores(unit, asked, base, span, own_buffer, here);
             stores(unit, asked, index, span, own_buffer, here);
@@ -33663,11 +33727,11 @@ fn descend(unit: &Unit, asked: &Asked<'_>, node: &Expr, span: &Span, own_buffer:
             stores(unit, asked, rhs, span, own_buffer, here);
         },
         Expr::Unary { expr, .. } => { let expr = nikaia_std::boxed::open(expr); stores(unit, asked, expr, span, own_buffer, here) },
-        Expr::Try(inner) => { let inner = nikaia_std::boxed::open(inner); stores(unit, asked, inner, span, own_buffer, here) },
-        Expr::Throw(inner) => { let inner = nikaia_std::boxed::open(inner); stores(unit, asked, inner, span, own_buffer, here) },
+        Expr::Try(inner, _) => { let inner = nikaia_std::boxed::open(inner); stores(unit, asked, inner, span, own_buffer, here) },
+        Expr::Throw(inner, _) => { let inner = nikaia_std::boxed::open(inner); stores(unit, asked, inner, span, own_buffer, here) },
         Expr::Cast { expr, .. } => { let expr = nikaia_std::boxed::open(expr); stores(unit, asked, expr, span, own_buffer, here) },
         Expr::Spawn { body, .. } => { let body = nikaia_std::boxed::open(body); stores(unit, asked, body, span, own_buffer, here) },
-        Expr::Coalesce { value, fallback } => {
+        Expr::Coalesce { value, fallback, .. } => {
             let value = nikaia_std::boxed::open(value); let fallback = nikaia_std::boxed::open(fallback);
             stores(unit, asked, value, span, own_buffer, here);
             stores(unit, asked, fallback, span, own_buffer, here);
@@ -33677,52 +33741,52 @@ fn descend(unit: &Unit, asked: &Asked<'_>, node: &Expr, span: &Span, own_buffer:
             stores(unit, asked, start, span, own_buffer, here);
             stores(unit, asked, end, span, own_buffer, here);
         },
-        Expr::Tuple(parts) => stores_all(unit, asked, parts, span, own_buffer, here),
+        Expr::Tuple(parts, _) => stores_all(unit, asked, parts, span, own_buffer, here),
         Expr::ListLit { items, .. } => stores_all(unit, asked, items, span, own_buffer, here),
-        Expr::Return(value) => { let value = nikaia_std::boxed::open(value); stores_maybe(unit, asked, (value).as_ref(), span, own_buffer, here) },
+        Expr::Return(value, _) => { let value = nikaia_std::boxed::open(value); stores_maybe(unit, asked, (value).as_ref(), span, own_buffer, here) },
         Expr::StructLit { fields, .. } => stores_fields(unit, asked, fields, span, own_buffer, here),
         Expr::With { base, fields, .. } => {
             let base = nikaia_std::boxed::open(base);
             stores(unit, asked, base, span, own_buffer, here);
             stores_fields(unit, asked, fields, span, own_buffer, here);
         },
-        Expr::Match { value, arms } => {
+        Expr::Match { value, arms, .. } => {
             let value = nikaia_std::boxed::open(value);
             stores(unit, asked, value, span, own_buffer, here);
             for arm in arms.iter() { stores(unit, asked, &arm.body, span, own_buffer, here); }
         },
-        Expr::If { cond, then_branch, else_branch } => {
+        Expr::If { cond, then_branch, else_branch, .. } => {
             let cond = nikaia_std::boxed::open(cond);
             stores(unit, asked, cond, span, own_buffer, here);
             walk_block(unit, asked, then_branch, false, own_buffer, here);
             walk_maybe_block(unit, asked, (else_branch).as_ref(), own_buffer, here);
         },
-        Expr::Block(block) => walk_block(unit, asked, block, false, own_buffer, here),
-        Expr::Unsafe(block) => walk_block(unit, asked, block, false, own_buffer, here),
-        Expr::Overlap(block) => walk_block(unit, asked, block, false, own_buffer, here),
+        Expr::Block(block, _) => walk_block(unit, asked, block, false, own_buffer, here),
+        Expr::Unsafe(block, _) => walk_block(unit, asked, block, false, own_buffer, here),
+        Expr::Overlap(block, _) => walk_block(unit, asked, block, false, own_buffer, here),
         Expr::Closure { body, .. } => walk_block(unit, asked, body, false, own_buffer, here),
-        Expr::Select(arms) => {
+        Expr::Select(arms, _) => {
             for arm in arms.iter() { stores(unit, asked, &arm.value, span, own_buffer, here); }
             for arm in arms.iter() { walk_block(unit, asked, &arm.body, false, own_buffer, here); }
         },
-        Expr::TryCatch { expr, handler } => {
+        Expr::TryCatch { expr, handler, .. } => {
             let expr = nikaia_std::boxed::open(expr);
             stores(unit, asked, expr, span, own_buffer, here);
             walk_block(unit, asked, handler, false, own_buffer, here);
         },
-        Expr::Break => { },
-        Expr::Continue => { },
+        Expr::Break(_) => { },
+        Expr::Continue(_) => { },
         Expr::Asm { .. } => { },
         Expr::Dsl { .. } => { },
-        Expr::Path(_) => { },
-        Expr::Variable(_) => { },
+        Expr::Path(_, _) => { },
+        Expr::Variable(_, _) => { },
         Expr::LitInt { .. } => { },
-        Expr::LitFloat(_) => { },
+        Expr::LitFloat(_, _) => { },
         Expr::LitStr { .. } => { },
         Expr::LitInterpolated { .. } => { },
-        Expr::LitChar(_) => { },
-        Expr::LitBool(_) => { },
-        Expr::LitNull => { },
+        Expr::LitChar(_, _) => { },
+        Expr::LitBool(_, _) => { },
+        Expr::LitNull(_) => { },
     }
 }
 
@@ -33789,12 +33853,12 @@ pub fn carrying(stored: &[Stored]) -> Vec<(u32, winnow_grammar::Symbol)> {
 
 pub fn written_expression(names: &winnow_grammar::InternerContext, expr: &Expr) -> String {
     match expr {
-        Expr::LitInt { value, negative } => { let negative = *negative; let value = *value; if negative && value > 0u64 { format!("-{}", value) } else { format!("{}", value) } },
-        Expr::LitFloat(text) => text.to_owned(),
-        Expr::LitBool(value) => { let value = *value; if value { String::from("true") } else { String::from("false") } },
-        Expr::LitChar(text) => format!("'{}'", text),
+        Expr::LitInt { value, negative, .. } => { let negative = *negative; let value = *value; if negative && value > 0u64 { format!("-{}", value) } else { format!("{}", value) } },
+        Expr::LitFloat(text, _) => text.to_owned(),
+        Expr::LitBool(value, _) => { let value = *value; if value { String::from("true") } else { String::from("false") } },
+        Expr::LitChar(text, _) => format!("'{}'", text),
         Expr::LitStr { text, .. } => format!("\"{}\"", text),
-        Expr::LitInterpolated { parts } => {
+        Expr::LitInterpolated { parts, .. } => {
             let mut body: String = String::from("");
             for part in parts.iter() {
                 match part {
@@ -33804,25 +33868,25 @@ pub fn written_expression(names: &winnow_grammar::InternerContext, expr: &Expr) 
             }
             format!("f\"{}\"", body)
         },
-        Expr::LitNull => String::from("null"),
-        Expr::Variable(name) => { let name = *name; names.resolve(name).to_owned() },
-        Expr::Path(segments) => path_written(names, segments),
-        Expr::Field { base, name } => { let base = nikaia_std::boxed::open(base); let name = *name; format!("{}.{}", operand(names, base), names.resolve(name)) },
-        Expr::SafeField { base, name } => { let base = nikaia_std::boxed::open(base); let name = *name; format!("{}?.{}", operand(names, base), names.resolve(name)) },
-        Expr::Index { base, index } => { let base = nikaia_std::boxed::open(base); let index = nikaia_std::boxed::open(index); format!("{}[{}]", operand(names, base), written_expression(names, index)) },
-        Expr::Call { func, args, config } => { let func = nikaia_std::boxed::open(func); format!("{}{}", written_expression(names, func), call_written(names, args, config)) },
-        Expr::MethodCall { receiver, method, args, config } => { let receiver = nikaia_std::boxed::open(receiver); let method = *method; format!("{}.{}{}", operand(names, receiver), names.resolve(method), call_written(names, args, config)) },
-        Expr::SafeMethod { receiver, method, args, config } => { let receiver = nikaia_std::boxed::open(receiver); let method = *method; format!("{}?.{}{}", operand(names, receiver), names.resolve(method), call_written(names, args, config)) },
-        Expr::Unary { op, expr } => { let expr = nikaia_std::boxed::open(expr); format!("{}{}", unary_word(op), operand(names, expr)) },
+        Expr::LitNull(_) => String::from("null"),
+        Expr::Variable(name, _) => { let name = *name; names.resolve(name).to_owned() },
+        Expr::Path(segments, _) => path_written(names, segments),
+        Expr::Field { base, name, .. } => { let base = nikaia_std::boxed::open(base); let name = *name; format!("{}.{}", operand(names, base), names.resolve(name)) },
+        Expr::SafeField { base, name, .. } => { let base = nikaia_std::boxed::open(base); let name = *name; format!("{}?.{}", operand(names, base), names.resolve(name)) },
+        Expr::Index { base, index, .. } => { let base = nikaia_std::boxed::open(base); let index = nikaia_std::boxed::open(index); format!("{}[{}]", operand(names, base), written_expression(names, index)) },
+        Expr::Call { func, args, config, .. } => { let func = nikaia_std::boxed::open(func); format!("{}{}", written_expression(names, func), call_written(names, args, config)) },
+        Expr::MethodCall { receiver, method, args, config, .. } => { let receiver = nikaia_std::boxed::open(receiver); let method = *method; format!("{}.{}{}", operand(names, receiver), names.resolve(method), call_written(names, args, config)) },
+        Expr::SafeMethod { receiver, method, args, config, .. } => { let receiver = nikaia_std::boxed::open(receiver); let method = *method; format!("{}?.{}{}", operand(names, receiver), names.resolve(method), call_written(names, args, config)) },
+        Expr::Unary { op, expr, .. } => { let expr = nikaia_std::boxed::open(expr); format!("{}{}", unary_word(op), operand(names, expr)) },
         Expr::Binary { op, lhs, rhs, .. } => {
             let lhs = nikaia_std::boxed::open(lhs); let rhs = nikaia_std::boxed::open(rhs);
             let here = binds(op);
             format!("{} {} {}", side(names, lhs, here, false), binary_word(op), side(names, rhs, here, true))
         },
-        Expr::Coalesce { value, fallback } => { let value = nikaia_std::boxed::open(value); let fallback = nikaia_std::boxed::open(fallback); format!("{} ?? {}", operand(names, value), operand(names, fallback)) },
-        Expr::Tuple(items) => format!("({})", all_written(names, items)),
+        Expr::Coalesce { value, fallback, .. } => { let value = nikaia_std::boxed::open(value); let fallback = nikaia_std::boxed::open(fallback); format!("{} ?? {}", operand(names, value), operand(names, fallback)) },
+        Expr::Tuple(items, _) => format!("({})", all_written(names, items)),
         Expr::ListLit { items, .. } => format!("[{}]", all_written(names, items)),
-        Expr::Range { start, end, inclusive } => {
+        Expr::Range { start, end, inclusive, .. } => {
             let start = nikaia_std::boxed::open(start); let end = nikaia_std::boxed::open(end); let inclusive = *inclusive;
             let dots = if inclusive { ".." } else { "..<" };
             format!("{}{}{}", operand(names, start), dots, operand(names, end))
@@ -33945,7 +34009,7 @@ pub mod assets {
 }
 pub mod ast {
     #[allow(unused_imports)]
-    pub use super::{Span, Spanned, Attribute, Program, Item, Block, Stmt, Expr, FPart, Type, ExternMember, OpaqueType, Code, EnumVariant, VariantFields, SelectArm, MatchArm, MatchPattern, GenericParam, TraitMethod, FnArg, ConfigArg, ConfigParam, FieldDef, FieldDefault, AsmBinding, FieldInit, UnaryOp, BinaryOp, GrammarDef, GrammarRule, FrameAttr, GrammarAlt, Pattern, Repeat, FoldSpec, Receiver, FnParams, ConfigZone, LONGEST_SOURCE, offset};
+    pub use super::{Span, Spanned, Attribute, Program, Item, Block, Stmt, Expr, id_of, fresh_id, numbered_id, FPart, Type, ExternMember, OpaqueType, Code, EnumVariant, VariantFields, SelectArm, MatchArm, MatchPattern, GenericParam, TraitMethod, FnArg, ConfigArg, ConfigParam, FieldDef, FieldDefault, AsmBinding, FieldInit, UnaryOp, BinaryOp, GrammarDef, GrammarRule, FrameAttr, GrammarAlt, Pattern, Repeat, FoldSpec, Receiver, FnParams, ConfigZone, LONGEST_SOURCE, offset};
 }
 pub mod boundaries {
     #[allow(unused_imports)]

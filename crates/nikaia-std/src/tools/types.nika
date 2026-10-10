@@ -309,11 +309,11 @@ fn block_types(names: ref winnow_grammar::InternerContext, block: ref Block, kno
 // The blocks an expression holds, a lambda passed as an argument included.
 fn blocks_types(names: ref winnow_grammar::InternerContext, expr: ref Expr, known: ref collections::BTreeSet[String], mut out: Vec[Finding]) {
     match expr {
-        Expr::Block(block) => block_types(names, block, known, out),
-        Expr::Unsafe(block) => block_types(names, block, known, out),
-        Expr::Overlap(block) => block_types(names, block, known, out),
+        Expr::Block(block, _) => block_types(names, block, known, out),
+        Expr::Unsafe(block, _) => block_types(names, block, known, out),
+        Expr::Overlap(block, _) => block_types(names, block, known, out),
         Expr::Closure { body, .. } => block_types(names, body, known, out),
-        Expr::Call { func, args, config } => {
+        Expr::Call { func, args, config, .. } => {
             blocks_types(names, func, known, out)
             for arg in args {
                 blocks_types(names, arg, known, out)
@@ -344,7 +344,7 @@ fn blocks_types(names: ref winnow_grammar::InternerContext, expr: ref Expr, know
             block_types(names, then_branch, known, out)
             block_types(names, else_branch ?? return, known, out)
         }
-        Expr::TryCatch { expr, handler } => {
+        Expr::TryCatch { expr, handler, .. } => {
             blocks_types(names, expr, known, out)
             block_types(names, handler, known, out)
         }
@@ -353,7 +353,7 @@ fn blocks_types(names: ref winnow_grammar::InternerContext, expr: ref Expr, know
                 blocks_types(names, arm.body, known, out)
             }
         }
-        Expr::Select(arms) => {
+        Expr::Select(arms, _) => {
             for arm in arms {
                 block_types(names, arm.body, known, out)
             }

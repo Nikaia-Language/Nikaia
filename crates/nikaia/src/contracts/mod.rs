@@ -1199,7 +1199,7 @@ fn argument_text(
     if a_literal(argument) {
         return Some(nikaia_std::tools::declared::default_text(argument));
     }
-    if let Expr::Variable(word) = argument
+    if let Expr::Variable(word, _) = argument
         && let ty::Ty::Named { name, .. } = ty
         && let Some(variant) = type_named(ledger, library, name).and_then(|c| {
             c.variants

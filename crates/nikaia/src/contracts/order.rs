@@ -192,7 +192,7 @@ pub fn overlap_report(
         &|body: &crate::ast::Block| {
             let mut blocks = Vec::new();
             crate::emit::visit_block(body, &mut |expr| {
-                if let Expr::Overlap(block) = expr {
+                if let Expr::Overlap(block, _) = expr {
                     blocks.push(block.clone());
                 }
             });

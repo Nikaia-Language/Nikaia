@@ -22,15 +22,15 @@ use std::collections
 /// Every name `expr` mentions, added to `out`.
 pub fn names_in(expr: ref Expr, words: ref winnow_grammar::InternerContext, mut out: collections::BTreeSet[String]) {
     match expr {
-        Expr::Variable(name) => {
+        Expr::Variable(name, _) => {
             out.insert(words.resolve(name).clone())
         }
-        Expr::Path(segments) => {
+        Expr::Path(segments, _) => {
             if segments.len() > 0 {
                 out.insert(words.resolve(segments[0]).clone())
             }
         }
-        Expr::Call { func, args, config } => {
+        Expr::Call { func, args, config, .. } => {
             names_in(func, words, out)
             for arg in args {
                 names_in(arg, words, out)
@@ -44,7 +44,7 @@ pub fn names_in(expr: ref Expr, words: ref winnow_grammar::InternerContext, mut 
         // reads is the same question either way. What stands after a call's
         // `;` reads names like anything else - a DSL's deferred parameters
         // arrive there (ADR-296 D5).
-        Expr::MethodCall { receiver, method, args, config } => {
+        Expr::MethodCall { receiver, method, args, config, .. } => {
             names_in(receiver, words, out)
             out.insert(words.resolve(method).clone())
             for arg in args {
@@ -54,7 +54,7 @@ pub fn names_in(expr: ref Expr, words: ref winnow_grammar::InternerContext, mut 
                 names_in(setting.value, words, out)
             }
         }
-        Expr::SafeMethod { receiver, method, args, config } => {
+        Expr::SafeMethod { receiver, method, args, config, .. } => {
             names_in(receiver, words, out)
             out.insert(words.resolve(method).clone())
             for arg in args {
@@ -71,13 +71,13 @@ pub fn names_in(expr: ref Expr, words: ref winnow_grammar::InternerContext, mut 
             names_in(rhs, words, out)
         }
         Expr::Unary { expr, .. } => names_in(expr, words, out),
-        Expr::Try(inner) => names_in(inner, words, out),
+        Expr::Try(inner, _) => names_in(inner, words, out),
         Expr::Cast { expr, .. } => names_in(expr, words, out),
-        Expr::Index { base, index } => {
+        Expr::Index { base, index, .. } => {
             names_in(base, words, out)
             names_in(index, words, out)
         }
-        Expr::Tuple(parts) => {
+        Expr::Tuple(parts, _) => {
             for part in parts {
                 names_in(part, words, out)
             }
@@ -87,7 +87,7 @@ pub fn names_in(expr: ref Expr, words: ref winnow_grammar::InternerContext, mut 
                 names_in(item, words, out)
             }
         }
-        Expr::Coalesce { value, fallback } => {
+        Expr::Coalesce { value, fallback, .. } => {
             names_in(value, words, out)
             names_in(fallback, words, out)
         }
@@ -95,7 +95,7 @@ pub fn names_in(expr: ref Expr, words: ref winnow_grammar::InternerContext, mut 
             names_in(start, words, out)
             names_in(end, words, out)
         }
-        Expr::StructLit { name, fields } => {
+        Expr::StructLit { name, fields, .. } => {
             out.insert(words.resolve(name).clone())
             for field in fields {
                 out.insert(words.resolve(field.name).clone())
@@ -112,26 +112,26 @@ pub fn names_in(expr: ref Expr, words: ref winnow_grammar::InternerContext, mut 
                 maybe_names_in(field.value, words, out)
             }
         }
-        Expr::Block(block) => names_in_block(block, words, out),
-        Expr::Unsafe(block) => names_in_block(block, words, out),
-        Expr::Overlap(block) => names_in_block(block, words, out),
+        Expr::Block(block, _) => names_in_block(block, words, out),
+        Expr::Unsafe(block, _) => names_in_block(block, words, out),
+        Expr::Overlap(block, _) => names_in_block(block, words, out),
         Expr::Closure { body, .. } => names_in_block(body, words, out),
         // **Both halves of every arm**, and the binding too: a name an arm
         // binds is read inside its body, and this counts what a value
         // reaches rather than what it declares.
-        Expr::Select(arms) => {
+        Expr::Select(arms, _) => {
             for arm in arms {
                 a_symbol(arm.binding, words, out)
                 names_in(arm.value, words, out)
                 names_in_block(arm.body, words, out)
             }
         }
-        Expr::If { cond, then_branch, else_branch } => {
+        Expr::If { cond, then_branch, else_branch, .. } => {
             names_in(cond, words, out)
             names_in_block(then_branch, words, out)
             maybe_names_in_block(else_branch, words, out)
         }
-        Expr::Match { value, arms } => {
+        Expr::Match { value, arms, .. } => {
             names_in(value, words, out)
             for arm in arms {
                 match arm.pattern {
@@ -142,11 +142,11 @@ pub fn names_in(expr: ref Expr, words: ref winnow_grammar::InternerContext, mut 
             }
         }
         Expr::Spawn { body, .. } => names_in(body, words, out),
-        Expr::Throw(thrown) => names_in(thrown, words, out),
-        Expr::Return(value) => maybe_names_in(value, words, out),
-        Expr::Break => {}
-        Expr::Continue => {}
-        Expr::TryCatch { expr, handler } => {
+        Expr::Throw(thrown, _) => names_in(thrown, words, out),
+        Expr::Return(value, _) => maybe_names_in(value, words, out),
+        Expr::Break(_) => {}
+        Expr::Continue(_) => {}
+        Expr::TryCatch { expr, handler, .. } => {
             names_in(expr, words, out)
             names_in_block(handler, words, out)
         }
@@ -154,7 +154,7 @@ pub fn names_in(expr: ref Expr, words: ref winnow_grammar::InternerContext, mut 
         // any other expression. A `dsl` body is a foreign syntax whose
         // actions are Nikaia too: every word in its raw text counts, which
         // finds every name they could hold and a good many they could not.
-        Expr::LitInterpolated { parts } => {
+        Expr::LitInterpolated { parts, .. } => {
             for part in parts {
                 match part {
                     FPart::Hole { expr, .. } => names_in(expr, words, out),
@@ -162,13 +162,13 @@ pub fn names_in(expr: ref Expr, words: ref winnow_grammar::InternerContext, mut 
                 }
             }
         }
-        Expr::Dsl { target, package, context, content } => {
+        Expr::Dsl { target, package, context, content, .. } => {
             out.insert(words.resolve(target).clone())
             a_symbol(package, words, out)
             a_symbol(context, words, out)
             words_of(content, out)
         }
-        Expr::Asm { bindings, code } => {
+        Expr::Asm { bindings, code, .. } => {
             for binding in bindings {
                 out.insert(words.resolve(binding.variable).clone())
             }
@@ -176,10 +176,10 @@ pub fn names_in(expr: ref Expr, words: ref winnow_grammar::InternerContext, mut 
         }
         // A value with no name in it, and the only arms that may say nothing.
         Expr::LitInt { .. } => {}
-        Expr::LitFloat(_) => {}
-        Expr::LitBool(_) => {}
-        Expr::LitNull => {}
-        Expr::LitChar(_) => {}
+        Expr::LitFloat(_, _) => {}
+        Expr::LitBool(_, _) => {}
+        Expr::LitNull(_) => {}
+        Expr::LitChar(_, _) => {}
         Expr::LitStr { .. } => {}
     }
 }

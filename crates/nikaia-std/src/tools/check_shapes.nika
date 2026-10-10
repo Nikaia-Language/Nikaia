@@ -21,11 +21,11 @@
 /// [`crate::emit::is_a_place`] at every link and roots in a call.
 pub fn roots_in_a_binding(expr: ref Expr) -> bool sync {
     return match expr {
-        Expr::Variable(_) => true,
+        Expr::Variable(_, _) => true,
         Expr::Field { base, .. } => roots_in_a_binding(base),
         Expr::SafeField { base, .. } => roots_in_a_binding(base),
         Expr::Index { base, .. } => roots_in_a_binding(base),
-        Expr::Try(inner) => roots_in_a_binding(inner),
+        Expr::Try(inner, _) => roots_in_a_binding(inner),
         Expr::Cast { expr, .. } => roots_in_a_binding(expr),
         else => false,
     }
@@ -63,15 +63,15 @@ fn any_catches_everything(alternatives: ref Vec[MatchPattern]) -> bool sync {
 /// program refused ([Part III C.4](../../docs/specification/30-nikaia-tooling.md)).
 pub fn plainly_a_value(expr: ref Expr) -> bool sync {
     return match expr {
-        Expr::Variable(_) => true,
+        Expr::Variable(_, _) => true,
         Expr::LitInt { .. } => true,
-        Expr::LitFloat(_) => true,
+        Expr::LitFloat(_, _) => true,
         Expr::LitStr { .. } => true,
-        Expr::LitBool(_) => true,
+        Expr::LitBool(_, _) => true,
         Expr::Binary { .. } => true,
         Expr::Field { .. } => true,
         Expr::Index { .. } => true,
-        Expr::Tuple(_) => true,
+        Expr::Tuple(_, _) => true,
         else => false,
     }
 }
@@ -207,7 +207,7 @@ impl CheckState {
     pub fn a_panic(ref self, world: ref CheckWorld, expr: ref Expr) -> bool sync {
         return match expr {
             Expr::Call { func, .. } => match func {
-                Expr::Variable(name) => world.words.resolve(name) == "panic" && self.lookup("panic") == null && !world.own.functions.contains_key("panic"),
+                Expr::Variable(name, _) => world.words.resolve(name) == "panic" && self.lookup("panic") == null && !world.own.functions.contains_key("panic"),
                 else => false,
             },
             else => false,
@@ -221,9 +221,9 @@ impl CheckState {
     /// four, which is the shape an arm written `=> { throw NotFound }` still has.
     pub fn exits(ref self, world: ref CheckWorld, expr: ref Expr) -> bool sync {
         return match expr {
-            Expr::Throw(_) => true,
-            Expr::Return(_) => true,
-            Expr::Block(block) => self.block_exits(world, block),
+            Expr::Throw(_, _) => true,
+            Expr::Return(_, _) => true,
+            Expr::Block(block, _) => self.block_exits(world, block),
             else => self.a_panic(world, expr),
         }
     }
@@ -248,7 +248,7 @@ impl CheckState {
             return true
         }
         return match expr {
-            Expr::Block(block) => self.block_leaves(world, block),
+            Expr::Block(block, _) => self.block_leaves(world, block),
             else => false,
         }
     }
@@ -275,10 +275,10 @@ impl CheckState {
     /// ending in one: `?? return`, `?? panic(…)`.
     pub fn jumps(ref self, world: ref CheckWorld, expr: ref Expr) -> bool sync {
         let plain = match expr {
-            Expr::Throw(_) => true,
-            Expr::Return(_) => true,
-            Expr::Break => true,
-            Expr::Continue => true,
+            Expr::Throw(_, _) => true,
+            Expr::Return(_, _) => true,
+            Expr::Break(_) => true,
+            Expr::Continue(_) => true,
             else => false,
         }
         return plain || self.a_panic(world, expr)

@@ -34,7 +34,10 @@ fn a_character_literal_is_kept_as_written() {
     let Stmt::Let { value, .. } = &body.stmts[0].node else {
         panic!("expected a `let`");
     };
-    assert!(matches!(value, Expr::LitChar(c) if c == "\\n"), "{value:?}");
+    assert!(
+        matches!(value, Expr::LitChar(c, _) if c == "\\n"),
+        "{value:?}"
+    );
 
     assert!(emit("fn main() { let c = '\\n' }").contains("let c = '\\n';"));
 }
@@ -61,7 +64,7 @@ fn a_character_literal_is_a_pattern() {
         panic!("expected a `match`");
     };
     assert!(
-        matches!(&arms[0].pattern, MatchPattern::Literal(Expr::LitChar(c)) if c == "n"),
+        matches!(&arms[0].pattern, MatchPattern::Literal(Expr::LitChar(c, _)) if c == "n"),
         "{:?}",
         arms[0].pattern
     );
@@ -517,7 +520,7 @@ fn the_tree_holds_the_parts_of_an_interpolation() {
     let Stmt::Expr(Expr::Call { args, .. }) = &body.stmts[1].node else {
         panic!("a call: {:?}", body.stmts[1].node);
     };
-    let Expr::LitInterpolated { parts } = &args[0] else {
+    let Expr::LitInterpolated { parts, .. } = &args[0] else {
         panic!("an interpolation: {:?}", args[0]);
     };
     let holes: Vec<_> = parts
@@ -532,7 +535,7 @@ fn the_tree_holds_the_parts_of_an_interpolation() {
     let holes: Vec<_> = holes.into_iter().map(|(e, s, _)| (e, s)).collect();
     assert_eq!(holes.len(), 2, "{parts:?}");
     assert!(
-        matches!(holes[0], (Expr::Variable(_), Some(">4"))),
+        matches!(holes[0], (Expr::Variable(_, _), Some(">4"))),
         "{:?}",
         holes[0]
     );

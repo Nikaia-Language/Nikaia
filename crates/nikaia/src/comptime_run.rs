@@ -111,9 +111,13 @@ fn constants_as_lets(
                     mutable: false,
                     ty: ty.clone(),
                     value: Expr::Call {
-                        func: Box::new(Expr::Path(constructor.split("::").map(name).collect())),
+                        func: Box::new(Expr::Path(
+                            constructor.split("::").map(name).collect(),
+                            crate::ast::NodeId::fresh(),
+                        )),
                         args,
                         config: Vec::new(),
+                        id: crate::ast::NodeId::fresh(),
                     },
                 },
                 Span::nowhere(),
@@ -630,8 +634,8 @@ fn culprit(
         }
         let key = match expr {
             Expr::Call { func, .. } => match &**func {
-                Expr::Variable(name) => Some(parsed.text(*name).to_string()),
-                Expr::Path(path) => Some(
+                Expr::Variable(name, _) => Some(parsed.text(*name).to_string()),
+                Expr::Path(path, _) => Some(
                     path.iter()
                         .map(|segment| parsed.text(*segment))
                         .collect::<Vec<_>>()
@@ -759,18 +763,24 @@ fn literal_of(value: &Value, parsed: &Parsed) -> Option<Expr> {
         Value::Int(n) => Some(Expr::LitInt {
             value: n.magnitude,
             negative: n.negative,
+            id: crate::ast::NodeId::fresh(),
         }),
-        Value::Bool(b) => Some(Expr::LitBool(*b)),
-        Value::Float(f) => Some(Expr::LitFloat(format!("{f:?}"))),
+        Value::Bool(b) => Some(Expr::LitBool(*b, crate::ast::NodeId::fresh())),
+        Value::Float(f) => Some(Expr::LitFloat(
+            format!("{f:?}"),
+            crate::ast::NodeId::fresh(),
+        )),
         Value::Text(text) => Some(Expr::LitStr {
             text: crate::build_time::written(text),
             at: 0,
+            id: crate::ast::NodeId::fresh(),
         }),
         Value::List(items) => Some(Expr::ListLit {
             items: all(items)?,
             at: 0,
+            id: crate::ast::NodeId::fresh(),
         }),
-        Value::Tuple(parts) => Some(Expr::Tuple(all(parts)?)),
+        Value::Tuple(parts) => Some(Expr::Tuple(all(parts)?, crate::ast::NodeId::fresh())),
         // **A `std` type's constructor is not a program's to write**
         // (ADR-318 D5): an item cannot hold one, and the value function
         // gets it as a `let` instead (`constants_as_lets`, #519).
@@ -786,19 +796,21 @@ fn literal_of(value: &Value, parsed: &Parsed) -> Option<Expr> {
                     })
                 })
                 .collect::<Option<_>>()?,
+            id: crate::ast::NodeId::fresh(),
         }),
         Value::Variant {
             ty,
             variant,
             payload,
         } => {
-            let path = Expr::Path(vec![name(ty), name(variant)]);
+            let path = Expr::Path(vec![name(ty), name(variant)], crate::ast::NodeId::fresh());
             match payload.is_empty() {
                 true => Some(path),
                 false => Some(Expr::Call {
                     func: Box::new(path),
                     args: all(payload)?,
                     config: Vec::new(),
+                    id: crate::ast::NodeId::fresh(),
                 }),
             }
         }

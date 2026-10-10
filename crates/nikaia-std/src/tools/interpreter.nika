@@ -76,7 +76,7 @@ fn expression(e: ref Expr, words: ref winnow_grammar::InternerContext, debug: fn
         Expr::Call { func, args, .. } => {
             // Simplified function resolution
             match func {
-                Expr::Variable(name) => {
+                Expr::Variable(name, _) => {
                     if words.resolve(name) == "println" {
                         printed(args, "", format_of, out)
                         return
@@ -95,7 +95,7 @@ fn expression(e: ref Expr, words: ref winnow_grammar::InternerContext, debug: fn
             // In Stage 1, this will use Tokio. For now, we execute inline.
             // The body is usually an Expr::Block because of `spawn({ ... })` syntax.
             match body {
-                Expr::Block(b) => block(b, words, debug, format_of, out),
+                Expr::Block(b, _) => block(b, words, debug, format_of, out),
                 else => expression(body, words, debug, format_of, out),
             }
         },
@@ -106,7 +106,7 @@ fn expression(e: ref Expr, words: ref winnow_grammar::InternerContext, debug: fn
         // which is the only order this interpreter has ever had (ADR-292
         // D7): nothing here overlaps anything, so `seq` asks for what it
         // already does.
-        Expr::Block(b) => block(b, words, debug, format_of, out),
+        Expr::Block(b, _) => block(b, words, debug, format_of, out),
         Expr::Dsl { target, .. } => out.push(f"[Nikaia Runtime] DSL Block '{words.resolve(target)}' (Skipped)"),
         else => out.push(f"[Nikaia Runtime] Eval: {debug(e)}"),
     }
@@ -118,7 +118,7 @@ fn printed(args: ref Vec[Expr], lead: ref String, format_of: fn(ref Vec[FPart]) 
     for arg in args {
         match arg {
             Expr::LitStr { text, .. } => out.push(f"{lead}{text}"),
-            Expr::LitInterpolated { parts } => out.push(f"{lead}{format_of(parts)}"),
+            Expr::LitInterpolated { parts, .. } => out.push(f"{lead}{format_of(parts)}"),
             else => {
                 if lead.len() == 0 {
                     out.push("<expression>")

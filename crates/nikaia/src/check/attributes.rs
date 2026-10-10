@@ -199,8 +199,8 @@ impl Checker<'_> {
         }
         for arg in &attribute.args {
             let word = match arg {
-                Expr::Variable(word) => self.parsed.text(*word).to_string(),
-                Expr::Path(segments) => segments
+                Expr::Variable(word, _) => self.parsed.text(*word).to_string(),
+                Expr::Path(segments, _) => segments
                     .last()
                     .map(|s| self.parsed.text(*s).to_lowercase())
                     .unwrap_or_default(),
@@ -235,7 +235,7 @@ impl Checker<'_> {
                     help: Some("Write `repeatable: true`, or leave it out.".to_string()),
                     labels: Vec::new(),
                 });
-            } else if !matches!(option.value, Expr::LitBool(_)) {
+            } else if !matches!(option.value, Expr::LitBool(_, _)) {
                 self.s.findings.push(Finding {
                     code: "NK1102".to_string(),
                     severity: Severity::Error,
@@ -326,7 +326,7 @@ impl Checker<'_> {
     fn attribute_argument(&mut self, owner: &str, field: &FieldContract, arg: &Expr, span: Span) {
         // **A variant by its name alone** (D3): `snake` for a `Case`, read
         // off the field's type - only here.
-        if let Expr::Variable(word) = arg
+        if let Expr::Variable(word, _) = arg
             && let Some(variants) = self.variants_of_type(&field.ty)
         {
             let word = self.parsed.text(*word);
@@ -335,10 +335,10 @@ impl Checker<'_> {
             }
         }
         let want = match &field.ty {
-            Ty::Nullable(inner) if !matches!(arg, Expr::LitNull) => (**inner).clone(),
+            Ty::Nullable(inner) if !matches!(arg, Expr::LitNull(_)) => (**inner).clone(),
             other => other.clone(),
         };
-        if matches!(arg, Expr::LitNull) && matches!(field.ty, Ty::Nullable(_)) {
+        if matches!(arg, Expr::LitNull(_)) && matches!(field.ty, Ty::Nullable(_)) {
             return;
         }
         if matches!(arg, Expr::LitStr { .. })
@@ -379,8 +379,8 @@ impl Checker<'_> {
     /// `None` where it is refused.
     pub(super) fn an_attribute_read(&mut self, args: &[Expr], span: &Span) -> Option<String> {
         let written = match args {
-            [Expr::Variable(name)] => self.parsed.text(*name).to_string(),
-            [Expr::Path(segments)] => segments
+            [Expr::Variable(name, _)] => self.parsed.text(*name).to_string(),
+            [Expr::Path(segments, _)] => segments
                 .iter()
                 .map(|s| self.parsed.text(*s))
                 .collect::<Vec<_>>()
@@ -536,14 +536,14 @@ pub(crate) fn mark_of(unit: &Parsed, mark: &ast::Attribute) -> Mark {
         .args
         .iter()
         .filter_map(|arg| match arg {
-            Expr::Variable(word) => Some(unit.text(*word).to_string()),
-            Expr::Path(segments) => segments.last().map(|s| unit.text(*s).to_lowercase()),
+            Expr::Variable(word, _) => Some(unit.text(*word).to_string()),
+            Expr::Path(segments, _) => segments.last().map(|s| unit.text(*s).to_lowercase()),
             _ => None,
         })
         .filter(|word| PLACES.contains(&word.as_str()))
         .collect();
     let repeatable = mark.config.iter().any(|option| {
-        unit.text(option.name) == "repeatable" && matches!(option.value, Expr::LitBool(true))
+        unit.text(option.name) == "repeatable" && matches!(option.value, Expr::LitBool(true, _))
     });
     Mark { places, repeatable }
 }
@@ -585,10 +585,10 @@ pub(super) fn literal_misfit(literal: &Expr, want: &Ty) -> Option<&'static str> 
     };
     match literal {
         Expr::LitInt { .. } if !number => Some("a whole number"),
-        Expr::LitFloat(_) if !matches!(name.as_str(), "f32" | "f64") => {
+        Expr::LitFloat(_, _) if !matches!(name.as_str(), "f32" | "f64") => {
             Some("a number with a fraction")
         }
-        Expr::LitBool(_) if name != "bool" => Some("a `bool`"),
+        Expr::LitBool(_, _) if name != "bool" => Some("a `bool`"),
         Expr::LitStr { .. } if !matches!(name.as_str(), "String" | "str") => Some("text"),
         _ => None,
     }

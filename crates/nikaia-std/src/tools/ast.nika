@@ -17,6 +17,8 @@
 // constantly, and are compared far more often than they are read, so interning
 // stores each distinct spelling once and makes equality an integer comparison.
 
+use std::node_id
+
 /// A byte range in the `.nika` source a node was parsed from.
 ///
 /// Every diagnostic a user ever sees has to end up pointing at one of these:
@@ -365,6 +367,15 @@ pub enum Stmt {
 }
 
 /// Ausdrücke (Alles, was einen Wert zurückgibt)
+///
+/// **Every variant carries an `id` as its last field**
+/// ([ADR-340](../../../docs/specification/adr/adr-340.md), #558): the number
+/// the parser gave the node when it made it, unique among the nodes of one
+/// parsed file (D1). A clone keeps it and a node the compiler builds takes
+/// [`fresh_id`] (D2). **The id is identity, not value** (D3): its equality says
+/// yes whatever the number, so two trees that differ only in ids are equal. A
+/// table about an expression is keyed on [`id_of`] (D4), which Nikaia can say
+/// where the node's address it replaces it cannot.
 pub enum Expr {
     // Primitive
     /// An integer literal, as large as a `u64` holds
@@ -379,11 +390,13 @@ pub enum Expr {
     LitInt {
         value: u64,
         negative: bool,
+        id: node_id::NodeId,
     },
     /// Kap 3.4: `match value { 1 => …, _ => … }`. An expression, like `if`.
     Match {
         value: Expr,
         arms: Vec[MatchArm],
+        id: node_id::NodeId,
     },
 
     /// Kap 3.3: `0..n` and `0..=n`. What a `for` counts over, and the reason
@@ -393,11 +406,12 @@ pub enum Expr {
         end: Expr,
         /// `..=`, which includes its end.
         inclusive: bool,
+        id: node_id::NodeId,
     },
 
     /// `(a, b)` - Kap 4.5. Two or more values of different types, with no
     /// name for the pair and none for its parts.
-    Tuple(Vec[Expr]),
+    Tuple(Vec[Expr], node_id::NodeId),
 
     /// `[1, 2, 3]` - a list, and `[]` an empty one
     /// ([ADR-135](../../../docs/specification/adr/adr-135.md) D1).
@@ -418,6 +432,7 @@ pub enum Expr {
     ListLit {
         items: Vec[Expr],
         at: u32,
+        id: node_id::NodeId,
     },
     /// `"…"` - Kap 2.5. **Inert text.** A `{` is a brace and nothing else, so
     /// a program that writes JSON, CSS or a regular expression says what it
@@ -432,6 +447,7 @@ pub enum Expr {
     LitStr {
         text: String,
         at: u32,
+        id: node_id::NodeId,
     },
     /// `f"… {expr} …"` - Kap 2.5. **Text with code in it**, and the `f` is what
     /// says so ([ADR-309](../../../docs/specification/adr/adr-309.md)).
@@ -449,12 +465,13 @@ pub enum Expr {
     /// anything, and the emitter builds the format string from the parts (D5).
     LitInterpolated {
         parts: Vec[FPart],
+        id: node_id::NodeId,
     },
     /// Kap 2.2: `'a'`, `'\n'`. The body is kept **as written**, escape and
     /// all: the language below spells a character literal the same way, so the
     /// lowering is a transcription and nothing has to decode it twice.
-    LitChar(String),
-    LitBool(bool),
+    LitChar(String, node_id::NodeId),
+    LitBool(bool, node_id::NodeId),
     /// Part I 2.3: `null`, the absence of a value. It lowers to `None`.
     ///
     /// **It has no type of its own**, exactly as an integer literal does not:
@@ -462,11 +479,11 @@ pub enum Expr {
     /// &str? = null` is an `Option<&str>` and `let m = null` on its own is a
     /// program `rustc` will ask for an annotation about - which is right,
     /// because nothing here can say what it is the absence of.
-    LitNull,
-    Variable(winnow_grammar::Symbol),
+    LitNull(node_id::NodeId),
+    Variable(winnow_grammar::Symbol, node_id::NodeId),
 
     // Kap 3.1: Blöcke sind Expressions
-    Block(Block),
+    Block(Block, node_id::NodeId),
 
     /// Part I 8.1.2: `overlap { … }` - **each statement in the block is a
     /// branch**, the block starts every branch and waits for all of them, and
@@ -478,7 +495,7 @@ pub enum Expr {
     /// branch may be is narrower than what a statement may be, and that is the
     /// checker's to say rather than the grammar's: `let` inside an `overlap`
     /// would bind a name the block's own value already carries.
-    Overlap(Block),
+    Overlap(Block, node_id::NodeId),
 
     /// Part II 12.4: `select { … }` — **every arm is started and the first one
     /// to finish wins** ([ADR-292](../../../docs/specification/adr/adr-292.md)
@@ -491,13 +508,14 @@ pub enum Expr {
     /// A `Vec<SelectArm>` and not a `Block`, because an arm is not a statement:
     /// it binds a name and then runs a block, which is the whole of why this
     /// costs a keyword rather than being a function (D1).
-    Select(Vec[SelectArm]),
+    Select(Vec[SelectArm], node_id::NodeId),
 
     // Kap 3.2: if cond { ... } else { ... }
     If {
         cond: Expr,
         then_branch: Block,
         else_branch: Block?,
+        id: node_id::NodeId,
     },
 
     // Kap 5.1: Funktionsaufruf add(1, 2)
@@ -509,6 +527,7 @@ pub enum Expr {
         /// putting them in the callee's order is the lowering's business,
         /// because only the declaration knows what that order is.
         config: Vec[ConfigArg],
+        id: node_id::NodeId,
     },
 
     // Kap 8.2: spawn({ ... }) oder spawn(move { ... })
@@ -516,6 +535,7 @@ pub enum Expr {
     Spawn {
         body: Expr, // Meistens ein Expr::Block
         is_move: bool,   // Kap 8.3
+        id: node_id::NodeId,
     },
 
     // Part II, Kap 10.5: dsl sql db { ... }
@@ -527,10 +547,11 @@ pub enum Expr {
         package: winnow_grammar::Symbol?,
         context: winnow_grammar::Symbol?, // z.B. db (optional)
         content: String,        // Simplified from TokenStream
+        id: node_id::NodeId,
     },
 
     // Ein qualifizierter Pfad: Summary::new, u8::from_str_radix
-    Path(Vec[winnow_grammar::Symbol]),
+    Path(Vec[winnow_grammar::Symbol], node_id::NodeId),
 
     // Methodenaufruf: acc.record(m)
     MethodCall {
@@ -541,18 +562,21 @@ pub enum Expr {
         /// deferred parameters arrive here (ADR-296 D5), which is why a method
         /// call carries them at all - before that they were parsed and dropped.
         config: Vec[ConfigArg],
+        id: node_id::NodeId,
     },
 
     // Feldzugriff: self.min
     Field {
         base: Expr,
         name: winnow_grammar::Symbol,
+        id: node_id::NodeId,
     },
 
     // Struct-Literal: Reading { name, temp }
     StructLit {
         name: winnow_grammar::Symbol,
         fields: Vec[FieldInit],
+        id: node_id::NodeId,
     },
 
     /// `p with { x: p.x + 1 }` — a **copy of a value with named fields
@@ -573,6 +597,7 @@ pub enum Expr {
         base: Expr,
         fields: Vec[FieldInit],
         at: u32,
+        id: node_id::NodeId,
     },
 
     // Kap 5.2: `fn(acc, m) { … }`. One form, and its arguments are the ones it
@@ -594,12 +619,14 @@ pub enum Expr {
         /// of `params` already has in hand.
         mutable: Vec[winnow_grammar::Symbol],
         body: Block,
+        id: node_id::NodeId,
     },
 
     // -value, !flag
     Unary {
         op: UnaryOp,
         expr: Expr,
+        id: node_id::NodeId,
     },
 
     // a + b, a < b
@@ -625,6 +652,7 @@ pub enum Expr {
         /// otherwise ([ADR-285](../../../docs/specification/adr/adr-285.md)
         /// D4, `NK1197`).
         grouped: bool,
+        id: node_id::NodeId,
     },
 
     /// Part I 3.5: `x?.field`, safe navigation.
@@ -636,6 +664,7 @@ pub enum Expr {
     SafeField {
         base: Expr,
         name: winnow_grammar::Symbol,
+        id: node_id::NodeId,
     },
 
     /// Kap 3.5: `x?.m(args)` - safe navigation onto a **method**.
@@ -658,16 +687,17 @@ pub enum Expr {
         /// carries them: a `?.` changes whether the call happens, never what a
         /// call is.
         config: Vec[ConfigArg],
+        id: node_id::NodeId,
     },
 
     // Kap 7.1: expr?
-    Try(Expr),
+    Try(Expr, node_id::NodeId),
 
     /// Kap 7.1: `throw ConfigError::NotFound(path)` - raise an error. The value
     /// must implement `Error`; there is no other way to originate one, which is
     /// why [ADR-023](../../../docs/specification/adr/adr-023.md) D2 calls it
     /// load-bearing rather than convenient.
-    Throw(Expr),
+    Throw(Expr, node_id::NodeId),
 
     /// `return`, `break` and `continue` **as expressions**
     /// ([ADR-276](../../../docs/specification/adr/adr-276.md) D20).
@@ -682,35 +712,39 @@ pub enum Expr {
     /// nothing about what they *do* changes — and `NK1133` still refuses a
     /// statement after a `break` in the same block, which is what keeps
     /// `break x` from becoming a quietly dropped value one position over (D3).
-    Return(Expr?),
-    Break,
-    Continue,
+    Return(Expr?, node_id::NodeId),
+    Break(node_id::NodeId),
+    Continue(node_id::NodeId),
 
     // Kap 2.2: 10.0
-    LitFloat(String),
+    LitFloat(String, node_id::NodeId),
 
     // Kap 4.5: map[key]
     Index {
         base: Expr,
         index: Expr,
+        id: node_id::NodeId,
     },
 
     // `self.sum as f64`
     Cast {
         expr: Expr,
         ty: Type,
+        id: node_id::NodeId,
     },
 
     // Kap 3.5: value ?? fallback
     Coalesce {
         value: Expr,
         fallback: Expr,
+        id: node_id::NodeId,
     },
 
     // Part III, Kap 16: unsafe asm { Bindings } { Body }
     Asm {
         bindings: Vec[AsmBinding], // Block 1
         code: String,              // Block 2 (Roher Text)
+        id: node_id::NodeId,
     },
 
     /// Part III 15.1: `unsafe { … }`
@@ -720,13 +754,75 @@ pub enum Expr {
     /// exactly as anything else is; what the word buys is that the boundary is
     /// visible *at the call*, in the body somebody reads, which is why it is a
     /// word rather than an attribute on the declaration.
-    Unsafe(Block),
+    Unsafe(Block, node_id::NodeId),
 
     // Kap 7.1: Error Handling ?{ ... }
     TryCatch {
         expr: Expr,
         handler: Block, // Der Block mit 'error' Variable
+        id: node_id::NodeId,
     },
+}
+
+/// **The number a table about an expression is keyed on**
+/// ([ADR-340](../../../docs/specification/adr/adr-340.md) D1, D4): the id the
+/// node was given when the parser made it, or when the compiler built it.
+pub fn id_of(expr: ref Expr) -> u32 sync {
+    return match expr {
+        Expr::LitInt { id, .. } => id.get(),
+        Expr::Match { id, .. } => id.get(),
+        Expr::Range { id, .. } => id.get(),
+        Expr::ListLit { id, .. } => id.get(),
+        Expr::LitStr { id, .. } => id.get(),
+        Expr::LitInterpolated { id, .. } => id.get(),
+        Expr::If { id, .. } => id.get(),
+        Expr::Call { id, .. } => id.get(),
+        Expr::Spawn { id, .. } => id.get(),
+        Expr::Dsl { id, .. } => id.get(),
+        Expr::MethodCall { id, .. } => id.get(),
+        Expr::Field { id, .. } => id.get(),
+        Expr::StructLit { id, .. } => id.get(),
+        Expr::With { id, .. } => id.get(),
+        Expr::Closure { id, .. } => id.get(),
+        Expr::Unary { id, .. } => id.get(),
+        Expr::Binary { id, .. } => id.get(),
+        Expr::SafeField { id, .. } => id.get(),
+        Expr::SafeMethod { id, .. } => id.get(),
+        Expr::Index { id, .. } => id.get(),
+        Expr::Cast { id, .. } => id.get(),
+        Expr::Coalesce { id, .. } => id.get(),
+        Expr::Asm { id, .. } => id.get(),
+        Expr::TryCatch { id, .. } => id.get(),
+        Expr::Tuple(_, id) => id.get(),
+        Expr::LitChar(_, id) => id.get(),
+        Expr::LitBool(_, id) => id.get(),
+        Expr::Variable(_, id) => id.get(),
+        Expr::Block(_, id) => id.get(),
+        Expr::Overlap(_, id) => id.get(),
+        Expr::Select(_, id) => id.get(),
+        Expr::Path(_, id) => id.get(),
+        Expr::Try(_, id) => id.get(),
+        Expr::Throw(_, id) => id.get(),
+        Expr::Return(_, id) => id.get(),
+        Expr::LitFloat(_, id) => id.get(),
+        Expr::Unsafe(_, id) => id.get(),
+        Expr::LitNull(id) => id.get(),
+        Expr::Break(id) => id.get(),
+        Expr::Continue(id) => id.get(),
+    }
+}
+
+/// **An id no other node has**, for a node the compiler builds after parsing
+/// ([ADR-340](../../../docs/specification/adr/adr-340.md) D2): a rewrite, a
+/// wrapper. The parser gives its own, in the order it makes its nodes.
+pub fn fresh_id() -> node_id::NodeId sync {
+    return node_id::NodeId::fresh()
+}
+
+/// The id with this number: what the parser gives the nodes it makes, from a
+/// run of numbers it set aside ([`fresh_id`] is the compiler's).
+pub fn numbered_id(number: u32) -> node_id::NodeId sync {
+    return node_id::NodeId::numbered(number)
 }
 
 /// **One piece of an `f"…"`** ([ADR-309](../../../docs/specification/adr/adr-309.md)

@@ -11,9 +11,29 @@ pub use nikaia_std::tools::parse_errors::RESERVED_WORDS;
 
 /// What the grammar's actions build the tree with - the postfix steps and the folds of
 /// a head and its tails - is `tools/tree_build.nika`'s (ADR-294, #125).
-pub use nikaia_std::tools::tree_build::{
-    Postfix, fold_binary, fold_postfix, grouped, guarded, params_of, split_mut,
-};
+pub use nikaia_std::tools::tree_build::{Postfix, grouped, params_of, split_mut};
+
+/// The folds, with the ids they give their nodes set aside from the file's
+/// count first ([ADR-340](../../../docs/specification/adr/adr-340.md) D1): the
+/// numbers are the parser's, the nodes are `tools/tree_build.nika`'s.
+fn fold_binary(
+    user: &mut Trivia,
+    head: ast::Expr,
+    tail: Vec<(ast::BinaryOp, ast::Expr, ast::Span)>,
+) -> ast::Expr {
+    let first = user.reserve(tail.len());
+    nikaia_std::tools::tree_build::fold_binary(head, tail, first)
+}
+
+/// Three numbers for each step: `xs[a..]` makes three nodes.
+fn fold_postfix(user: &mut Trivia, base: ast::Expr, tail: Vec<Postfix>) -> ast::Expr {
+    let first = user.reserve(3 * tail.len());
+    nikaia_std::tools::tree_build::fold_postfix(base, tail, first)
+}
+
+fn guarded(user: &mut Trivia, jump: ast::Stmt, cond: ast::Expr, span: ast::Span) -> ast::Stmt {
+    nikaia_std::tools::tree_build::guarded(jump, cond, span, user.id())
+}
 
 /// What the whitespace skip has seen: where it ended, whether it held a line
 /// break, and the run of `///` lines in it.
@@ -62,9 +82,34 @@ pub struct Trivia {
     /// `doc_reaches`, which is a fact about the input rather than a flag a
     /// losing branch can spoil.
     doc_live: bool,
+    /// **The next id the parser gives an expression node**
+    /// ([ADR-340](../../../docs/specification/adr/adr-340.md) D1): the number of
+    /// nodes made so far in this file, counted from where the parse began.
+    ///
+    /// Not idempotent the way the rest of this state is, and it need not be: a
+    /// branch that loses has still made its nodes, and the ids it used are
+    /// gone, which leaves a gap and nothing else. What D1 asks is that no two
+    /// nodes of the file share one and that the same source gives the same
+    /// ids, and a counter that only goes up gives both.
+    next_id: u32,
 }
 
 impl Trivia {
+    /// The id for the node being made.
+    pub fn id(&mut self) -> ast::NodeId {
+        let id = ast::NodeId::numbered(self.next_id);
+        self.next_id += 1;
+        id
+    }
+
+    /// `count` ids set aside for the nodes a fold makes (`tree_build`), the
+    /// first of them.
+    pub fn reserve(&mut self, count: usize) -> u32 {
+        let first = self.next_id;
+        self.next_id += u32::try_from(count).expect("a fold makes fewer nodes than a u32 counts");
+        first
+    }
+
     /// Record a run of trivia.
     ///
     /// A comment that a line break ran straight into **carries** the flag, so
@@ -340,6 +385,13 @@ pub struct Parsed {
     /// the first one copied. Only what parsed is kept; a hole that does not is
     /// said by whoever asks, in their own words, every time.
     holes: std::sync::Mutex<std::collections::HashMap<String, ast::Expr>>,
+    /// **The next id this file has not given**
+    /// ([ADR-340](../../../docs/specification/adr/adr-340.md) D1): where the
+    /// parse of the file stopped counting, and where a hole parsed later
+    /// ([`Parsed::hole`]) goes on, so no two nodes of the file share one. A
+    /// lock and not an atomic, because a hole is parsed while the lock is held
+    /// and its nodes take a run of numbers together.
+    next_id: std::sync::Mutex<u32>,
 }
 
 impl Parsed {
@@ -350,7 +402,15 @@ impl Parsed {
         if let Some(expr) = self.holes.lock().expect("a hole parse panicked").get(text) {
             return Ok(expr.clone());
         }
-        let expr = parse_expression(&self.interner, text)?;
+        // **The ids' lock first, then the cache asked again**: two readers of
+        // one hole must get the same ids, and the one that parses second would
+        // otherwise parse it with numbers of its own.
+        let mut next = self.next_id.lock().expect("a hole parse panicked");
+        if let Some(expr) = self.holes.lock().expect("a hole parse panicked").get(text) {
+            return Ok(expr.clone());
+        }
+        let (expr, after) = parse_expression_from(&self.interner, text, *next)?;
+        *next = after;
         self.holes
             .lock()
             .expect("a hole parse panicked")
@@ -383,6 +443,7 @@ impl Parsed {
             package: self.package.clone(),
             hole_wraps: self.hole_wraps.clone(),
             holes: Default::default(),
+            next_id: std::sync::Mutex::new(*self.next_id.lock().expect("a hole parse panicked")),
         }
     }
 
@@ -418,6 +479,7 @@ impl Parsed {
             package: self.package.clone(),
             hole_wraps: self.hole_wraps.clone(),
             holes: Default::default(),
+            next_id: std::sync::Mutex::new(*self.next_id.lock().expect("a hole parse panicked")),
         }
     }
 
@@ -446,12 +508,28 @@ impl Parsed {
 /// expressions inside a literal: they are not seen by the grammar that read the
 /// literal, so they are parsed here, with the program's own interner so that
 /// the symbols they produce mean the same as everywhere else.
+///
+/// **Its ids count from 0**, which is for a caller that reads a name out of the
+/// result and keeps no tree; a tree that joins a file's takes
+/// [`parse_expression_from`].
 pub fn parse_expression(interner: &InternerContext, input: &str) -> Result<ast::Expr> {
+    Ok(parse_expression_from(interner, input, 0)?.0)
+}
+
+/// [`parse_expression`] with the ids counted from `first`, and the next number
+/// that is free afterwards: how a hole takes its place among the nodes of the
+/// file it is in ([ADR-340](../../../docs/specification/adr/adr-340.md) D1).
+pub fn parse_expression_from(
+    interner: &InternerContext,
+    input: &str,
+    first: u32,
+) -> Result<(ast::Expr, u32)> {
     fits(input.len())?;
-    let context = ParseContext::<Trivia> {
+    let mut context = ParseContext::<Trivia> {
         interner: interner.clone(),
         ..Default::default()
     };
+    context.user_state.next_id = first;
 
     let mut stream = ParseInput::<Trivia> {
         state: context,
@@ -479,7 +557,7 @@ pub fn parse_expression(interner: &InternerContext, input: &str) -> Result<ast::
         )));
     }
 
-    Ok(expr)
+    Ok((expr, stream.state.user_state.next_id))
 }
 
 /// **A source every `Span` can point into**, or refused before it is read
@@ -629,6 +707,7 @@ pub fn parse_to_ast(input: &str) -> Result<Parsed> {
         return Err(refuse_parsing(finding, input));
     }
 
+    let after_ids = stream.state.user_state.next_id;
     let aliases = nikaia_std::tools::parsed_tree::aliases_of(&program.items, &interner);
     let mut parsed = Parsed {
         program,
@@ -638,6 +717,7 @@ pub fn parse_to_ast(input: &str) -> Result<Parsed> {
         package: None,
         hole_wraps: std::collections::BTreeMap::new(),
         holes: Default::default(),
+        next_id: std::sync::Mutex::new(after_ids),
     };
     // **What a `String` field or result is below is decided here, once**
     // ([ADR-282](../../../../docs/specification/adr/adr-282.md)): by what flows
@@ -851,11 +931,11 @@ grammar! {
         // them are the words that start the declarations they name:
         // `@meta::Attribute(field, struct)`.
         rule attribute_value -> Expr =
-            KW_STRUCT -> { Expr::Variable(_state.intern("struct")) }
-          | KW_ENUM -> { Expr::Variable(_state.intern("enum")) }
-          | KW_FN -> { Expr::Variable(_state.intern("fn")) }
-          | KW_TRAIT -> { Expr::Variable(_state.intern("trait")) }
-          | KW_IMPL -> { Expr::Variable(_state.intern("impl")) }
+            KW_STRUCT -> { Expr::Variable(_state.intern("struct"), _state.user().id()) }
+          | KW_ENUM -> { Expr::Variable(_state.intern("enum"), _state.user().id()) }
+          | KW_FN -> { Expr::Variable(_state.intern("fn"), _state.user().id()) }
+          | KW_TRAIT -> { Expr::Variable(_state.intern("trait"), _state.user().id()) }
+          | KW_IMPL -> { Expr::Variable(_state.intern("impl"), _state.user().id()) }
           | e:expr -> { e }
 
         // **`test "name" { … }`**
@@ -1249,7 +1329,7 @@ grammar! {
                 ConfigParam {
                     name,
                     ty,
-                    default: Expr::LitBool(false),
+                    default: Expr::LitBool(false, _state.user().id()),
                     default_span: Span::from(_span),
                 }
             }
@@ -1261,9 +1341,9 @@ grammar! {
             b:bool_lit -> { b }
           | s:str_lit -> { s }
           | c:char_lit -> { c }
-          | "-" f:float_lit -> { Expr::Unary { op: UnaryOp::Neg, expr: Box::new(f) } }
+          | "-" f:float_lit -> { Expr::Unary { op: UnaryOp::Neg, expr: Box::new(f), id: _state.user().id() } }
           | f:float_lit -> { f }
-          | "-" i:int_lit -> { Expr::Unary { op: UnaryOp::Neg, expr: Box::new(i) } }
+          | "-" i:int_lit -> { Expr::Unary { op: UnaryOp::Neg, expr: Box::new(i), id: _state.user().id() } }
           | i:int_lit -> { i }
 
         rule receiver -> Receiver =
@@ -2034,11 +2114,11 @@ grammar! {
         // of an `if` expression, as it always was (D2).
         rule return_stmt -> Stmt @=
             KW_RETURN cond:exit_guard ";"? -> {
-                guarded(Stmt::Return(None), cond, Span::from(_span))
+                guarded(_state.user(), Stmt::Return(None), cond, Span::from(_span))
             }
           | KW_RETURN value:expr? cond:exit_guard? ";"? -> {
                 match cond {
-                    Some(cond) => guarded(Stmt::Return(value), cond, Span::from(_span)),
+                    Some(cond) => guarded(_state.user(), Stmt::Return(value), cond, Span::from(_span)),
                     None => Stmt::Return(value),
                 }
             }
@@ -2080,9 +2160,9 @@ grammar! {
         // its own (ADR-023 D2).
         rule throw_stmt -> Stmt @=
             KW_THROW value:expr cond:exit_guard? ";"? -> {
-                let jump = Stmt::Expr(Expr::Throw(Box::new(value)));
+                let jump = Stmt::Expr(Expr::Throw(Box::new(value), _state.user().id()));
                 match cond {
-                    Some(cond) => guarded(jump, cond, Span::from(_span)),
+                    Some(cond) => guarded(_state.user(), jump, cond, Span::from(_span)),
                     None => jump,
                 }
             }
@@ -2260,7 +2340,7 @@ grammar! {
         // argued there (740 instructions a statement,
         // [ADR-276](../../../../docs/specification/adr/adr-276.md) D19) — so
         // once D1 put the two words in the expression grammar, `expr_stmt`
-        // reached them first and a bare `break` became `Stmt::Expr(Expr::Break)`.
+        // reached them first and a bare `break` became `Stmt::Expr(Expr::Break(_state.user().id()))`.
         // Every analysis that asks about a jump asks about the *statement*, so
         // `NK1133` — *nothing after a `break` in the same block is reached*,
         // which is D3's whole safety net — stopped firing.
@@ -2276,16 +2356,16 @@ grammar! {
         // costs a keyword compare, and only on a statement no earlier arm took.
         rule expr_stmt -> Stmt @=
             KW_BREAK cond:exit_guard ";"? -> {
-                guarded(Stmt::Break, cond, Span::from(_span))
+                guarded(_state.user(), Stmt::Break, cond, Span::from(_span))
             }
           | KW_CONTINUE cond:exit_guard ";"? -> {
-                guarded(Stmt::Continue, cond, Span::from(_span))
+                guarded(_state.user(), Stmt::Continue, cond, Span::from(_span))
             }
           | e:expr ";"? -> {
                 match e {
-                    Expr::Break => Stmt::Break,
-                    Expr::Continue => Stmt::Continue,
-                    Expr::Return(value) => Stmt::Return(*value),
+                    Expr::Break(_) => Stmt::Break,
+                    Expr::Continue(_) => Stmt::Continue,
+                    Expr::Return(value, _) => Stmt::Return(*value),
                     e => Stmt::Expr(e),
                 }
             }
@@ -2300,7 +2380,7 @@ grammar! {
         rule catch_expr -> Expr =
             value:coalesce_expr handler:catch_tail? -> {
                 match handler {
-                    Some(handler) => Expr::TryCatch { expr: Box::new(value), handler },
+                    Some(handler) => Expr::TryCatch { expr: Box::new(value), handler, id: _state.user().id() },
                     None => value,
                 }
             }
@@ -2314,7 +2394,7 @@ grammar! {
                 match fallback {
                     Some(fallback) => Expr::Coalesce {
                         value: Box::new(value),
-                        fallback: Box::new(fallback),
+                        fallback: Box::new(fallback), id: _state.user().id()
                     },
                     None => value,
                 }
@@ -2369,7 +2449,7 @@ grammar! {
                 match tail {
                     Some(fallback) => Expr::Coalesce {
                         value: Box::new(head),
-                        fallback: Box::new(fallback),
+                        fallback: Box::new(fallback), id: _state.user().id()
                     },
                     None => head,
                 }
@@ -2380,7 +2460,7 @@ grammar! {
             KW_FN "(" params:closure_params? ")" body:block
             -> {
                 let (params, mutable) = split_mut(&params.unwrap_or_default());
-                Expr::Closure { params, mutable, body }
+                Expr::Closure { params, mutable, body, id: _state.user().id() }
             }
           // `fn { … }` takes **no arguments**, and used to take however many of
           // `a`, `b`, `c` its body mentioned (ADR-277 withdrew that). A body that
@@ -2388,7 +2468,7 @@ grammar! {
           // declares, which `NK1117` refuses - so the form needs no rule of its
           // own to be refused by.
           | KW_FN body:block -> {
-                Expr::Closure { params: Vec::new(), mutable: Vec::new(), body }
+                Expr::Closure { params: Vec::new(), mutable: Vec::new(), body, id: _state.user().id() }
             }
 
         // **A lambda's parameter takes `mut`**
@@ -2433,7 +2513,7 @@ grammar! {
                     Some((inclusive, end)) => Expr::Range {
                         start: Box::new(start),
                         end: Box::new(end),
-                        inclusive,
+                        inclusive, id: _state.user().id()
                     },
                     None => start,
                 }
@@ -2453,22 +2533,22 @@ grammar! {
           | "..=" fail(
                 "Nikaia has no `..=`. `0..n` already includes `n`; write `0..<n` for a \
                  range that stops before it."
-            ) -> { (true, Expr::LitInt { value: 0, negative: false }) }
+            ) -> { (true, Expr::LitInt { value: 0, negative: false, id: _state.user().id() }) }
           | ".." e:or_expr -> { (true, e) }
 
         rule or_expr -> Expr =
-            head:and_expr tail:or_tail* -> { fold_binary(head, tail) }
+            head:and_expr tail:or_tail* -> { fold_binary(_state.user(), head, tail) }
 
         rule or_tail -> (BinaryOp, Expr, Span) @= "||" e:and_expr -> { (BinaryOp::Or, e, Span::from(_span)) }
 
         rule and_expr -> Expr =
-            head:cmp_expr tail:and_tail* -> { fold_binary(head, tail) }
+            head:cmp_expr tail:and_tail* -> { fold_binary(_state.user(), head, tail) }
 
         rule and_tail -> (BinaryOp, Expr, Span) @= "&&" e:cmp_expr -> { (BinaryOp::And, e, Span::from(_span)) }
 
         rule cmp_expr -> Expr =
             head:bit_or_expr tail:cmp_tail? -> {
-                fold_binary(head, tail.into_iter().collect::<Vec<_>>())
+                fold_binary(_state.user(), head, tail.into_iter().collect::<Vec<_>>())
             }
 
         rule cmp_tail -> (BinaryOp, Expr, Span) @= op:cmp_op e:bit_or_expr -> { (op, e, Span::from(_span)) }
@@ -2480,25 +2560,25 @@ grammar! {
         // `||` and `|=`, `&` off `&&` and `&=`, `^` off `^=` - so a line that
         // writes the other is read as the other.
         rule bit_or_expr -> Expr =
-            head:bit_xor_expr tail:bit_or_tail* -> { fold_binary(head, tail) }
+            head:bit_xor_expr tail:bit_or_tail* -> { fold_binary(_state.user(), head, tail) }
 
         rule bit_or_tail -> (BinaryOp, Expr, Span) @=
             "|" not("|") not("=") e:bit_xor_expr -> { (BinaryOp::BitOr, e, Span::from(_span)) }
 
         rule bit_xor_expr -> Expr =
-            head:bit_and_expr tail:bit_xor_tail* -> { fold_binary(head, tail) }
+            head:bit_and_expr tail:bit_xor_tail* -> { fold_binary(_state.user(), head, tail) }
 
         rule bit_xor_tail -> (BinaryOp, Expr, Span) @=
             "^" not("=") e:bit_and_expr -> { (BinaryOp::BitXor, e, Span::from(_span)) }
 
         rule bit_and_expr -> Expr =
-            head:shift_expr tail:bit_and_tail* -> { fold_binary(head, tail) }
+            head:shift_expr tail:bit_and_tail* -> { fold_binary(_state.user(), head, tail) }
 
         rule bit_and_tail -> (BinaryOp, Expr, Span) @=
             "&" not("&") not("=") e:shift_expr -> { (BinaryOp::BitAnd, e, Span::from(_span)) }
 
         rule shift_expr -> Expr =
-            head:add_expr tail:shift_tail* -> { fold_binary(head, tail) }
+            head:add_expr tail:shift_tail* -> { fold_binary(_state.user(), head, tail) }
 
         rule shift_tail -> (BinaryOp, Expr, Span) @= op:shift_op e:add_expr -> { (op, e, Span::from(_span)) }
 
@@ -2517,7 +2597,7 @@ grammar! {
           | ">" -> { BinaryOp::Gt }
 
         rule add_expr -> Expr =
-            head:mul_expr tail:add_tail* -> { fold_binary(head, tail) }
+            head:mul_expr tail:add_tail* -> { fold_binary(_state.user(), head, tail) }
 
         rule add_tail -> (BinaryOp, Expr, Span) @= op:add_op e:mul_expr -> { (op, e, Span::from(_span)) }
 
@@ -2526,7 +2606,7 @@ grammar! {
           | "-" -> { BinaryOp::Sub }
 
         rule mul_expr -> Expr =
-            head:cast_expr tail:mul_tail* -> { fold_binary(head, tail) }
+            head:cast_expr tail:mul_tail* -> { fold_binary(_state.user(), head, tail) }
 
         rule mul_tail -> (BinaryOp, Expr, Span) @= op:mul_op e:cast_expr -> { (op, e, Span::from(_span)) }
 
@@ -2535,6 +2615,7 @@ grammar! {
                 casts.into_iter().fold(head, |expr, ty| Expr::Cast {
                     expr: Box::new(expr),
                     ty,
+                    id: _state.user().id(),
                 })
             }
 
@@ -2559,7 +2640,7 @@ grammar! {
             // this was one number missing rather than a hole.
             n:negative_number_lit -> { crate::ast::int_literal(n) }
           | op:unary_op e:unary_expr -> {
-                Expr::Unary { op, expr: Box::new(e) }
+                Expr::Unary { op, expr: Box::new(e), id: _state.user().id() }
             }
           | e:postfix_expr -> { e }
 
@@ -2574,7 +2655,7 @@ grammar! {
           | KW_REF -> { UnaryOp::Ref }
 
         rule postfix_expr -> Expr =
-            base:primary_expr tail:postfix_tail* -> { fold_postfix(base, tail) }
+            base:primary_expr tail:postfix_tail* -> { fold_postfix(_state.user(), base, tail) }
 
         // The trailing-lambda form first (Kap 5.2): `.map fn: a.id` has no
         // parentheses, so the plain method rule would stop before the `fn:` and
@@ -2638,16 +2719,16 @@ grammar! {
           // fold writes as `a..<base.len()`, the one form a range has.
           | same_line "[" "..<" end:or_expr "]" -> {
                 Postfix::Index(Expr::Range {
-                    start: Box::new(Expr::LitInt { value: 0, negative: false }),
+                    start: Box::new(Expr::LitInt { value: 0, negative: false, id: _state.user().id() }),
                     end: Box::new(end),
-                    inclusive: false,
+                    inclusive: false, id: _state.user().id()
                 })
             }
           | same_line "[" ".." end:or_expr "]" -> {
                 Postfix::Index(Expr::Range {
-                    start: Box::new(Expr::LitInt { value: 0, negative: false }),
+                    start: Box::new(Expr::LitInt { value: 0, negative: false, id: _state.user().id() }),
                     end: Box::new(end),
-                    inclusive: true,
+                    inclusive: true, id: _state.user().id()
                 })
             }
           | same_line "[" start:or_expr ".." "]" -> {
@@ -2705,10 +2786,10 @@ grammar! {
         rule trailing_lambda -> Expr =
             KW_FN "(" params:closure_params? ")" body:block -> {
                 let (params, mutable) = split_mut(&params.unwrap_or_default());
-                Expr::Closure { params, mutable, body }
+                Expr::Closure { params, mutable, body, id: _state.user().id() }
             }
           | KW_FN body:block -> {
-                Expr::Closure { params: Vec::new(), mutable: Vec::new(), body }
+                Expr::Closure { params: Vec::new(), mutable: Vec::new(), body, id: _state.user().id() }
             }
             // ADR-277: `fn: expr` was removed, and a form that was in the
             // specification deserves a sentence rather than a parse error at
@@ -2719,7 +2800,7 @@ grammar! {
                 Expr::Closure {
                     params: Vec::new(),
                     mutable: Vec::new(),
-                    body: Block { stmts: Vec::new() },
+                    body: Block { stmts: Vec::new() }, id: _state.user().id()
                 }
             }
 
@@ -2864,10 +2945,10 @@ grammar! {
           | j:jump_expr -> { j }
 
         rule jump_expr -> Expr =
-            KW_THROW e:expr -> { Expr::Throw(Box::new(e)) }
-          | KW_RETURN e:returned? -> { Expr::Return(Box::new(e)) }
-          | KW_BREAK -> { Expr::Break }
-          | KW_CONTINUE -> { Expr::Continue }
+            KW_THROW e:expr -> { Expr::Throw(Box::new(e), _state.user().id()) }
+          | KW_RETURN e:returned? -> { Expr::Return(Box::new(e), _state.user().id()) }
+          | KW_BREAK -> { Expr::Break(_state.user().id()) }
+          | KW_CONTINUE -> { Expr::Continue(_state.user().id()) }
 
         // **What a `return` inside an expression hands back stands on its
         // line** ([ADR-135](../../../docs/specification/adr/adr-135.md) D3's
@@ -2879,7 +2960,7 @@ grammar! {
         rule returned -> Expr = same_line e:expr -> { e }
 
         rule float_lit -> Expr =
-            f:FLOAT -> { Expr::LitFloat(f) }
+            f:FLOAT -> { Expr::LitFloat(f, _state.user().id()) }
 
         // Uppercase, so this is lexical: `1 . 5` is not a number, and neither
         // is `1.0 e5`. The exponent is what a program about physical
@@ -2921,7 +3002,7 @@ grammar! {
                 match fallback {
                     Some(fallback) => Expr::Coalesce {
                         value: Box::new(value),
-                        fallback: Box::new(fallback),
+                        fallback: Box::new(fallback), id: _state.user().id()
                     },
                     None => value,
                 }
@@ -2950,7 +3031,7 @@ grammar! {
                 match tail {
                     Some(fallback) => Expr::Coalesce {
                         value: Box::new(head),
-                        fallback: Box::new(fallback),
+                        fallback: Box::new(fallback), id: _state.user().id()
                     },
                     None => head,
                 }
@@ -2962,7 +3043,7 @@ grammar! {
                     Some((inclusive, end)) => Expr::Range {
                         start: Box::new(start),
                         end: Box::new(end),
-                        inclusive,
+                        inclusive, id: _state.user().id()
                     },
                     None => start,
                 }
@@ -2976,7 +3057,7 @@ grammar! {
           | "..=" fail(
                 "Nikaia has no `..=`. `0..n` already includes `n`; write `0..<n` for a \
                  range that stops before it."
-            ) -> { (true, Expr::LitInt { value: 0, negative: false }) }
+            ) -> { (true, Expr::LitInt { value: 0, negative: false, id: _state.user().id() }) }
           | ".." e:head_or -> { (true, e) }
 
         // **Neither connective can begin a block**, which is the whole of why
@@ -2985,29 +3066,29 @@ grammar! {
         // which descends to the same brace-free `head_primary` as everything
         // else in this chain.
         rule head_or -> Expr =
-            head:head_and tail:head_or_tail* -> { fold_binary(head, tail) }
+            head:head_and tail:head_or_tail* -> { fold_binary(_state.user(), head, tail) }
 
         rule head_or_tail -> (BinaryOp, Expr, Span) @= "||" e:head_and -> { (BinaryOp::Or, e, Span::from(_span)) }
 
         rule head_and -> Expr =
-            head:head_cmp tail:head_and_tail* -> { fold_binary(head, tail) }
+            head:head_cmp tail:head_and_tail* -> { fold_binary(_state.user(), head, tail) }
 
         rule head_and_tail -> (BinaryOp, Expr, Span) @= "&&" e:head_cmp -> { (BinaryOp::And, e, Span::from(_span)) }
 
         rule head_cmp -> Expr =
             head:head_add tail:cmp_head_tail? -> {
-                fold_binary(head, tail.into_iter().collect::<Vec<_>>())
+                fold_binary(_state.user(), head, tail.into_iter().collect::<Vec<_>>())
             }
 
         rule cmp_head_tail -> (BinaryOp, Expr, Span) @= op:cmp_op e:head_add -> { (op, e, Span::from(_span)) }
 
         rule head_add -> Expr =
-            head:head_mul tail:head_add_tail* -> { fold_binary(head, tail) }
+            head:head_mul tail:head_add_tail* -> { fold_binary(_state.user(), head, tail) }
 
         rule head_add_tail -> (BinaryOp, Expr, Span) @= op:add_op e:head_mul -> { (op, e, Span::from(_span)) }
 
         rule head_mul -> Expr =
-            head:head_cast tail:head_mul_tail* -> { fold_binary(head, tail) }
+            head:head_cast tail:head_mul_tail* -> { fold_binary(_state.user(), head, tail) }
 
         rule head_mul_tail -> (BinaryOp, Expr, Span) @= op:mul_op e:head_cast -> { (op, e, Span::from(_span)) }
 
@@ -3018,17 +3099,18 @@ grammar! {
                 casts.into_iter().fold(head, |expr, ty| Expr::Cast {
                     expr: Box::new(expr),
                     ty,
+                    id: _state.user().id(),
                 })
             }
 
         rule head_unary -> Expr =
             op:unary_op e:head_unary -> {
-                Expr::Unary { op, expr: Box::new(e) }
+                Expr::Unary { op, expr: Box::new(e), id: _state.user().id() }
             }
           | e:head_postfix -> { e }
 
         rule head_postfix -> Expr =
-            base:head_primary tail:postfix_tail* -> { fold_postfix(base, tail) }
+            base:head_primary tail:postfix_tail* -> { fold_postfix(_state.user(), base, tail) }
 
         // **`primary_expr` minus the forms a `{` begins, and nothing else**
         // ([ADR-301](../../../../docs/specification/adr/adr-301.md) D4). What is
@@ -3077,7 +3159,7 @@ grammar! {
             "(" head:expr tail:call_args_tail+ ","? ")" -> {
                 let mut parts = vec![head];
                 parts.extend(tail);
-                Expr::Tuple(parts)
+                Expr::Tuple(parts, _state.user().id())
             }
 
         rule paren_expr -> Expr =
@@ -3105,7 +3187,7 @@ grammar! {
         // byte cannot tell two literals in one statement apart.
         rule list_lit -> Expr @=
             "[" items:list_items? "]" -> {
-                Expr::ListLit { items: items.unwrap_or_default(), at: crate::ast::offset(_span.start) }
+                Expr::ListLit { items: items.unwrap_or_default(), at: crate::ast::offset(_span.start), id: _state.user().id() }
             }
 
         rule list_items -> Vec<Expr> =
@@ -3128,16 +3210,16 @@ grammar! {
         // rather than *"expected `fn`"*.
         rule spawn_expr -> Expr =
             KW_SPAWN body:trailing_lambda -> {
-                Expr::Spawn { body: Box::new(body), is_move: false }
+                Expr::Spawn { body: Box::new(body), is_move: false, id: _state.user().id() }
             }
           | KW_SPAWN "(" fail("`spawn` takes a lambda. Write `spawn fn { … }`.") -> {
                 Expr::Spawn {
                     body: Box::new(Expr::Closure {
                         params: Vec::new(),
                         mutable: Vec::new(),
-                        body: Block { stmts: Vec::new() },
+                        body: Block { stmts: Vec::new() }, id: _state.user().id()
                     }),
-                    is_move: false,
+                    is_move: false, id: _state.user().id()
                 }
             }
 
@@ -3157,13 +3239,13 @@ grammar! {
                         target: grammar,
                         package: Some(first),
                         context: None,
-                        content: body.to_string(),
+                        content: body.to_string(), id: _state.user().id()
                     },
                     None => Expr::Dsl {
                         target: first,
                         package: None,
                         context: None,
-                        content: body.to_string(),
+                        content: body.to_string(), id: _state.user().id()
                     },
                 }
             }
@@ -3184,7 +3266,7 @@ grammar! {
             KW_DSL name:NAME KW_FROM fail("`dsl X from e` is no longer supported. Write \
                                            `X::rule(e)`, naming the rule you want to \
                                            start from.") -> {
-                Expr::Variable(name)
+                Expr::Variable(name, _state.user().id())
             }
 
         // Kap 3.4. The value is a `head_expr` for the reason `if`'s condition is
@@ -3192,7 +3274,7 @@ grammar! {
         // literal and take the arms for fields.
         rule match_expr -> Expr =
             KW_MATCH value:head_expr "{" arms:match_arm+ "}" -> {
-                Expr::Match { value: Box::new(value), arms }
+                Expr::Match { value: Box::new(value), arms, id: _state.user().id() }
             }
 
         // **The guard is `if` and it stands on the arm**
@@ -3213,7 +3295,7 @@ grammar! {
         rule match_guard -> Expr = KW_IF e:head_expr -> { e }
 
         rule match_arm_body -> Expr =
-            b:block -> { Expr::Block(b) }
+            b:block -> { Expr::Block(b, _state.user().id()) }
           | e:expr -> { e }
 
         // **The catch-all arm is `else`**
@@ -3260,7 +3342,7 @@ grammar! {
           | pattern_lit "..<" fail(
                 "A pattern can't use `..<`. Pattern ranges include both ends, so \
                  move the end instead: `200..299`."
-            ) -> { MatchPattern::Literal(Expr::LitInt { value: 0, negative: false }) }
+            ) -> { MatchPattern::Literal(Expr::LitInt { value: 0, negative: false, id: _state.user().id() }) }
           | l:pattern_lit -> { MatchPattern::Literal(l) }
           // **A bare tuple**, which names no type: `(0, 0)`.
           | "(" parts:match_part_list ")" -> {
@@ -3586,7 +3668,7 @@ grammar! {
                 Expr::If {
                     cond: Box::new(cond),
                     then_branch,
-                    else_branch: otherwise,
+                    else_branch: otherwise, id: _state.user().id()
                 }
             }
 
@@ -3612,7 +3694,7 @@ grammar! {
 
         // Blocks are expressions (Part I, 3.1).
         rule block_expr -> Expr =
-            b:block -> { Expr::Block(b) }
+            b:block -> { Expr::Block(b, _state.user().id()) }
 
         // Part I 8.1.1: `seq { … }` states an order the compiler cannot see
         // (ADR-292 D7). The statements inside keep the order they were written
@@ -3625,7 +3707,7 @@ grammar! {
         // a keyword and a block, and the difference is entirely in what they
         // mean.
         rule overlap_expr -> Expr =
-            KW_OVERLAP b:block -> { Expr::Overlap(b) }
+            KW_OVERLAP b:block -> { Expr::Overlap(b, _state.user().id()) }
 
         // Part II 12.4: `select { … }`, where each **arm** is a branch and the
         // first to finish wins ([ADR-292](../../../../docs/specification/adr/adr-292.md)
@@ -3635,7 +3717,7 @@ grammar! {
         // the whole of why this costs a keyword: an arm binds a name and then
         // runs a block, and no function parameter can be given that shape.
         rule select_expr -> Expr =
-            KW_SELECT "{" arms:select_arm+ "}" -> { Expr::Select(arms) }
+            KW_SELECT "{" arms:select_arm+ "}" -> { Expr::Select(arms, _state.user().id()) }
 
 
         // `head_expr` and not `expr`, for the reason `match`'s arms give: what
@@ -3665,11 +3747,11 @@ grammar! {
         // checked exactly as anything else is, and what the word buys is that
         // the boundary is visible *at the call*.
         rule unsafe_expr -> Expr =
-            KW_UNSAFE b:block -> { Expr::Unsafe(b) }
+            KW_UNSAFE b:block -> { Expr::Unsafe(b, _state.user().id()) }
 
         rule struct_lit -> Expr =
             name:type_name "{" fields:field_inits "}" -> {
-                Expr::StructLit { name, fields }
+                Expr::StructLit { name, fields, id: _state.user().id() }
             }
 
         rule field_inits -> Vec<FieldInit> =
@@ -3709,9 +3791,9 @@ grammar! {
                 let mut segments = vec![head];
                 segments.extend(tail);
                 let base = if segments.len() == 1 {
-                    Expr::Variable(segments[0])
+                    Expr::Variable(segments[0], _state.user().id())
                 } else {
-                    Expr::Path(segments)
+                    Expr::Path(segments, _state.user().id())
                 };
                 match (args, lambda) {
                     (Some((mut args, config)), lambda) => {
@@ -3719,28 +3801,28 @@ grammar! {
                         Expr::Call {
                             func: Box::new(base),
                             args,
-                            config,
+                            config, id: _state.user().id()
                         }
                     }
                     (None, Some(lambda)) => Expr::Call {
                         func: Box::new(base),
                         args: vec![lambda],
-                        config: Vec::new(),
+                        config: Vec::new(), id: _state.user().id()
                     },
                     (None, None) => base,
                 }
             }
 
         rule bool_lit -> Expr =
-            KW_TRUE -> { Expr::LitBool(true) }
-          | KW_FALSE -> { Expr::LitBool(false) }
+            KW_TRUE -> { Expr::LitBool(true, _state.user().id()) }
+          | KW_FALSE -> { Expr::LitBool(false, _state.user().id()) }
 
         // Part I 2.3. Beside `bool_lit` because it is the same kind of thing: a
         // word the grammar knows, which is why it is a reserved word
         // ([ADR-298](../../../../docs/specification/adr/adr-298.md) D1) - read
         // as a name it would be `NK1117`, and read as a name that *is* declared
         // it would be a different program.
-        rule null_lit -> Expr = KW_NULL -> { Expr::LitNull }
+        rule null_lit -> Expr = KW_NULL -> { Expr::LitNull(_state.user().id()) }
 
         // Kap 2.5. `f` before the quote is what makes a string *code* - without
         // it the braces are braces (ADR-309). UPPERCASE, so the `f` and the
@@ -3753,7 +3835,7 @@ grammar! {
         // ordinary `expr`, so every walk sees it as a child of the literal, and
         // the emitter builds the format string from the parts (D5).
         rule F_STRING -> Expr =
-            "f\"" parts:F_PART* "\"" -> { Expr::LitInterpolated { parts } }
+            "f\"" parts:F_PART* "\"" -> { Expr::LitInterpolated { parts, id: _state.user().id() } }
 
         rule F_PART -> crate::ast::FPart =
             t:F_TEXT -> { crate::ast::FPart::Text(t) }
@@ -3816,7 +3898,7 @@ grammar! {
         // `@=` for the position, as `list_lit` has it and for its reason: what
         // the literal lowers to is its use's answer (ADR-282 D4).
         rule str_lit -> Expr @=
-            s:STRING -> { Expr::LitStr { text: s, at: crate::ast::offset(_span.start) } }
+            s:STRING -> { Expr::LitStr { text: s, at: crate::ast::offset(_span.start), id: _state.user().id() } }
 
         // Its own rule rather than an alternative inside `str_lit`, and the
         // reason is the error message: a rule whose body is one sequence
@@ -3845,7 +3927,7 @@ grammar! {
           | not("'") c:any -> { c.to_string() }
 
         rule char_lit -> Expr =
-            c:CHAR -> { Expr::LitChar(c) }
+            c:CHAR -> { Expr::LitChar(c, _state.user().id()) }
 
         // **The four spellings are one rule and it is written in Rust**
         // ([ADR-285](../../../../docs/specification/adr/adr-285.md)): see

@@ -390,7 +390,9 @@ pub(crate) fn visit_expr_mut(
     s: &mut dyn FnMut(&mut Stmt, usize),
 ) {
     match expr {
-        Expr::Call { func, args, config } => {
+        Expr::Call {
+            func, args, config, ..
+        } => {
             visit_expr_mut(func, f, s);
             args.iter_mut().for_each(|a| visit_expr_mut(a, f, s));
             config
@@ -420,16 +422,16 @@ pub(crate) fn visit_expr_mut(
             visit_expr_mut(rhs, f, s);
         }
         Expr::Unary { expr, .. }
-        | Expr::Try(expr)
-        | Expr::Throw(expr)
+        | Expr::Try(expr, _)
+        | Expr::Throw(expr, _)
         | Expr::Cast { expr, .. } => visit_expr_mut(expr, f, s),
-        Expr::Return(value) => {
+        Expr::Return(value, _) => {
             if let Some(value) = &mut **value {
                 visit_expr_mut(value, f, s)
             }
         }
         Expr::Field { base, .. } | Expr::SafeField { base, .. } => visit_expr_mut(base, f, s),
-        Expr::Index { base, index } => {
+        Expr::Index { base, index, .. } => {
             visit_expr_mut(base, f, s);
             visit_expr_mut(index, f, s);
         }
@@ -437,14 +439,16 @@ pub(crate) fn visit_expr_mut(
             visit_expr_mut(start, f, s);
             visit_expr_mut(end, f, s);
         }
-        Expr::Tuple(items) | Expr::ListLit { items, .. } => {
+        Expr::Tuple(items, _) | Expr::ListLit { items, .. } => {
             items.iter_mut().for_each(|i| visit_expr_mut(i, f, s))
         }
-        Expr::Coalesce { value, fallback } => {
+        Expr::Coalesce {
+            value, fallback, ..
+        } => {
             visit_expr_mut(value, f, s);
             visit_expr_mut(fallback, f, s);
         }
-        Expr::TryCatch { expr, handler } => {
+        Expr::TryCatch { expr, handler, .. } => {
             visit_expr_mut(expr, f, s);
             visit_block_mut(handler, f, s);
         }
@@ -452,6 +456,7 @@ pub(crate) fn visit_expr_mut(
             cond,
             then_branch,
             else_branch,
+            ..
         } => {
             visit_expr_mut(cond, f, s);
             visit_block_mut(then_branch, f, s);
@@ -459,7 +464,7 @@ pub(crate) fn visit_expr_mut(
                 visit_block_mut(block, f, s);
             }
         }
-        Expr::Match { value, arms } => {
+        Expr::Match { value, arms, .. } => {
             visit_expr_mut(value, f, s);
             for arm in arms {
                 if let Some(guard) = &mut arm.guard {
@@ -483,7 +488,7 @@ pub(crate) fn visit_expr_mut(
                 }
             }
         }
-        Expr::Block(block) | Expr::Unsafe(block) | Expr::Overlap(block) => {
+        Expr::Block(block, _) | Expr::Unsafe(block, _) | Expr::Overlap(block, _) => {
             visit_block_mut(block, f, s)
         }
         Expr::Closure { body, .. } => visit_block_mut(body, f, s),
@@ -500,44 +505,34 @@ fn wrap_item(item: &mut Item, wraps: &BTreeMap<usize, usize>, into: [winnow_gram
     if wraps.is_empty() {
         return;
     }
-    // Every address is compared before any expression is replaced, so the
-    // replacement - which moves the value into a new box - cannot shift an
-    // address another comparison is still waiting for.
-    let mut marked: Vec<(*mut Expr, usize)> = Vec::new();
+    // Found by the id the parser gave it (ADR-340 D4), and replaced where the
+    // walk meets it: children are visited before their parent, so wrapping one
+    // moves nothing another comparison is still waiting for, and the wrapper
+    // takes an id of its own.
     each_block(item, &mut |block| {
         visit_block_mut(
             block,
             &mut |expr| {
-                if let Some(hand) = wraps.get(&(expr as *const Expr as usize)) {
-                    marked.push((expr as *mut Expr, *hand));
+                if let Some(hand) = wraps.get(&crate::check::value_node(expr)) {
+                    wrapped(expr, into[*hand]);
                 }
             },
             &mut |_, _| {},
         )
     });
-    // Replaced from the innermost out - children were marked before parents -
-    // so wrapping one never moves another that is still to be found: a
-    // replacement writes into the slot it found, and only what it wraps
-    // moves, into a box of its own.
-    for (at, hand) in marked {
-        each_block(item, &mut |block| {
-            visit_block_mut(
-                block,
-                &mut |expr| {
-                    if std::ptr::eq(expr as *const Expr, at as *const Expr) {
-                        let value = std::mem::replace(expr, Expr::Break);
-                        *expr = Expr::MethodCall {
-                            receiver: Box::new(value),
-                            method: into[hand],
-                            args: Vec::new(),
-                            config: Vec::new(),
-                        };
-                    }
-                },
-                &mut |_, _| {},
-            )
-        });
-    }
+}
+
+/// `expr` becomes `expr.<method>()`: the value moves into the receiver's box
+/// and the call is a node of its own.
+fn wrapped(expr: &mut Expr, method: winnow_grammar::Symbol) {
+    let value = std::mem::replace(expr, Expr::LitNull(crate::ast::NodeId::fresh()));
+    *expr = Expr::MethodCall {
+        receiver: Box::new(value),
+        method,
+        args: Vec::new(),
+        config: Vec::new(),
+        id: crate::ast::NodeId::fresh(),
+    };
 }
 
 fn annotate_item(item: &mut Item, lets: &BTreeSet<usize>, text: &Type) {
@@ -600,26 +595,26 @@ fn said(tiers: &Tiers) -> Vec<String> {
 /// whose shape was recorded becomes `value.<method>()`, innermost first, as
 /// [`wrap_item`] does to the program.
 pub fn wrap_hole(hole: &mut Expr, wraps: &[(String, winnow_grammar::Symbol)]) {
-    let mut marked: Vec<(*mut Expr, winnow_grammar::Symbol)> = Vec::new();
+    // The shapes are read off the tree as it was parsed, before any wrapper
+    // changes the text of a parent; what matched is replaced by its id.
+    let mut marked: Vec<(usize, winnow_grammar::Symbol)> = Vec::new();
     let mut mark = |expr: &mut Expr| {
         let shape = crate::check::argument_shape(expr);
         if let Some((_, method)) = wraps.iter().find(|(s, _)| *s == shape) {
-            marked.push((expr as *mut Expr, *method));
+            let id = crate::check::value_node(expr);
+            // Once for an id, whatever number of nodes carry it.
+            if !marked.iter().any(|(seen, _)| *seen == id) {
+                marked.push((id, *method));
+            }
         }
     };
     visit_expr_mut(hole, &mut mark, &mut |_, _| {});
-    for (at, method) in marked {
+    for (id, method) in marked {
         visit_expr_mut(
             hole,
             &mut |expr| {
-                if std::ptr::eq(expr as *const Expr, at as *const Expr) {
-                    let value = std::mem::replace(expr, Expr::Break);
-                    *expr = Expr::MethodCall {
-                        receiver: Box::new(value),
-                        method,
-                        args: Vec::new(),
-                        config: Vec::new(),
-                    };
+                if crate::check::value_node(expr) == id {
+                    wrapped(expr, method);
                 }
             },
             &mut |_, _| {},

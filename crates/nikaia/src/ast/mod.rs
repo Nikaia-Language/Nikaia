@@ -6,6 +6,7 @@
 // what the compiler needs that the language does not say - a literal's number
 // as an `i128`, which no Nikaia number holds.
 
+pub use nikaia_std::node_id::{FIRST_BUILT, NodeId};
 pub use nikaia_std::tools::ast::*;
 
 /// The number an integer literal says, wide enough for every one of them.
@@ -24,5 +25,6 @@ pub fn int_literal(n: i128) -> Expr {
     Expr::LitInt {
         value: u64::try_from(n.unsigned_abs()).expect("a literal is as large as a u64 holds"),
         negative: n < 0,
+        id: crate::ast::NodeId::fresh(),
     }
 }

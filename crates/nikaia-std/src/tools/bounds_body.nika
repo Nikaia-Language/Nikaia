@@ -103,7 +103,7 @@ fn pushed_onto(stmt: ref Stmt, words: ref winnow_grammar::InternerContext) -> St
 
 fn variable_text(expr: ref Expr, words: ref winnow_grammar::InternerContext) -> String? {
     return match expr {
-        Expr::Variable(name) => words.resolve(name).clone(),
+        Expr::Variable(name, _) => words.resolve(name).clone(),
         else => null,
     }
 }
@@ -113,7 +113,7 @@ fn assigned_root(target: ref Expr, words: ref winnow_grammar::InternerContext) -
     return match target {
         Expr::Index { base, .. } => assigned_root(base, words),
         Expr::Field { base, .. } => assigned_root(base, words),
-        Expr::Variable(name) => words.resolve(name).clone(),
+        Expr::Variable(name, _) => words.resolve(name).clone(),
         else => null,
     }
 }
@@ -226,15 +226,15 @@ fn tally_fields(fields: ref Vec[FieldInit], ask: ref Ask, deferred: bool, words:
 fn tally_here(expr: ref Expr, ask: ref Ask, deferred: bool, words: ref winnow_grammar::InternerContext, mut tally: Tally) {
     match ask {
         Ask::Leaves => match expr {
-            Expr::Break => { tally.found = true },
-            Expr::Continue => { tally.found = true },
-            Expr::Return(_) => { tally.found = true },
-            Expr::Throw(_) => { tally.found = true },
-            Expr::Try(_) => { tally.found = true },
+            Expr::Break(_) => { tally.found = true },
+            Expr::Continue(_) => { tally.found = true },
+            Expr::Return(_, _) => { tally.found = true },
+            Expr::Throw(_, _) => { tally.found = true },
+            Expr::Try(_, _) => { tally.found = true },
             else => {},
         },
         Ask::Breaks => match expr {
-            Expr::Break => { tally.found = true },
+            Expr::Break(_) => { tally.found = true },
             else => {},
         },
         Ask::Changes(list) => match expr {
@@ -295,7 +295,7 @@ fn tally_expr(expr: ref Expr, ask: ref Ask, deferred: bool, words: ref winnow_gr
         return
     }
     match expr {
-        Expr::Match { value, arms } => {
+        Expr::Match { value, arms, .. } => {
             tally_expr(value, ask, deferred, words, tally)
             for arm in arms {
                 tally_maybe(arm.guard, ask, deferred, words, tally)
@@ -306,9 +306,9 @@ fn tally_expr(expr: ref Expr, ask: ref Ask, deferred: bool, words: ref winnow_gr
             tally_expr(start, ask, deferred, words, tally)
             tally_expr(end, ask, deferred, words, tally)
         },
-        Expr::Tuple(items) => tally_all(items, ask, deferred, words, tally),
+        Expr::Tuple(items, _) => tally_all(items, ask, deferred, words, tally),
         Expr::ListLit { items, .. } => tally_all(items, ask, deferred, words, tally),
-        Expr::LitInterpolated { parts } => {
+        Expr::LitInterpolated { parts, .. } => {
             for part in parts {
                 match part {
                     FPart::Hole { expr, .. } => tally_expr(expr, ask, deferred, words, tally),
@@ -316,12 +316,12 @@ fn tally_expr(expr: ref Expr, ask: ref Ask, deferred: bool, words: ref winnow_gr
                 }
             }
         },
-        Expr::If { cond, then_branch, else_branch } => {
+        Expr::If { cond, then_branch, else_branch, .. } => {
             tally_expr(cond, ask, deferred, words, tally)
             tally_block(then_branch, ask, deferred, words, tally)
             tally_maybe_block(else_branch, ask, deferred, words, tally)
         },
-        Expr::Call { func, args, config } => {
+        Expr::Call { func, args, config, .. } => {
             tally_expr(func, ask, deferred, words, tally)
             tally_all(args, ask, deferred, words, tally)
             tally_config(config, ask, deferred, words, tally)
@@ -345,10 +345,10 @@ fn tally_expr(expr: ref Expr, ask: ref Ask, deferred: bool, words: ref winnow_gr
             tally_fields(fields, ask, deferred, words, tally)
         },
         Expr::Unary { expr, .. } => tally_expr(expr, ask, deferred, words, tally),
-        Expr::Try(inner) => tally_expr(inner, ask, deferred, words, tally),
-        Expr::Throw(inner) => tally_expr(inner, ask, deferred, words, tally),
+        Expr::Try(inner, _) => tally_expr(inner, ask, deferred, words, tally),
+        Expr::Throw(inner, _) => tally_expr(inner, ask, deferred, words, tally),
         Expr::Cast { expr, .. } => tally_expr(expr, ask, deferred, words, tally),
-        Expr::TryCatch { expr, handler } => {
+        Expr::TryCatch { expr, handler, .. } => {
             tally_expr(expr, ask, deferred, words, tally)
             tally_block(handler, ask, deferred, words, tally)
         },
@@ -356,24 +356,24 @@ fn tally_expr(expr: ref Expr, ask: ref Ask, deferred: bool, words: ref winnow_gr
             tally_expr(lhs, ask, deferred, words, tally)
             tally_expr(rhs, ask, deferred, words, tally)
         },
-        Expr::Return(value) => tally_maybe(value, ask, deferred, words, tally),
-        Expr::Index { base, index } => {
+        Expr::Return(value, _) => tally_maybe(value, ask, deferred, words, tally),
+        Expr::Index { base, index, .. } => {
             tally_expr(base, ask, deferred, words, tally)
             tally_expr(index, ask, deferred, words, tally)
         },
-        Expr::Coalesce { value, fallback } => {
+        Expr::Coalesce { value, fallback, .. } => {
             tally_expr(value, ask, deferred, words, tally)
             tally_expr(fallback, ask, deferred, words, tally)
         },
-        Expr::Select(arms) => {
+        Expr::Select(arms, _) => {
             for arm in arms {
                 tally_expr(arm.value, ask, deferred, words, tally)
                 tally_block(arm.body, ask, true, words, tally)
             }
         },
-        Expr::Block(b) => tally_block(b, ask, deferred, words, tally),
-        Expr::Overlap(b) => tally_block(b, ask, true, words, tally),
-        Expr::Unsafe(b) => tally_block(b, ask, deferred, words, tally),
+        Expr::Block(b, _) => tally_block(b, ask, deferred, words, tally),
+        Expr::Overlap(b, _) => tally_block(b, ask, true, words, tally),
+        Expr::Unsafe(b, _) => tally_block(b, ask, deferred, words, tally),
         Expr::Closure { body, .. } => tally_block(body, ask, true, words, tally),
         else => {},
     }

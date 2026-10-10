@@ -173,7 +173,7 @@ impl CheckState {
             return
         }
         let shown: String = match receiver {
-            Expr::Variable(name) => world.words.resolve(name).clone(),
+            Expr::Variable(name, _) => world.words.resolve(name).clone(),
             else => "…",
         }
         self.findings.push(check_refusal("NK1189", span, f"To copy a value, write `.clone()`, not `.{written}()`.", ["Nikaia has one word for a copy, for text and for everything else.".clone()], f"Write `{shown}.clone()`."))

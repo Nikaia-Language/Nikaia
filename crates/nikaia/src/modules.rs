@@ -1090,7 +1090,7 @@ fn with_tests_as_functions(mut units: Vec<Unit>) -> Result<(Vec<Unit>, Vec<TestC
     let main = match main {
         Some(name) => name,
         None => match parser::parse_expression(&parsed.interner, "main")? {
-            crate::ast::Expr::Variable(name) => name,
+            crate::ast::Expr::Variable(name, _) => name,
             _ => anyhow::bail!("`main` did not parse as a name"),
         },
     };
@@ -1115,7 +1115,7 @@ fn with_tests_as_functions(mut units: Vec<Unit>) -> Result<(Vec<Unit>, Vec<TestC
             let name =
                 match parser::parse_expression(&unit.parsed.interner, &test_function(tests.len()))?
                 {
-                    crate::ast::Expr::Variable(name) => name,
+                    crate::ast::Expr::Variable(name, _) => name,
                     _ => anyhow::bail!("a test's function name did not parse as a name"),
                 };
             tests.push(TestCase {

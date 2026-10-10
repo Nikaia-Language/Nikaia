@@ -102,7 +102,7 @@ impl CheckState {
     /// answering, about memory the program did not mean to touch.
     pub fn a_length_that_may_not_fit(ref mut self, world: ref CheckWorld, written: ref String, buffer: ref Expr, span: ref Span) sync {
         let named = match buffer {
-            Expr::Variable(name) => world.words.resolve(name).clone(),
+            Expr::Variable(name, _) => world.words.resolve(name).clone(),
             else => "the buffer",
         }
         self.findings.push(check_refusal("NK1159", span, f"`{written}` takes this as the length of `{named}`, but it might be longer than the buffer.", ["C trusts the count completely, so a count longer than the buffer would read or write past its end.".clone()], f"Pass `{named}.len()`, or a constant no bigger than the buffer. An `Array[T, N]` knows its length; a `Vec[T]` doesn't until the program runs."))
@@ -122,11 +122,11 @@ impl CheckState {
 pub fn element_kind(expr: ref Expr, ty: ref Ty) -> String? sync {
     match expr {
         Expr::LitInt { .. } => return "a number",
-        Expr::LitFloat(_) => return "a number",
+        Expr::LitFloat(_, _) => return "a number",
         Expr::LitStr { .. } => return "text",
         Expr::LitInterpolated { .. } => return "text",
-        Expr::LitChar(_) => return "a character",
-        Expr::LitBool(_) => return "a `bool`",
+        Expr::LitChar(_, _) => return "a character",
+        Expr::LitBool(_, _) => return "a `bool`",
         else => {}
     }
     return match ty {

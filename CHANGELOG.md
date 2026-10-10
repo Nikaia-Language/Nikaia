@@ -8,6 +8,14 @@ or the specification. A change only to the guide, the notes, the README, the
 website, the tests, the examples or the tooling around them raises nothing and
 has no heading here; `CLAUDE.md` draws the line.
 
+## [0.0.777] — 2026-10-10
+
+**Every `Expr` node carries an id the parser gave it (ADR-340, #558, step 2).**
+- Each of the 40 variants of `Expr` ends in a `NodeId` (`nikaia_std::node_id`): a `u32` the parser counts up in the order it makes its nodes, unique within one parsed file. `id_of` answers the number. The equality of two ids is always true, so two trees that differ only in their ids are equal (D3) and `Expr` keeps its derived `PartialEq`.
+- A node the compiler builds takes `NodeId::fresh()`, a process-wide counter from 2^31 up (D2). A hole of an `f"..."` parsed after the file takes the next numbers the file has not given (`Parsed::hole`).
+- `tools/tree_build.nika`'s folds take the first of the numbers the parser set aside for them. `NodeId` prints as `NodeId` in `{:?}` (the checker's `argument_shape` is that text) and with its number in `{:#?}`.
+- `check::value_node`, the key of most tables about an expression, and the text-tier pass's wraps (`wrap_item`, `wrap_hole`) are keyed on the id instead of the address; a copy made by one reader and another made by the next now agree. The other address keys follow. Tests: `expr_ids.rs`.
+
 ## [0.0.776] — 2026-10-10
 
 **The checker's refusals about pauses, locks and build-time runs are Nikaia**

@@ -164,8 +164,8 @@ fn expression_paths(expr: ref Expr, span: ref Span, names: ref winnow_grammar::I
     match expr {
         Expr::Spawn { .. } => found.seen.push(Seen::Spawn { span: span.clone() }),
         Expr::Dsl { .. } => found.seen.push(Seen::Opaque { span: span.clone() }),
-        Expr::Overlap(_) => found.seen.push(Seen::Joins { construct: "overlap", span: span.clone() }),
-        Expr::Select(_) => found.seen.push(Seen::Joins { construct: "select", span: span.clone() }),
+        Expr::Overlap(_, _) => found.seen.push(Seen::Joins { construct: "overlap", span: span.clone() }),
+        Expr::Select(_, _) => found.seen.push(Seen::Joins { construct: "select", span: span.clone() }),
         Expr::Call { func, args, .. } => a_named_call(func, args, span, names, root_at, found),
         else => {}
     }
@@ -173,17 +173,17 @@ fn expression_paths(expr: ref Expr, span: ref Span, names: ref winnow_grammar::I
         expression_paths(hole, span, names, unaliased, holes_of, root_at, found)
     }
     match expr {
-        Expr::Path(segments) => {
+        Expr::Path(segments, _) => {
             if segments.len() > 0 {
                 found.seen.push(named_at(path_name(segments, names, unaliased), span))
             }
         }
-        Expr::Variable(name) => {
+        Expr::Variable(name, _) => {
             if found.with_names {
                 found.seen.push(Seen::Name(names.resolve(name).clone()))
             }
         }
-        Expr::Call { func, args, config } => {
+        Expr::Call { func, args, config, .. } => {
             expression_paths(func, span, names, unaliased, holes_of, root_at, found)
             for arg in args {
                 expression_paths(arg, span, names, unaliased, holes_of, root_at, found)
@@ -215,12 +215,12 @@ fn expression_paths(expr: ref Expr, span: ref Span, names: ref winnow_grammar::I
             expression_paths(rhs, span, names, unaliased, holes_of, root_at, found)
         }
         Expr::Unary { expr, .. } => expression_paths(expr, span, names, unaliased, holes_of, root_at, found),
-        Expr::Try(inner) => expression_paths(inner, span, names, unaliased, holes_of, root_at, found),
-        Expr::Throw(inner) => expression_paths(inner, span, names, unaliased, holes_of, root_at, found),
+        Expr::Try(inner, _) => expression_paths(inner, span, names, unaliased, holes_of, root_at, found),
+        Expr::Throw(inner, _) => expression_paths(inner, span, names, unaliased, holes_of, root_at, found),
         Expr::Cast { expr, .. } => expression_paths(expr, span, names, unaliased, holes_of, root_at, found),
         Expr::Field { base, .. } => expression_paths(base, span, names, unaliased, holes_of, root_at, found),
         Expr::SafeField { base, .. } => expression_paths(base, span, names, unaliased, holes_of, root_at, found),
-        Expr::Index { base, index } => {
+        Expr::Index { base, index, .. } => {
             expression_paths(base, span, names, unaliased, holes_of, root_at, found)
             expression_paths(index, span, names, unaliased, holes_of, root_at, found)
         }
@@ -228,18 +228,18 @@ fn expression_paths(expr: ref Expr, span: ref Span, names: ref winnow_grammar::I
             expression_paths(start, span, names, unaliased, holes_of, root_at, found)
             expression_paths(end, span, names, unaliased, holes_of, root_at, found)
         }
-        Expr::Tuple(parts) => {
+        Expr::Tuple(parts, _) => {
             for part in parts {
                 expression_paths(part, span, names, unaliased, holes_of, root_at, found)
             }
         }
-        Expr::Coalesce { value, fallback } => {
+        Expr::Coalesce { value, fallback, .. } => {
             expression_paths(value, span, names, unaliased, holes_of, root_at, found)
             expression_paths(fallback, span, names, unaliased, holes_of, root_at, found)
         }
         Expr::TryCatch { expr, .. } => expression_paths(expr, span, names, unaliased, holes_of, root_at, found),
         Expr::If { cond, .. } => expression_paths(cond, span, names, unaliased, holes_of, root_at, found),
-        Expr::Match { value, arms } => {
+        Expr::Match { value, arms, .. } => {
             expression_paths(value, span, names, unaliased, holes_of, root_at, found)
             for arm in arms {
                 maybe_expression_paths(arm.guard, span, names, unaliased, holes_of, root_at, found)
@@ -262,8 +262,8 @@ fn expression_paths(expr: ref Expr, span: ref Span, names: ref winnow_grammar::I
                 maybe_expression_paths(field.value, span, names, unaliased, holes_of, root_at, found)
             }
         }
-        Expr::Return(value) => maybe_expression_paths(value, span, names, unaliased, holes_of, root_at, found),
-        Expr::Select(arms) => {
+        Expr::Return(value, _) => maybe_expression_paths(value, span, names, unaliased, holes_of, root_at, found),
+        Expr::Select(arms, _) => {
             for arm in arms {
                 expression_paths(arm.value, span, names, unaliased, holes_of, root_at, found)
             }
@@ -295,11 +295,11 @@ fn statement_blocks(stmt: ref Stmt, names: ref winnow_grammar::InternerContext, 
 // included: a trailing lambda runs during the call it is given to.
 fn expression_blocks(expr: ref Expr, names: ref winnow_grammar::InternerContext, unaliased: fn(ref String) -> String sync, holes_of: fn(ref Expr) -> Vec[Expr] sync, root_at: fn(ref String) -> i64 sync, mut found: Walked) {
     match expr {
-        Expr::Block(block) => block_names(block, names, unaliased, holes_of, root_at, found),
-        Expr::Unsafe(block) => block_names(block, names, unaliased, holes_of, root_at, found),
-        Expr::Overlap(block) => block_names(block, names, unaliased, holes_of, root_at, found),
+        Expr::Block(block, _) => block_names(block, names, unaliased, holes_of, root_at, found),
+        Expr::Unsafe(block, _) => block_names(block, names, unaliased, holes_of, root_at, found),
+        Expr::Overlap(block, _) => block_names(block, names, unaliased, holes_of, root_at, found),
         Expr::Closure { body, .. } => block_names(body, names, unaliased, holes_of, root_at, found),
-        Expr::Call { func, args, config } => {
+        Expr::Call { func, args, config, .. } => {
             expression_blocks(func, names, unaliased, holes_of, root_at, found)
             for arg in args {
                 expression_blocks(arg, names, unaliased, holes_of, root_at, found)
@@ -326,23 +326,23 @@ fn expression_blocks(expr: ref Expr, names: ref winnow_grammar::InternerContext,
                 expression_blocks(setting.value, names, unaliased, holes_of, root_at, found)
             }
         }
-        Expr::If { cond, then_branch, else_branch } => {
+        Expr::If { cond, then_branch, else_branch, .. } => {
             expression_blocks(cond, names, unaliased, holes_of, root_at, found)
             block_names(then_branch, names, unaliased, holes_of, root_at, found)
             block_names(else_branch ?? return, names, unaliased, holes_of, root_at, found)
         }
-        Expr::TryCatch { expr, handler } => {
+        Expr::TryCatch { expr, handler, .. } => {
             expression_blocks(expr, names, unaliased, holes_of, root_at, found)
             block_names(handler, names, unaliased, holes_of, root_at, found)
         }
-        Expr::Match { value, arms } => {
+        Expr::Match { value, arms, .. } => {
             expression_blocks(value, names, unaliased, holes_of, root_at, found)
             for arm in arms {
                 maybe_expression_blocks(arm.guard, names, unaliased, holes_of, root_at, found)
                 expression_blocks(arm.body, names, unaliased, holes_of, root_at, found)
             }
         }
-        Expr::Select(arms) => {
+        Expr::Select(arms, _) => {
             for arm in arms {
                 expression_blocks(arm.value, names, unaliased, holes_of, root_at, found)
                 block_names(arm.body, names, unaliased, holes_of, root_at, found)
@@ -357,12 +357,12 @@ fn expression_blocks(expr: ref Expr, names: ref winnow_grammar::InternerContext,
             expression_blocks(rhs, names, unaliased, holes_of, root_at, found)
         }
         Expr::Unary { expr, .. } => expression_blocks(expr, names, unaliased, holes_of, root_at, found),
-        Expr::Try(inner) => expression_blocks(inner, names, unaliased, holes_of, root_at, found),
-        Expr::Throw(inner) => expression_blocks(inner, names, unaliased, holes_of, root_at, found),
+        Expr::Try(inner, _) => expression_blocks(inner, names, unaliased, holes_of, root_at, found),
+        Expr::Throw(inner, _) => expression_blocks(inner, names, unaliased, holes_of, root_at, found),
         Expr::Cast { expr, .. } => expression_blocks(expr, names, unaliased, holes_of, root_at, found),
         Expr::Field { base, .. } => expression_blocks(base, names, unaliased, holes_of, root_at, found),
         Expr::SafeField { base, .. } => expression_blocks(base, names, unaliased, holes_of, root_at, found),
-        Expr::Index { base, index } => {
+        Expr::Index { base, index, .. } => {
             expression_blocks(base, names, unaliased, holes_of, root_at, found)
             expression_blocks(index, names, unaliased, holes_of, root_at, found)
         }
@@ -370,12 +370,12 @@ fn expression_blocks(expr: ref Expr, names: ref winnow_grammar::InternerContext,
             expression_blocks(start, names, unaliased, holes_of, root_at, found)
             expression_blocks(end, names, unaliased, holes_of, root_at, found)
         }
-        Expr::Tuple(parts) => {
+        Expr::Tuple(parts, _) => {
             for part in parts {
                 expression_blocks(part, names, unaliased, holes_of, root_at, found)
             }
         }
-        Expr::Coalesce { value, fallback } => {
+        Expr::Coalesce { value, fallback, .. } => {
             expression_blocks(value, names, unaliased, holes_of, root_at, found)
             expression_blocks(fallback, names, unaliased, holes_of, root_at, found)
         }
@@ -395,7 +395,7 @@ fn expression_blocks(expr: ref Expr, names: ref winnow_grammar::InternerContext,
                 maybe_expression_blocks(field.value, names, unaliased, holes_of, root_at, found)
             }
         }
-        Expr::Return(value) => maybe_expression_blocks(value, names, unaliased, holes_of, root_at, found),
+        Expr::Return(value, _) => maybe_expression_blocks(value, names, unaliased, holes_of, root_at, found),
         else => {}
     }
 }
@@ -422,8 +422,8 @@ fn named_at(name: String, span: ref Span) -> Seen {
 // A call by a name or a path, as written, and what it hands a `root`.
 fn a_named_call(func: ref Expr, args: ref Vec[Expr], span: ref Span, names: ref winnow_grammar::InternerContext, root_at: fn(ref String) -> i64 sync, mut found: Walked) {
     let name = match func {
-        Expr::Variable(name) => names.resolve(name).clone(),
-        Expr::Path(segments) => written_path(names, segments),
+        Expr::Variable(name, _) => names.resolve(name).clone(),
+        Expr::Path(segments, _) => written_path(names, segments),
         else => "",
     }
     if name.len() == 0 {

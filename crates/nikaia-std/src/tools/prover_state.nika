@@ -323,7 +323,7 @@ impl ProverState {
                     given_by.insert(param.clone(), term ?? 0)
                 }
                 match arg {
-                    Expr::Variable(name) => {
+                    Expr::Variable(name, _) => {
                         let length = length_of(words.resolve(name))
                         if scope.ints.contains(length) {
                             let known = arena.var(length)
@@ -469,7 +469,7 @@ pub fn postconditions_for(mut arena: TermArena, posts: ref Vec[PostClaim], param
             args_given.insert(param.clone(), term ?? 0)
         }
         match arg {
-            Expr::Variable(name) => {
+            Expr::Variable(name, _) => {
                 let length = length_of(words.resolve(name))
                 if scope.ints.contains(length) {
                     let known = arena.var(length)

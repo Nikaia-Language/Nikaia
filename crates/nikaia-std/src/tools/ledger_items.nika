@@ -63,12 +63,12 @@ pub fn impl_parameters(words: ref winnow_grammar::InternerContext, target: ref T
 pub fn a_literal(expr: ref Expr) -> bool {
     return match expr {
         Expr::LitInt { .. } => true,
-        Expr::LitFloat(_) => true,
-        Expr::LitBool(_) => true,
+        Expr::LitFloat(_, _) => true,
+        Expr::LitBool(_, _) => true,
         Expr::LitStr { .. } => true,
-        Expr::LitChar(_) => true,
-        Expr::LitNull => true,
-        Expr::Unary { op, expr } => {
+        Expr::LitChar(_, _) => true,
+        Expr::LitNull(_) => true,
+        Expr::Unary { op, expr, .. } => {
             let negated = match op {
                 UnaryOp::Neg => true,
                 else => false,
@@ -82,7 +82,7 @@ pub fn a_literal(expr: ref Expr) -> bool {
 fn is_a_number(expr: ref Expr) -> bool {
     return match expr {
         Expr::LitInt { .. } => true,
-        Expr::LitFloat(_) => true,
+        Expr::LitFloat(_, _) => true,
         else => false,
     }
 }

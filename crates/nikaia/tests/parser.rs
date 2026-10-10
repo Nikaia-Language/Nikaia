@@ -26,7 +26,7 @@ fn test_advanced_hello_world_compilation() {
         // Verify println("Hello Nikaia")
         match &body.stmts[0].node {
             Stmt::Expr(Expr::Call { func, args, .. }) => {
-                if let Expr::Variable(fname) = &**func {
+                if let Expr::Variable(fname, _) = &**func {
                     assert_eq!(parsed.text(*fname), "println");
                 } else {
                     panic!("Expected function name");
@@ -47,6 +47,7 @@ fn test_advanced_hello_world_compilation() {
             Stmt::Expr(Expr::Spawn {
                 body: spawn_body,
                 is_move,
+                ..
             }) => {
                 assert!(!is_move, "Should not be move by default");
                 // The body is the lambda of Part I 8.2 - one form, and the
@@ -92,7 +93,7 @@ fn a_keyword_does_not_swallow_the_start_of_a_longer_word() {
         panic!("a function");
     };
     assert!(
-        matches!(&body.stmts[1].node, Stmt::Expr(Expr::Variable(name))
+        matches!(&body.stmts[1].node, Stmt::Expr(Expr::Variable(name, _))
             if parsed.text(*name) == "asfoo"),
         "`asfoo` is one name: {:?}",
         body.stmts[1].node
@@ -104,7 +105,7 @@ fn a_keyword_does_not_swallow_the_start_of_a_longer_word() {
         panic!("a function");
     };
     assert!(
-        matches!(&body.stmts[0].node, Stmt::Expr(Expr::Variable(name))
+        matches!(&body.stmts[0].node, Stmt::Expr(Expr::Variable(name, _))
             if parsed.text(*name) == "returnx"),
         "`returnx` is one name: {:?}",
         body.stmts[0].node

@@ -100,9 +100,9 @@ fn stepped(n: Integer?, heading: bool, pinned: String) -> Folded {
 /// `Folded::Nothing` for one it does not.
 pub fn constant_of(expr: ref Expr, name_is: fn(winnow_grammar::Symbol) -> Folded sync) -> Folded {
     return match expr {
-        Expr::LitInt { value, negative } => Folded::Value(Constant { value: integer(value, negative), pinned: "" }),
-        Expr::Variable(name) => name_is(name),
-        Expr::Unary { op, expr } => negated(op, expr, name_is),
+        Expr::LitInt { value, negative, .. } => Folded::Value(Constant { value: integer(value, negative), pinned: "" }),
+        Expr::Variable(name, _) => name_is(name),
+        Expr::Unary { op, expr, .. } => negated(op, expr, name_is),
         Expr::Binary { op, lhs, rhs, .. } => combined(op, lhs, rhs, name_is),
         else => Folded::Nothing,
     }

@@ -180,7 +180,7 @@ fn theirs(sets: ref collections::BTreeMap[String, collections::BTreeSet[String]]
 /// not the variant too (ADR-023 D1, ADR-280 D9).
 pub fn error_type(names: ref winnow_grammar::InternerContext, thrown: ref Expr) -> String? {
     return match thrown {
-        Expr::Path(segments) => if segments.len() > 1 { all_but_the_last(names, segments) } else { null },
+        Expr::Path(segments, _) => if segments.len() > 1 { all_but_the_last(names, segments) } else { null },
         Expr::Call { func, .. } => error_type(names, func),
         Expr::StructLit { name, .. } => struct_type(names.resolve(name)),
         else => null,
@@ -296,7 +296,7 @@ fn thrown_in(expr: ref Expr, names: ref winnow_grammar::InternerContext, holes_o
         thrown_in(hole, names, holes_of, contribution_of, in_a_handler, caught, out)
     }
     match expr {
-        Expr::Call { func, args, config } => {
+        Expr::Call { func, args, config, .. } => {
             thrown_in(func, names, holes_of, contribution_of, in_a_handler, caught, out)
             for arg in args {
                 thrown_in(arg, names, holes_of, contribution_of, in_a_handler, caught, out)
@@ -328,12 +328,12 @@ fn thrown_in(expr: ref Expr, names: ref winnow_grammar::InternerContext, holes_o
             thrown_in(rhs, names, holes_of, contribution_of, in_a_handler, caught, out)
         }
         Expr::Unary { expr, .. } => thrown_in(expr, names, holes_of, contribution_of, in_a_handler, caught, out),
-        Expr::Try(inner) => thrown_in(inner, names, holes_of, contribution_of, in_a_handler, caught, out),
-        Expr::Throw(inner) => thrown_in(inner, names, holes_of, contribution_of, in_a_handler, caught, out),
+        Expr::Try(inner, _) => thrown_in(inner, names, holes_of, contribution_of, in_a_handler, caught, out),
+        Expr::Throw(inner, _) => thrown_in(inner, names, holes_of, contribution_of, in_a_handler, caught, out),
         Expr::Cast { expr, .. } => thrown_in(expr, names, holes_of, contribution_of, in_a_handler, caught, out),
         Expr::Field { base, .. } => thrown_in(base, names, holes_of, contribution_of, in_a_handler, caught, out),
         Expr::SafeField { base, .. } => thrown_in(base, names, holes_of, contribution_of, in_a_handler, caught, out),
-        Expr::Index { base, index } => {
+        Expr::Index { base, index, .. } => {
             thrown_in(base, names, holes_of, contribution_of, in_a_handler, caught, out)
             thrown_in(index, names, holes_of, contribution_of, in_a_handler, caught, out)
         }
@@ -341,21 +341,21 @@ fn thrown_in(expr: ref Expr, names: ref winnow_grammar::InternerContext, holes_o
             thrown_in(start, names, holes_of, contribution_of, in_a_handler, caught, out)
             thrown_in(end, names, holes_of, contribution_of, in_a_handler, caught, out)
         }
-        Expr::Tuple(parts) => {
+        Expr::Tuple(parts, _) => {
             for part in parts {
                 thrown_in(part, names, holes_of, contribution_of, in_a_handler, caught, out)
             }
         }
-        Expr::Coalesce { value, fallback } => {
+        Expr::Coalesce { value, fallback, .. } => {
             thrown_in(value, names, holes_of, contribution_of, in_a_handler, caught, out)
             thrown_in(fallback, names, holes_of, contribution_of, in_a_handler, caught, out)
         }
-        Expr::TryCatch { expr, handler } => {
+        Expr::TryCatch { expr, handler, .. } => {
             let into_the_handler = caught || !passes_on(handler, names, holes_of, contribution_of)
             thrown_in(expr, names, holes_of, contribution_of, in_a_handler, into_the_handler, out)
         }
         Expr::If { cond, .. } => thrown_in(cond, names, holes_of, contribution_of, in_a_handler, caught, out),
-        Expr::Match { value, arms } => {
+        Expr::Match { value, arms, .. } => {
             thrown_in(value, names, holes_of, contribution_of, in_a_handler, caught, out)
             for arm in arms {
                 maybe_thrown_in(arm.guard, names, holes_of, contribution_of, in_a_handler, caught, out)
@@ -378,8 +378,8 @@ fn thrown_in(expr: ref Expr, names: ref winnow_grammar::InternerContext, holes_o
                 maybe_thrown_in(field.value, names, holes_of, contribution_of, in_a_handler, caught, out)
             }
         }
-        Expr::Return(value) => thrown_in(value ?? return, names, holes_of, contribution_of, in_a_handler, caught, out),
-        Expr::Select(arms) => {
+        Expr::Return(value, _) => thrown_in(value ?? return, names, holes_of, contribution_of, in_a_handler, caught, out),
+        Expr::Select(arms, _) => {
             for arm in arms {
                 thrown_in(arm.value, names, holes_of, contribution_of, in_a_handler, caught, out)
             }
@@ -396,11 +396,11 @@ fn maybe_thrown_in(expr: ref Expr?, names: ref winnow_grammar::InternerContext, 
 // included - and a `catch`'s handler, walked as one.
 fn thrown_in_blocks(expr: ref Expr, names: ref winnow_grammar::InternerContext, holes_of: fn(ref Expr) -> Vec[Expr] sync, contribution_of: fn(ref Expr) -> Contribution sync, in_a_handler: bool, mut out: Thrown) {
     match expr {
-        Expr::Block(block) => thrown_in_block(block, names, holes_of, contribution_of, in_a_handler, out),
-        Expr::Unsafe(block) => thrown_in_block(block, names, holes_of, contribution_of, in_a_handler, out),
-        Expr::Overlap(block) => thrown_in_block(block, names, holes_of, contribution_of, in_a_handler, out),
+        Expr::Block(block, _) => thrown_in_block(block, names, holes_of, contribution_of, in_a_handler, out),
+        Expr::Unsafe(block, _) => thrown_in_block(block, names, holes_of, contribution_of, in_a_handler, out),
+        Expr::Overlap(block, _) => thrown_in_block(block, names, holes_of, contribution_of, in_a_handler, out),
         Expr::Closure { body, .. } => thrown_in_block(body, names, holes_of, contribution_of, in_a_handler, out),
-        Expr::Call { func, args, config } => {
+        Expr::Call { func, args, config, .. } => {
             thrown_in_blocks(func, names, holes_of, contribution_of, in_a_handler, out)
             for arg in args {
                 thrown_in_blocks(arg, names, holes_of, contribution_of, in_a_handler, out)
@@ -431,7 +431,7 @@ fn thrown_in_blocks(expr: ref Expr, names: ref winnow_grammar::InternerContext, 
             thrown_in_block(then_branch, names, holes_of, contribution_of, in_a_handler, out)
             thrown_in_block(else_branch ?? return, names, holes_of, contribution_of, in_a_handler, out)
         }
-        Expr::TryCatch { expr, handler } => {
+        Expr::TryCatch { expr, handler, .. } => {
             thrown_in_blocks(expr, names, holes_of, contribution_of, in_a_handler, out)
             thrown_in_block(handler, names, holes_of, contribution_of, true, out)
         }
@@ -440,7 +440,7 @@ fn thrown_in_blocks(expr: ref Expr, names: ref winnow_grammar::InternerContext, 
                 thrown_in_blocks(arm.body, names, holes_of, contribution_of, in_a_handler, out)
             }
         }
-        Expr::Select(arms) => {
+        Expr::Select(arms, _) => {
             for arm in arms {
                 thrown_in_block(arm.body, names, holes_of, contribution_of, in_a_handler, out)
             }
@@ -466,7 +466,7 @@ fn a_contribution(expr: ref Expr, names: ref winnow_grammar::InternerContext, co
         // A `throw` that reached something this compiler cannot name - a
         // value from a call, say - fails; with what is the absence of a claim
         // rather than an answer.
-        Expr::Throw(thrown) => {
+        Expr::Throw(thrown, _) => {
             out.direct.insert(error_type(names, thrown) ?? "?")
         }
         else => {
@@ -485,8 +485,8 @@ fn a_contribution(expr: ref Expr, names: ref winnow_grammar::InternerContext, co
 // `throw error`, the caught error handed on.
 fn the_caught_error(expr: ref Expr, names: ref winnow_grammar::InternerContext) -> bool {
     return match expr {
-        Expr::Throw(thrown) => match thrown {
-            Expr::Variable(name) => names.resolve(name) == "error",
+        Expr::Throw(thrown, _) => match thrown {
+            Expr::Variable(name, _) => names.resolve(name) == "error",
             else => false,
         },
         else => false,

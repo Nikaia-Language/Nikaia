@@ -191,7 +191,7 @@ fn a_method_buffer(method: ref String, receiver: ref Expr) -> Buffer {
             Expr::LitStr { .. } => Buffer::None,
             Expr::LitInterpolated { .. } => Buffer::Named("String"),
             Expr::LitInt { .. } => Buffer::Named("String"),
-            Expr::LitFloat(_) => Buffer::Named("String"),
+            Expr::LitFloat(_, _) => Buffer::Named("String"),
             else => Buffer::Unknown,
         }
     }
@@ -207,8 +207,8 @@ fn a_method_buffer(method: ref String, receiver: ref Expr) -> Buffer {
 
 fn a_call_buffer(func: ref Expr, asked: ref Asked, unaliased: fn(ref String) -> String sync) -> Buffer {
     let name = match func {
-        Expr::Variable(name) => asked.names.resolve(name).clone(),
-        Expr::Path(segments) => unaliased(joined_segments(segments, asked.names)),
+        Expr::Variable(name, _) => asked.names.resolve(name).clone(),
+        Expr::Path(segments, _) => unaliased(joined_segments(segments, asked.names)),
         else => return Buffer::None,
     }
     let constructor = f"{name}::new"

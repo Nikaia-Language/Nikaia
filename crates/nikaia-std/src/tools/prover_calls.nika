@@ -73,8 +73,8 @@ pub fn may_throw(call: ref Expr, in_throwing: bool, program: ref Program, words:
 fn thrower_named(call: ref Expr, words: ref winnow_grammar::InternerContext, unaliased: fn(ref String) -> String sync) -> String? {
     return match call {
         Expr::Call { func, .. } => match func {
-            Expr::Variable(name) => words.resolve(name).clone(),
-            Expr::Path(segments) => {
+            Expr::Variable(name, _) => words.resolve(name).clone(),
+            Expr::Path(segments, _) => {
                 let mut joined: String = ""
                 for segment in segments {
                     if !joined.is_empty() {
@@ -96,7 +96,7 @@ fn thrower_named(call: ref Expr, words: ref winnow_grammar::InternerContext, una
 /// expression, not into its blocks, the holes of its literals included.
 pub fn from_outside(expr: ref Expr, tainted: ref collections::BTreeSet[String], words: ref winnow_grammar::InternerContext, library: ref Ledger, holes_of: fn(ref Expr) -> Vec[Expr] sync) -> bool {
     match expr {
-        Expr::Variable(name) => {
+        Expr::Variable(name, _) => {
             if tainted.contains(words.resolve(name)) {
                 return true
             }
@@ -115,23 +115,23 @@ pub fn from_outside(expr: ref Expr, tainted: ref collections::BTreeSet[String], 
         }
     }
     return match expr {
-        Expr::Call { func, args, config } => from_outside(func, tainted, words, library, holes_of) || any_from_outside(args, tainted, words, library, holes_of) || config_from_outside(config, tainted, words, library, holes_of),
+        Expr::Call { func, args, config, .. } => from_outside(func, tainted, words, library, holes_of) || any_from_outside(args, tainted, words, library, holes_of) || config_from_outside(config, tainted, words, library, holes_of),
         Expr::MethodCall { receiver, args, config, .. } => from_outside(receiver, tainted, words, library, holes_of) || any_from_outside(args, tainted, words, library, holes_of) || config_from_outside(config, tainted, words, library, holes_of),
         Expr::SafeMethod { receiver, args, config, .. } => from_outside(receiver, tainted, words, library, holes_of) || any_from_outside(args, tainted, words, library, holes_of) || config_from_outside(config, tainted, words, library, holes_of),
         Expr::Binary { lhs, rhs, .. } => from_outside(lhs, tainted, words, library, holes_of) || from_outside(rhs, tainted, words, library, holes_of),
         Expr::Unary { expr, .. } => from_outside(expr, tainted, words, library, holes_of),
-        Expr::Try(inner) => from_outside(inner, tainted, words, library, holes_of),
-        Expr::Throw(inner) => from_outside(inner, tainted, words, library, holes_of),
+        Expr::Try(inner, _) => from_outside(inner, tainted, words, library, holes_of),
+        Expr::Throw(inner, _) => from_outside(inner, tainted, words, library, holes_of),
         Expr::Cast { expr, .. } => from_outside(expr, tainted, words, library, holes_of),
         Expr::Field { base, .. } => from_outside(base, tainted, words, library, holes_of),
         Expr::SafeField { base, .. } => from_outside(base, tainted, words, library, holes_of),
-        Expr::Index { base, index } => from_outside(base, tainted, words, library, holes_of) || from_outside(index, tainted, words, library, holes_of),
+        Expr::Index { base, index, .. } => from_outside(base, tainted, words, library, holes_of) || from_outside(index, tainted, words, library, holes_of),
         Expr::Range { start, end, .. } => from_outside(start, tainted, words, library, holes_of) || from_outside(end, tainted, words, library, holes_of),
-        Expr::Tuple(parts) => any_from_outside(parts, tainted, words, library, holes_of),
-        Expr::Coalesce { value, fallback } => from_outside(value, tainted, words, library, holes_of) || from_outside(fallback, tainted, words, library, holes_of),
+        Expr::Tuple(parts, _) => any_from_outside(parts, tainted, words, library, holes_of),
+        Expr::Coalesce { value, fallback, .. } => from_outside(value, tainted, words, library, holes_of) || from_outside(fallback, tainted, words, library, holes_of),
         Expr::TryCatch { expr, .. } => from_outside(expr, tainted, words, library, holes_of),
         Expr::If { cond, .. } => from_outside(cond, tainted, words, library, holes_of),
-        Expr::Match { value, arms } => {
+        Expr::Match { value, arms, .. } => {
             if from_outside(value, tainted, words, library, holes_of) {
                 return true
             }
@@ -162,8 +162,8 @@ pub fn from_outside(expr: ref Expr, tainted: ref collections::BTreeSet[String], 
             }
             false
         },
-        Expr::Return(value) => maybe_from_outside(value, tainted, words, library, holes_of),
-        Expr::Select(arms) => {
+        Expr::Return(value, _) => maybe_from_outside(value, tainted, words, library, holes_of),
+        Expr::Select(arms, _) => {
             for arm in arms {
                 if from_outside(arm.value, tainted, words, library, holes_of) {
                     return true
@@ -201,8 +201,8 @@ fn config_from_outside(config: ref Vec[ConfigArg], tainted: ref collections::BTr
 /// A call's callee as `std`'s ledger keys a source: a bare name, or a path.
 fn outside_source_named(func: ref Expr, words: ref winnow_grammar::InternerContext) -> String? {
     return match func {
-        Expr::Variable(name) => words.resolve(name).clone(),
-        Expr::Path(segments) => {
+        Expr::Variable(name, _) => words.resolve(name).clone(),
+        Expr::Path(segments, _) => {
             let mut joined: String = ""
             for segment in segments {
                 if !joined.is_empty() {

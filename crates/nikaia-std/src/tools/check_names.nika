@@ -174,11 +174,11 @@ pub fn integer_named(ty: ref Ty) -> String? sync {
 pub fn is_a_literal(expr: ref Expr) -> bool sync {
     return match expr {
         Expr::LitInt { .. } => true,
-        Expr::LitFloat(_) => true,
+        Expr::LitFloat(_, _) => true,
         Expr::LitStr { .. } => true,
         Expr::LitInterpolated { .. } => true,
-        Expr::LitChar(_) => true,
-        Expr::LitBool(_) => true,
+        Expr::LitChar(_, _) => true,
+        Expr::LitBool(_, _) => true,
         else => false,
     }
 }

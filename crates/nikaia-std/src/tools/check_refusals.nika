@@ -209,7 +209,7 @@ impl CheckState {
     /// thing this checker may never do (Part III, C.4).
     pub fn nothing_declares_it(ref mut self, world: ref CheckWorld, expr: ref Expr, span: ref Span) sync {
         let name = match expr {
-            Expr::Variable(symbol) => world.words.resolve(symbol).clone(),
+            Expr::Variable(symbol, _) => world.words.resolve(symbol).clone(),
             else => return,
         }
         // A grammar's name stands where a callee stands (ADR-296 D24), so it is

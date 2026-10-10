@@ -12,7 +12,7 @@
 pub fn child_exprs_of(expr: ref Expr) -> Vec[ref Expr] {
     let mut out: Vec[ref Expr] = []
     match expr {
-        Expr::Call { func, args, config } => {
+        Expr::Call { func, args, config, .. } => {
             out.push(func)
             for arg in args {
                 out.push(arg)
@@ -44,12 +44,12 @@ pub fn child_exprs_of(expr: ref Expr) -> Vec[ref Expr] {
             out.push(rhs)
         }
         Expr::Unary { expr, .. } => out.push(expr),
-        Expr::Try(inner) => out.push(inner),
-        Expr::Throw(inner) => out.push(inner),
+        Expr::Try(inner, _) => out.push(inner),
+        Expr::Throw(inner, _) => out.push(inner),
         Expr::Cast { expr, .. } => out.push(expr),
         Expr::Field { base, .. } => out.push(base),
         Expr::SafeField { base, .. } => out.push(base),
-        Expr::Index { base, index } => {
+        Expr::Index { base, index, .. } => {
             out.push(base)
             out.push(index)
         }
@@ -57,18 +57,18 @@ pub fn child_exprs_of(expr: ref Expr) -> Vec[ref Expr] {
             out.push(start)
             out.push(end)
         }
-        Expr::Tuple(parts) => {
+        Expr::Tuple(parts, _) => {
             for part in parts {
                 out.push(part)
             }
         }
-        Expr::Coalesce { value, fallback } => {
+        Expr::Coalesce { value, fallback, .. } => {
             out.push(value)
             out.push(fallback)
         }
         Expr::TryCatch { expr, .. } => out.push(expr),
         Expr::If { cond, .. } => out.push(cond),
-        Expr::Match { value, arms } => {
+        Expr::Match { value, arms, .. } => {
             out.push(value)
             for arm in arms {
                 if arm.guard != null {
@@ -97,12 +97,12 @@ pub fn child_exprs_of(expr: ref Expr) -> Vec[ref Expr] {
                 }
             }
         }
-        Expr::Return(value) => {
+        Expr::Return(value, _) => {
             if value != null {
                 out.push(value ?? return out)
             }
         }
-        Expr::Select(arms) => {
+        Expr::Select(arms, _) => {
             for arm in arms {
                 out.push(select_value(arm))
             }
@@ -125,15 +125,15 @@ pub fn blocks_of_expr(expr: ref Expr) -> Vec[ref Block] {
         // An `unsafe` block is part of the function that writes it
         // (ADR-302 D3): it makes no boundary of its own, so what it calls,
         // the function calls.
-        Expr::Block(block) => {
+        Expr::Block(block, _) => {
             out.push(block)
             return out
         }
-        Expr::Unsafe(block) => {
+        Expr::Unsafe(block, _) => {
             out.push(block)
             return out
         }
-        Expr::Overlap(block) => {
+        Expr::Overlap(block, _) => {
             out.push(block)
             return out
         }
@@ -150,7 +150,7 @@ pub fn blocks_of_expr(expr: ref Expr) -> Vec[ref Block] {
         }
         Expr::TryCatch { handler, .. } => out.push(handler),
         // A `select` arm's body runs in this function once its value won.
-        Expr::Select(arms) => {
+        Expr::Select(arms, _) => {
             for arm in arms {
                 out.push(select_body(arm))
             }

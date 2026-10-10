@@ -577,7 +577,7 @@ fn walk_block(unit: ref Unit, asked: ref Asked, block: ref Block, tail: bool, ow
             Stmt::Assign { target, value, .. } => {
                 if mentions(unit, asked, here, value) {
                     match target {
-                        Expr::Variable(name) => {
+                        Expr::Variable(name, _) => {
                             here.carriers.insert(asked.names.resolve(name).clone())
                         }
                         else => assigned(unit, asked, target, span, here),
@@ -708,8 +708,8 @@ fn hands_back_another_buffer(unit: ref Unit, asked: ref Asked, here: ref Here, v
         // A free call names its callee with a bare name or a path; anything
         // else is code decided at run time, which no column describes.
         Expr::Call { func, args, .. } => match func {
-            Expr::Variable(name) => borrows_elsewhere(unit, asked, here, asked.names.resolve(name), null, args),
-            Expr::Path(parts) => borrows_elsewhere(unit, asked, here, joined_path(asked, parts), null, args),
+            Expr::Variable(name, _) => borrows_elsewhere(unit, asked, here, asked.names.resolve(name), null, args),
+            Expr::Path(parts, _) => borrows_elsewhere(unit, asked, here, joined_path(asked, parts), null, args),
             else => false,
         },
         else => false,
@@ -781,8 +781,8 @@ fn receiver_clear(unit: ref Unit, asked: ref Asked, here: ref Here, receiver: re
 // subject, a field of the subject, and a parameter.
 fn type_of(unit: ref Unit, asked: ref Asked, here: ref Here, receiver: ref Expr) -> Type? {
     return match receiver {
-        Expr::Variable(name) => variable_type(asked, here, asked.names.resolve(name)),
-        Expr::Field { base, name } => field_type(unit, asked, here, base, asked.names.resolve(name)),
+        Expr::Variable(name, _) => variable_type(asked, here, asked.names.resolve(name)),
+        Expr::Field { base, name, .. } => field_type(unit, asked, here, base, asked.names.resolve(name)),
         else => null,
     }
 }
@@ -819,7 +819,7 @@ fn fields_reached(unit: ref Unit, asked: ref Asked, here: ref Here, base: ref Ex
 
 fn is_self(asked: ref Asked, expr: ref Expr) -> bool {
     return match expr {
-        Expr::Variable(name) => asked.names.resolve(name) == "self",
+        Expr::Variable(name, _) => asked.names.resolve(name) == "self",
         else => false,
     }
 }
@@ -837,7 +837,7 @@ fn stores(unit: ref Unit, asked: ref Asked, expr: ref Expr, span: ref Span, own_
             handed_to(unit, asked, receiver, args, config, span, here)
             descend(unit, asked, expr, span, own_buffer, here)
         }
-        Expr::StructLit { name, fields } => {
+        Expr::StructLit { name, fields, .. } => {
             let owner = asked.names.resolve(name).clone()
             if unit.borrowing.contains(owner) {
                 let declared = unit.fields[owner]?.clone() ?? []
@@ -968,10 +968,10 @@ fn field_of_subject(unit: ref Unit, asked: ref Asked, field: ref String, span: r
 // What a call's receiver is rooted in.
 fn root(unit: ref Unit, asked: ref Asked, here: ref Here, expr: ref Expr) -> Root {
     return match expr {
-        Expr::Variable(name) => a_variable_root(unit, asked, here, name),
+        Expr::Variable(name, _) => a_variable_root(unit, asked, here, name),
         // The outer field sits inside the root one, so the root field is what
         // carries the buffer.
-        Expr::Field { base, name } => match root(unit, asked, here, base) {
+        Expr::Field { base, name, .. } => match root(unit, asked, here, base) {
             Root::Subject => Root::SubjectField(asked.names.resolve(name).clone()),
             Root::Param(param) => Root::ParamField(param, asked.names.resolve(name).clone()),
             Root::SubjectField(field) => Root::SubjectField(field),
@@ -981,7 +981,7 @@ fn root(unit: ref Unit, asked: ref Asked, here: ref Here, expr: ref Expr) -> Roo
         Expr::MethodCall { receiver, .. } => root(unit, asked, here, receiver),
         Expr::SafeMethod { receiver, .. } => root(unit, asked, here, receiver),
         Expr::Index { base, .. } => root(unit, asked, here, base),
-        Expr::Try(inner) => root(unit, asked, here, inner),
+        Expr::Try(inner, _) => root(unit, asked, here, inner),
         else => Root::Elsewhere,
     }
 }
@@ -1001,50 +1001,50 @@ fn a_variable_root(unit: ref Unit, asked: ref Asked, here: ref Here, name: winno
 // destination's declared type keeps it from mattering.
 fn mentions(unit: ref Unit, asked: ref Asked, here: ref Here, node: ref Expr) -> bool {
     return match node {
-        Expr::Variable(name) => here.carriers.contains(asked.names.resolve(name)),
+        Expr::Variable(name, _) => here.carriers.contains(asked.names.resolve(name)),
         Expr::MethodCall { receiver, args, config, .. } => mentions(unit, asked, here, receiver) || any_mentions(unit, asked, here, args) || config_mentions(unit, asked, here, config),
         Expr::SafeMethod { receiver, args, config, .. } => mentions(unit, asked, here, receiver) || any_mentions(unit, asked, here, args) || config_mentions(unit, asked, here, config),
-        Expr::Call { func, args, config } => mentions(unit, asked, here, func) || any_mentions(unit, asked, here, args) || config_mentions(unit, asked, here, config),
+        Expr::Call { func, args, config, .. } => mentions(unit, asked, here, func) || any_mentions(unit, asked, here, args) || config_mentions(unit, asked, here, config),
         Expr::Field { base, .. } => mentions(unit, asked, here, base),
         Expr::SafeField { base, .. } => mentions(unit, asked, here, base),
-        Expr::Index { base, index } => mentions(unit, asked, here, base) || mentions(unit, asked, here, index),
+        Expr::Index { base, index, .. } => mentions(unit, asked, here, base) || mentions(unit, asked, here, index),
         Expr::Binary { lhs, rhs, .. } => mentions(unit, asked, here, lhs) || mentions(unit, asked, here, rhs),
         Expr::Unary { expr, .. } => mentions(unit, asked, here, expr),
-        Expr::Try(inner) => mentions(unit, asked, here, inner),
-        Expr::Throw(inner) => mentions(unit, asked, here, inner),
+        Expr::Try(inner, _) => mentions(unit, asked, here, inner),
+        Expr::Throw(inner, _) => mentions(unit, asked, here, inner),
         Expr::Cast { expr, .. } => mentions(unit, asked, here, expr),
         Expr::Spawn { body, .. } => mentions(unit, asked, here, body),
-        Expr::Coalesce { value, fallback } => mentions(unit, asked, here, value) || mentions(unit, asked, here, fallback),
+        Expr::Coalesce { value, fallback, .. } => mentions(unit, asked, here, value) || mentions(unit, asked, here, fallback),
         Expr::Range { start, end, .. } => mentions(unit, asked, here, start) || mentions(unit, asked, here, end),
-        Expr::Tuple(parts) => any_mentions(unit, asked, here, parts),
+        Expr::Tuple(parts, _) => any_mentions(unit, asked, here, parts),
         Expr::ListLit { items, .. } => any_mentions(unit, asked, here, items),
-        Expr::Return(value) => maybe_mentions(unit, asked, here, value),
+        Expr::Return(value, _) => maybe_mentions(unit, asked, here, value),
         Expr::StructLit { fields, .. } => fields_mention(unit, asked, here, fields),
         // A copy carries what it did not name (ADR-118 D3).
         Expr::With { base, fields, .. } => mentions(unit, asked, here, base) || fields_mention(unit, asked, here, fields),
-        Expr::Match { value, arms } => mentions(unit, asked, here, value) || arms_mention(unit, asked, here, arms),
-        Expr::If { cond, then_branch, else_branch } => mentions(unit, asked, here, cond) || block_mentions(unit, asked, here, then_branch) || maybe_block_mentions(unit, asked, here, else_branch),
-        Expr::Block(block) => block_mentions(unit, asked, here, block),
-        Expr::Unsafe(block) => block_mentions(unit, asked, here, block),
-        Expr::Overlap(block) => block_mentions(unit, asked, here, block),
+        Expr::Match { value, arms, .. } => mentions(unit, asked, here, value) || arms_mention(unit, asked, here, arms),
+        Expr::If { cond, then_branch, else_branch, .. } => mentions(unit, asked, here, cond) || block_mentions(unit, asked, here, then_branch) || maybe_block_mentions(unit, asked, here, else_branch),
+        Expr::Block(block, _) => block_mentions(unit, asked, here, block),
+        Expr::Unsafe(block, _) => block_mentions(unit, asked, here, block),
+        Expr::Overlap(block, _) => block_mentions(unit, asked, here, block),
         Expr::Closure { body, .. } => block_mentions(unit, asked, here, body),
         // An arm holds both: what is raced is an expression, and what runs if
         // it wins is a block (ADR-292 D12).
-        Expr::Select(arms) => select_mentions(unit, asked, here, arms),
-        Expr::TryCatch { expr, handler } => mentions(unit, asked, here, expr) || block_mentions(unit, asked, here, handler),
-        Expr::Break => false,
-        Expr::Continue => false,
+        Expr::Select(arms, _) => select_mentions(unit, asked, here, arms),
+        Expr::TryCatch { expr, handler, .. } => mentions(unit, asked, here, expr) || block_mentions(unit, asked, here, handler),
+        Expr::Break(_) => false,
+        Expr::Continue(_) => false,
         Expr::Asm { .. } => false,
         Expr::Dsl { .. } => false,
-        Expr::Path(_) => false,
+        Expr::Path(_, _) => false,
         Expr::LitInt { .. } => false,
-        Expr::LitFloat(_) => false,
+        Expr::LitFloat(_, _) => false,
         Expr::LitStr { .. } => false,
         Expr::LitInterpolated { .. } => false,
-        Expr::LitChar(_) => false,
-        Expr::LitBool(_) => false,
+        Expr::LitChar(_, _) => false,
+        Expr::LitBool(_, _) => false,
         // `null` holds nothing, so it borrows nothing.
-        Expr::LitNull => false,
+        Expr::LitNull(_) => false,
     }
 }
 
@@ -1138,14 +1138,14 @@ fn descend(unit: ref Unit, asked: ref Asked, node: ref Expr, span: ref Span, own
             stores_all(unit, asked, args, span, own_buffer, here)
             stores_config(unit, asked, config, span, own_buffer, here)
         }
-        Expr::Call { func, args, config } => {
+        Expr::Call { func, args, config, .. } => {
             stores(unit, asked, func, span, own_buffer, here)
             stores_all(unit, asked, args, span, own_buffer, here)
             stores_config(unit, asked, config, span, own_buffer, here)
         }
         Expr::Field { base, .. } => stores(unit, asked, base, span, own_buffer, here),
         Expr::SafeField { base, .. } => stores(unit, asked, base, span, own_buffer, here),
-        Expr::Index { base, index } => {
+        Expr::Index { base, index, .. } => {
             stores(unit, asked, base, span, own_buffer, here)
             stores(unit, asked, index, span, own_buffer, here)
         }
@@ -1154,11 +1154,11 @@ fn descend(unit: ref Unit, asked: ref Asked, node: ref Expr, span: ref Span, own
             stores(unit, asked, rhs, span, own_buffer, here)
         }
         Expr::Unary { expr, .. } => stores(unit, asked, expr, span, own_buffer, here),
-        Expr::Try(inner) => stores(unit, asked, inner, span, own_buffer, here),
-        Expr::Throw(inner) => stores(unit, asked, inner, span, own_buffer, here),
+        Expr::Try(inner, _) => stores(unit, asked, inner, span, own_buffer, here),
+        Expr::Throw(inner, _) => stores(unit, asked, inner, span, own_buffer, here),
         Expr::Cast { expr, .. } => stores(unit, asked, expr, span, own_buffer, here),
         Expr::Spawn { body, .. } => stores(unit, asked, body, span, own_buffer, here),
-        Expr::Coalesce { value, fallback } => {
+        Expr::Coalesce { value, fallback, .. } => {
             stores(unit, asked, value, span, own_buffer, here)
             stores(unit, asked, fallback, span, own_buffer, here)
         }
@@ -1166,30 +1166,30 @@ fn descend(unit: ref Unit, asked: ref Asked, node: ref Expr, span: ref Span, own
             stores(unit, asked, start, span, own_buffer, here)
             stores(unit, asked, end, span, own_buffer, here)
         }
-        Expr::Tuple(parts) => stores_all(unit, asked, parts, span, own_buffer, here),
+        Expr::Tuple(parts, _) => stores_all(unit, asked, parts, span, own_buffer, here),
         Expr::ListLit { items, .. } => stores_all(unit, asked, items, span, own_buffer, here),
-        Expr::Return(value) => stores_maybe(unit, asked, value, span, own_buffer, here),
+        Expr::Return(value, _) => stores_maybe(unit, asked, value, span, own_buffer, here),
         Expr::StructLit { fields, .. } => stores_fields(unit, asked, fields, span, own_buffer, here),
         Expr::With { base, fields, .. } => {
             stores(unit, asked, base, span, own_buffer, here)
             stores_fields(unit, asked, fields, span, own_buffer, here)
         }
-        Expr::Match { value, arms } => {
+        Expr::Match { value, arms, .. } => {
             stores(unit, asked, value, span, own_buffer, here)
             for arm in arms {
                 stores(unit, asked, arm.body, span, own_buffer, here)
             }
         }
-        Expr::If { cond, then_branch, else_branch } => {
+        Expr::If { cond, then_branch, else_branch, .. } => {
             stores(unit, asked, cond, span, own_buffer, here)
             walk_block(unit, asked, then_branch, false, own_buffer, here)
             walk_maybe_block(unit, asked, else_branch, own_buffer, here)
         }
-        Expr::Block(block) => walk_block(unit, asked, block, false, own_buffer, here),
-        Expr::Unsafe(block) => walk_block(unit, asked, block, false, own_buffer, here),
-        Expr::Overlap(block) => walk_block(unit, asked, block, false, own_buffer, here),
+        Expr::Block(block, _) => walk_block(unit, asked, block, false, own_buffer, here),
+        Expr::Unsafe(block, _) => walk_block(unit, asked, block, false, own_buffer, here),
+        Expr::Overlap(block, _) => walk_block(unit, asked, block, false, own_buffer, here),
         Expr::Closure { body, .. } => walk_block(unit, asked, body, false, own_buffer, here),
-        Expr::Select(arms) => {
+        Expr::Select(arms, _) => {
             for arm in arms {
                 stores(unit, asked, arm.value, span, own_buffer, here)
             }
@@ -1197,23 +1197,23 @@ fn descend(unit: ref Unit, asked: ref Asked, node: ref Expr, span: ref Span, own
                 walk_block(unit, asked, arm.body, false, own_buffer, here)
             }
         }
-        Expr::TryCatch { expr, handler } => {
+        Expr::TryCatch { expr, handler, .. } => {
             stores(unit, asked, expr, span, own_buffer, here)
             walk_block(unit, asked, handler, false, own_buffer, here)
         }
-        Expr::Break => {}
-        Expr::Continue => {}
+        Expr::Break(_) => {}
+        Expr::Continue(_) => {}
         Expr::Asm { .. } => {}
         Expr::Dsl { .. } => {}
-        Expr::Path(_) => {}
-        Expr::Variable(_) => {}
+        Expr::Path(_, _) => {}
+        Expr::Variable(_, _) => {}
         Expr::LitInt { .. } => {}
-        Expr::LitFloat(_) => {}
+        Expr::LitFloat(_, _) => {}
         Expr::LitStr { .. } => {}
         Expr::LitInterpolated { .. } => {}
-        Expr::LitChar(_) => {}
-        Expr::LitBool(_) => {}
-        Expr::LitNull => {}
+        Expr::LitChar(_, _) => {}
+        Expr::LitBool(_, _) => {}
+        Expr::LitNull(_) => {}
     }
 }
 

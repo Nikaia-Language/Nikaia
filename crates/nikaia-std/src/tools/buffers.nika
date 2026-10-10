@@ -295,7 +295,7 @@ fn buffer_statement(stmt: ref Stmt, span: ref Span, ask: ref BufferAsk, holes_of
             let origins = origins_of(value, ask, holes_of, unaliased, walk)
             let root = root_of(ask.names, target) ?? return
             let whole = op == null && match target {
-                Expr::Variable(_) => true,
+                Expr::Variable(_, _) => true,
                 else => false,
             }
             if whole {
@@ -447,7 +447,7 @@ fn copies_text(receiver: ref Expr, ask: ref BufferAsk, walk: ref BufferWalk) -> 
     return match receiver {
         Expr::LitStr { .. } => true,
         Expr::LitInterpolated { .. } => true,
-        Expr::Variable(name) => text_local(ask.names.resolve(name), ask, walk),
+        Expr::Variable(name, _) => text_local(ask.names.resolve(name), ask, walk),
         Expr::MethodCall { receiver, method, .. } => match ask.names.resolve(method) == "trim" || ask.names.resolve(method) == "trim_start" || ask.names.resolve(method) == "trim_end" || ask.names.resolve(method) == "clone" {
             true => copies_text(receiver, ask, walk),
             false => false,
@@ -470,7 +470,7 @@ fn text_local(name: ref String, ask: ref BufferAsk, walk: ref BufferWalk) -> boo
 // is: a name whose written type is something other than text.
 fn formats(receiver: ref Expr, ask: ref BufferAsk, walk: ref BufferWalk) -> bool {
     return match receiver {
-        Expr::Variable(name) => formats_local(ask.names.resolve(name), ask, walk),
+        Expr::Variable(name, _) => formats_local(ask.names.resolve(name), ask, walk),
         else => false,
     }
 }
@@ -486,7 +486,7 @@ fn formats_local(name: ref String, ask: ref BufferAsk, walk: ref BufferWalk) -> 
 // bound to one, or its copy.
 fn is_the_buffer(expr: ref Expr, ask: ref BufferAsk, walk: ref BufferWalk) -> bool {
     return match expr {
-        Expr::Variable(name) => a_buffer_local(ask.names.resolve(name), walk),
+        Expr::Variable(name, _) => a_buffer_local(ask.names.resolve(name), walk),
         Expr::MethodCall { receiver, method, .. } => match ask.names.resolve(method) == "clone" || ask.names.resolve(method) == "to_owned" || ask.names.resolve(method) == "to_string" {
             true => is_the_buffer(receiver, ask, walk),
             false => false,
@@ -500,7 +500,7 @@ fn is_the_buffer(expr: ref Expr, ask: ref BufferAsk, walk: ref BufferWalk) -> bo
 fn struct_of(expr: ref Expr, ask: ref BufferAsk, walk: ref BufferWalk) -> String? {
     let name = match expr {
         Expr::StructLit { name, .. } => ask.names.resolve(name).clone(),
-        Expr::Variable(name) => written_type_of(ask.names.resolve(name), ask, walk) ?? return null,
+        Expr::Variable(name, _) => written_type_of(ask.names.resolve(name), ask, walk) ?? return null,
         else => return null,
     }
     if ask.context.borrowing.contains(name) {
@@ -628,11 +628,11 @@ fn escape_word(escaping: ref Escape) -> String {
 // their statements do, each as a block nested in this statement.
 fn nested_blocks(expr: ref Expr, at: i64, ask: ref BufferAsk, holes_of: fn(ref Expr) -> Vec[Expr] sync, unaliased: fn(ref String) -> String sync, mut walk: BufferWalk) {
     match expr {
-        Expr::Block(block) => nested_keeping_statement(at, block, ask, holes_of, unaliased, walk),
-        Expr::Unsafe(block) => nested_keeping_statement(at, block, ask, holes_of, unaliased, walk),
-        Expr::Overlap(block) => nested_keeping_statement(at, block, ask, holes_of, unaliased, walk),
+        Expr::Block(block, _) => nested_keeping_statement(at, block, ask, holes_of, unaliased, walk),
+        Expr::Unsafe(block, _) => nested_keeping_statement(at, block, ask, holes_of, unaliased, walk),
+        Expr::Overlap(block, _) => nested_keeping_statement(at, block, ask, holes_of, unaliased, walk),
         Expr::Closure { body, .. } => nested_keeping_statement(at, body, ask, holes_of, unaliased, walk),
-        Expr::Call { func, args, config } => {
+        Expr::Call { func, args, config, .. } => {
             nested_blocks(func, at, ask, holes_of, unaliased, walk)
             for arg in args {
                 nested_blocks(arg, at, ask, holes_of, unaliased, walk)
@@ -663,7 +663,7 @@ fn nested_blocks(expr: ref Expr, at: i64, ask: ref BufferAsk, holes_of: fn(ref E
             nested_keeping_statement(at, then_branch, ask, holes_of, unaliased, walk)
             nested_keeping_statement(at, else_branch ?? return, ask, holes_of, unaliased, walk)
         }
-        Expr::TryCatch { expr, handler } => {
+        Expr::TryCatch { expr, handler, .. } => {
             nested_blocks(expr, at, ask, holes_of, unaliased, walk)
             nested_keeping_statement(at, handler, ask, holes_of, unaliased, walk)
         }
@@ -672,7 +672,7 @@ fn nested_blocks(expr: ref Expr, at: i64, ask: ref BufferAsk, holes_of: fn(ref E
                 nested_blocks(arm.body, at, ask, holes_of, unaliased, walk)
             }
         }
-        Expr::Select(arms) => {
+        Expr::Select(arms, _) => {
             for arm in arms {
                 nested_keeping_statement(at, arm.body, ask, holes_of, unaliased, walk)
             }
@@ -746,7 +746,7 @@ fn spawn_bodies(expr: ref Expr, holes_of: fn(ref Expr) -> Vec[Expr] sync, mut ou
         spawn_bodies(hole, holes_of, out)
     }
     match expr {
-        Expr::Call { func, args, config } => {
+        Expr::Call { func, args, config, .. } => {
             spawn_bodies(func, holes_of, out)
             for arg in args {
                 spawn_bodies(arg, holes_of, out)
@@ -778,12 +778,12 @@ fn spawn_bodies(expr: ref Expr, holes_of: fn(ref Expr) -> Vec[Expr] sync, mut ou
             spawn_bodies(rhs, holes_of, out)
         }
         Expr::Unary { expr, .. } => spawn_bodies(expr, holes_of, out),
-        Expr::Try(inner) => spawn_bodies(inner, holes_of, out),
-        Expr::Throw(inner) => spawn_bodies(inner, holes_of, out),
+        Expr::Try(inner, _) => spawn_bodies(inner, holes_of, out),
+        Expr::Throw(inner, _) => spawn_bodies(inner, holes_of, out),
         Expr::Cast { expr, .. } => spawn_bodies(expr, holes_of, out),
         Expr::Field { base, .. } => spawn_bodies(base, holes_of, out),
         Expr::SafeField { base, .. } => spawn_bodies(base, holes_of, out),
-        Expr::Index { base, index } => {
+        Expr::Index { base, index, .. } => {
             spawn_bodies(base, holes_of, out)
             spawn_bodies(index, holes_of, out)
         }
@@ -791,18 +791,18 @@ fn spawn_bodies(expr: ref Expr, holes_of: fn(ref Expr) -> Vec[Expr] sync, mut ou
             spawn_bodies(start, holes_of, out)
             spawn_bodies(end, holes_of, out)
         }
-        Expr::Tuple(parts) => {
+        Expr::Tuple(parts, _) => {
             for part in parts {
                 spawn_bodies(part, holes_of, out)
             }
         }
-        Expr::Coalesce { value, fallback } => {
+        Expr::Coalesce { value, fallback, .. } => {
             spawn_bodies(value, holes_of, out)
             spawn_bodies(fallback, holes_of, out)
         }
         Expr::TryCatch { expr, .. } => spawn_bodies(expr, holes_of, out),
         Expr::If { cond, .. } => spawn_bodies(cond, holes_of, out),
-        Expr::Match { value, arms } => {
+        Expr::Match { value, arms, .. } => {
             spawn_bodies(value, holes_of, out)
             for arm in arms {
                 if arm.guard != null {
@@ -827,8 +827,8 @@ fn spawn_bodies(expr: ref Expr, holes_of: fn(ref Expr) -> Vec[Expr] sync, mut ou
                 spawn_bodies(field.value ?? continue, holes_of, out)
             }
         }
-        Expr::Return(value) => spawn_bodies(value ?? return, holes_of, out),
-        Expr::Select(arms) => {
+        Expr::Return(value, _) => spawn_bodies(value ?? return, holes_of, out),
+        Expr::Select(arms, _) => {
             for arm in arms {
                 spawn_bodies(arm.value, holes_of, out)
             }
@@ -850,7 +850,7 @@ fn effects(expr: ref Expr, ask: ref BufferAsk, holes_of: fn(ref Expr) -> Vec[Exp
             origins_of(expr, ask, holes_of, unaliased, walk)
         }
         Expr::TryCatch { expr, .. } => effects(expr, ask, holes_of, unaliased, walk),
-        Expr::Try(expr) => effects(expr, ask, holes_of, unaliased, walk),
+        Expr::Try(expr, _) => effects(expr, ask, holes_of, unaliased, walk),
         else => {
             origins_of(expr, ask, holes_of, unaliased, walk)
         }
@@ -905,13 +905,13 @@ fn put_into(root: ref String, at: i64, of: ref collections::BTreeSet[(i64, Strin
 fn origins_of(expr: ref Expr, ask: ref BufferAsk, holes_of: fn(ref Expr) -> Vec[Expr] sync, unaliased: fn(ref String) -> String sync, mut walk: BufferWalk) -> collections::BTreeSet[(i64, String)] {
     let none: collections::BTreeSet[(i64, String)] = collections::BTreeSet()
     return match expr {
-        Expr::Variable(name) => origins_of_local(ask.names.resolve(name), walk),
+        Expr::Variable(name, _) => origins_of_local(ask.names.resolve(name), walk),
         Expr::MethodCall { .. } => method_origins(expr, ask, holes_of, unaliased, walk),
         Expr::SafeMethod { .. } => method_origins(expr, ask, holes_of, unaliased, walk),
         Expr::Call { func, args, .. } => call_origins(func, args, ask, holes_of, unaliased, walk),
         Expr::Field { base, .. } => origins_of(base, ask, holes_of, unaliased, walk),
         Expr::SafeField { base, .. } => origins_of(base, ask, holes_of, unaliased, walk),
-        Expr::Index { base, index } => {
+        Expr::Index { base, index, .. } => {
             origins_of(index, ask, holes_of, unaliased, walk)
             origins_of(base, ask, holes_of, unaliased, walk)
         }
@@ -944,8 +944,8 @@ fn origins_of(expr: ref Expr, ask: ref BufferAsk, holes_of: fn(ref Expr) -> Vec[
         }
         // **And into a list or a tuple whole**, for the same reason.
         Expr::ListLit { items, .. } => items_origins(items, ask, holes_of, unaliased, walk),
-        Expr::Tuple(items) => items_origins(items, ask, holes_of, unaliased, walk),
-        Expr::If { cond, then_branch, else_branch } => {
+        Expr::Tuple(items, _) => items_origins(items, ask, holes_of, unaliased, walk),
+        Expr::If { cond, then_branch, else_branch, .. } => {
             origins_of(cond, ask, holes_of, unaliased, walk)
             let mut out = tail_origins(then_branch, ask, holes_of, unaliased, walk)
             if else_branch != null {
@@ -953,7 +953,7 @@ fn origins_of(expr: ref Expr, ask: ref BufferAsk, holes_of: fn(ref Expr) -> Vec[
             }
             out
         }
-        Expr::Match { value, arms } => {
+        Expr::Match { value, arms, .. } => {
             origins_of(value, ask, holes_of, unaliased, walk)
             let mut out: collections::BTreeSet[(i64, String)] = collections::BTreeSet()
             for arm in arms {
@@ -961,17 +961,17 @@ fn origins_of(expr: ref Expr, ask: ref BufferAsk, holes_of: fn(ref Expr) -> Vec[
             }
             out
         }
-        Expr::Block(block) => tail_origins(block, ask, holes_of, unaliased, walk),
-        Expr::Unsafe(block) => tail_origins(block, ask, holes_of, unaliased, walk),
+        Expr::Block(block, _) => tail_origins(block, ask, holes_of, unaliased, walk),
+        Expr::Unsafe(block, _) => tail_origins(block, ask, holes_of, unaliased, walk),
         Expr::Unary { expr, .. } => origins_of(expr, ask, holes_of, unaliased, walk),
-        Expr::Try(inner) => origins_of(inner, ask, holes_of, unaliased, walk),
+        Expr::Try(inner, _) => origins_of(inner, ask, holes_of, unaliased, walk),
         Expr::Cast { expr, .. } => origins_of(expr, ask, holes_of, unaliased, walk),
-        Expr::TryCatch { expr, handler } => {
+        Expr::TryCatch { expr, handler, .. } => {
             let mut out = origins_of(expr, ask, holes_of, unaliased, walk)
             add_all(tail_origins(handler, ask, holes_of, unaliased, walk), out)
             out
         }
-        Expr::Coalesce { value, fallback } => {
+        Expr::Coalesce { value, fallback, .. } => {
             let mut out = origins_of(value, ask, holes_of, unaliased, walk)
             add_all(origins_of(fallback, ask, holes_of, unaliased, walk), out)
             out
@@ -1041,7 +1041,7 @@ fn method_origins(call: ref Expr, ask: ref BufferAsk, holes_of: fn(ref Expr) -> 
     }
     let mut out: collections::BTreeSet[(i64, String)] = collections::BTreeSet()
     let on_self = match receiver {
-        Expr::Variable(name) => ask.names.resolve(name) == "self",
+        Expr::Variable(name, _) => ask.names.resolve(name) == "self",
         else => false,
     }
     let keeping = keeping_method_key(ask.own, walk.target, on_self, method)
@@ -1180,16 +1180,16 @@ fn made_arguments(contract: ref FnContract, named: ref String, args: ref Vec[Exp
 // and not a literal, which is a view already.
 fn made_in_the_call(arg: ref Expr) -> bool {
     return match arg {
-        Expr::Variable(_) => false,
+        Expr::Variable(_, _) => false,
         Expr::Field { .. } => false,
         Expr::SafeField { .. } => false,
         Expr::Index { .. } => false,
-        Expr::Path(_) => false,
+        Expr::Path(_, _) => false,
         Expr::LitStr { .. } => false,
         Expr::LitInt { .. } => false,
         Expr::LitFloat { .. } => false,
-        Expr::LitBool(_) => false,
-        Expr::LitNull => false,
+        Expr::LitBool(_, _) => false,
+        Expr::LitNull(_) => false,
         else => true,
     }
 }

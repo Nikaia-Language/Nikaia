@@ -64,11 +64,11 @@ pub fn leaves_expr(expr: ref Expr, throwing: fn(ref Expr) -> bool sync, holes_of
 /// One expression, by itself.
 fn leaves_here(e: ref Expr, throwing: fn(ref Expr) -> bool sync, with_continue: bool) -> bool {
     return match e {
-        Expr::Throw(_) => true,
-        Expr::Return(_) => true,
-        Expr::Break => true,
-        Expr::Try(_) => true,
-        Expr::Continue => with_continue,
+        Expr::Throw(_, _) => true,
+        Expr::Return(_, _) => true,
+        Expr::Break(_) => true,
+        Expr::Try(_, _) => true,
+        Expr::Continue(_) => with_continue,
         Expr::Call { .. } => throwing(e),
         Expr::MethodCall { .. } => throwing(e),
         Expr::SafeMethod { .. } => throwing(e),
@@ -88,7 +88,7 @@ fn leaves_within(expr: ref Expr, throwing: fn(ref Expr) -> bool sync, holes_of: 
         }
     }
     return match expr {
-        Expr::Call { func, args, config } => {
+        Expr::Call { func, args, config, .. } => {
             if leaves_within(func, throwing, holes_of, with_continue) {
                 return true
             }
@@ -98,18 +98,18 @@ fn leaves_within(expr: ref Expr, throwing: fn(ref Expr) -> bool sync, holes_of: 
         Expr::SafeMethod { receiver, args, config, .. } => leaves_within(receiver, throwing, holes_of, with_continue) || any_leaves_within(args, throwing, holes_of, with_continue) || config_leaves_within(config, throwing, holes_of, with_continue),
         Expr::Binary { lhs, rhs, .. } => leaves_within(lhs, throwing, holes_of, with_continue) || leaves_within(rhs, throwing, holes_of, with_continue),
         Expr::Unary { expr, .. } => leaves_within(expr, throwing, holes_of, with_continue),
-        Expr::Try(inner) => leaves_within(inner, throwing, holes_of, with_continue),
-        Expr::Throw(inner) => leaves_within(inner, throwing, holes_of, with_continue),
+        Expr::Try(inner, _) => leaves_within(inner, throwing, holes_of, with_continue),
+        Expr::Throw(inner, _) => leaves_within(inner, throwing, holes_of, with_continue),
         Expr::Cast { expr, .. } => leaves_within(expr, throwing, holes_of, with_continue),
         Expr::Field { base, .. } => leaves_within(base, throwing, holes_of, with_continue),
         Expr::SafeField { base, .. } => leaves_within(base, throwing, holes_of, with_continue),
-        Expr::Index { base, index } => leaves_within(base, throwing, holes_of, with_continue) || leaves_within(index, throwing, holes_of, with_continue),
+        Expr::Index { base, index, .. } => leaves_within(base, throwing, holes_of, with_continue) || leaves_within(index, throwing, holes_of, with_continue),
         Expr::Range { start, end, .. } => leaves_within(start, throwing, holes_of, with_continue) || leaves_within(end, throwing, holes_of, with_continue),
-        Expr::Tuple(parts) => any_leaves_within(parts, throwing, holes_of, with_continue),
-        Expr::Coalesce { value, fallback } => leaves_within(value, throwing, holes_of, with_continue) || leaves_within(fallback, throwing, holes_of, with_continue),
+        Expr::Tuple(parts, _) => any_leaves_within(parts, throwing, holes_of, with_continue),
+        Expr::Coalesce { value, fallback, .. } => leaves_within(value, throwing, holes_of, with_continue) || leaves_within(fallback, throwing, holes_of, with_continue),
         Expr::TryCatch { expr, .. } => leaves_within(expr, throwing, holes_of, with_continue),
         Expr::If { cond, .. } => leaves_within(cond, throwing, holes_of, with_continue),
-        Expr::Match { value, arms } => {
+        Expr::Match { value, arms, .. } => {
             if leaves_within(value, throwing, holes_of, with_continue) {
                 return true
             }
@@ -123,8 +123,8 @@ fn leaves_within(expr: ref Expr, throwing: fn(ref Expr) -> bool sync, holes_of: 
         Expr::StructLit { fields, .. } => fields_leave_within(fields, throwing, holes_of, with_continue),
         Expr::ListLit { items, .. } => any_leaves_within(items, throwing, holes_of, with_continue),
         Expr::With { base, fields, .. } => leaves_within(base, throwing, holes_of, with_continue) || fields_leave_within(fields, throwing, holes_of, with_continue),
-        Expr::Return(value) => maybe_leaves_within(value, throwing, holes_of, with_continue),
-        Expr::Select(arms) => {
+        Expr::Return(value, _) => maybe_leaves_within(value, throwing, holes_of, with_continue),
+        Expr::Select(arms, _) => {
             for arm in arms {
                 if leaves_within(arm.value, throwing, holes_of, with_continue) {
                     return true
@@ -180,11 +180,11 @@ fn fields_leave_within(fields: ref Vec[FieldInit], throwing: fn(ref Expr) -> boo
 /// lambdas a call is handed - and whether one leaves.
 fn blocks_leave(expr: ref Expr, throwing: fn(ref Expr) -> bool sync, holes_of: fn(ref Expr) -> Vec[Expr] sync, with_continue: bool) -> bool {
     return match expr {
-        Expr::Block(block) => leaves_block(block, throwing, holes_of, with_continue),
-        Expr::Unsafe(block) => leaves_block(block, throwing, holes_of, with_continue),
-        Expr::Overlap(block) => leaves_block(block, throwing, holes_of, with_continue),
+        Expr::Block(block, _) => leaves_block(block, throwing, holes_of, with_continue),
+        Expr::Unsafe(block, _) => leaves_block(block, throwing, holes_of, with_continue),
+        Expr::Overlap(block, _) => leaves_block(block, throwing, holes_of, with_continue),
         Expr::Closure { body, .. } => leaves_block(body, throwing, holes_of, with_continue),
-        Expr::Call { func, args, config } => {
+        Expr::Call { func, args, config, .. } => {
             if blocks_leave(func, throwing, holes_of, with_continue) {
                 return true
             }
@@ -199,7 +199,7 @@ fn blocks_leave(expr: ref Expr, throwing: fn(ref Expr) -> bool sync, holes_of: f
             let otherwise = else_branch ?? return false
             leaves_block(otherwise, throwing, holes_of, with_continue)
         },
-        Expr::TryCatch { expr, handler } => blocks_leave(expr, throwing, holes_of, with_continue) || leaves_block(handler, throwing, holes_of, with_continue),
+        Expr::TryCatch { expr, handler, .. } => blocks_leave(expr, throwing, holes_of, with_continue) || leaves_block(handler, throwing, holes_of, with_continue),
         Expr::Match { arms, .. } => {
             for arm in arms {
                 if blocks_leave(arm.body, throwing, holes_of, with_continue) {
@@ -208,7 +208,7 @@ fn blocks_leave(expr: ref Expr, throwing: fn(ref Expr) -> bool sync, holes_of: f
             }
             false
         },
-        Expr::Select(arms) => {
+        Expr::Select(arms, _) => {
             for arm in arms {
                 if leaves_block(arm.body, throwing, holes_of, with_continue) {
                     return true

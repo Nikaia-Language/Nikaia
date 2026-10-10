@@ -79,8 +79,8 @@ pub fn callee_named(names: ref winnow_grammar::InternerContext, name: String, ow
 /// The name a call's target is written as, where it is a name.
 fn called_name(names: ref winnow_grammar::InternerContext, func: ref Expr) -> String? {
     return match func {
-        Expr::Variable(symbol) => names.resolve(symbol).clone(),
-        Expr::Path(segments) => written_path(names, segments),
+        Expr::Variable(symbol, _) => names.resolve(symbol).clone(),
+        Expr::Path(segments, _) => written_path(names, segments),
         else => null,
     }
 }

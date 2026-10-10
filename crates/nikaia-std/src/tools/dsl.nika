@@ -283,9 +283,9 @@ fn calls_in(expr: ref Expr, span: ref Span, words: ref winnow_grammar::InternerC
                 calls_in(arg, span, words, bound, takers, found)
             }
         }
-        Expr::Block(block) => calls_in_block(block, span, words, bound, takers, found),
-        Expr::Overlap(block) => calls_in_block(block, span, words, bound, takers, found),
-        Expr::If { cond, then_branch, else_branch } => {
+        Expr::Block(block, _) => calls_in_block(block, span, words, bound, takers, found),
+        Expr::Overlap(block, _) => calls_in_block(block, span, words, bound, takers, found),
+        Expr::If { cond, then_branch, else_branch, .. } => {
             calls_in(cond, span, words, bound, takers, found)
             calls_in_block(then_branch, span, words, bound, takers, found)
             calls_in_block(else_branch ?? return, span, words, bound, takers, found)
@@ -295,10 +295,10 @@ fn calls_in(expr: ref Expr, span: ref Span, words: ref winnow_grammar::InternerC
             calls_in(rhs, span, words, bound, takers, found)
         }
         Expr::Unary { expr, .. } => calls_in(expr, span, words, bound, takers, found),
-        Expr::Try(inner) => calls_in(inner, span, words, bound, takers, found),
+        Expr::Try(inner, _) => calls_in(inner, span, words, bound, takers, found),
         Expr::Field { base, .. } => calls_in(base, span, words, bound, takers, found),
         Expr::SafeField { base, .. } => calls_in(base, span, words, bound, takers, found),
-        Expr::TryCatch { expr, handler } => {
+        Expr::TryCatch { expr, handler, .. } => {
             calls_in(expr, span, words, bound, takers, found)
             calls_in_block(handler, span, words, bound, takers, found)
         }
@@ -356,9 +356,9 @@ fn statements_in(expr: ref Expr, words: ref winnow_grammar::InternerContext, mut
                 statements_in(arg, words, out)
             }
         }
-        Expr::Block(block) => statements_in_block(block, words, out),
-        Expr::Overlap(block) => statements_in_block(block, words, out),
-        Expr::If { cond, then_branch, else_branch } => {
+        Expr::Block(block, _) => statements_in_block(block, words, out),
+        Expr::Overlap(block, _) => statements_in_block(block, words, out),
+        Expr::If { cond, then_branch, else_branch, .. } => {
             statements_in(cond, words, out)
             statements_in_block(then_branch, words, out)
             statements_in_block(else_branch ?? return, words, out)
@@ -368,10 +368,10 @@ fn statements_in(expr: ref Expr, words: ref winnow_grammar::InternerContext, mut
             statements_in(rhs, words, out)
         }
         Expr::Unary { expr, .. } => statements_in(expr, words, out),
-        Expr::Try(inner) => statements_in(inner, words, out),
+        Expr::Try(inner, _) => statements_in(inner, words, out),
         Expr::Field { base, .. } => statements_in(base, words, out),
         Expr::SafeField { base, .. } => statements_in(base, words, out),
-        Expr::TryCatch { expr, handler } => {
+        Expr::TryCatch { expr, handler, .. } => {
             statements_in(expr, words, out)
             statements_in_block(handler, words, out)
         }
@@ -391,15 +391,15 @@ fn a_statement(target: ref String, content: ref String) -> (String, String) {
 // decides whether the call happens, never what a call is (ADR-278).
 fn a_call(expr: ref Expr, span: ref Span, words: ref winnow_grammar::InternerContext, bound: ref collections::BTreeMap[String, Vec[String]], takers: ref Vec[String], mut found: Vec[Finding]) {
     match expr {
-        Expr::MethodCall { receiver, method, args, config } => {
+        Expr::MethodCall { receiver, method, args, config, .. } => {
             let subject = bound_subject(receiver, words, bound) ?? bound_argument(args, words, bound)
             a_parameter_call(words.resolve(method), option_names(config, words), subject, span, bound, takers, found)
         }
-        Expr::SafeMethod { receiver, method, args, config } => {
+        Expr::SafeMethod { receiver, method, args, config, .. } => {
             let subject = bound_subject(receiver, words, bound) ?? bound_argument(args, words, bound)
             a_parameter_call(words.resolve(method), option_names(config, words), subject, span, bound, takers, found)
         }
-        Expr::Call { func, args, config } => {
+        Expr::Call { func, args, config, .. } => {
             a_parameter_call(callee_name(func, words), option_names(config, words), bound_argument(args, words, bound), span, bound, takers, found)
         }
         else => {}
@@ -409,7 +409,7 @@ fn a_call(expr: ref Expr, span: ref Span, words: ref winnow_grammar::InternerCon
 // The name a call is made by, or nothing for a call of anything else.
 fn callee_name(func: ref Expr, words: ref winnow_grammar::InternerContext) -> String {
     return match func {
-        Expr::Variable(name) => words.resolve(name).clone(),
+        Expr::Variable(name, _) => words.resolve(name).clone(),
         else => "",
     }
 }
@@ -417,7 +417,7 @@ fn callee_name(func: ref Expr, words: ref winnow_grammar::InternerContext) -> St
 // A subject that names a bound statement.
 fn bound_subject(subject: ref Expr, words: ref winnow_grammar::InternerContext, bound: ref collections::BTreeMap[String, Vec[String]]) -> String? {
     return match subject {
-        Expr::Variable(name) => if bound.contains_key(words.resolve(name)) { words.resolve(name).clone() } else { null },
+        Expr::Variable(name, _) => if bound.contains_key(words.resolve(name)) { words.resolve(name).clone() } else { null },
         else => null,
     }
 }

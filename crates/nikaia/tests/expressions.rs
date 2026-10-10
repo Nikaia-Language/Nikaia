@@ -150,7 +150,7 @@ fn a_number_is_not_an_identifier() {
         panic!("expected a `let`");
     };
     assert!(
-        matches!(value, Expr::LitFloat(f) if f == "1.5"),
+        matches!(value, Expr::LitFloat(f, _) if f == "1.5"),
         "{value:?}"
     );
 

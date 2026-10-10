@@ -408,7 +408,7 @@ fn bounding_range(mut walk: BoundsWalk, expr: ref Expr, facts: ref BoundsFacts, 
     }
     match expr {
         Expr::Binary { op, lhs, rhs, .. } => return bounding_range_of(walk, op, lhs, rhs, facts, context, program, words, node_of, ask),
-        Expr::Unary { op, expr } => {
+        Expr::Unary { op, expr, .. } => {
             match op {
                 UnaryOp::Neg => {
                     let inner = bounding_range(walk, expr, facts, context, program, words, node_of, ask) ?? return null
@@ -418,7 +418,7 @@ fn bounding_range(mut walk: BoundsWalk, expr: ref Expr, facts: ref BoundsFacts, 
             }
         },
         // A conversion keeps its value or stops the program.
-        Expr::Cast { expr, ty } => {
+        Expr::Cast { expr, ty, .. } => {
             if ty.generics.is_empty() {
                 let into = Range::of_type(words.resolve(ty.name)) ?? return null
                 let got = bounding_range(walk, expr, facts, context, program, words, node_of, ask) ?? return into
@@ -680,11 +680,11 @@ fn bounding_after_change(mut walk: BoundsWalk, mut facts: BoundsFacts, changed: 
 /// **`expr` as a linear term**, where it is one.
 fn bounding_lin(mut walk: BoundsWalk, expr: ref Expr, facts: ref BoundsFacts, context: ref BoundsContext, program: ref Program, words: ref winnow_grammar::InternerContext, node_of: fn(ref Expr) -> i64 sync) -> i64? {
     match expr {
-        Expr::LitInt { value, negative } => {
+        Expr::LitInt { value, negative, .. } => {
             let n = integer_as_count(integer(value, negative)) ?? return null
             return walk.arena.int(n)
         },
-        Expr::Variable(name) => {
+        Expr::Variable(name, _) => {
             let text = words.resolve(name)
             if walk.shape.constants.contains_key(text) {
                 let n = walk.shape.constants[text] ?? 0
@@ -697,12 +697,12 @@ fn bounding_lin(mut walk: BoundsWalk, expr: ref Expr, facts: ref BoundsFacts, co
         Expr::MethodCall { receiver, method, args, .. } => {
             if args.is_empty() && words.resolve(method) == "len" {
                 match receiver {
-                    Expr::Variable(name) => return bounding_length(walk, receiver, words.resolve(name), context, node_of),
+                    Expr::Variable(name, _) => return bounding_length(walk, receiver, words.resolve(name), context, node_of),
                     else => {},
                 }
             }
         },
-        Expr::Unary { op, expr } => {
+        Expr::Unary { op, expr, .. } => {
             match op {
                 UnaryOp::Neg => {
                     let a = bounding_lin(walk, expr, facts, context, program, words, node_of) ?? return null
@@ -714,7 +714,7 @@ fn bounding_lin(mut walk: BoundsWalk, expr: ref Expr, facts: ref BoundsFacts, co
         // **A conversion keeps the value or stops the program** (Part III
         // A.2: one that does not fit is checked at every build), so where the
         // program goes on, the number is the one converted.
-        Expr::Cast { expr, ty } => {
+        Expr::Cast { expr, ty, .. } => {
             if ty.generics.is_empty() && is_whole_number(words.resolve(ty.name)) {
                 if context.char_codes.contains(node_of(expr)) {
                     return bounding_code_of(walk, expr, context, words)
@@ -722,7 +722,7 @@ fn bounding_lin(mut walk: BoundsWalk, expr: ref Expr, facts: ref BoundsFacts, co
                 return bounding_lin(walk, expr, facts, context, program, words, node_of)
             }
         },
-        Expr::Call { func, args, config } => {
+        Expr::Call { func, args, config, .. } => {
             if config.is_empty() {
                 let callee = bounding_callee(func, words) ?? return null
                 let mut given: Vec[i64] = []
@@ -796,7 +796,7 @@ fn bounding_negation(mut walk: BoundsWalk, expr: ref Expr, facts: ref BoundsFact
     let node = node_of(expr)
     let ty = context.negations[node] ?? return
     let operand = match expr {
-        Expr::Unary { op, expr } => match op {
+        Expr::Unary { op, expr, .. } => match op {
             UnaryOp::Neg => expr,
             else => return,
         },
@@ -842,8 +842,8 @@ fn bounding_chars_of(iter: ref Expr, words: ref winnow_grammar::InternerContext)
 /// `text::digit_value`.
 fn bounding_callee(func: ref Expr, words: ref winnow_grammar::InternerContext) -> String? {
     return match func {
-        Expr::Variable(name) => words.resolve(name).clone(),
-        Expr::Path(parts) => {
+        Expr::Variable(name, _) => words.resolve(name).clone(),
+        Expr::Path(parts, _) => {
             let mut out: String = ""
             for part in parts {
                 if !out.is_empty() {
@@ -890,7 +890,7 @@ fn bounding_ensured(mut walk: BoundsWalk, ensured: ref Ensured, args: ref Vec[Ex
 /// The name `expr` is, where it is a bare one.
 fn bounding_variable(expr: ref Expr, words: ref winnow_grammar::InternerContext) -> String? {
     return match expr {
-        Expr::Variable(name) => words.resolve(name).clone(),
+        Expr::Variable(name, _) => words.resolve(name).clone(),
         else => null,
     }
 }
@@ -1000,15 +1000,15 @@ fn bounding_called(mut walk: BoundsWalk, wanted: ref String, given: ref Vec[i64]
 /// `expr`, a callee's expression, over `env`'s terms for its parameters.
 fn bounding_inline(mut walk: BoundsWalk, expr: ref Expr, env: ref collections::BTreeMap[String, i64], depth: i64, program: ref Program, words: ref winnow_grammar::InternerContext) -> i64? {
     match expr {
-        Expr::LitInt { value, negative } => {
+        Expr::LitInt { value, negative, .. } => {
             let n = integer_as_count(integer(value, negative)) ?? return null
             return walk.arena.int(n)
         },
-        Expr::Variable(name) => {
+        Expr::Variable(name, _) => {
             let term = env[words.resolve(name)] ?? return null
             return term
         },
-        Expr::Unary { op, expr } => {
+        Expr::Unary { op, expr, .. } => {
             match op {
                 UnaryOp::Neg => {
                     let a = bounding_inline(walk, expr, env, depth, program, words) ?? return null
@@ -1017,12 +1017,12 @@ fn bounding_inline(mut walk: BoundsWalk, expr: ref Expr, env: ref collections::B
                 else => {},
             }
         },
-        Expr::Cast { expr, ty } => {
+        Expr::Cast { expr, ty, .. } => {
             if ty.generics.is_empty() && is_whole_number(words.resolve(ty.name)) {
                 return bounding_inline(walk, expr, env, depth, program, words)
             }
         },
-        Expr::Call { func, args, config } => {
+        Expr::Call { func, args, config, .. } => {
             if config.is_empty() {
                 let callee = bounding_variable(func, words) ?? return null
                 let mut given: Vec[i64] = []
@@ -1048,8 +1048,8 @@ fn bounding_inline(mut walk: BoundsWalk, expr: ref Expr, env: ref collections::B
 /// never more.
 fn bounding_claim(mut walk: BoundsWalk, expr: ref Expr, facts: ref BoundsFacts, context: ref BoundsContext, program: ref Program, words: ref winnow_grammar::InternerContext, node_of: fn(ref Expr) -> i64 sync) -> i64? {
     match expr {
-        Expr::LitBool(b) => return walk.arena.boolean(b),
-        Expr::Unary { op, expr } => {
+        Expr::LitBool(b, _) => return walk.arena.boolean(b),
+        Expr::Unary { op, expr, .. } => {
             match op {
                 UnaryOp::Not => return bounding_denial(walk, expr, facts, context, program, words, node_of),
                 else => {},
@@ -1088,8 +1088,8 @@ fn bounding_claim(mut walk: BoundsWalk, expr: ref Expr, facts: ref BoundsFacts, 
 /// halves can be denied.
 fn bounding_denial(mut walk: BoundsWalk, expr: ref Expr, facts: ref BoundsFacts, context: ref BoundsContext, program: ref Program, words: ref winnow_grammar::InternerContext, node_of: fn(ref Expr) -> i64 sync) -> i64? {
     match expr {
-        Expr::LitBool(b) => return walk.arena.boolean(!b),
-        Expr::Unary { op, expr } => {
+        Expr::LitBool(b, _) => return walk.arena.boolean(!b),
+        Expr::Unary { op, expr, .. } => {
             match op {
                 UnaryOp::Not => return bounding_claim(walk, expr, facts, context, program, words, node_of),
                 else => {},
@@ -1196,7 +1196,7 @@ fn bounding_inside(mut walk: BoundsWalk, list: ref String, index: ref Expr, fact
 /// `base[index]`, read or written: proved where `base` is a list by name.
 fn bounding_index(mut walk: BoundsWalk, base: ref Expr, index: ref Expr, facts: ref BoundsFacts, context: ref BoundsContext, program: ref Program, words: ref winnow_grammar::InternerContext, node_of: fn(ref Expr) -> i64 sync, ask: fn(ref TermArena, ref Vec[i64], i64) -> bool sync) {
     match base {
-        Expr::Variable(list) => {
+        Expr::Variable(list, _) => {
             if bounding_inside(walk, words.resolve(list), index, facts, context, program, words, node_of, ask) {
                 walk.proven.indices.insert(node_of(base))
             }
@@ -1276,7 +1276,7 @@ fn bounding_stmt(mut walk: BoundsWalk, stmt: ref Stmt, mut facts: BoundsFacts, c
                 }
             }
             match target {
-                Expr::Variable(name) => bounding_assign(walk, facts, words.resolve(name), op, value, context, program, words, node_of, ask),
+                Expr::Variable(name, _) => bounding_assign(walk, facts, words.resolve(name), op, value, context, program, words, node_of, ask),
                 else => {},
             }
             return false
@@ -1388,7 +1388,7 @@ fn bounding_compound(mut walk: BoundsWalk, op: ref BinaryOp?, target: ref Expr, 
         return
     }
     match target {
-        Expr::Variable(_) => {},
+        Expr::Variable(_, _) => {},
         else => return,
     }
     let ty = context.arithmetic[at] ?? return
@@ -1409,7 +1409,7 @@ fn bounding_for(mut walk: BoundsWalk, bindings: ref Vec[winnow_grammar::Symbol],
     let mut closed = false
     if bindings.len() == 1 {
         match iter {
-            Expr::Range { start, end, inclusive } => {
+            Expr::Range { start, end, inclusive, .. } => {
                 low = bounding_lin(walk, start, facts, context, program, words, node_of)
                 high = bounding_lin(walk, end, facts, context, program, words, node_of)
                 counted = true
@@ -1632,7 +1632,7 @@ fn bounding_built(mut walk: BoundsWalk, mut facts: BoundsFacts, name: ref String
 /// is.
 fn bounding_place(mut walk: BoundsWalk, target: ref Expr, mut facts: BoundsFacts, context: ref BoundsContext, program: ref Program, words: ref winnow_grammar::InternerContext, node_of: fn(ref Expr) -> i64 sync, ask: fn(ref TermArena, ref Vec[i64], i64) -> bool sync) {
     match target {
-        Expr::Index { base, index } => {
+        Expr::Index { base, index, .. } => {
             bounding_place(walk, base, facts, context, program, words, node_of, ask)
             bounding_expr(walk, index, facts, context, program, words, node_of, ask)
             bounding_index(walk, base, index, facts, context, program, words, node_of, ask)
@@ -1645,15 +1645,15 @@ fn bounding_place(mut walk: BoundsWalk, target: ref Expr, mut facts: BoundsFacts
 /// An expression as a statement; whether control never goes past it.
 fn bounding_expr_leaves(mut walk: BoundsWalk, expr: ref Expr, mut facts: BoundsFacts, context: ref BoundsContext, program: ref Program, words: ref winnow_grammar::InternerContext, node_of: fn(ref Expr) -> i64 sync, ask: fn(ref TermArena, ref Vec[i64], i64) -> bool sync) -> bool {
     match expr {
-        Expr::If { cond, then_branch, else_branch } => return bounding_if_leaves(walk, cond, then_branch, else_branch, facts, context, program, words, node_of, ask),
-        Expr::Return(value) => {
+        Expr::If { cond, then_branch, else_branch, .. } => return bounding_if_leaves(walk, cond, then_branch, else_branch, facts, context, program, words, node_of, ask),
+        Expr::Return(value, _) => {
             let returned = value ?? return true
             bounding_expr(walk, returned, facts, context, program, words, node_of, ask)
             return true
         },
-        Expr::Break => return true,
-        Expr::Continue => return true,
-        Expr::Throw(value) => {
+        Expr::Break(_) => return true,
+        Expr::Continue(_) => return true,
+        Expr::Throw(value, _) => {
             bounding_expr(walk, value, facts, context, program, words, node_of, ask)
             return true
         },
@@ -1704,13 +1704,13 @@ fn bounding_expr(mut walk: BoundsWalk, expr: ref Expr, mut facts: BoundsFacts, c
     bounding_nonnegative(walk, expr, facts, context, program, words, node_of, ask)
     bounding_negation(walk, expr, facts, context, program, words, node_of, ask)
     match expr {
-        Expr::Index { base, index } => {
+        Expr::Index { base, index, .. } => {
             bounding_expr(walk, base, facts, context, program, words, node_of, ask)
             bounding_expr(walk, index, facts, context, program, words, node_of, ask)
             bounding_index(walk, base, index, facts, context, program, words, node_of, ask)
         },
         Expr::Binary { op, lhs, rhs, span, .. } => bounding_binary(walk, op, lhs, rhs, span.start as i64, facts, context, program, words, node_of, ask),
-        Expr::If { cond, then_branch, else_branch } => {
+        Expr::If { cond, then_branch, else_branch, .. } => {
             bounding_expr(walk, cond, facts, context, program, words, node_of, ask)
             let mut then_facts = facts.clone()
             bounding_assume(walk, then_facts, cond, context, program, words, node_of)
@@ -1719,9 +1719,9 @@ fn bounding_expr(mut walk: BoundsWalk, expr: ref Expr, mut facts: BoundsFacts, c
             bounding_else(walk, else_branch, cond, facts, changed, context, program, words, node_of, ask)
             bounding_after_change(walk, facts, changed)
         },
-        Expr::Block(block) => bounding_inner_block(walk, block, facts, context, program, words, node_of, ask),
-        Expr::Unsafe(block) => bounding_inner_block(walk, block, facts, context, program, words, node_of, ask),
-        Expr::Match { value, arms } => {
+        Expr::Block(block, _) => bounding_inner_block(walk, block, facts, context, program, words, node_of, ask),
+        Expr::Unsafe(block, _) => bounding_inner_block(walk, block, facts, context, program, words, node_of, ask),
+        Expr::Match { value, arms, .. } => {
             bounding_expr(walk, value, facts, context, program, words, node_of, ask)
             let mut changed = nothing_changed()
             for arm in arms {
@@ -1737,11 +1737,11 @@ fn bounding_expr(mut walk: BoundsWalk, expr: ref Expr, mut facts: BoundsFacts, c
         // Not entered: a lambda or a task may run at any later moment.
         Expr::Closure { .. } => {},
         Expr::Spawn { .. } => {},
-        Expr::Overlap(_) => {},
-        Expr::Select(_) => {},
+        Expr::Overlap(_, _) => {},
+        Expr::Select(_, _) => {},
         Expr::MethodCall { receiver, method, args, .. } => bounding_method_call(walk, receiver, words.resolve(method), args, facts, context, program, words, node_of, ask),
         Expr::SafeMethod { receiver, method, args, .. } => bounding_method_call(walk, receiver, words.resolve(method), args, facts, context, program, words, node_of, ask),
-        Expr::Call { func, args, config } => {
+        Expr::Call { func, args, config, .. } => {
             bounding_expr(walk, func, facts, context, program, words, node_of, ask)
             for arg in args {
                 bounding_expr(walk, arg, facts, context, program, words, node_of, ask)
@@ -1757,7 +1757,7 @@ fn bounding_expr(mut walk: BoundsWalk, expr: ref Expr, mut facts: BoundsFacts, c
             let callee = callee_params(func, context.around, words)
             for at in 0..<args.len() {
                 match args[at] {
-                    Expr::Variable(name) => {
+                    Expr::Variable(name, _) => {
                         if hands_on(callee, at) {
                             bounding_forget(walk, facts, words.resolve(name))
                         }
@@ -1867,13 +1867,13 @@ fn bounding_method_call(mut walk: BoundsWalk, receiver: ref Expr, method: ref St
         }
     }
     match receiver {
-        Expr::Variable(name) => bounding_method(walk, facts, words.resolve(name), method, args, context, program, words, node_of, ask),
+        Expr::Variable(name, _) => bounding_method(walk, facts, words.resolve(name), method, args, context, program, words, node_of, ask),
         else => {},
     }
     let changes_its_arguments = context.around.changing_methods.contains(method)
     for arg in args {
         match arg {
-            Expr::Variable(name) => {
+            Expr::Variable(name, _) => {
                 let text = words.resolve(name)
                 if changes_its_arguments {
                     bounding_forget(walk, facts, text)
@@ -1965,7 +1965,7 @@ fn bounding_children(mut walk: BoundsWalk, expr: ref Expr, mut facts: BoundsFact
             bounding_expr(walk, start, facts, context, program, words, node_of, ask)
             bounding_expr(walk, end, facts, context, program, words, node_of, ask)
         },
-        Expr::Tuple(items) => {
+        Expr::Tuple(items, _) => {
             for item in items {
                 bounding_expr(walk, item, facts, context, program, words, node_of, ask)
             }
@@ -1975,7 +1975,7 @@ fn bounding_children(mut walk: BoundsWalk, expr: ref Expr, mut facts: BoundsFact
                 bounding_expr(walk, item, facts, context, program, words, node_of, ask)
             }
         },
-        Expr::LitInterpolated { parts } => {
+        Expr::LitInterpolated { parts, .. } => {
             for part in parts {
                 match part {
                     FPart::Hole { expr, .. } => bounding_expr(walk, expr, facts, context, program, words, node_of, ask),
@@ -1997,15 +1997,15 @@ fn bounding_children(mut walk: BoundsWalk, expr: ref Expr, mut facts: BoundsFact
             }
         },
         Expr::Unary { expr, .. } => bounding_expr(walk, expr, facts, context, program, words, node_of, ask),
-        Expr::Try(inner) => bounding_expr(walk, inner, facts, context, program, words, node_of, ask),
-        Expr::Throw(inner) => bounding_expr(walk, inner, facts, context, program, words, node_of, ask),
+        Expr::Try(inner, _) => bounding_expr(walk, inner, facts, context, program, words, node_of, ask),
+        Expr::Throw(inner, _) => bounding_expr(walk, inner, facts, context, program, words, node_of, ask),
         Expr::Cast { expr, .. } => bounding_expr(walk, expr, facts, context, program, words, node_of, ask),
-        Expr::TryCatch { expr, handler } => {
+        Expr::TryCatch { expr, handler, .. } => {
             bounding_expr(walk, expr, facts, context, program, words, node_of, ask)
             bounding_inner_block(walk, handler, facts, context, program, words, node_of, ask)
         },
-        Expr::Return(value) => bounding_maybe_expr(walk, value, facts, context, program, words, node_of, ask),
-        Expr::Coalesce { value, fallback } => {
+        Expr::Return(value, _) => bounding_maybe_expr(walk, value, facts, context, program, words, node_of, ask),
+        Expr::Coalesce { value, fallback, .. } => {
             bounding_expr(walk, value, facts, context, program, words, node_of, ask)
             bounding_expr(walk, fallback, facts, context, program, words, node_of, ask)
         },
@@ -2051,7 +2051,7 @@ fn changed_in_block(block: ref Block, context: ref BoundsContext, words: ref win
         match stmt.node {
             Stmt::Assign { target, value, .. } => {
                 match target {
-                    Expr::Variable(name) => {
+                    Expr::Variable(name, _) => {
                         out.lengths.insert(words.resolve(name).clone())
                         out.values.insert(words.resolve(name).clone())
                     },
@@ -2092,7 +2092,7 @@ fn changed_in_all(exprs: ref Vec[Expr], context: ref BoundsContext, words: ref w
 fn changed_in_expr(expr: ref Expr, context: ref BoundsContext, words: ref winnow_grammar::InternerContext, mut out: BoundsChanged) {
     changed_by(expr, context, words, out)
     match expr {
-        Expr::Match { value, arms } => {
+        Expr::Match { value, arms, .. } => {
             changed_in_expr(value, context, words, out)
             for arm in arms {
                 changed_in_maybe(arm.guard, context, words, out)
@@ -2103,9 +2103,9 @@ fn changed_in_expr(expr: ref Expr, context: ref BoundsContext, words: ref winnow
             changed_in_expr(start, context, words, out)
             changed_in_expr(end, context, words, out)
         },
-        Expr::Tuple(items) => changed_in_all(items, context, words, out),
+        Expr::Tuple(items, _) => changed_in_all(items, context, words, out),
         Expr::ListLit { items, .. } => changed_in_all(items, context, words, out),
-        Expr::LitInterpolated { parts } => {
+        Expr::LitInterpolated { parts, .. } => {
             for part in parts {
                 match part {
                     FPart::Hole { expr, .. } => changed_in_expr(expr, context, words, out),
@@ -2113,12 +2113,12 @@ fn changed_in_expr(expr: ref Expr, context: ref BoundsContext, words: ref winnow
                 }
             }
         },
-        Expr::If { cond, then_branch, else_branch } => {
+        Expr::If { cond, then_branch, else_branch, .. } => {
             changed_in_expr(cond, context, words, out)
             changed_in_block(then_branch, context, words, out)
             changed_in_maybe_block(else_branch, context, words, out)
         },
-        Expr::Call { func, args, config } => {
+        Expr::Call { func, args, config, .. } => {
             changed_in_expr(func, context, words, out)
             changed_in_all(args, context, words, out)
             for c in config {
@@ -2154,10 +2154,10 @@ fn changed_in_expr(expr: ref Expr, context: ref BoundsContext, words: ref winnow
             }
         },
         Expr::Unary { expr, .. } => changed_in_expr(expr, context, words, out),
-        Expr::Try(inner) => changed_in_expr(inner, context, words, out),
-        Expr::Throw(inner) => changed_in_expr(inner, context, words, out),
+        Expr::Try(inner, _) => changed_in_expr(inner, context, words, out),
+        Expr::Throw(inner, _) => changed_in_expr(inner, context, words, out),
         Expr::Cast { expr, .. } => changed_in_expr(expr, context, words, out),
-        Expr::TryCatch { expr, handler } => {
+        Expr::TryCatch { expr, handler, .. } => {
             changed_in_expr(expr, context, words, out)
             changed_in_block(handler, context, words, out)
         },
@@ -2165,24 +2165,24 @@ fn changed_in_expr(expr: ref Expr, context: ref BoundsContext, words: ref winnow
             changed_in_expr(lhs, context, words, out)
             changed_in_expr(rhs, context, words, out)
         },
-        Expr::Return(value) => changed_in_maybe(value, context, words, out),
-        Expr::Index { base, index } => {
+        Expr::Return(value, _) => changed_in_maybe(value, context, words, out),
+        Expr::Index { base, index, .. } => {
             changed_in_expr(base, context, words, out)
             changed_in_expr(index, context, words, out)
         },
-        Expr::Coalesce { value, fallback } => {
+        Expr::Coalesce { value, fallback, .. } => {
             changed_in_expr(value, context, words, out)
             changed_in_expr(fallback, context, words, out)
         },
-        Expr::Select(arms) => {
+        Expr::Select(arms, _) => {
             for arm in arms {
                 changed_in_expr(arm.value, context, words, out)
                 changed_in_block(arm.body, context, words, out)
             }
         },
-        Expr::Block(b) => changed_in_block(b, context, words, out),
-        Expr::Overlap(b) => changed_in_block(b, context, words, out),
-        Expr::Unsafe(b) => changed_in_block(b, context, words, out),
+        Expr::Block(b, _) => changed_in_block(b, context, words, out),
+        Expr::Overlap(b, _) => changed_in_block(b, context, words, out),
+        Expr::Unsafe(b, _) => changed_in_block(b, context, words, out),
         Expr::Closure { body, .. } => changed_in_block(body, context, words, out),
         else => {},
     }
@@ -2203,7 +2203,7 @@ fn changed_by(expr: ref Expr, context: ref BoundsContext, words: ref winnow_gram
             let callee = callee_params(func, context.around, words)
             for at in 0..<args.len() {
                 match args[at] {
-                    Expr::Variable(name) => {
+                    Expr::Variable(name, _) => {
                         if hands_on(callee, at) {
                             out.lengths.insert(words.resolve(name).clone())
                             out.values.insert(words.resolve(name).clone())
@@ -2219,7 +2219,7 @@ fn changed_by(expr: ref Expr, context: ref BoundsContext, words: ref winnow_gram
 
 fn changed_by_method(receiver: ref Expr, method: ref String, args: ref Vec[Expr], context: ref BoundsContext, words: ref winnow_grammar::InternerContext, mut out: BoundsChanged) {
     match receiver {
-        Expr::Variable(name) => {
+        Expr::Variable(name, _) => {
             if !keeps_length(method) {
                 out.lengths.insert(words.resolve(name).clone())
             }
@@ -2229,7 +2229,7 @@ fn changed_by_method(receiver: ref Expr, method: ref String, args: ref Vec[Expr]
     let changes_its_arguments = context.around.changing_methods.contains(method)
     for arg in args {
         match arg {
-            Expr::Variable(name) => {
+            Expr::Variable(name, _) => {
                 if changes_its_arguments {
                     out.values.insert(words.resolve(name).clone())
                 }

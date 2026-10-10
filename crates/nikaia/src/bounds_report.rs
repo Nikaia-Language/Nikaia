@@ -188,7 +188,7 @@ impl Walk<'_> {
         }
         let mut found: Vec<Site> = Vec::new();
         visit_stmt(self.parsed, stmt, &mut |expr| match expr {
-            Expr::Index { base, index } if self.lists.contains(&value_node(base)) => {
+            Expr::Index { base, index, .. } if self.lists.contains(&value_node(base)) => {
                 if !self.seen.insert(value_node(base)) {
                     return;
                 }

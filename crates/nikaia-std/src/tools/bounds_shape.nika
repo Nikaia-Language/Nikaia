@@ -125,7 +125,7 @@ pub fn shape_of(args: ref Vec[FnArg], body: ref Block, pinned: ref collections::
 /// key, and `key[]` for an element of a list of lists.
 pub fn elements_key(shape: ref BodyShape, expr: ref Expr, words: ref winnow_grammar::InternerContext) -> String? {
     return match expr {
-        Expr::Variable(n) => {
+        Expr::Variable(n, _) => {
             let name = words.resolve(n)
             if shape.roots.contains(name) {
                 return name.clone()
@@ -175,7 +175,7 @@ pub fn key_root(key: ref String) -> String {
 /// The variable an index, a field or a name is rooted in.
 pub fn root_name(expr: ref Expr, words: ref winnow_grammar::InternerContext) -> String? {
     return match expr {
-        Expr::Variable(n) => words.resolve(n).clone(),
+        Expr::Variable(n, _) => words.resolve(n).clone(),
         Expr::Index { base, .. } => root_name(base, words),
         Expr::Field { base, .. } => root_name(base, words),
         else => null,
@@ -242,7 +242,7 @@ fn bind_pattern(pattern: ref MatchPattern, words: ref winnow_grammar::InternerCo
 /// The number a literal says, when it is a whole number an `i64` holds.
 fn literal_count(expr: ref Expr) -> i64? {
     return match expr {
-        Expr::LitInt { value, negative } => integer_as_count(integer(value, negative)),
+        Expr::LitInt { value, negative, .. } => integer_as_count(integer(value, negative)),
         else => null,
     }
 }
@@ -332,7 +332,7 @@ fn lose_by_call(func: ref Expr, args: ref Vec[Expr], around: ref Around, words: 
 /// names one of this program.
 fn callee_params(func: ref Expr, around: ref Around, words: ref winnow_grammar::InternerContext) -> Vec[bool]? {
     return match func {
-        Expr::Variable(name) => {
+        Expr::Variable(name, _) => {
             let params = around.functions.get(words.resolve(name)) ?? return null
             params.clone()
         },
@@ -403,7 +403,7 @@ fn look_expr_here(expr: ref Expr, look: ref Look, deferred: bool, around: ref Ar
                     bind_pattern(arm.pattern, words, seen)
                 }
             },
-            Expr::Select(arms) => {
+            Expr::Select(arms, _) => {
                 for arm in arms {
                     let n = arm.binding ?? continue
                     bind_name(words.resolve(n), seen)
@@ -418,7 +418,7 @@ fn look_expr_here(expr: ref Expr, look: ref Look, deferred: bool, around: ref Ar
             // arm names: it may run whenever.
             if deferred {
                 match expr {
-                    Expr::Variable(n) => { seen.lost.insert(words.resolve(n).clone()) },
+                    Expr::Variable(n, _) => { seen.lost.insert(words.resolve(n).clone()) },
                     else => {},
                 }
             }
@@ -490,7 +490,7 @@ fn look_fields(fields: ref Vec[FieldInit], look: ref Look, deferred: bool, aroun
 fn look_expr(expr: ref Expr, look: ref Look, deferred: bool, around: ref Around, words: ref winnow_grammar::InternerContext, mut seen: ShapeSeen) {
     look_expr_here(expr, look, deferred, around, words, seen)
     match expr {
-        Expr::Match { value, arms } => {
+        Expr::Match { value, arms, .. } => {
             look_expr(value, look, deferred, around, words, seen)
             for arm in arms {
                 look_maybe(arm.guard, look, deferred, around, words, seen)
@@ -501,9 +501,9 @@ fn look_expr(expr: ref Expr, look: ref Look, deferred: bool, around: ref Around,
             look_expr(start, look, deferred, around, words, seen)
             look_expr(end, look, deferred, around, words, seen)
         },
-        Expr::Tuple(items) => look_all(items, look, deferred, around, words, seen),
+        Expr::Tuple(items, _) => look_all(items, look, deferred, around, words, seen),
         Expr::ListLit { items, .. } => look_all(items, look, deferred, around, words, seen),
-        Expr::LitInterpolated { parts } => {
+        Expr::LitInterpolated { parts, .. } => {
             for part in parts {
                 match part {
                     FPart::Hole { expr, .. } => look_expr(expr, look, deferred, around, words, seen),
@@ -511,13 +511,13 @@ fn look_expr(expr: ref Expr, look: ref Look, deferred: bool, around: ref Around,
                 }
             }
         },
-        Expr::If { cond, then_branch, else_branch } => {
+        Expr::If { cond, then_branch, else_branch, .. } => {
             look_expr(cond, look, deferred, around, words, seen)
             look_block(then_branch, look, deferred, around, words, seen)
             let other = else_branch ?? return
             look_block(other, look, deferred, around, words, seen)
         },
-        Expr::Call { func, args, config } => {
+        Expr::Call { func, args, config, .. } => {
             look_expr(func, look, deferred, around, words, seen)
             look_all(args, look, deferred, around, words, seen)
             look_config(config, look, deferred, around, words, seen)
@@ -541,10 +541,10 @@ fn look_expr(expr: ref Expr, look: ref Look, deferred: bool, around: ref Around,
             look_fields(fields, look, deferred, around, words, seen)
         },
         Expr::Unary { expr, .. } => look_expr(expr, look, deferred, around, words, seen),
-        Expr::Try(inner) => look_expr(inner, look, deferred, around, words, seen),
-        Expr::Throw(inner) => look_expr(inner, look, deferred, around, words, seen),
+        Expr::Try(inner, _) => look_expr(inner, look, deferred, around, words, seen),
+        Expr::Throw(inner, _) => look_expr(inner, look, deferred, around, words, seen),
         Expr::Cast { expr, .. } => look_expr(expr, look, deferred, around, words, seen),
-        Expr::TryCatch { expr, handler } => {
+        Expr::TryCatch { expr, handler, .. } => {
             look_expr(expr, look, deferred, around, words, seen)
             look_block(handler, look, deferred, around, words, seen)
         },
@@ -552,16 +552,16 @@ fn look_expr(expr: ref Expr, look: ref Look, deferred: bool, around: ref Around,
             look_expr(lhs, look, deferred, around, words, seen)
             look_expr(rhs, look, deferred, around, words, seen)
         },
-        Expr::Return(value) => look_maybe(value, look, deferred, around, words, seen),
-        Expr::Index { base, index } => {
+        Expr::Return(value, _) => look_maybe(value, look, deferred, around, words, seen),
+        Expr::Index { base, index, .. } => {
             look_expr(base, look, deferred, around, words, seen)
             look_expr(index, look, deferred, around, words, seen)
         },
-        Expr::Coalesce { value, fallback } => {
+        Expr::Coalesce { value, fallback, .. } => {
             look_expr(value, look, deferred, around, words, seen)
             look_expr(fallback, look, deferred, around, words, seen)
         },
-        Expr::Select(arms) => {
+        Expr::Select(arms, _) => {
             for arm in arms {
                 look_expr(arm.value, look, deferred, around, words, seen)
             }
@@ -569,9 +569,9 @@ fn look_expr(expr: ref Expr, look: ref Look, deferred: bool, around: ref Around,
                 look_block(arm.body, look, true, around, words, seen)
             }
         },
-        Expr::Block(b) => look_block(b, look, deferred, around, words, seen),
-        Expr::Overlap(b) => look_block(b, look, true, around, words, seen),
-        Expr::Unsafe(b) => look_block(b, look, deferred, around, words, seen),
+        Expr::Block(b, _) => look_block(b, look, deferred, around, words, seen),
+        Expr::Overlap(b, _) => look_block(b, look, true, around, words, seen),
+        Expr::Unsafe(b, _) => look_block(b, look, deferred, around, words, seen),
         Expr::Closure { body, .. } => look_block(body, look, true, around, words, seen),
         else => {},
     }

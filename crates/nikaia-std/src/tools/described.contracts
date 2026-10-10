@@ -31,3 +31,33 @@ pub = true
 sync = true
 touches = []
 signature = "(self: ref winnow_grammar::InternerContext, symbol: winnow_grammar::Symbol) -> ref(self) String"
+
+# The id every expression node of the tree carries (ADR-340, #558): a `u32`
+# the parser gives, compared as equal whatever the number (D3), so a key is
+# `get`, never the id itself.
+[type."node_id::NodeId"]
+pub = true
+crosses = true
+compares = true
+copies = true
+
+# The id of a node the compiler builds after parsing: one no other node has.
+[fn."node_id::NodeId::fresh"]
+pub = true
+sync = true
+touches = []
+signature = "() -> node_id::NodeId"
+
+# The number a table is keyed on.
+[fn."node_id::NodeId::get"]
+pub = true
+sync = true
+touches = []
+signature = "(self: node_id::NodeId) -> u32"
+
+# The id with this number: what the parser gives the nodes it makes, in order.
+[fn."node_id::NodeId::numbered"]
+pub = true
+sync = true
+touches = []
+signature = "(number: u32) -> node_id::NodeId"

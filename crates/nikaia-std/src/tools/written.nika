@@ -10,12 +10,12 @@
 /// them and nowhere else.
 pub fn written_expression(names: ref winnow_grammar::InternerContext, expr: ref Expr) -> String {
     return match expr {
-        Expr::LitInt { value, negative } => if negative && value > 0 { f"-{value}" } else { f"{value}" },
-        Expr::LitFloat(text) => text.clone(),
-        Expr::LitBool(value) => if value { "true" } else { "false" },
-        Expr::LitChar(text) => f"'{text}'",
+        Expr::LitInt { value, negative, .. } => if negative && value > 0 { f"-{value}" } else { f"{value}" },
+        Expr::LitFloat(text, _) => text.clone(),
+        Expr::LitBool(value, _) => if value { "true" } else { "false" },
+        Expr::LitChar(text, _) => f"'{text}'",
         Expr::LitStr { text, .. } => f"\"{text}\"",
-        Expr::LitInterpolated { parts } => {
+        Expr::LitInterpolated { parts, .. } => {
             let mut body: String = ""
             for part in parts {
                 match part {
@@ -25,24 +25,24 @@ pub fn written_expression(names: ref winnow_grammar::InternerContext, expr: ref 
             }
             f"f\"{body}\""
         }
-        Expr::LitNull => "null",
-        Expr::Variable(name) => names.resolve(name).clone(),
-        Expr::Path(segments) => path_written(names, segments),
-        Expr::Field { base, name } => f"{operand(names, base)}.{names.resolve(name)}",
-        Expr::SafeField { base, name } => f"{operand(names, base)}?.{names.resolve(name)}",
-        Expr::Index { base, index } => f"{operand(names, base)}[{written_expression(names, index)}]",
-        Expr::Call { func, args, config } => f"{written_expression(names, func)}{call_written(names, args, config)}",
-        Expr::MethodCall { receiver, method, args, config } => f"{operand(names, receiver)}.{names.resolve(method)}{call_written(names, args, config)}",
-        Expr::SafeMethod { receiver, method, args, config } => f"{operand(names, receiver)}?.{names.resolve(method)}{call_written(names, args, config)}",
-        Expr::Unary { op, expr } => f"{unary_word(op)}{operand(names, expr)}",
+        Expr::LitNull(_) => "null",
+        Expr::Variable(name, _) => names.resolve(name).clone(),
+        Expr::Path(segments, _) => path_written(names, segments),
+        Expr::Field { base, name, .. } => f"{operand(names, base)}.{names.resolve(name)}",
+        Expr::SafeField { base, name, .. } => f"{operand(names, base)}?.{names.resolve(name)}",
+        Expr::Index { base, index, .. } => f"{operand(names, base)}[{written_expression(names, index)}]",
+        Expr::Call { func, args, config, .. } => f"{written_expression(names, func)}{call_written(names, args, config)}",
+        Expr::MethodCall { receiver, method, args, config, .. } => f"{operand(names, receiver)}.{names.resolve(method)}{call_written(names, args, config)}",
+        Expr::SafeMethod { receiver, method, args, config, .. } => f"{operand(names, receiver)}?.{names.resolve(method)}{call_written(names, args, config)}",
+        Expr::Unary { op, expr, .. } => f"{unary_word(op)}{operand(names, expr)}",
         Expr::Binary { op, lhs, rhs, .. } => {
             let here = binds(op)
             f"{side(names, lhs, here, false)} {binary_word(op)} {side(names, rhs, here, true)}"
         }
-        Expr::Coalesce { value, fallback } => f"{operand(names, value)} ?? {operand(names, fallback)}",
-        Expr::Tuple(items) => f"({all_written(names, items)})",
+        Expr::Coalesce { value, fallback, .. } => f"{operand(names, value)} ?? {operand(names, fallback)}",
+        Expr::Tuple(items, _) => f"({all_written(names, items)})",
         Expr::ListLit { items, .. } => f"[{all_written(names, items)}]",
-        Expr::Range { start, end, inclusive } => {
+        Expr::Range { start, end, inclusive, .. } => {
             let dots = if inclusive { ".." } else { "..<" }
             f"{operand(names, start)}{dots}{operand(names, end)}"
         }

@@ -254,7 +254,7 @@ impl CheckState {
     /// name is not a value, so there is nothing to confuse this with.
     pub fn grammar_entry(ref self, world: ref CheckWorld, receiver: ref Expr, method: winnow_grammar::Symbol) -> String? sync {
         return match receiver {
-            Expr::Variable(name) => self.grammar_rule(world.words.resolve(name), world.words.resolve(method)),
+            Expr::Variable(name, _) => self.grammar_rule(world.words.resolve(name), world.words.resolve(method)),
             else => null,
         }
     }

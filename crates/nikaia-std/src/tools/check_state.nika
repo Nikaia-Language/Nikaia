@@ -292,7 +292,7 @@ fn what_a_loop_does(words: ref winnow_grammar::InternerContext, block: ref Block
             }
             Stmt::Assign { target, .. } => {
                 match target {
-                    Expr::Variable(name) => {
+                    Expr::Variable(name, _) => {
                         found.revived.insert(words.resolve(name).clone())
                     }
                     else => {}
@@ -329,7 +329,7 @@ pub fn a_body_never_ends(body: ref Block) -> bool {
 
 fn a_true_literal(expr: ref Expr) -> bool {
     return match expr {
-        Expr::LitBool(value) => value,
+        Expr::LitBool(value, _) => value,
         else => false,
     }
 }

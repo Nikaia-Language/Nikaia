@@ -217,7 +217,7 @@ impl CheckState {
 /// name at all.
 pub fn names_the_argument(world: ref CheckWorld, expr: ref Expr, at: i64) -> (String, String?) sync {
     let prose: String = match expr {
-        Expr::Variable(name) => f"`{world.words.resolve(name)}`",
+        Expr::Variable(name, _) => f"`{world.words.resolve(name)}`",
         Expr::Field { name, .. } => f"the `{world.words.resolve(name)}` this passes",
         else => f"argument {at + 1}",
     }
@@ -234,8 +234,8 @@ pub fn names_the_argument(world: ref CheckWorld, expr: ref Expr, at: i64) -> (St
 /// the same polarity as the ellipsis `NK2204` prints.
 pub fn dotted_path(world: ref CheckWorld, expr: ref Expr) -> String? sync {
     return match expr {
-        Expr::Variable(name) => world.words.resolve(name).clone(),
-        Expr::Field { base, name } => dotted_field(world, base, name),
+        Expr::Variable(name, _) => world.words.resolve(name).clone(),
+        Expr::Field { base, name, .. } => dotted_field(world, base, name),
         else => null,
     }
 }

@@ -79,7 +79,7 @@ fn site_reads(expr: ref Expr, mut read: SiteReads) {
                 site_reads(arg, read)
             }
         },
-        Expr::Index { base, index } => {
+        Expr::Index { base, index, .. } => {
             match base {
                 Expr::Index { .. } => {
                     read.nested = true

@@ -16,11 +16,11 @@
 pub fn lin_term(expr: ref Expr, words: ref winnow_grammar::InternerContext, var: fn(ref String) -> bool sync, mut out: Vec[SolverTerm]) -> i64? {
     return match expr {
         // A literal no `i64` holds is outside what the solver reads.
-        Expr::LitInt { value, negative } => {
+        Expr::LitInt { value, negative, .. } => {
             let n = literal_value(value, negative) ?? return null
             built(SolverTerm::Int(n), out)
         },
-        Expr::Variable(name) => {
+        Expr::Variable(name, _) => {
             let text = words.resolve(name)
             if !var(text) {
                 return null
@@ -33,7 +33,7 @@ pub fn lin_term(expr: ref Expr, words: ref winnow_grammar::InternerContext, var:
                 return null
             }
             let length = match receiver {
-                Expr::Variable(name) => f"{words.resolve(name)}.len()",
+                Expr::Variable(name, _) => f"{words.resolve(name)}.len()",
                 else => return null,
             }
             if !var(length) {
@@ -41,7 +41,7 @@ pub fn lin_term(expr: ref Expr, words: ref winnow_grammar::InternerContext, var:
             }
             built(SolverTerm::Var(length), out)
         },
-        Expr::Unary { op, expr } => {
+        Expr::Unary { op, expr, .. } => {
             if op != UnaryOp::Neg {
                 return null
             }
@@ -52,7 +52,7 @@ pub fn lin_term(expr: ref Expr, words: ref winnow_grammar::InternerContext, var:
         // program** (Part III A.2), so where it goes on the number is the one
         // converted: `c as i32` over a name `var` admits is that name
         // (ADR-314 D3's `result == c as i32 - 48`).
-        Expr::Cast { expr, ty } => {
+        Expr::Cast { expr, ty, .. } => {
             if !ty.generics.is_empty() || !is_whole_number(words.resolve(ty.name)) {
                 return null
             }
@@ -81,8 +81,8 @@ pub fn lin_term(expr: ref Expr, words: ref winnow_grammar::InternerContext, var:
 /// prover reads.
 pub fn claim_term(expr: ref Expr, words: ref winnow_grammar::InternerContext, var: fn(ref String) -> bool sync, mut out: Vec[SolverTerm]) -> i64? {
     return match expr {
-        Expr::LitBool(b) => built(SolverTerm::Bool(b), out),
-        Expr::Unary { op, expr } => {
+        Expr::LitBool(b, _) => built(SolverTerm::Bool(b), out),
+        Expr::Unary { op, expr, .. } => {
             if op != UnaryOp::Not {
                 return null
             }

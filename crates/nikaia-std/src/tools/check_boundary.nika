@@ -188,8 +188,8 @@ impl CheckState {
             Expr::LitStr { .. } => text,
             // A name of text is viewed either way below; a name of anything else
             // is lent by a `&`, which a view already is not.
-            Expr::Variable(_) => text || !other.is_a_view(),
-            Expr::Path(segments) => !text && segments.len() == 2 && self.is_variant(world.words.resolve(segments[0]), world.words.resolve(segments[1])),
+            Expr::Variable(_, _) => text || !other.is_a_view(),
+            Expr::Path(segments, _) => !text && segments.len() == 2 && self.is_variant(world.words.resolve(segments[0]), world.words.resolve(segments[1])),
             else => false,
         }
         if !viewable {
@@ -209,7 +209,7 @@ impl CheckState {
     /// `row` ([ADR-094](../../docs/specification/adr/adr-094.md) D3).
     pub fn rooted_at(ref self, world: ref CheckWorld, place: ref Expr) -> String? sync {
         return match place {
-            Expr::Variable(name) => world.words.resolve(name).clone(),
+            Expr::Variable(name, _) => world.words.resolve(name).clone(),
             Expr::Field { base, .. } => self.rooted_at(world, base),
             Expr::SafeField { base, .. } => self.rooted_at(world, base),
             Expr::Index { base, .. } => self.rooted_at(world, base),

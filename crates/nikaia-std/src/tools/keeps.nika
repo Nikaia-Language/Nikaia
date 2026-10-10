@@ -175,8 +175,8 @@ fn reached_of(expr: ref Expr, interner: ref winnow_grammar::InternerContext, con
                 }
             }
         }
-        Expr::Block(block) => reached_by_last(block, interner, context, aliases, found),
-        Expr::Variable(ident) => {
+        Expr::Block(block, _) => reached_by_last(block, interner, context, aliases, found),
+        Expr::Variable(ident, _) => {
             let name = interner.resolve(ident).clone()
             if context.parameters.contains(name) {
                 found.insert(name.clone())
@@ -186,7 +186,7 @@ fn reached_of(expr: ref Expr, interner: ref winnow_grammar::InternerContext, con
                 found.insert(one.clone())
             }
         }
-        Expr::Field { base, name } => {
+        Expr::Field { base, name, .. } => {
             let parameter = parameter_named(base, interner, context) ?? return found
             if parameter != "self" && !a_field_that_copies(parameter, interner.resolve(name), context) {
                 found.insert(parameter)
@@ -220,7 +220,7 @@ fn keeps_expression(expr: ref Expr, interner: ref winnow_grammar::InternerContex
         keeps_expression(hole, interner, holes_of, context, own, library, uses)
     }
     match expr {
-        Expr::Call { func, args, config } => {
+        Expr::Call { func, args, config, .. } => {
             keeps_expression(func, interner, holes_of, context, own, library, uses)
             keeps_expressions(args, interner, holes_of, context, own, library, uses)
             for setting in config {
@@ -246,12 +246,12 @@ fn keeps_expression(expr: ref Expr, interner: ref winnow_grammar::InternerContex
             keeps_expression(rhs, interner, holes_of, context, own, library, uses)
         }
         Expr::Unary { expr, .. } => keeps_expression(expr, interner, holes_of, context, own, library, uses),
-        Expr::Try(inner) => keeps_expression(inner, interner, holes_of, context, own, library, uses),
-        Expr::Throw(inner) => keeps_expression(inner, interner, holes_of, context, own, library, uses),
+        Expr::Try(inner, _) => keeps_expression(inner, interner, holes_of, context, own, library, uses),
+        Expr::Throw(inner, _) => keeps_expression(inner, interner, holes_of, context, own, library, uses),
         Expr::Cast { expr, .. } => keeps_expression(expr, interner, holes_of, context, own, library, uses),
         Expr::Field { base, .. } => keeps_expression(base, interner, holes_of, context, own, library, uses),
         Expr::SafeField { base, .. } => keeps_expression(base, interner, holes_of, context, own, library, uses),
-        Expr::Index { base, index } => {
+        Expr::Index { base, index, .. } => {
             keeps_expression(base, interner, holes_of, context, own, library, uses)
             keeps_expression(index, interner, holes_of, context, own, library, uses)
         }
@@ -259,14 +259,14 @@ fn keeps_expression(expr: ref Expr, interner: ref winnow_grammar::InternerContex
             keeps_expression(start, interner, holes_of, context, own, library, uses)
             keeps_expression(end, interner, holes_of, context, own, library, uses)
         }
-        Expr::Tuple(items) => keeps_expressions(items, interner, holes_of, context, own, library, uses),
-        Expr::Coalesce { value, fallback } => {
+        Expr::Tuple(items, _) => keeps_expressions(items, interner, holes_of, context, own, library, uses),
+        Expr::Coalesce { value, fallback, .. } => {
             keeps_expression(value, interner, holes_of, context, own, library, uses)
             keeps_expression(fallback, interner, holes_of, context, own, library, uses)
         }
         Expr::TryCatch { expr, .. } => keeps_expression(expr, interner, holes_of, context, own, library, uses),
         Expr::If { cond, .. } => keeps_expression(cond, interner, holes_of, context, own, library, uses),
-        Expr::Match { value, arms } => {
+        Expr::Match { value, arms, .. } => {
             keeps_expression(value, interner, holes_of, context, own, library, uses)
             for arm in arms {
                 keeps_maybe(arm.guard, interner, holes_of, context, own, library, uses)
@@ -285,8 +285,8 @@ fn keeps_expression(expr: ref Expr, interner: ref winnow_grammar::InternerContex
                 keeps_maybe(field.value, interner, holes_of, context, own, library, uses)
             }
         }
-        Expr::Return(value) => keeps_maybe(value, interner, holes_of, context, own, library, uses),
-        Expr::Select(arms) => {
+        Expr::Return(value, _) => keeps_maybe(value, interner, holes_of, context, own, library, uses),
+        Expr::Select(arms, _) => {
             for arm in arms {
                 keeps_expression(arm.value, interner, holes_of, context, own, library, uses)
             }
@@ -310,11 +310,11 @@ fn keeps_maybe(expr: ref Expr?, interner: ref winnow_grammar::InternerContext, h
 // not walked here.
 fn keeps_blocks_in(expr: ref Expr, interner: ref winnow_grammar::InternerContext, holes_of: fn(ref Expr) -> Vec[Expr] sync, context: ref KeepsBody, own: ref Ledger, library: ref Ledger, mut walk: KeepsWalk) {
     match expr {
-        Expr::Block(block) => keeps_block(block, interner, holes_of, context, own, library, walk),
-        Expr::Unsafe(block) => keeps_block(block, interner, holes_of, context, own, library, walk),
-        Expr::Overlap(block) => keeps_block(block, interner, holes_of, context, own, library, walk),
+        Expr::Block(block, _) => keeps_block(block, interner, holes_of, context, own, library, walk),
+        Expr::Unsafe(block, _) => keeps_block(block, interner, holes_of, context, own, library, walk),
+        Expr::Overlap(block, _) => keeps_block(block, interner, holes_of, context, own, library, walk),
         Expr::Closure { body, .. } => keeps_block(body, interner, holes_of, context, own, library, walk),
-        Expr::Call { func, args, config } => {
+        Expr::Call { func, args, config, .. } => {
             keeps_blocks_in(func, interner, holes_of, context, own, library, walk)
             for arg in args {
                 keeps_blocks_in(arg, interner, holes_of, context, own, library, walk)
@@ -345,7 +345,7 @@ fn keeps_blocks_in(expr: ref Expr, interner: ref winnow_grammar::InternerContext
             keeps_block(then_branch, interner, holes_of, context, own, library, walk)
             keeps_block(else_branch ?? return, interner, holes_of, context, own, library, walk)
         }
-        Expr::TryCatch { expr, handler } => {
+        Expr::TryCatch { expr, handler, .. } => {
             keeps_blocks_in(expr, interner, holes_of, context, own, library, walk)
             keeps_block(handler, interner, holes_of, context, own, library, walk)
         }
@@ -354,7 +354,7 @@ fn keeps_blocks_in(expr: ref Expr, interner: ref winnow_grammar::InternerContext
                 keeps_blocks_in(arm.body, interner, holes_of, context, own, library, walk)
             }
         }
-        Expr::Select(arms) => {
+        Expr::Select(arms, _) => {
             for arm in arms {
                 keeps_block(arm.body, interner, holes_of, context, own, library, walk)
             }
@@ -390,7 +390,7 @@ fn classify(expr: ref Expr, interner: ref winnow_grammar::InternerContext, holes
                 keep_part(item, interner, context, uses)
             }
         }
-        Expr::Tuple(items) => {
+        Expr::Tuple(items, _) => {
             for item in items {
                 keep_part(item, interner, context, uses)
             }
@@ -400,7 +400,7 @@ fn classify(expr: ref Expr, interner: ref winnow_grammar::InternerContext, holes
         // unwraps one - each moves the value in the language below.
         Expr::Coalesce { value, .. } => keep_named(value, interner, context, uses),
         Expr::SafeField { base, .. } => keep_named(base, interner, context, uses),
-        Expr::Try(value) => keep_named(value, interner, context, uses),
+        Expr::Try(value, _) => keep_named(value, interner, context, uses),
         // **A parameter a `match` takes apart counts as kept** - the
         // over-approximation D2's fail-closed clause licenses: Rust matches
         // through a reference with its default binding modes, and this compiler
@@ -560,7 +560,7 @@ fn takes_self(contract: ref FnContract) -> bool {
 fn keep_what_a_task_names(body: ref Expr, interner: ref winnow_grammar::InternerContext, holes_of: fn(ref Expr) -> Vec[Expr] sync, context: ref KeepsBody, mut uses: Uses) {
     let seen = match body {
         Expr::Closure { body, .. } => seen_in(body, interner, name_as_it_is, holes_of, no_root, true),
-        Expr::Block(block) => seen_in(block, interner, name_as_it_is, holes_of, no_root, true),
+        Expr::Block(block, _) => seen_in(block, interner, name_as_it_is, holes_of, no_root, true),
         else => {
             for name in context.parameters {
                 uses.kept.insert(name.clone())
@@ -604,7 +604,7 @@ fn keep_part(expr: ref Expr?, interner: ref winnow_grammar::InternerContext, con
 // The parameter this expression **is**: a bare name and nothing else.
 fn parameter_named(expr: ref Expr, interner: ref winnow_grammar::InternerContext, context: ref KeepsBody) -> String? {
     return match expr {
-        Expr::Variable(ident) => match context.parameters.contains(interner.resolve(ident)) {
+        Expr::Variable(ident, _) => match context.parameters.contains(interner.resolve(ident)) {
             true => interner.resolve(ident).clone(),
             false => null,
         },
@@ -617,7 +617,7 @@ fn parameter_named(expr: ref Expr, interner: ref winnow_grammar::InternerContext
 // nothing, a deeper part keeps, and `self` is `NK1131`'s.
 fn part_of_a_parameter(expr: ref Expr, interner: ref winnow_grammar::InternerContext, context: ref KeepsBody) -> String? {
     match expr {
-        Expr::Field { base, name } => {
+        Expr::Field { base, name, .. } => {
             if parameter_named(base, interner, context) == null {
                 let deeper = part_of_a_parameter(base, interner, context) ?? return null
                 return not_self(deeper)
@@ -650,8 +650,8 @@ fn a_field_that_copies(parameter: ref String, field: ref String, context: ref Ke
 // The ledger key a plain call's callee resolves to, where a ledger names it.
 fn resolved_callee(func: ref Expr, interner: ref winnow_grammar::InternerContext, own: ref Ledger, library: ref Ledger) -> String? {
     let written = match func {
-        Expr::Variable(ident) => interner.resolve(ident).clone(),
-        Expr::Path(segments) => written_path(interner, segments),
+        Expr::Variable(ident, _) => interner.resolve(ident).clone(),
+        Expr::Path(segments, _) => written_path(interner, segments),
         else => return null,
     }
     if own.functions.contains_key(written) || library.functions.contains_key(written) {

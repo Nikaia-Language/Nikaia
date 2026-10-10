@@ -172,7 +172,7 @@ fn prover_stmt(mut walk: ProverWalk, stmt: ref Spanned[Stmt], mut scope: ProverS
             prover_expr(walk, target, span, scope, nested, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition)
             prover_expr(walk, value, span, scope, nested, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition)
             match target {
-                Expr::Variable(name) => {
+                Expr::Variable(name, _) => {
                     let n = words.resolve(name).clone()
                     let tainted = from_outside(value, scope.tainted, words, library, holes_of)
                     scope.rebind(walk.arena, n)
@@ -317,7 +317,7 @@ fn prover_for(mut walk: ProverWalk, bindings: ref Vec[winnow_grammar::Symbol], i
     let mut ranged = false
     if bindings.len() == 1 {
         match iter {
-            Expr::Range { start, end, inclusive } => {
+            Expr::Range { start, end, inclusive, .. } => {
                 let low = lin_term(start, words, fn(name) { scope.ints.contains(name) }, walk.arena.nodes)
                 let high = lin_term(end, words, fn(name) { scope.ints.contains(name) }, walk.arena.nodes)
                 if low != null && high != null {
@@ -380,7 +380,7 @@ fn prover_return(mut walk: ProverWalk, value: ref Expr?, span: Span, scope: ref 
 fn prover_expr_stmt(mut walk: ProverWalk, expr: ref Expr, span: Span, mut scope: ProverScope, at: ref ProverWhere, program: ref Program, words: ref winnow_grammar::InternerContext, own: ref Ledger, library: ref Ledger, ask: fn(ref TermArena, ref Vec[i64], i64) -> SolverAnswer sync, model: fn(ref TermArena, ref Vec[i64], i64) -> collections::BTreeMap[String, i64]? sync, escape: fn(ref String) -> String sync, holes_of: fn(ref Expr) -> Vec[Expr] sync, unaliased: fn(ref String) -> String sync, written_of: fn(ref Expr) -> String sync, shape_of: fn(ref Expr) -> String sync, condition: fn(ref String, ref collections::BTreeSet[String]) -> Vec[SolverTerm] sync) -> bool {
     let nested = at.inside(false)
     match expr {
-        Expr::Call { func, args, config } => {
+        Expr::Call { func, args, config, .. } => {
             if prover_an_assert_call(func, args, span, walk.claims, shape_of) {
                 let cond = args[0]
                 prover_expr(walk, cond, span, scope, nested, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition)
@@ -396,19 +396,19 @@ fn prover_expr_stmt(mut walk: ProverWalk, expr: ref Expr, span: Span, mut scope:
                 return false
             }
         },
-        Expr::If { cond, then_branch, else_branch } => {
+        Expr::If { cond, then_branch, else_branch, .. } => {
             return prover_if(walk, cond, then_branch, else_branch, span, scope, at, nested, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition)
         },
-        Expr::Throw(value) => {
+        Expr::Throw(value, _) => {
             prover_expr(walk, value, span, scope, nested, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition)
             return true
         },
-        Expr::Return(value) => {
+        Expr::Return(value, _) => {
             prover_return(walk, value, span, scope, at, nested, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition)
             return true
         },
-        Expr::Break => return true,
-        Expr::Continue => return true,
+        Expr::Break(_) => return true,
+        Expr::Continue(_) => return true,
         else => {},
     }
     prover_expr(walk, expr, span, scope, nested, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition)
@@ -505,7 +505,7 @@ fn prover_calls_in(mut walk: ProverWalk, expr: ref Expr, span: Span, scope: ref 
         prover_calls_in(walk, hole, span, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition)
     }
     match expr {
-        Expr::Call { func, args, config } => {
+        Expr::Call { func, args, config, .. } => {
             prover_calls_in(walk, func, span, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition)
             for arg in args {
                 prover_calls_in(walk, arg, span, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition)
@@ -537,12 +537,12 @@ fn prover_calls_in(mut walk: ProverWalk, expr: ref Expr, span: Span, scope: ref 
             prover_calls_in(walk, rhs, span, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition)
         },
         Expr::Unary { expr, .. } => prover_calls_in(walk, expr, span, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition),
-        Expr::Try(inner) => prover_calls_in(walk, inner, span, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition),
-        Expr::Throw(inner) => prover_calls_in(walk, inner, span, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition),
+        Expr::Try(inner, _) => prover_calls_in(walk, inner, span, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition),
+        Expr::Throw(inner, _) => prover_calls_in(walk, inner, span, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition),
         Expr::Cast { expr, .. } => prover_calls_in(walk, expr, span, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition),
         Expr::Field { base, .. } => prover_calls_in(walk, base, span, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition),
         Expr::SafeField { base, .. } => prover_calls_in(walk, base, span, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition),
-        Expr::Index { base, index } => {
+        Expr::Index { base, index, .. } => {
             prover_calls_in(walk, base, span, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition)
             prover_calls_in(walk, index, span, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition)
         },
@@ -550,18 +550,18 @@ fn prover_calls_in(mut walk: ProverWalk, expr: ref Expr, span: Span, scope: ref 
             prover_calls_in(walk, start, span, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition)
             prover_calls_in(walk, end, span, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition)
         },
-        Expr::Tuple(parts) => {
+        Expr::Tuple(parts, _) => {
             for part in parts {
                 prover_calls_in(walk, part, span, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition)
             }
         },
-        Expr::Coalesce { value, fallback } => {
+        Expr::Coalesce { value, fallback, .. } => {
             prover_calls_in(walk, value, span, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition)
             prover_calls_in(walk, fallback, span, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition)
         },
         Expr::TryCatch { expr, .. } => prover_calls_in(walk, expr, span, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition),
         Expr::If { cond, .. } => prover_calls_in(walk, cond, span, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition),
-        Expr::Match { value, arms } => {
+        Expr::Match { value, arms, .. } => {
             prover_calls_in(walk, value, span, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition)
             for arm in arms {
                 prover_calls_in_maybe(walk, arm.guard, span, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition)
@@ -584,8 +584,8 @@ fn prover_calls_in(mut walk: ProverWalk, expr: ref Expr, span: Span, scope: ref 
                 prover_calls_in_maybe(walk, field.value, span, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition)
             }
         },
-        Expr::Return(value) => prover_calls_in_maybe(walk, value, span, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition),
-        Expr::Select(arms) => {
+        Expr::Return(value, _) => prover_calls_in_maybe(walk, value, span, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition),
+        Expr::Select(arms, _) => {
             for arm in arms {
                 prover_calls_in(walk, arm.value, span, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition)
             }
@@ -603,10 +603,10 @@ fn prover_calls_in_maybe(mut walk: ProverWalk, expr: ref Expr?, span: Span, scop
 /// lambda's body - which runs during the call it is given to - included.
 fn prover_blocks_in(mut walk: ProverWalk, expr: ref Expr, scope: ref ProverScope, at: ref ProverWhere, program: ref Program, words: ref winnow_grammar::InternerContext, own: ref Ledger, library: ref Ledger, ask: fn(ref TermArena, ref Vec[i64], i64) -> SolverAnswer sync, model: fn(ref TermArena, ref Vec[i64], i64) -> collections::BTreeMap[String, i64]? sync, escape: fn(ref String) -> String sync, holes_of: fn(ref Expr) -> Vec[Expr] sync, unaliased: fn(ref String) -> String sync, written_of: fn(ref Expr) -> String sync, shape_of: fn(ref Expr) -> String sync, condition: fn(ref String, ref collections::BTreeSet[String]) -> Vec[SolverTerm] sync) {
     match expr {
-        Expr::Block(block) => prover_nested(walk, block, null, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition),
-        Expr::Unsafe(block) => prover_nested(walk, block, null, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition),
-        Expr::Overlap(block) => prover_nested(walk, block, null, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition),
-        Expr::Closure { params, mutable, body } => {
+        Expr::Block(block, _) => prover_nested(walk, block, null, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition),
+        Expr::Unsafe(block, _) => prover_nested(walk, block, null, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition),
+        Expr::Overlap(block, _) => prover_nested(walk, block, null, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition),
+        Expr::Closure { params, mutable, body, .. } => {
             let mut names: Vec[String] = []
             for p in params {
                 names.push(words.resolve(p).clone())
@@ -616,7 +616,7 @@ fn prover_blocks_in(mut walk: ProverWalk, expr: ref Expr, scope: ref ProverScope
             }
             prover_nested(walk, body, names, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition)
         },
-        Expr::Call { func, args, config } => {
+        Expr::Call { func, args, config, .. } => {
             prover_blocks_in(walk, func, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition)
             for arg in args {
                 prover_blocks_in(walk, arg, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition)
@@ -647,7 +647,7 @@ fn prover_blocks_in(mut walk: ProverWalk, expr: ref Expr, scope: ref ProverScope
             prover_nested(walk, then_branch, null, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition)
             prover_nested_maybe(walk, else_branch, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition)
         },
-        Expr::TryCatch { expr, handler } => {
+        Expr::TryCatch { expr, handler, .. } => {
             prover_blocks_in(walk, expr, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition)
             prover_nested(walk, handler, null, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition)
         },
@@ -656,7 +656,7 @@ fn prover_blocks_in(mut walk: ProverWalk, expr: ref Expr, scope: ref ProverScope
                 prover_blocks_in(walk, arm.body, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition)
             }
         },
-        Expr::Select(arms) => {
+        Expr::Select(arms, _) => {
             for arm in arms {
                 prover_nested(walk, arm.body, null, scope, at, program, words, own, library, ask, model, escape, holes_of, unaliased, written_of, shape_of, condition)
             }
@@ -806,8 +806,8 @@ fn prover_throws(call: ref Expr, at: ref ProverWhere, program: ref Program, word
 /// a path as the ledger keys it.
 fn prover_called(func: ref Expr, words: ref winnow_grammar::InternerContext, unaliased: fn(ref String) -> String sync) -> String? {
     return match func {
-        Expr::Variable(name) => words.resolve(name).clone(),
-        Expr::Path(segments) => prover_qualified(segments, words, unaliased),
+        Expr::Variable(name, _) => words.resolve(name).clone(),
+        Expr::Path(segments, _) => prover_qualified(segments, words, unaliased),
         else => null,
     }
 }
@@ -815,14 +815,14 @@ fn prover_called(func: ref Expr, words: ref winnow_grammar::InternerContext, una
 /// The callee a `let`'s value calls, where no local shadows it.
 fn prover_bound_callee(func: ref Expr, scope: ref ProverScope, words: ref winnow_grammar::InternerContext, unaliased: fn(ref String) -> String sync) -> String? {
     return match func {
-        Expr::Variable(name) => {
+        Expr::Variable(name, _) => {
             let text = words.resolve(name)
             if scope.locals.contains(text) {
                 return null
             }
             text.clone()
         },
-        Expr::Path(segments) => prover_qualified(segments, words, unaliased),
+        Expr::Path(segments, _) => prover_qualified(segments, words, unaliased),
         else => null,
     }
 }
@@ -842,7 +842,7 @@ fn prover_qualified(segments: ref Vec[winnow_grammar::Symbol], words: ref winnow
 /// Whether a call is one of the checker's `assert`s.
 fn prover_an_assert_call(func: ref Expr, args: ref Vec[Expr], span: Span, claims: ref collections::BTreeSet[(i64, String)], shape_of: fn(ref Expr) -> String sync) -> bool {
     let named = match func {
-        Expr::Variable(_) => true,
+        Expr::Variable(_, _) => true,
         else => false,
     }
     if !named || args.len() != 1 {
@@ -875,7 +875,7 @@ fn prover_returned_name(stmt: ref Stmt, words: ref winnow_grammar::InternerConte
 fn prover_variable_named(value: ref Expr?, words: ref winnow_grammar::InternerContext) -> String? {
     let present = value ?? return null
     return match present {
-        Expr::Variable(name) => words.resolve(name).clone(),
+        Expr::Variable(name, _) => words.resolve(name).clone(),
         else => null,
     }
 }

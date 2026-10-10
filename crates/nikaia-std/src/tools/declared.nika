@@ -224,11 +224,11 @@ fn returns_a_view(ret_type: ref Type?) -> bool {
 /// below does (ADR-296 D17). A default of `null` is `None`.
 pub fn default_text(expr: ref Expr) -> String {
     return match expr {
-        Expr::LitBool(value) => if value { "true" } else { "false" },
-        Expr::LitNull => "None",
-        Expr::LitInt { value, negative } => if negative { f"-{value}" } else { f"{value}" },
-        Expr::LitFloat(written) => written.clone(),
-        Expr::LitChar(written) => f"'{written}'",
+        Expr::LitBool(value, _) => if value { "true" } else { "false" },
+        Expr::LitNull(_) => "None",
+        Expr::LitInt { value, negative, .. } => if negative { f"-{value}" } else { f"{value}" },
+        Expr::LitFloat(written, _) => written.clone(),
+        Expr::LitChar(written, _) => f"'{written}'",
         Expr::LitStr { text, .. } => f"\"{text}\"",
         Expr::Unary { expr, .. } => f"-{default_text(expr)}",
         // The grammar admits nothing else as a default (Kap 5.1).

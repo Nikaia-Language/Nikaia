@@ -208,8 +208,8 @@ pub fn keeping_method_key(ledger: ref Ledger, target: ref String?, on_self: bool
 /// alias (ADR-286 D12).
 pub fn written_callee(names: ref winnow_grammar::InternerContext, func: ref Expr, unaliased: fn(ref String) -> String sync) -> String? {
     return match func {
-        Expr::Variable(name) => names.resolve(name).clone(),
-        Expr::Path(segments) => unaliased(joined_segments(segments, names)),
+        Expr::Variable(name, _) => names.resolve(name).clone(),
+        Expr::Path(segments, _) => unaliased(joined_segments(segments, names)),
         else => null,
     }
 }
@@ -217,7 +217,7 @@ pub fn written_callee(names: ref winnow_grammar::InternerContext, func: ref Expr
 /// The local an expression is rooted in: `xs`, `self.items`, `m[k]`.
 pub fn root_of(names: ref winnow_grammar::InternerContext, expr: ref Expr) -> String? {
     return match expr {
-        Expr::Variable(name) => names.resolve(name).clone(),
+        Expr::Variable(name, _) => names.resolve(name).clone(),
         Expr::Field { base, .. } => root_of(names, base),
         Expr::Index { base, .. } => root_of(names, base),
         Expr::SafeField { base, .. } => root_of(names, base),
@@ -231,7 +231,7 @@ pub fn root_of(names: ref winnow_grammar::InternerContext, expr: ref Expr) -> St
 pub fn taken_from(names: ref winnow_grammar::InternerContext, value: ref Expr) -> String? {
     return match value {
         Expr::MethodCall { receiver, method, .. } => if hands_back_what_it_removes(names.resolve(method)) { root_of(names, receiver) } else { null },
-        Expr::Try(inner) => taken_from(names, inner),
+        Expr::Try(inner, _) => taken_from(names, inner),
         Expr::TryCatch { expr, .. } => taken_from(names, expr),
         else => null,
     }

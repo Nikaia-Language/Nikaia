@@ -310,9 +310,9 @@ pub(crate) fn visit_expr_blocks<'a>(expr: &'a Expr, f: &mut impl FnMut(&'a Block
         // An `unsafe` block is part of the function that writes it
         // ([ADR-302](../../../docs/specification/adr/adr-302.md) D3): it makes
         // no boundary of its own, so what it calls, the function calls.
-        Expr::Block(block)
-        | Expr::Unsafe(block)
-        | Expr::Overlap(block)
+        Expr::Block(block, _)
+        | Expr::Unsafe(block, _)
+        | Expr::Overlap(block, _)
         | Expr::Closure { body: block, .. } => {
             f(block);
             return;
@@ -330,7 +330,7 @@ pub(crate) fn visit_expr_blocks<'a>(expr: &'a Expr, f: &mut impl FnMut(&'a Block
         }
         Expr::TryCatch { handler, .. } => f(handler),
         // A `select` arm's body runs in this function once its value won.
-        Expr::Select(arms) => arms.iter().for_each(|arm| f(&arm.body)),
+        Expr::Select(arms, _) => arms.iter().for_each(|arm| f(&arm.body)),
         _ => {}
     }
     // **Through every expression that holds others** (#494): a block under
@@ -349,7 +349,9 @@ pub(crate) fn visit_expr_blocks<'a>(expr: &'a Expr, f: &mut impl FnMut(&'a Block
 pub(crate) fn child_exprs(expr: &Expr) -> Vec<&Expr> {
     let mut out: Vec<&Expr> = Vec::new();
     match expr {
-        Expr::Call { func, args, config } => {
+        Expr::Call {
+            func, args, config, ..
+        } => {
             out.push(func);
             out.extend(args.iter());
             out.extend(config.iter().map(|c| &c.value));
@@ -375,11 +377,11 @@ pub(crate) fn child_exprs(expr: &Expr) -> Vec<&Expr> {
             out.push(rhs);
         }
         Expr::Unary { expr, .. }
-        | Expr::Try(expr)
-        | Expr::Throw(expr)
+        | Expr::Try(expr, _)
+        | Expr::Throw(expr, _)
         | Expr::Cast { expr, .. } => out.push(expr),
         Expr::Field { base, .. } | Expr::SafeField { base, .. } => out.push(base),
-        Expr::Index { base, index } => {
+        Expr::Index { base, index, .. } => {
             out.push(base);
             out.push(index);
         }
@@ -387,14 +389,16 @@ pub(crate) fn child_exprs(expr: &Expr) -> Vec<&Expr> {
             out.push(start);
             out.push(end);
         }
-        Expr::Tuple(parts) => out.extend(parts.iter()),
-        Expr::Coalesce { value, fallback } => {
+        Expr::Tuple(parts, _) => out.extend(parts.iter()),
+        Expr::Coalesce {
+            value, fallback, ..
+        } => {
             out.push(value);
             out.push(fallback);
         }
         Expr::TryCatch { expr, .. } => out.push(expr),
         Expr::If { cond, .. } => out.push(cond),
-        Expr::Match { value, arms } => {
+        Expr::Match { value, arms, .. } => {
             out.push(value);
             for arm in arms {
                 if let Some(guard) = &arm.guard {
@@ -411,12 +415,12 @@ pub(crate) fn child_exprs(expr: &Expr) -> Vec<&Expr> {
             out.push(base);
             out.extend(fields.iter().filter_map(|field| field.value.as_ref()));
         }
-        Expr::Return(value) => {
+        Expr::Return(value, _) => {
             if let Some(value) = &**value {
                 out.push(value);
             }
         }
-        Expr::Select(arms) => out.extend(arms.iter().map(|arm| &arm.value)),
+        Expr::Select(arms, _) => out.extend(arms.iter().map(|arm| &arm.value)),
         _ => {}
     }
     out
@@ -442,7 +446,9 @@ pub(crate) fn visit_expr(parsed: &Parsed, expr: &Expr, f: &mut impl FnMut(&Expr)
         // call this walk does not reach is a function claiming it cannot pause
         // - the fail-open direction ADR-288 D2 names as the dangerous one. A
         // DSL's deferred parameters stand there (ADR-296 D5).
-        Expr::Call { func, args, config } => {
+        Expr::Call {
+            func, args, config, ..
+        } => {
             visit_expr(parsed, func, f);
             args.iter().for_each(|a| visit_expr(parsed, a, f));
             config.iter().for_each(|c| visit_expr(parsed, &c.value, f));
@@ -475,11 +481,11 @@ pub(crate) fn visit_expr(parsed: &Parsed, expr: &Expr, f: &mut impl FnMut(&Expr)
         // parameter as lent because the `throw` that stores it was invisible;
         // the same hole was `sync`'s, `throws`' and `touches`'.
         Expr::Unary { expr, .. }
-        | Expr::Try(expr)
-        | Expr::Throw(expr)
+        | Expr::Try(expr, _)
+        | Expr::Throw(expr, _)
         | Expr::Cast { expr, .. } => visit_expr(parsed, expr, f),
         Expr::Field { base, .. } | Expr::SafeField { base, .. } => visit_expr(parsed, base, f),
-        Expr::Index { base, index } => {
+        Expr::Index { base, index, .. } => {
             visit_expr(parsed, base, f);
             visit_expr(parsed, index, f);
         }
@@ -487,8 +493,10 @@ pub(crate) fn visit_expr(parsed: &Parsed, expr: &Expr, f: &mut impl FnMut(&Expr)
             visit_expr(parsed, start, f);
             visit_expr(parsed, end, f);
         }
-        Expr::Tuple(parts) => parts.iter().for_each(|p| visit_expr(parsed, p, f)),
-        Expr::Coalesce { value, fallback } => {
+        Expr::Tuple(parts, _) => parts.iter().for_each(|p| visit_expr(parsed, p, f)),
+        Expr::Coalesce {
+            value, fallback, ..
+        } => {
             visit_expr(parsed, value, f);
             visit_expr(parsed, fallback, f);
         }
@@ -500,7 +508,7 @@ pub(crate) fn visit_expr(parsed: &Parsed, expr: &Expr, f: &mut impl FnMut(&Expr)
         // while its lowering awaited `slow()`, which `rustc` refused - the
         // fail-open direction ADR-288 D2 names, for `throws`, `touches` and
         // `keeps` as much as for `sync`. A guard runs too.
-        Expr::Match { value, arms } => {
+        Expr::Match { value, arms, .. } => {
             visit_expr(parsed, value, f);
             for arm in arms {
                 if let Some(guard) = &arm.guard {
@@ -525,12 +533,12 @@ pub(crate) fn visit_expr(parsed: &Parsed, expr: &Expr, f: &mut impl FnMut(&Expr)
                 .filter_map(|field| field.value.as_ref())
                 .for_each(|value| visit_expr(parsed, value, f));
         }
-        Expr::Return(value) => {
+        Expr::Return(value, _) => {
             if let Some(value) = &**value {
                 visit_expr(parsed, value, f);
             }
         }
-        Expr::Select(arms) => arms
+        Expr::Select(arms, _) => arms
             .iter()
             .for_each(|arm| visit_expr(parsed, &arm.value, f)),
         _ => {}

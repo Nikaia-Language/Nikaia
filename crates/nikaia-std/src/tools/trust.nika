@@ -37,7 +37,7 @@ pub fn spelled(wrote: ref Wrote) -> String {
 /// `Root::Anywhere`, or `Root::Dir("/")`, under whatever module path.
 pub fn written_root(names: ref winnow_grammar::InternerContext, arg: ref Expr) -> Wrote? {
     return match arg {
-        Expr::Path(segments) => if ends_with_variant(names, segments, "Anywhere") { Wrote::Anywhere } else { null },
+        Expr::Path(segments, _) => if ends_with_variant(names, segments, "Anywhere") { Wrote::Anywhere } else { null },
         Expr::Call { func, args, .. } => the_whole_filesystem(names, func, args),
         else => null,
     }
@@ -46,7 +46,7 @@ pub fn written_root(names: ref winnow_grammar::InternerContext, arg: ref Expr) -
 /// `Root::Dir("/")`, and no other directory.
 fn the_whole_filesystem(names: ref winnow_grammar::InternerContext, func: ref Expr, args: ref Vec[Expr]) -> Wrote? {
     let is_dir = match func {
-        Expr::Path(segments) => ends_with_variant(names, segments, "Dir"),
+        Expr::Path(segments, _) => ends_with_variant(names, segments, "Dir"),
         else => false,
     }
     return null if !is_dir || args.len() == 0
@@ -387,7 +387,7 @@ fn tm_walk_block(block: ref Block, words: ref winnow_grammar::InternerContext, l
                 tm_walk_expr(target, words, library, env, walk)
                 tm_walk_expr(value, words, library, env, walk)
                 match target {
-                    Expr::Variable(name) => {
+                    Expr::Variable(name, _) => {
                         let given = tm_deps_of(value, words, library, env, walk)
                         let id = tm_resolve(words.resolve(name), walk)
                         if id >= 0 {
@@ -399,7 +399,7 @@ fn tm_walk_block(block: ref Block, words: ref winnow_grammar::InternerContext, l
             },
             Stmt::For { bindings, iter, body } => {
                 match iter {
-                    Expr::Variable(name) => {
+                    Expr::Variable(name, _) => {
                         let id = tm_resolve(words.resolve(name), walk)
                         if id >= 0 {
                             walk.kept.push(MapKept { id: id, deps: tm_nothing() })
@@ -436,7 +436,7 @@ fn tm_walk_block(block: ref Block, words: ref winnow_grammar::InternerContext, l
 /// The map `receiver` names, if it names one: its binding, else `-1`.
 fn map_named(receiver: ref Expr, words: ref winnow_grammar::InternerContext, walk: ref MapWalk) -> i64 {
     return match receiver {
-        Expr::Variable(name) => {
+        Expr::Variable(name, _) => {
             let id = tm_resolve(words.resolve(name), walk)
             if id >= 0 { id } else { -1 }
         },
@@ -448,16 +448,16 @@ fn map_named(receiver: ref Expr, words: ref winnow_grammar::InternerContext, wal
 /// names bound here, and the blocks inside it walked with their own.
 fn tm_walk_expr(expr: ref Expr, words: ref winnow_grammar::InternerContext, library: ref Ledger, env: ref MapEnv, mut walk: MapWalk) {
     match expr {
-        Expr::Block(b) => tm_walk_block(b, words, library, env, walk),
-        Expr::Unsafe(b) => tm_walk_block(b, words, library, env, walk),
-        Expr::If { cond, then_branch, else_branch } => {
+        Expr::Block(b, _) => tm_walk_block(b, words, library, env, walk),
+        Expr::Unsafe(b, _) => tm_walk_block(b, words, library, env, walk),
+        Expr::If { cond, then_branch, else_branch, .. } => {
             tm_walk_expr(cond, words, library, env, walk)
             tm_walk_block(then_branch, words, library, env, walk)
             if else_branch != null {
                 tm_walk_block(else_branch ?? return, words, library, env, walk)
             }
         },
-        Expr::MethodCall { receiver, method, args, config } => {
+        Expr::MethodCall { receiver, method, args, config, .. } => {
             let id = map_named(receiver, words, walk)
             if id >= 0 && words.resolve(method) != "clone" {
                 let mut all = tm_nothing()
@@ -475,7 +475,7 @@ fn tm_walk_expr(expr: ref Expr, words: ref winnow_grammar::InternerContext, libr
                 tm_walk_expr(c.value, words, library, env, walk)
             }
         },
-        Expr::Index { base, index } => {
+        Expr::Index { base, index, .. } => {
             let id = map_named(base, words, walk)
             if id >= 0 {
                 let deps = tm_deps_of(index, words, library, env, walk)
@@ -485,7 +485,7 @@ fn tm_walk_expr(expr: ref Expr, words: ref winnow_grammar::InternerContext, libr
             }
             tm_walk_expr(index, words, library, env, walk)
         },
-        Expr::Call { func, args, config } => {
+        Expr::Call { func, args, config, .. } => {
             tm_walk_expr(func, words, library, env, walk)
             for a in args {
                 tm_walk_expr(a, words, library, env, walk)
@@ -500,15 +500,15 @@ fn tm_walk_expr(expr: ref Expr, words: ref winnow_grammar::InternerContext, libr
         },
         Expr::Unary { expr, .. } => tm_walk_expr(expr, words, library, env, walk),
         Expr::Cast { expr, .. } => tm_walk_expr(expr, words, library, env, walk),
-        Expr::Try(inner) => tm_walk_expr(inner, words, library, env, walk),
-        Expr::Throw(inner) => tm_walk_expr(inner, words, library, env, walk),
+        Expr::Try(inner, _) => tm_walk_expr(inner, words, library, env, walk),
+        Expr::Throw(inner, _) => tm_walk_expr(inner, words, library, env, walk),
         Expr::Field { base, .. } => tm_walk_expr(base, words, library, env, walk),
         Expr::SafeField { base, .. } => tm_walk_expr(base, words, library, env, walk),
-        Expr::Coalesce { value, fallback } => {
+        Expr::Coalesce { value, fallback, .. } => {
             tm_walk_expr(value, words, library, env, walk)
             tm_walk_expr(fallback, words, library, env, walk)
         },
-        Expr::Tuple(items) => {
+        Expr::Tuple(items, _) => {
             for i in items {
                 tm_walk_expr(i, words, library, env, walk)
             }
@@ -518,7 +518,7 @@ fn tm_walk_expr(expr: ref Expr, words: ref winnow_grammar::InternerContext, libr
                 tm_walk_expr(i, words, library, env, walk)
             }
         },
-        Expr::LitInterpolated { parts } => {
+        Expr::LitInterpolated { parts, .. } => {
             for part in parts {
                 match part {
                     FPart::Hole { expr, .. } => tm_walk_expr(expr, words, library, env, walk),
@@ -526,26 +526,26 @@ fn tm_walk_expr(expr: ref Expr, words: ref winnow_grammar::InternerContext, libr
                 }
             }
         },
-        Expr::Return(value) => {
+        Expr::Return(value, _) => {
             if value != null {
                 tm_walk_expr(value ?? return, words, library, env, walk)
             }
         },
-        Expr::Variable(name) => {
+        Expr::Variable(name, _) => {
             let id = tm_resolve(words.resolve(name), walk)
             if id >= 0 {
                 walk.escapes.insert(id)
             }
         },
-        Expr::Path(_) => {},
+        Expr::Path(_, _) => {},
         Expr::LitInt { .. } => {},
-        Expr::LitFloat(_) => {},
+        Expr::LitFloat(_, _) => {},
         Expr::LitStr { .. } => {},
-        Expr::LitChar(_) => {},
-        Expr::LitBool(_) => {},
-        Expr::LitNull => {},
-        Expr::Break => {},
-        Expr::Continue => {},
+        Expr::LitChar(_, _) => {},
+        Expr::LitBool(_, _) => {},
+        Expr::LitNull(_) => {},
+        Expr::Break(_) => {},
+        Expr::Continue(_) => {},
         // A lambda, a `match`, a `catch`, a task: names bound some way this
         // does not follow.
         else => {
@@ -570,16 +570,16 @@ fn tm_all_deps(items: ref Vec[Expr], words: ref winnow_grammar::InternerContext,
 fn tm_deps_of(value: ref Expr, words: ref winnow_grammar::InternerContext, library: ref Ledger, env: ref MapEnv, walk: ref MapWalk) -> KeyDeps {
     return match value {
         Expr::LitInt { .. } => tm_nothing(),
-        Expr::LitFloat(_) => tm_nothing(),
+        Expr::LitFloat(_, _) => tm_nothing(),
         Expr::LitStr { .. } => tm_nothing(),
-        Expr::LitChar(_) => tm_nothing(),
-        Expr::LitBool(_) => tm_nothing(),
-        Expr::LitNull => tm_nothing(),
-        Expr::Variable(name) => {
+        Expr::LitChar(_, _) => tm_nothing(),
+        Expr::LitBool(_, _) => tm_nothing(),
+        Expr::LitNull(_) => tm_nothing(),
+        Expr::Variable(name, _) => {
             let id = tm_resolve(words.resolve(name), walk)
             if id >= 0 { tm_reading(id) } else { tm_never() }
         },
-        Expr::LitInterpolated { parts } => {
+        Expr::LitInterpolated { parts, .. } => {
             let mut all = tm_nothing()
             for part in parts {
                 match part {
@@ -591,15 +591,15 @@ fn tm_deps_of(value: ref Expr, words: ref winnow_grammar::InternerContext, libra
             }
             all
         },
-        Expr::Tuple(items) => tm_all_deps(items, words, library, env, walk),
+        Expr::Tuple(items, _) => tm_all_deps(items, words, library, env, walk),
         Expr::ListLit { items, .. } => tm_all_deps(items, words, library, env, walk),
         Expr::Unary { expr, .. } => tm_deps_of(expr, words, library, env, walk),
         Expr::Cast { expr, .. } => tm_deps_of(expr, words, library, env, walk),
         Expr::Binary { lhs, rhs, .. } => tm_join(tm_deps_of(lhs, words, library, env, walk), tm_deps_of(rhs, words, library, env, walk)),
         Expr::Field { base, .. } => tm_deps_of(base, words, library, env, walk),
-        Expr::Index { base, index } => tm_join(tm_deps_of(base, words, library, env, walk), tm_deps_of(index, words, library, env, walk)),
-        Expr::Coalesce { value, fallback } => tm_join(tm_deps_of(value, words, library, env, walk), tm_deps_of(fallback, words, library, env, walk)),
-        Expr::Call { func, args, config } => tm_call_deps(func, args, config, words, library, env, walk),
+        Expr::Index { base, index, .. } => tm_join(tm_deps_of(base, words, library, env, walk), tm_deps_of(index, words, library, env, walk)),
+        Expr::Coalesce { value, fallback, .. } => tm_join(tm_deps_of(value, words, library, env, walk), tm_deps_of(fallback, words, library, env, walk)),
+        Expr::Call { func, args, config, .. } => tm_call_deps(func, args, config, words, library, env, walk),
         Expr::MethodCall { receiver, method, args, .. } => {
             let name = words.resolve(method)
             if env.sources.contains(name) || env.own.contains(name) {
@@ -614,7 +614,7 @@ fn tm_deps_of(value: ref Expr, words: ref winnow_grammar::InternerContext, libra
 
 fn tm_call_deps(func: ref Expr, args: ref Vec[Expr], config: ref Vec[ConfigArg], words: ref winnow_grammar::InternerContext, library: ref Ledger, env: ref MapEnv, walk: ref MapWalk) -> KeyDeps {
     let name = match func {
-        Expr::Path(segments) => {
+        Expr::Path(segments, _) => {
             let mut joined: String = ""
             for segment in segments {
                 if !joined.is_empty() {
@@ -624,7 +624,7 @@ fn tm_call_deps(func: ref Expr, args: ref Vec[Expr], config: ref Vec[ConfigArg],
             }
             joined
         },
-        Expr::Variable(one) => words.resolve(one).clone(),
+        Expr::Variable(one, _) => words.resolve(one).clone(),
         else => return tm_never(),
     }
     if env.own.contains(name) {
@@ -653,11 +653,11 @@ fn is_a_map_made(value: ref Expr, words: ref winnow_grammar::InternerContext) ->
                 false
             } else {
                 match func {
-                    Expr::Path(segments) => {
+                    Expr::Path(segments, _) => {
                         let last = words.resolve(segments[segments.len() - 1])
                         last == "HashMap" || last == "HashSet"
                     },
-                    Expr::Variable(one) => {
+                    Expr::Variable(one, _) => {
                         let last = words.resolve(one)
                         last == "HashMap" || last == "HashSet"
                     },

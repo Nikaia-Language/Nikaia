@@ -1754,9 +1754,13 @@ pub(crate) fn kept_function_call(parsed: &Parsed, name: Ident, arity: usize) -> 
         .map(|at| parsed.interner.intern_string(&format!("__nikaia_arg{at}")))
         .collect();
     let call = Expr::Call {
-        func: Box::new(Expr::Variable(name)),
-        args: names.iter().map(|n| Expr::Variable(*n)).collect(),
+        func: Box::new(Expr::Variable(name, crate::ast::NodeId::fresh())),
+        args: names
+            .iter()
+            .map(|n| Expr::Variable(*n, crate::ast::NodeId::fresh()))
+            .collect(),
         config: Vec::new(),
+        id: crate::ast::NodeId::fresh(),
     };
     (names, call)
 }
@@ -1981,12 +1985,13 @@ fn number_where_no_number_is(want: &Ty, value: &Expr) -> Option<Ty> {
         Expr::Unary {
             op: crate::ast::UnaryOp::Neg,
             expr,
+            ..
         } => expr.as_ref(),
         value => value,
     };
     match literal {
         Expr::LitInt { .. } => Some(Ty::named("i64")),
-        Expr::LitFloat(_) => Some(Ty::named("f64")),
+        Expr::LitFloat(_, _) => Some(Ty::named("f64")),
         _ => None,
     }
 }
@@ -2538,7 +2543,7 @@ fn walks_the_fields_of(
 ) -> bool {
     let mut found = false;
     crate::emit::visit_block(body, &mut |expr| {
-        if let Expr::Path(segments) = expr {
+        if let Expr::Path(segments, _) = expr {
             let names: Vec<&str> = segments.iter().map(|s| parsed.text(*s)).collect();
             // **`T::attribute(X)` asks for the type too** (ADR-331 D6): its
             // value is the type's own, so the function is copied per type as
@@ -4004,6 +4009,7 @@ impl<'a> Checker<'a> {
                     params,
                     mutable,
                     body,
+                    ..
                 } => {
                     self.lambda(params, mutable, body, &given, promised, span);
                 }
@@ -4020,8 +4026,8 @@ impl<'a> Checker<'a> {
     /// hands back, where its signature says.
     fn a_named_fold_part_that_may_pause(&mut self, part: &Expr, span: &Span) -> Option<Ty> {
         let name = match part {
-            Expr::Variable(name) => self.parsed.text(*name).to_string(),
-            Expr::Path(parts) => parts
+            Expr::Variable(name, _) => self.parsed.text(*name).to_string(),
+            Expr::Path(parts, _) => parts
                 .iter()
                 .map(|p| self.parsed.text(*p))
                 .collect::<Vec<_>>()
@@ -4636,7 +4642,7 @@ impl<'a> Checker<'a> {
         // bound to a map read beside a jump - is a reference already (found
         // moving `describe`'s draft into Nikaia, #125).
         if crate::contracts::keeps::moves(ty)
-            && (matches!(given, Expr::Variable(name)
+            && (matches!(given, Expr::Variable(name, _)
                 if self.s.binding(self.parsed.text(*name)).is_some_and(|local| local.lent))
                 // Or a part of a tuple taken apart out of a place (#465).
                 || self.a_lent_let(given))
@@ -4648,8 +4654,8 @@ impl<'a> Checker<'a> {
         // `AsKey` the language below had no type to give it but its default -
         // `s.contains(4)` on a `HashSet[i64]` asked for an `i32`'s key. A plain
         // `&` lets the collection's own key type say what the number is.
-        let a_number = matches!(given, Expr::LitInt { .. } | Expr::LitFloat(_))
-            || matches!(given, Expr::Variable(name)
+        let a_number = matches!(given, Expr::LitInt { .. } | Expr::LitFloat(_, _))
+            || matches!(given, Expr::Variable(name, _)
                 if self.s.binding(self.parsed.text(*name)).is_some_and(|l| l.constant.is_some()));
         // **A key of no known type** - `let k = 1` has none until something
         // pins it - is written through `AsKey`, which lends a number and
@@ -4686,7 +4692,7 @@ impl<'a> Checker<'a> {
         into: &Ty,
         span: &Span,
     ) -> bool {
-        let Expr::Variable(name) = target else {
+        let Expr::Variable(name, _) = target else {
             return false;
         };
         let name = self.parsed.text(*name).to_string();
@@ -4769,7 +4775,7 @@ impl<'a> Checker<'a> {
         let joining = matches!(op, BinaryOp::Add) && is_a_list(left) && is_a_list(right);
         // `xs += [3]` is the one shape whose way out can be written whole.
         let extend = match sides {
-            [(Expr::Variable(bound), _), (value, _)] if compound => format!(
+            [(Expr::Variable(bound, _), _), (value, _)] if compound => format!(
                 "{}.extend({})",
                 self.parsed.text(*bound),
                 written(self.parsed, value)
@@ -4842,7 +4848,7 @@ impl<'a> Checker<'a> {
             _ => Vec::new(),
         };
         let field = match (numeric.as_slice(), side) {
-            ([field], Expr::Variable(bound))
+            ([field], Expr::Variable(bound, _))
                 if self.declared_with_no_arithmetic(other).is_none() =>
             {
                 Some(format!("{}.{field}", self.parsed.text(*bound)))
@@ -5106,7 +5112,7 @@ impl<'a> Checker<'a> {
         }
         let mut read: BTreeSet<String> = BTreeSet::new();
         crate::contracts::sync::visit_expr(self.parsed, guard, &mut |expr| {
-            if let Expr::Variable(name) = expr {
+            if let Expr::Variable(name, _) = expr {
                 let name = self.parsed.text(*name);
                 if inside.iter().any(|bound| bound == name) {
                     read.insert(name.to_string());
@@ -5239,7 +5245,7 @@ impl<'a> Checker<'a> {
     /// ([ADR-269](../../docs/specification/adr/adr-269.md) D2), and not to a
     /// name the program declared itself.
     fn the_prelude_assert(&self, func: &Expr) -> bool {
-        matches!(func, Expr::Variable(name) if self.parsed.text(*name) == ASSERT)
+        matches!(func, Expr::Variable(name, _) if self.parsed.text(*name) == ASSERT)
             && self.s.lookup(ASSERT).is_none()
             && !self.world.own.functions.contains_key(ASSERT)
     }
@@ -5394,13 +5400,13 @@ impl<'a> Checker<'a> {
         let literal = matches!(
             operand,
             Expr::LitInt { .. }
-                | Expr::LitFloat(_)
+                | Expr::LitFloat(_, _)
                 | Expr::LitStr { .. }
-                | Expr::LitChar(_)
-                | Expr::LitBool(_)
-                | Expr::LitNull
-        ) || matches!(operand, Expr::Unary { op: UnaryOp::Neg, expr }
-            if matches!(**expr, Expr::LitInt { .. } | Expr::LitFloat(_)));
+                | Expr::LitChar(_, _)
+                | Expr::LitBool(_, _)
+                | Expr::LitNull(_)
+        ) || matches!(operand, Expr::Unary { op: UnaryOp::Neg, expr, .. }
+            if matches!(**expr, Expr::LitInt { .. } | Expr::LitFloat(_, _)));
         (!literal).then(|| written(self.parsed, operand))
     }
 
@@ -5412,13 +5418,13 @@ impl<'a> Checker<'a> {
         crate::contracts::sync::visit_expr(self.parsed, condition, &mut |expr| {
             let form = match expr {
                 Expr::Spawn { .. } => Some("starts a task"),
-                Expr::Select(_) => Some("waits in a `select`"),
-                Expr::Overlap(_) => Some("runs an `overlap`"),
+                Expr::Select(_, _) => Some("waits in a `select`"),
+                Expr::Overlap(_, _) => Some("runs an `overlap`"),
                 Expr::Dsl { .. } => Some("runs a `dsl` block"),
-                Expr::Asm { .. } | Expr::Unsafe(_) => Some("runs `unsafe` code"),
-                Expr::Try(_) | Expr::Throw(_) | Expr::TryCatch { .. } => Some("can fail"),
-                Expr::Return(_) | Expr::Break | Expr::Continue => Some("jumps"),
-                Expr::Block(_) | Expr::If { .. } | Expr::Match { .. } | Expr::Closure { .. } => {
+                Expr::Asm { .. } | Expr::Unsafe(_, _) => Some("runs `unsafe` code"),
+                Expr::Try(_, _) | Expr::Throw(_, _) | Expr::TryCatch { .. } => Some("can fail"),
+                Expr::Return(_, _) | Expr::Break(_) | Expr::Continue(_) => Some("jumps"),
+                Expr::Block(_, _) | Expr::If { .. } | Expr::Match { .. } | Expr::Closure { .. } => {
                     Some("contains a block, which might change something")
                 }
                 _ => None,
@@ -5430,8 +5436,8 @@ impl<'a> Checker<'a> {
                 return;
             };
             let name = match func.as_ref() {
-                Expr::Variable(name) => self.parsed.text(*name).to_string(),
-                Expr::Path(segments) => self.parsed.unaliased(
+                Expr::Variable(name, _) => self.parsed.text(*name).to_string(),
+                Expr::Path(segments, _) => self.parsed.unaliased(
                     &segments
                         .iter()
                         .map(|s| self.parsed.text(*s))
@@ -5482,7 +5488,7 @@ impl<'a> Checker<'a> {
         // the same reason): the checker types `c` in `for c in word` as the
         // element, and the language below binds a `&char`.
         let lent = |side: &Expr| -> bool {
-            matches!(side, Expr::Variable(name)
+            matches!(side, Expr::Variable(name, _)
                 if self.s.binding(self.parsed.text(*name)).is_some_and(|local| local.lent))
         };
         let copied = |ty: &Ty| -> bool {
@@ -5544,10 +5550,10 @@ impl<'a> Checker<'a> {
             (copied(ty) && is_value(side, ty))
                 || matches!(
                     side,
-                    Expr::LitInt { .. } | Expr::LitFloat(_) | Expr::LitChar(_)
+                    Expr::LitInt { .. } | Expr::LitFloat(_, _) | Expr::LitChar(_, _)
                 )
-                || matches!(side, Expr::Unary { op: UnaryOp::Neg, expr }
-                    if matches!(**expr, Expr::LitInt { .. } | Expr::LitFloat(_)))
+                || matches!(side, Expr::Unary { op: UnaryOp::Neg, expr, .. }
+                    if matches!(**expr, Expr::LitInt { .. } | Expr::LitFloat(_, _)))
         };
         let unknown = |side: &Expr, ty: &Ty| lent(side) && ty.is_unknown();
         let number_left = unknown(lhs, left) && a_number(rhs, right);
@@ -6049,7 +6055,7 @@ impl<'a> Checker<'a> {
             Reached::Field(name) => ("field", format!(".{name}")),
             Reached::Method(name) => ("method", format!(".{name}(…)")),
         };
-        if let Expr::Index { base, index } = receiver {
+        if let Expr::Index { base, index, .. } = receiver {
             self.s.findings.push(Finding {
                 severity: Severity::Error,
                 span: *span,
@@ -6119,7 +6125,7 @@ impl<'a> Checker<'a> {
         let found = self.expr(&default.value, &default.span);
         let declared = Ty::from_ast(self.parsed, &field.ty);
         let want = match (&declared, &default.value) {
-            (_, Expr::LitNull) => return,
+            (_, Expr::LitNull(_)) => return,
             (Ty::Nullable(inner), _) => (**inner).clone(),
             _ => declared,
         };
@@ -6329,7 +6335,7 @@ impl<'a> Checker<'a> {
                 ),
             }],
             help: Some(match (index, value) {
-                (true, Expr::Index { base, index }) => format!(
+                (true, Expr::Index { base, index, .. }) => format!(
                     "Check the length first: `if {} < {}.len()`.",
                     written(self.parsed, index),
                     written(self.parsed, base)
@@ -6453,7 +6459,7 @@ impl<'a> Checker<'a> {
             //
             // Only a bare name. `&mut c.field` for a `mut c` is the reference
             // the call wants, and `rooted_at` would have said `c` for it.
-            if matches!(given, Expr::Variable(name)
+            if matches!(given, Expr::Variable(name, _)
                 if self.s.binding(self.parsed.text(*name)).is_some_and(|l| l.changing))
             {
                 return true;
@@ -6597,7 +6603,7 @@ impl<'a> Checker<'a> {
         // a `T?` of its own.
         let a_lent_nullable = matches!(found, Ty::Nullable(_))
             && matches!(want, Ty::Nullable(inner) if inner.is_a_view())
-            && matches!(given, Expr::Variable(name)
+            && matches!(given, Expr::Variable(name, _)
                 if self.s.binding(self.parsed.text(*name)).is_some_and(|local| local.lent));
         // A value that is already a view needs nothing: the declaration and the
         // argument agree without a second `&`.
@@ -6611,7 +6617,7 @@ impl<'a> Checker<'a> {
         // into Nikaia, #125). A number read that way is the emitter's `*`.
         if !matches!(found, Ty::Nullable(_))
             && crate::contracts::keeps::moves(found)
-            && matches!(given, Expr::Variable(name)
+            && matches!(given, Expr::Variable(name, _)
                 if self.s.binding(self.parsed.text(*name)).is_some_and(|local| local.lent))
         {
             return true;
@@ -6657,8 +6663,8 @@ impl<'a> Checker<'a> {
     /// The name a free call names, unaliased — or nothing where this is not one.
     fn free_callee(&self, func: &Expr) -> Option<String> {
         let name = match func {
-            Expr::Variable(name) => self.parsed.text(*name).to_string(),
-            Expr::Path(segments) => segments
+            Expr::Variable(name, _) => self.parsed.text(*name).to_string(),
+            Expr::Path(segments, _) => segments
                 .iter()
                 .map(|s| self.parsed.text(*s))
                 .collect::<Vec<_>>()
@@ -7018,10 +7024,10 @@ impl<'a> Checker<'a> {
         if !self.s.borrowing_self {
             return;
         }
-        let Expr::Field { base, name } = value else {
+        let Expr::Field { base, name, .. } = value else {
             return;
         };
-        let Expr::Variable(subject) = base.as_ref() else {
+        let Expr::Variable(subject, _) = base.as_ref() else {
             return;
         };
         if self.parsed.text(*subject) != "self" {
@@ -7137,7 +7143,7 @@ impl<'a> Checker<'a> {
     /// `Box { items: out }` was `rustc`'s *mismatched types* about a file
     /// nobody wrote.
     fn a_mut_parameter_given_away(&mut self, value: &Expr, span: &Span, what: &str) {
-        let Expr::Variable(name) = value else {
+        let Expr::Variable(name, _) = value else {
             return;
         };
         let name = self.parsed.text(*name).to_string();
@@ -8222,6 +8228,7 @@ impl<'a> Checker<'a> {
             Expr::Unary {
                 op: UnaryOp::Neg,
                 expr,
+                ..
             } => {
                 self.widen_operand(expr, into, span);
                 true
@@ -8267,6 +8274,7 @@ impl<'a> Checker<'a> {
             Expr::Unary {
                 op: UnaryOp::Not,
                 expr,
+                ..
             } => (
                 "`!`".to_string(),
                 format!("!({} as {into})", written(self.parsed, expr)),
@@ -8314,7 +8322,9 @@ impl<'a> Checker<'a> {
             return;
         }
         match side {
-            Expr::LitInt { value, negative } => {
+            Expr::LitInt {
+                value, negative, ..
+            } => {
                 self.checked.unsigned_literals.insert(
                     (value_node(side), crate::ast::int_value(*value, *negative)),
                     into.to_string(),
@@ -8381,6 +8391,7 @@ impl<'a> Checker<'a> {
         let Expr::Coalesce {
             value: read,
             fallback,
+            ..
         } = value
         else {
             return;
@@ -8538,7 +8549,7 @@ impl<'a> Checker<'a> {
     /// and where it is declared.
     fn an_open_comptime_in(&self, expr: &Expr) -> Option<(String, Span)> {
         match expr {
-            Expr::Variable(name) => {
+            Expr::Variable(name, _) => {
                 let local = self.s.binding(self.parsed.text(*name))?;
                 let at = self.open_comptimes.get(&(local.id as usize))?;
                 Some((local.name.clone(), *at))
@@ -8636,7 +8647,7 @@ impl<'a> Checker<'a> {
     /// any integer (ADR-285 D9).
     fn open_numbers_in(&self, expr: &Expr, out: &mut Vec<usize>) {
         match expr {
-            Expr::Variable(name) => {
+            Expr::Variable(name, _) => {
                 if let Some(at) = self
                     .s
                     .binding(self.parsed.text(*name))
@@ -8676,6 +8687,7 @@ impl<'a> Checker<'a> {
             Expr::Unary {
                 op: UnaryOp::Neg | UnaryOp::Not,
                 expr,
+                ..
             } => self.open_numbers_in(expr, out),
             _ => {}
         }
@@ -8684,10 +8696,10 @@ impl<'a> Checker<'a> {
     /// **An element read out of a list whose elements are open** (D34):
     /// `xs[i]`, and not a slice of it.
     fn open_element_of(&self, expr: &Expr) -> Option<usize> {
-        let Expr::Index { base, index } = expr else {
+        let Expr::Index { base, index, .. } = expr else {
             return None;
         };
-        let Expr::Variable(name) = &**base else {
+        let Expr::Variable(name, _) = &**base else {
             return None;
         };
         if matches!(&**index, Expr::Range { .. }) {
@@ -8700,10 +8712,10 @@ impl<'a> Checker<'a> {
     /// **The constant an element of an immutable list of literals is**, where
     /// the index folds (D34, D26).
     fn element_constant(&self, expr: &Expr) -> Option<Constant> {
-        let Expr::Index { base, index } = expr else {
+        let Expr::Index { base, index, .. } = expr else {
             return None;
         };
-        let Expr::Variable(name) = &**base else {
+        let Expr::Variable(name, _) = &**base else {
             return None;
         };
         let local = self.s.binding(self.parsed.text(*name))?;
@@ -8722,7 +8734,7 @@ impl<'a> Checker<'a> {
     fn number_shaped(&self, expr: &Expr) -> bool {
         match expr {
             Expr::LitInt { .. } => true,
-            Expr::Variable(name) => self
+            Expr::Variable(name, _) => self
                 .s
                 .binding(self.parsed.text(*name))
                 .is_some_and(|local| local.open_number.is_some()),
@@ -8740,6 +8752,7 @@ impl<'a> Checker<'a> {
             Expr::Unary {
                 op: UnaryOp::Neg | UnaryOp::Not,
                 expr,
+                ..
             } => self.number_shaped(expr),
             _ => false,
         }
@@ -8757,7 +8770,7 @@ impl<'a> Checker<'a> {
             } if self.parsed.text(*method) == "clone" => &**receiver,
             value => value,
         };
-        if let Expr::Variable(name) = list
+        if let Expr::Variable(name, _) = list
             && let Some(number) = self
                 .s
                 .binding(self.parsed.text(*name))
@@ -8790,7 +8803,7 @@ impl<'a> Checker<'a> {
     /// the operations of one type [`Self::open_numbers_in`] walks.
     fn comptimes_asked(&mut self, expr: &Expr, ty: &str) {
         match expr {
-            Expr::Variable(name) => {
+            Expr::Variable(name, _) => {
                 let Some(local) = self.s.binding(self.parsed.text(*name)) else {
                     return;
                 };
@@ -8816,6 +8829,7 @@ impl<'a> Checker<'a> {
             Expr::Unary {
                 op: UnaryOp::Neg | UnaryOp::Not,
                 expr,
+                ..
             } => self.comptimes_asked(expr, ty),
             _ => {}
         }
@@ -9229,7 +9243,7 @@ impl<'a> Checker<'a> {
                 // lent, not handed over** (#452): `let c: ref String = data`
                 // over a mapped file is a view of its text, so `data` stays
                 // where it is and the line is written `&data`.
-                let seen_through = matches!(value, Expr::Variable(_) | Expr::Field { .. })
+                let seen_through = matches!(value, Expr::Variable(_, _) | Expr::Field { .. })
                     && ty.as_ref().is_some_and(|t| {
                         let want = Ty::from_ast(self.parsed, t);
                         !found.fits(&want) && self.fits_through_deref(&found, &want)
@@ -9480,7 +9494,7 @@ impl<'a> Checker<'a> {
                 // `get` below, a `&String`, which a comparison with a `String`
                 // has no impl for (found moving `types` into Nikaia, #125). A
                 // view below whatever its type says, as a `for` binding is.
-                let read_through_a_jump = matches!(value, Expr::Coalesce { value: read, fallback }
+                let read_through_a_jump = matches!(value, Expr::Coalesce { value: read, fallback, .. }
                     if matches!(**read, Expr::Index { .. })
                         && self.s.jumps(&self.world, fallback));
                 // **Unless what it reads is a number, a `bool` or a `char`**
@@ -9491,7 +9505,7 @@ impl<'a> Checker<'a> {
                 // owned answer is read as well. Bound as a view, `values.insert(name, v)`
                 // handed the map a `&i64`.
                 let copied_read = a_copy_by_value(&bound)
-                    && matches!(value, Expr::Coalesce { value: read, fallback }
+                    && matches!(value, Expr::Coalesce { value: read, fallback, .. }
                         if (matches!(**read, Expr::Index { .. })
                             || matches!(&**read, Expr::MethodCall { method, .. }
                                 if self.parsed.text(*method) == "get"))
@@ -9564,12 +9578,12 @@ impl<'a> Checker<'a> {
             } => {
                 // **Code assigned into a function field** (ADR-230 D1): the
                 // lock column does not read it, so the field is undecided.
-                if let Expr::Field { base, name } = target {
+                if let Expr::Field { base, name, .. } = target {
                     let field = self.parsed.text(*name).to_string();
                     // The owner where the base is a name; every struct with a
                     // function field of that name where it is not.
                     let owners: Vec<String> = match base.as_ref() {
-                        Expr::Variable(bound) => match self.s.lookup(self.parsed.text(*bound)) {
+                        Expr::Variable(bound, _) => match self.s.lookup(self.parsed.text(*bound)) {
                             Some(Ty::Named { name: owner, .. }) => vec![owner],
                             _ => Vec::new(),
                         },
@@ -9615,13 +9629,13 @@ impl<'a> Checker<'a> {
                 // A name that holds shared mutable state is not asked for
                 // `mut`: writing it directly is `NK2204`'s, one message for one
                 // mistake, and `mut` would not be the way out.
-                let shared = matches!(target, Expr::Variable(_))
+                let shared = matches!(target, Expr::Variable(_, _))
                     && self.s.rooted_at(&self.world, target).and_then(|root| self.s.binding(&root)).is_some_and(
                         |local| matches!(&local.ty, Ty::Named { name, .. } if name == SHARED_MUT),
                     );
                 if let Some(root) = self.s.rooted_at(&self.world, target).filter(|_| !shared) {
                     let how = match target {
-                        Expr::Variable(_) => "changed here",
+                        Expr::Variable(_, _) => "changed here",
                         _ => "one of its parts is changed here",
                     };
                     self.a_changed_binding_says_mut(&root, how, *span);
@@ -9637,8 +9651,10 @@ impl<'a> Checker<'a> {
                 // The target is **written**, not taken: `s = xs.iter()` gives a
                 // walked sequence a new one (ADR-293 D19). What is inside an
                 // index is still read, and is walked by its own arm.
-                let outer =
-                    std::mem::replace(&mut self.reading_only, matches!(target, Expr::Variable(_)));
+                let outer = std::mem::replace(
+                    &mut self.reading_only,
+                    matches!(target, Expr::Variable(_, _)),
+                );
                 // **A key written is handed to the map** (ADR-293 D27): the
                 // `Index` arm reads this for the one index it is walking.
                 self.writing_index = op.is_none() && matches!(target, Expr::Index { .. });
@@ -9676,7 +9692,7 @@ impl<'a> Checker<'a> {
                 // nothing.
                 if !matches!(op, Some(BinaryOp::Shl | BinaryOp::Shr)) {
                     let open = match target {
-                        Expr::Variable(name) => self
+                        Expr::Variable(name, _) => self
                             .s
                             .binding(self.parsed.text(*name))
                             .and_then(|local| local.open_number.map(|n| n as usize))
@@ -9728,7 +9744,7 @@ impl<'a> Checker<'a> {
                 // `remove-overflow-checks` (ADR-306 D10).
                 if let (
                     Some(BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul),
-                    Expr::Variable(_),
+                    Expr::Variable(_, _),
                     Ty::Named {
                         name,
                         args,
@@ -9946,7 +9962,7 @@ impl<'a> Checker<'a> {
                     && local.ty.is_unknown()
                 {
                     match iter {
-                        Expr::Variable(name) => {
+                        Expr::Variable(name, _) => {
                             if let Some(at) =
                                 self.s.binding(self.parsed.text(*name)).and_then(|list| {
                                     self.open_elements.get(&(list.id as usize)).copied()
@@ -10042,7 +10058,10 @@ impl<'a> Checker<'a> {
         // first use that asks decides the literal's.
         let ty = match expr {
             Expr::MethodCall { receiver, .. } if matches!(**receiver, Expr::LitInt { .. }) => {
-                let Expr::LitInt { value, negative } = **receiver else {
+                let Expr::LitInt {
+                    value, negative, ..
+                } = **receiver
+                else {
                     unreachable!("matched above")
                 };
                 let key = (value_node(receiver), crate::ast::int_value(value, negative));
@@ -10117,10 +10136,10 @@ impl<'a> Checker<'a> {
     /// `panic`, of a reflected field's `of` in a generic body, and not again
     /// where a part inside was already refused: one cause, one refusal.
     fn a_value_of_no_known_type(&mut self, expr: &Expr, span: &Span) {
-        let open = matches!(expr, Expr::LitInt { .. } | Expr::LitFloat(_))
+        let open = matches!(expr, Expr::LitInt { .. } | Expr::LitFloat(_, _))
             || matches!(expr, Expr::MethodCall { receiver, .. } if matches!(**receiver, Expr::LitInt { .. }))
             || self.number_shaped(expr)
-            || matches!(expr, Expr::Variable(n) if self
+            || matches!(expr, Expr::Variable(n, _) if self
                 .s
                 .binding(self.parsed.text(*n))
                 .is_some_and(|l| self.open_comptimes.contains_key(&(l.id as usize))))
@@ -10133,27 +10152,27 @@ impl<'a> Checker<'a> {
             // `asset("…")` is the bytes of a file, and the `comptime` it
             // stands in says what they are read as (ADR-310 D3).
             || matches!(expr, Expr::Call { func, .. }
-                if matches!(&**func, Expr::Variable(n) if self.parsed.text(*n) == ASSET));
+                if matches!(&**func, Expr::Variable(n, _) if self.parsed.text(*n) == ASSET));
         // **A name is asked where it is bound**: a `let`'s value, a loop's
         // sequence, the place a lambda stands, a declared parameter. Whatever
         // left it without a type was said there, or stood back for.
-        let said = matches!(expr, Expr::Variable(_));
+        let said = matches!(expr, Expr::Variable(_, _));
         let structural = matches!(
             expr,
             Expr::Binary { .. }
                 | Expr::Unary { .. }
                 | Expr::If { .. }
-                | Expr::Block(_)
+                | Expr::Block(_, _)
                 | Expr::Match { .. }
-                | Expr::Select(_)
-                | Expr::Return(_)
-                | Expr::Throw(_)
+                | Expr::Select(_, _)
+                | Expr::Return(_, _)
+                | Expr::Throw(_, _)
                 | Expr::TryCatch { .. }
                 | Expr::Range { .. }
-                | Expr::Continue
-                | Expr::Break
+                | Expr::Continue(_)
+                | Expr::Break(_)
         ) || matches!(expr, Expr::Call { func, .. }
-            if matches!(&**func, Expr::Variable(n) if self.parsed.text(*n) == "panic"))
+            if matches!(&**func, Expr::Variable(n, _) if self.parsed.text(*n) == "panic"))
             || matches!(expr, Expr::MethodCall { method, .. }
                 if self.parsed.text(*method) == "of" && self.unrolling.is_none())
             || matches!(expr, Expr::Field { name, .. }
@@ -10168,7 +10187,7 @@ impl<'a> Checker<'a> {
         // A member of a value that has no known type is unknown because of
         // that value, whose own refusal (or reason not to) was said.
         let of_an_unknown = matches!(expr, Expr::Field { base, .. } | Expr::MethodCall { receiver: base, .. }
-            if matches!(&**base, Expr::Variable(n) if self
+            if matches!(&**base, Expr::Variable(n, _) if self
                 .s
                 .binding(self.parsed.text(*n))
                 .is_some_and(|l| self.unknown_bound.contains(&(l.id as usize)))));
@@ -10222,10 +10241,10 @@ impl<'a> Checker<'a> {
     fn through_a_package_unread(&self, expr: &Expr) -> bool {
         let func = match expr {
             Expr::Call { func, .. } => &**func,
-            Expr::Path(_) => expr,
+            Expr::Path(_, _) => expr,
             _ => return false,
         };
-        let Expr::Path(segments) = func else {
+        let Expr::Path(segments, _) = func else {
             return false;
         };
         let [head, _, ..] = segments.as_slice() else {
@@ -10256,7 +10275,7 @@ impl<'a> Checker<'a> {
             // (Part I 2.2), so there is nothing to choose between and nothing
             // a use could decide. `let mut px = 0.0` is an `f64`, and so is
             // everything computed from it.
-            Expr::LitFloat(_) => Ty::named("f64"),
+            Expr::LitFloat(_, _) => Ty::named("f64"),
             // Part I 2.4 calls a string literal a `String`; Stage 0 emits a
             // Rust string literal, which is a view of static text. The checker
             // says what is emitted - see ADR-024 D5.
@@ -10275,7 +10294,7 @@ impl<'a> Checker<'a> {
             // Nikaia source written inside a literal, and until that walk
             // existed it was source no analysis could see - the same mistake
             // was caught outside a hole and silently passed inside one.
-            Expr::LitInterpolated { parts } => {
+            Expr::LitInterpolated { parts, .. } => {
                 // **The literal's own text runs**: a hole is code, and a
                 // string inside one is a literal of its own, asked when the
                 // hole is walked (ADR-309 D7).
@@ -10300,11 +10319,11 @@ impl<'a> Checker<'a> {
             }
             // A character literal is kept as written too, so `'\q'` is the
             // same refusal one literal over.
-            Expr::LitChar(text) => {
+            Expr::LitChar(text, _) => {
                 self.an_escape_nothing_names(text, span);
                 Ty::named("scalar")
             }
-            Expr::LitBool(_) => Ty::named("bool"),
+            Expr::LitBool(_, _) => Ty::named("bool"),
             // **A nullable of it-does-not-say.** `null` names the absence of a
             // value without naming what value, so the inside is `Unknown` and
             // anything nullable fits it - which is what makes `let mut m: &str?
@@ -10312,9 +10331,9 @@ impl<'a> Checker<'a> {
             // here: `let mut m = null` then `m = "hi"` is a correct program
             // (Part III, C.4), and it is `rustc` that asks for an annotation
             // where nothing ever says.
-            Expr::LitNull => Ty::Nullable(Box::new(Ty::Unknown)),
+            Expr::LitNull(_) => Ty::Nullable(Box::new(Ty::Unknown)),
 
-            Expr::Variable(name) => {
+            Expr::Variable(name, _) => {
                 let name = self.parsed.text(*name);
                 // `NK2101`: where this name is read, for the question a `spawn`
                 // asks about what comes after it.
@@ -10371,7 +10390,7 @@ impl<'a> Checker<'a> {
                 }
             }
 
-            Expr::Path(segments) => {
+            Expr::Path(segments, _) => {
                 // `Op::Times` is a value of the enum that declares it. Anything
                 // else a path can name, this compiler does not resolve.
                 let names: Vec<&str> = segments.iter().map(|s| self.parsed.text(*s)).collect();
@@ -10448,14 +10467,14 @@ impl<'a> Checker<'a> {
             // **`unsafe { … }` is a block with a value and no other rule**
             // ([ADR-302](../../docs/specification/adr/adr-302.md) D3): what is
             // inside is checked exactly as anything else is.
-            Expr::Block(block) => self.block(block),
+            Expr::Block(block, _) => self.block(block),
 
             // **`unsafe { … }` is a block with a value and no other rule**
             // ([ADR-302](../../docs/specification/adr/adr-302.md) D3): what is
             // inside is checked exactly as anything else is. The one thing it
             // changes is that a call to an `extern` name is allowed here, which
             // is the whole of what the word buys.
-            Expr::Unsafe(block) => {
+            Expr::Unsafe(block, _) => {
                 let outer = std::mem::replace(&mut self.s.inside_unsafe, true);
                 let value = self.block(block);
                 self.s.inside_unsafe = outer;
@@ -10471,7 +10490,7 @@ impl<'a> Checker<'a> {
             // them. The scope frame is the block's own, so a name a branch binds
             // does not leak - and `branches_meet_on_nothing` is what refuses one
             // that binds at all, since the block's value already carries it.
-            Expr::Overlap(block) => {
+            Expr::Overlap(block, _) => {
                 self.s.scope.push(Vec::new());
                 let parts: Vec<Ty> = block
                     .stmts
@@ -10510,7 +10529,7 @@ impl<'a> Checker<'a> {
             // where the rest do not say the same the answer is `Unknown`
             // rather than a guess. Part II 12.4's own example is two jumping
             // arms, so it is a `select` of no value at all.
-            Expr::Select(arms) => {
+            Expr::Select(arms, _) => {
                 let mut result: Option<Ty> = None;
                 let mut agree = true;
                 for arm in arms {
@@ -10549,6 +10568,7 @@ impl<'a> Checker<'a> {
                 cond,
                 then_branch,
                 else_branch,
+                ..
             } => {
                 let cond_ty = self.expr(cond, span);
                 self.expect_bool(&cond_ty, span, "An `if` decides on a `bool`.");
@@ -10623,12 +10643,12 @@ impl<'a> Checker<'a> {
                 branches
             }
 
-            Expr::Match { value, arms } => {
+            Expr::Match { value, arms, .. } => {
                 let on = self.expr(value, span);
                 // `error` in a handler is untyped at its binding; where one
                 // type arrives, that is what its parts are read from.
                 let typed = match (&on, &**value) {
-                    (Ty::Unknown, Expr::Variable(name))
+                    (Ty::Unknown, Expr::Variable(name, _))
                         if self.parsed.text(*name) == "error" && !self.caught_several =>
                     {
                         self.caught_one.clone().unwrap_or(Ty::Unknown)
@@ -10646,7 +10666,7 @@ impl<'a> Checker<'a> {
                 // The parameter itself is the `&mut` the arms bind through; a
                 // field of one is a place the arms bind out of.
                 let through_the_reference =
-                    mut_subject.is_some() && matches!(value.as_ref(), Expr::Variable(_));
+                    mut_subject.is_some() && matches!(value.as_ref(), Expr::Variable(_, _));
                 // **A field reached through a view is matched as the view it
                 // is** (found moving `traits` into Nikaia, #125): `match
                 // item.node` for a lent `item` is a place behind a reference
@@ -10663,7 +10683,7 @@ impl<'a> Checker<'a> {
                         root = base;
                     }
                     matches!(&**value, Expr::Field { .. } | Expr::Index { .. })
-                        && matches!(root, Expr::Variable(name)
+                        && matches!(root, Expr::Variable(name, _)
                             if self.s.binding(self.parsed.text(*name))
                                 .is_some_and(|local| local.lent || local.ty.is_a_view()))
                 };
@@ -10684,7 +10704,7 @@ impl<'a> Checker<'a> {
                 // **And so is a name lent to this function's walk**
                 // (`Local::lent`): `target` bound by `Stmt::Assign { target,
                 // .. }` over a lent statement is a reference below whatever
-                // its type says, so `match target { Expr::Variable(name) =>
+                // its type says, so `match target { Expr::Variable(name, _) =>
                 // … }` binds a `&Symbol` there. Read as the view it is, a part
                 // that copies is copied out at the head of the arm - it was
                 // handed on as the reference, and `rustc` answered *expected
@@ -10692,7 +10712,7 @@ impl<'a> Checker<'a> {
                 // `views` into Nikaia, #125).
                 // **And a `let` over a place** (#567): `let v = vs[0]` is a
                 // `&V` below whatever type it has here.
-                let lent_name = matches!(&**value, Expr::Variable(name)
+                let lent_name = matches!(&**value, Expr::Variable(name, _)
                     if self.s.binding(self.parsed.text(*name)).is_some_and(|local| local.lent))
                     || self.a_lent_let(value);
                 let typed =
@@ -10933,7 +10953,7 @@ impl<'a> Checker<'a> {
                 // untyped (see [`Checker::caught_one`]); this hands the one
                 // question that can only gain by knowing.
                 let on = match (&on, &**value) {
-                    (Ty::Unknown, Expr::Variable(name))
+                    (Ty::Unknown, Expr::Variable(name, _))
                         if self.parsed.text(*name) == "error" && !self.caught_several =>
                     {
                         self.caught_one.clone().unwrap_or(Ty::Unknown)
@@ -10954,7 +10974,9 @@ impl<'a> Checker<'a> {
                 }
             }
 
-            Expr::Call { func, args, config } => match self.the_prelude_assert(func) {
+            Expr::Call {
+                func, args, config, ..
+            } => match self.the_prelude_assert(func) {
                 true => self.an_assert(args, config, span),
                 false => self.call(func, args, config, span),
             },
@@ -10964,12 +10986,14 @@ impl<'a> Checker<'a> {
                 method,
                 args,
                 config,
+                ..
             }
             | Expr::SafeMethod {
                 receiver,
                 method,
                 args,
                 config,
+                ..
             } => {
                 // **`after:` on a `set` is a witness and not an option**
                 // ([ADR-281](../../docs/specification/adr/adr-281.md) D26): it
@@ -10982,7 +11006,7 @@ impl<'a> Checker<'a> {
                 // **And an empty map's first `insert`** (#543): its key and
                 // value types, the same way.
                 self.pushed_into = match (&**receiver, self.parsed.text(*method), args.len()) {
-                    (Expr::Variable(name), "push", 1)
+                    (Expr::Variable(name, _), "push", 1)
                         if self
                             .s
                             .binding(self.parsed.text(*name))
@@ -10993,7 +11017,7 @@ impl<'a> Checker<'a> {
                     {
                         Some(self.parsed.text(*name).to_string())
                     }
-                    (Expr::Variable(name), "insert", 2)
+                    (Expr::Variable(name, _), "insert", 2)
                         if self
                             .s
                             .binding(self.parsed.text(*name))
@@ -11054,7 +11078,12 @@ impl<'a> Checker<'a> {
                 // not tell which integer it was. The type is written on the
                 // literal ([`Checked::unsigned_literals`]).
                 let on = match (&**receiver, &on) {
-                    (Expr::LitInt { value, negative }, Ty::Unknown) => {
+                    (
+                        Expr::LitInt {
+                            value, negative, ..
+                        },
+                        Ty::Unknown,
+                    ) => {
                         let number =
                             Constant::of(nikaia_std::tools::integers::integer(*value, *negative));
                         let ty = match number.fits("i64") {
@@ -11349,7 +11378,7 @@ impl<'a> Checker<'a> {
                 let outer_receiver = std::mem::replace(
                     &mut self.s.set_receiver,
                     match receiver.as_ref() {
-                        Expr::Variable(name) => Some(self.parsed.text(*name).to_string()),
+                        Expr::Variable(name, _) => Some(self.parsed.text(*name).to_string()),
                         _ => Some("this lock".to_string()),
                     },
                 );
@@ -11358,7 +11387,7 @@ impl<'a> Checker<'a> {
                 let outer_named = std::mem::replace(
                     &mut self.receiver_name,
                     match receiver.as_ref() {
-                        Expr::Variable(name) => Some(self.parsed.text(*name).to_string()),
+                        Expr::Variable(name, _) => Some(self.parsed.text(*name).to_string()),
                         _ => None,
                     },
                 );
@@ -11531,7 +11560,7 @@ impl<'a> Checker<'a> {
                     // array's own `contains` takes a `&&str`. Element by element
                     // answers every pairing of `String` and `str`.
                     if (key == "Vec::contains" || key == "Array::contains")
-                        && let [Expr::Variable(name)] = args
+                        && let [Expr::Variable(name, _)] = args
                         && self
                             .s
                             .binding(self.parsed.text(*name))
@@ -11610,7 +11639,7 @@ impl<'a> Checker<'a> {
                 }
             }
 
-            Expr::Field { base, name } | Expr::SafeField { base, name } => {
+            Expr::Field { base, name, .. } | Expr::SafeField { base, name, .. } => {
                 let on = self.expr(base, span);
                 let field = self.parsed.text(*name).to_string();
                 // **`x?.field`** (Part I 3.5): over a `T?` the field of what is
@@ -11791,7 +11820,7 @@ impl<'a> Checker<'a> {
                 }
             }
 
-            Expr::StructLit { name, fields } => {
+            Expr::StructLit { name, fields, .. } => {
                 // `unaliased`, the same as a type: `h::Request(path: …)` builds
                 // `http::Request` (ADR-286 D12).
                 let name = self.parsed.unaliased(self.parsed.text(*name));
@@ -11867,7 +11896,7 @@ impl<'a> Checker<'a> {
                             }
                             // A function of this program, named: it is what
                             // runs.
-                            Some(Expr::Variable(named)) => {
+                            Some(Expr::Variable(named, _)) => {
                                 let named = self.parsed.text(*named).to_string();
                                 match self.s.lookup(&named).is_none() {
                                     true => {
@@ -12056,7 +12085,9 @@ impl<'a> Checker<'a> {
             // literal's — so what is new here is the **operand**: it has to be
             // a struct this compiler can name, because what it lowers to is
             // Rust's `Point { x: 1, ..p }` and the type is written there.
-            Expr::With { base, fields, at } => {
+            Expr::With {
+                base, fields, at, ..
+            } => {
                 let found = self.expr(base, span);
                 let Ty::Named {
                     name,
@@ -12148,6 +12179,7 @@ impl<'a> Checker<'a> {
                 params,
                 mutable,
                 body,
+                ..
             } => {
                 // **Its parameters are what the place it stands in says**
                 // (#497), as a callee's signature says for an argument.
@@ -12192,13 +12224,13 @@ impl<'a> Checker<'a> {
                 }
             }
 
-            whole @ Expr::Unary { op, expr } => {
+            whole @ Expr::Unary { op, expr, .. } => {
                 if matches!(op, UnaryOp::Neg) {
                     self.reaching = self.reached.take();
                 }
                 // `&s` looks at a sequence without taking it (ADR-293 D19). Only
                 // a name directly under the `&`: `&f(s)` still hands `s` over.
-                let looks = matches!(op, UnaryOp::Ref) && matches!(&**expr, Expr::Variable(_));
+                let looks = matches!(op, UnaryOp::Ref) && matches!(&**expr, Expr::Variable(_, _));
                 let outer = std::mem::replace(&mut self.reading_only, looks);
                 let inner = self.expr(expr, span);
                 self.reading_only = outer;
@@ -12365,8 +12397,8 @@ impl<'a> Checker<'a> {
                         // emitter writes it `x.is_none()` (0.0.250): nothing
                         // of what `x` holds is compared, so a type that does
                         // not compare is no reason to refuse it.
-                        let asks_for_null = matches!(lhs.as_ref(), Expr::LitNull)
-                            || matches!(rhs.as_ref(), Expr::LitNull);
+                        let asks_for_null = matches!(lhs.as_ref(), Expr::LitNull(_))
+                            || matches!(rhs.as_ref(), Expr::LitNull(_));
                         if !asks_for_null {
                             self.a_type_that_does_not_compare(&left, &right, at);
                         }
@@ -12485,7 +12517,7 @@ impl<'a> Checker<'a> {
                 }
             }
 
-            Expr::Cast { expr, ty } => {
+            Expr::Cast { expr, ty, .. } => {
                 let from = self.expr(expr, span);
                 let into = self.declared(ty, span);
                 self.a_cast_over_a_lent_binding(expr, span);
@@ -12503,7 +12535,7 @@ impl<'a> Checker<'a> {
                 into
             }
 
-            Expr::Tuple(parts) => {
+            Expr::Tuple(parts, _) => {
                 let found: Vec<Ty> = parts.iter().map(|p| self.expr(p, span)).collect();
                 for (part, ty) in parts.iter().zip(&found) {
                     self.hands_over(part, ty, "put into a tuple", span);
@@ -12519,14 +12551,14 @@ impl<'a> Checker<'a> {
             // A `?` unwraps a failure, a `??` unwraps an absence, an index
             // reaches into a container and a range is an iterator: four things
             // Stage 0 has no signature for.
-            Expr::Try(inner) => {
+            Expr::Try(inner, _) => {
                 self.expr(inner, span);
                 Ty::Unknown
             }
             // Kap 7.1: `throw` leaves the function, so it has no value of its
             // own - the same shape a `return` has. What it throws is walked,
             // because a mistyped constructor inside it is still a mistake.
-            Expr::Throw(inner) => {
+            Expr::Throw(inner, _) => {
                 let thrown = self.expr(inner, span);
                 self.s
                     .a_thrown_value_that_is_not_an_error(inner, &thrown, span);
@@ -12539,22 +12571,24 @@ impl<'a> Checker<'a> {
             // about what they do changes (D2), so each asks exactly what its
             // statement form asks — the answer to *what is a `return` worth* is
             // the same wherever it is written.
-            Expr::Return(value) => {
+            Expr::Return(value, _) => {
                 self.returns((**value).as_ref(), span, true);
                 self.a_way_out("return", "", span);
                 Ty::Unknown
             }
-            Expr::Break | Expr::Continue => {
+            Expr::Break(_) | Expr::Continue(_) => {
                 if self.loops == 0 {
                     let word = match expr {
-                        Expr::Break => "break",
+                        Expr::Break(_) => "break",
                         _ => "continue",
                     };
                     self.a_jump_with_nowhere_to_go(word, span);
                 }
                 Ty::Unknown
             }
-            Expr::Coalesce { value, fallback } => {
+            Expr::Coalesce {
+                value, fallback, ..
+            } => {
                 let outer = std::mem::replace(&mut self.read_a_map, false);
                 let left = self.expr(value, span);
                 let read_now = std::mem::replace(&mut self.read_a_map, outer);
@@ -12571,7 +12605,7 @@ impl<'a> Checker<'a> {
                 // left side is a view of what the map keeps either way.
                 let from_a_map = match &**value {
                     Expr::Index { .. } | Expr::MethodCall { .. } => read_now,
-                    Expr::Variable(name) => self
+                    Expr::Variable(name, _) => self
                         .s
                         .binding(self.parsed.text(*name))
                         .is_some_and(|local| self.map_views.contains(&(local.id as usize))),
@@ -12606,7 +12640,7 @@ impl<'a> Checker<'a> {
                 // take the field, and a jump has no value, so the answer is a
                 // view of the left side wherever it stands - a `let` binds a
                 // view, as `let found = m[k]` does.
-                let lent_and_jumps = matches!(&**value, Expr::Variable(_) | Expr::Field { .. })
+                let lent_and_jumps = matches!(&**value, Expr::Variable(_, _) | Expr::Field { .. })
                     && self.s.jumps(&self.world, fallback)
                     && matches!(&left, Ty::Nullable(inner) if self.s.takes_away(&self.world, &inner.unseen()))
                     && self
@@ -12625,7 +12659,7 @@ impl<'a> Checker<'a> {
                         return view_of(inner);
                     }
                 }
-                if matches!(&**value, Expr::Variable(_) | Expr::Field { .. }) {
+                if matches!(&**value, Expr::Variable(_, _) | Expr::Field { .. }) {
                     match self
                         .s
                         .a_coalesce_that_may_lend(&self.world, &left, fallback, &other)
@@ -12682,7 +12716,7 @@ impl<'a> Checker<'a> {
                     && **inner == Ty::named("String")
                     && from_a_map
                     && other.is_a_view()
-                    && matches!(&**fallback, Expr::Variable(_) | Expr::Field { .. })
+                    && matches!(&**fallback, Expr::Variable(_, _) | Expr::Field { .. })
                     && matches!(&other, Ty::Named { name, .. }
                         if matches!(crate::contracts::ty::base(name), "String" | "str"))
                 {
@@ -12699,7 +12733,7 @@ impl<'a> Checker<'a> {
                 // as a value of its own. Text has its own answers above.
                 if let Ty::Nullable(inner) = &left
                     && from_a_map
-                    && matches!(&**fallback, Expr::Variable(_))
+                    && matches!(&**fallback, Expr::Variable(_, _))
                     && !other.is_a_view()
                     && let Ty::Named { name, args, .. } = inner.as_ref()
                     && !matches!(name.as_str(), "str" | "String")
@@ -12826,7 +12860,7 @@ impl<'a> Checker<'a> {
             // A shape it does not recognise still claims nothing: `s[i]` over
             // text is a slice in some languages and a byte in others, and
             // Nikaia has not said. `?` is the absence of a claim (ADR-024 D1).
-            Expr::Index { base, index } => {
+            Expr::Index { base, index, .. } => {
                 let writing = std::mem::replace(&mut self.writing_index, false);
                 let on = self.expr(base, span);
                 let key = self.expr(index, span);
@@ -12983,7 +13017,7 @@ impl<'a> Checker<'a> {
                 }
             }
 
-            Expr::TryCatch { expr, handler } => {
+            Expr::TryCatch { expr, handler, .. } => {
                 // Kap 7.1: the handler is what handles the failure, so the
                 // guarded expression is where a fallible call needs no
                 // `throws` on the function around it (`NK2605`). The handler
@@ -13115,6 +13149,7 @@ impl<'a> Checker<'a> {
                         // already refused the list that is not empty.
                         mutable: Vec::new(),
                         body: body.clone(),
+                        id: crate::ast::NodeId::fresh(),
                     },
                     span,
                 );
@@ -13165,6 +13200,7 @@ impl<'a> Checker<'a> {
                 package: None,
                 context: None,
                 content,
+                ..
             } if self
                 .s
                 .grammars
@@ -13190,6 +13226,7 @@ impl<'a> Checker<'a> {
                         package: None,
                         context: None,
                         content,
+                        ..
                     } if self.parsed.text(*target) == "html"
                         && !crate::dsl::is_deferred("html", content) =>
                     {
@@ -13203,6 +13240,7 @@ impl<'a> Checker<'a> {
                         package: None,
                         context: None,
                         content,
+                        ..
                     } if crate::dsl::is_deferred(self.parsed.text(*target), content) => {
                         Ty::view("str")
                     }
@@ -13339,7 +13377,9 @@ impl<'a> Checker<'a> {
     fn literals_are(&mut self, value: &Expr, ty: &str, span: &Span) {
         let value_expr = value;
         match value {
-            Expr::LitInt { value, negative } => {
+            Expr::LitInt {
+                value, negative, ..
+            } => {
                 let _ = span;
                 self.checked.unsigned_literals.insert(
                     (
@@ -13376,7 +13416,7 @@ impl<'a> Checker<'a> {
                     self.literals_are(&arm.body, ty, span);
                 }
             }
-            Expr::Block(block) => self.literals_in_the_tail(block, ty),
+            Expr::Block(block, _) => self.literals_in_the_tail(block, ty),
             _ => {}
         }
     }
@@ -13734,9 +13774,11 @@ impl<'a> Checker<'a> {
                     .is_variant(self.parsed.text(segments[0]), self.parsed.text(segments[1]))
         };
         match written {
-            Expr::Path(segments) => variant(segments),
+            Expr::Path(segments, _) => variant(segments),
             Expr::StructLit { .. } => true,
-            Expr::Call { func, .. } => matches!(&**func, Expr::Path(segments) if variant(segments)),
+            Expr::Call { func, .. } => {
+                matches!(&**func, Expr::Path(segments, _) if variant(segments))
+            }
             _ => false,
         }
     }
@@ -14024,7 +14066,7 @@ impl<'a> Checker<'a> {
         // back the same address (found moving `sharing`'s walk into Nikaia,
         // #125: `double(3000000000)` in a hole lost its `u32`).
         let walked: Vec<(std::borrow::Cow<'_, Expr>, LoopNames)> = match literal {
-            Expr::LitInterpolated { parts } => crate::emit::interpolated_holes(parts)
+            Expr::LitInterpolated { parts, .. } => crate::emit::interpolated_holes(parts)
                 .into_iter()
                 .map(|(at, hole)| (crate::emit::hole_as_read(self.parsed, at, hole), Vec::new()))
                 .collect(),
@@ -14063,7 +14105,7 @@ impl<'a> Checker<'a> {
                 _ => self.hole.clone(),
             };
             let held = self.expr(hole, span);
-            if let Expr::Variable(name) = hole {
+            if let Expr::Variable(name, _) = hole {
                 collections.insert(self.parsed.text(*name).to_string(), held.clone());
             }
             // **A hole is formatted by reference** (ADR-279 D5): a `??` that
@@ -14097,27 +14139,27 @@ impl<'a> Checker<'a> {
             |ty: &Ty| matches!(ty, Ty::Named { name, .. } if name == "String" || name == "str");
         match expr {
             Expr::LitStr { .. } => true,
-            Expr::Variable(name) => self
-                .s
-                .binding(self.parsed.text(*name))
-                .is_some_and(|local| {
-                    text(&local.ty) || self.text_paths.contains(&(local.id as usize))
-                }),
-            Expr::LitInterpolated { parts } => {
-                crate::emit::interpolated_holes(parts)
-                    .iter()
-                    .all(|(_, hole)| match hole {
-                        Expr::Variable(name) => self
-                            .s
+            Expr::Variable(name, _) => {
+                self.s
+                    .binding(self.parsed.text(*name))
+                    .is_some_and(|local| {
+                        text(&local.ty) || self.text_paths.contains(&(local.id as usize))
+                    })
+            }
+            Expr::LitInterpolated { parts, .. } => crate::emit::interpolated_holes(parts)
+                .iter()
+                .all(|(_, hole)| match hole {
+                    Expr::Variable(name, _) => {
+                        self.s
                             .binding(self.parsed.text(*name))
                             .is_some_and(|local| {
                                 !matches!(&local.ty, Ty::Named { name, .. } if name == "fs::Path")
                                     || self.text_paths.contains(&(local.id as usize))
-                            }),
-                        Expr::LitInt { .. } | Expr::LitStr { .. } => true,
-                        other => self.made_from_text(other),
-                    })
-            }
+                            })
+                    }
+                    Expr::LitInt { .. } | Expr::LitStr { .. } => true,
+                    other => self.made_from_text(other),
+                }),
             Expr::MethodCall {
                 receiver,
                 method,
@@ -14138,7 +14180,7 @@ impl<'a> Checker<'a> {
     /// every position; whether the name is text is the program's to say,
     /// with `to_text()` or `display()`.
     fn a_name_in_text(&mut self, want: &Ty, value: Option<&Expr>, span: &Span) -> bool {
-        let Some(literal @ Expr::LitInterpolated { parts }) = value else {
+        let Some(literal @ Expr::LitInterpolated { parts, .. }) = value else {
             return false;
         };
         let wants_text = match want {
@@ -14166,7 +14208,7 @@ impl<'a> Checker<'a> {
             }
             let written = written(self.parsed, hole);
             let shown = match hole {
-                Expr::Variable(_) | Expr::Field { .. } => written.clone(),
+                Expr::Variable(_, _) | Expr::Field { .. } => written.clone(),
                 _ => format!("({written})"),
             };
             self.s.findings.push(Finding {
@@ -14225,7 +14267,7 @@ impl<'a> Checker<'a> {
                     "Join its elements into text first: `let text = {}.iter().join(\", \")`, \
                      then write `{{text}}`.",
                     match hole {
-                        Expr::Variable(_) | Expr::Field { .. } => written.clone(),
+                        Expr::Variable(_, _) | Expr::Field { .. } => written.clone(),
                         _ => format!("({written})"),
                     }
                 ),
@@ -14274,6 +14316,7 @@ impl<'a> Checker<'a> {
             params,
             mutable,
             body,
+            ..
         } = last
         else {
             self.no_door(door, "The block comes last: `fn(a, b) { … }`.", span);
@@ -14471,7 +14514,7 @@ impl<'a> Checker<'a> {
     fn call(&mut self, func: &Expr, args: &[Expr], config: &[ast::ConfigArg], span: &Span) -> Ty {
         // **`T::attribute(X)` and `T::attributes(X)`, a walked type's own**
         // (ADR-331 D6): `X` is a type, not a value, and is not walked as one.
-        if let Expr::Path(segments) = func
+        if let Expr::Path(segments, _) = func
             && let [parameter, member] = segments.as_slice()
             && self
                 .s
@@ -14496,7 +14539,7 @@ impl<'a> Checker<'a> {
         // be answered before the arguments are walked: what the lambda is handed
         // comes from what the *locks* hold, so the locks are typed first and the
         // lambda after. Every other call can walk its arguments in one pass.
-        if let Expr::Variable(name) = func {
+        if let Expr::Variable(name, _) = func {
             if let Some(door) = MultiLock::named(self.parsed.text(*name)) {
                 return self.locks(door, args, span);
             }
@@ -14537,11 +14580,11 @@ impl<'a> Checker<'a> {
         // [ADR-277](../../docs/specification/adr/adr-277.md) D7's promises had
         // nothing to be asked of.
         let name = match func {
-            Expr::Variable(name) => self.parsed.text(*name).to_string(),
+            Expr::Variable(name, _) => self.parsed.text(*name).to_string(),
             // `unaliased`: `h::serve()` is `http::serve()` where the file wrote
             // `use http as h` (ADR-286 D12), and the ledger knows only the
             // package's own name.
-            Expr::Path(segments) => self.parsed.unaliased(
+            Expr::Path(segments, _) => self.parsed.unaliased(
                 &segments
                     .iter()
                     .map(|s| self.parsed.text(*s))
@@ -14556,7 +14599,7 @@ impl<'a> Checker<'a> {
 
         // **A kept function value called by name**: a `let`, or a parameter
         // the function keeps. What its type says is what the call does.
-        if matches!(func, Expr::Variable(_))
+        if matches!(func, Expr::Variable(_, _))
             && !self.s.run_code.contains(&name)
             && let Some(Ty::Fn {
                 params,
@@ -14631,7 +14674,7 @@ impl<'a> Checker<'a> {
         // find module or crate* about a file nobody wrote. Whether a head
         // exists is always known, so this is no guess (C.4 is about types).
         // `Self` and a built-in type name a type that is always there.
-        if let Expr::Path(segments) = func
+        if let Expr::Path(segments, _) = func
             && let [head, _, ..] = segments.as_slice()
         {
             let head = self.parsed.text(*head);
@@ -14714,7 +14757,7 @@ impl<'a> Checker<'a> {
         // apply(twice: fn(i64) -> i64 sync)` is the parameter, not a free
         // `fn twice(a, b, c)` - which it was, and the call was checked
         // against the wrong signature.
-        let shadowed = matches!(func, Expr::Variable(_)) && self.s.lookup(&name).is_some();
+        let shadowed = matches!(func, Expr::Variable(_, _)) && self.s.lookup(&name).is_some();
         let resolved = match variant.is_some() || is_hull(&name) || shadowed {
             true => None,
             false => self.resolve(&name),
@@ -14729,7 +14772,7 @@ impl<'a> Checker<'a> {
         // the reference for - typed from nothing, the text went below by
         // value and `rustc` refused it.
         if resolved.is_none()
-            && matches!(func, Expr::Variable(_))
+            && matches!(func, Expr::Variable(_, _))
             && self.s.run_code.contains(&name)
             && let Some(Ty::Fn { params, .. }) = self.s.lookup(&name)
         {
@@ -14806,10 +14849,10 @@ impl<'a> Checker<'a> {
         }
 
         let Some((key, contract)) = resolved else {
-            if matches!(func, Expr::Variable(_)) {
+            if matches!(func, Expr::Variable(_, _)) {
                 self.a_function_nothing_declares(&name, span);
             }
-            if let Expr::Path(segments) = func
+            if let Expr::Path(segments, _) = func
                 && let [head, member] = segments.as_slice()
                 && !shadowed
             {
@@ -14843,7 +14886,7 @@ impl<'a> Checker<'a> {
             // unresolved, and an unresolved method is read as one that may
             // pause - so the function came out `async` with nothing in it that
             // pauses (found moving `foreign`'s walk into Nikaia, #125).
-            if let Expr::Variable(_) = func
+            if let Expr::Variable(_, _) = func
                 && self.s.run_code.contains(&name)
                 && let Some(Ty::Fn { params, result, .. }) = self.s.lookup(&name)
             {
@@ -15105,7 +15148,9 @@ impl<'a> Checker<'a> {
                 // A free call walks its arguments first, so a call on a
                 // number written as its receiver is told its parameter here.
                 if let Expr::MethodCall { receiver, .. } = given
-                    && let Expr::LitInt { value, negative } = **receiver
+                    && let Expr::LitInt {
+                        value, negative, ..
+                    } = **receiver
                 {
                     let key = (value_node(receiver), crate::ast::int_value(value, negative));
                     if let Some(at) = self.literal_receivers.iter().position(|k| *k == key) {
@@ -15295,7 +15340,7 @@ impl<'a> Checker<'a> {
             // whatever this checker calls it, and a `*` on it is not Rust.
             if self.a_view_that_copies(found)
                 && unviewed(found) == *want
-                && matches!(given.get(at), Some(Expr::Variable(_)))
+                && matches!(given.get(at), Some(Expr::Variable(_, _)))
             {
                 self.checked
                     .copied_args
@@ -15723,7 +15768,7 @@ impl<'a> Checker<'a> {
             .to_string();
         let keeper = sentence(keeper);
         let named = match value {
-            Some(Expr::Variable(name)) => Some(self.parsed.text(*name).to_string()),
+            Some(Expr::Variable(name, _)) => Some(self.parsed.text(*name).to_string()),
             _ => None,
         };
         let binding = named.as_deref().and_then(|name| self.s.binding(name));
@@ -16161,7 +16206,7 @@ impl<'a> Checker<'a> {
         else {
             return;
         };
-        let Some(Expr::Variable(value)) = given else {
+        let Some(Expr::Variable(value, _)) = given else {
             return;
         };
         let Some(how) = self.tears_down(want, &mut BTreeSet::new()) else {
@@ -16404,7 +16449,7 @@ impl<'a> Checker<'a> {
         if !matches!(over, Ty::Seq { shape, .. } if !shape.replays) {
             return;
         }
-        let Expr::Variable(name) = iter else {
+        let Expr::Variable(name, _) = iter else {
             return;
         };
         let name = self.parsed.text(*name).to_string();
@@ -16494,7 +16539,7 @@ impl<'a> Checker<'a> {
             // for (found moving `contracts::keep`'s plan into Nikaia, #125).
             false => match found.is_a_view()
                 || matches!(index, Expr::LitStr { .. })
-                || matches!(index, Expr::Variable(name)
+                || matches!(index, Expr::Variable(name, _)
                     if self.s.binding(self.parsed.text(*name)).is_some_and(|local| local.lent))
                 // A `let` over a place, or a part of a tuple taken apart out
                 // of one (#465), is a view below too.
@@ -16539,7 +16584,7 @@ impl<'a> Checker<'a> {
         let Some(&at) = self.read_index.get(&(address(value), span.at())) else {
             return;
         };
-        if !matches!(value, Expr::Variable(_) | Expr::Field { .. }) {
+        if !matches!(value, Expr::Variable(_, _) | Expr::Field { .. }) {
             return;
         }
         let (path, seq) = (
@@ -16663,7 +16708,7 @@ impl<'a> Checker<'a> {
     /// Whether `side` names a `let` over a place, which is a view of it
     /// ([`Checked::lent_lets`]).
     fn a_lent_let(&self, side: &Expr) -> bool {
-        let Expr::Variable(name) = side else {
+        let Expr::Variable(name, _) = side else {
             return false;
         };
         let name = self.parsed.text(*name);
@@ -18400,7 +18445,7 @@ impl<'a> Checker<'a> {
     /// **A sequence is untouched**: `xs[i] += 1` reads a `T` and writes a `T`,
     /// because a list has a value at every index it has at all (D3).
     fn a_compound_write_to_a_map_slot(&mut self, target: &Expr, span: &Span) {
-        let Expr::Index { base, index } = target else {
+        let Expr::Index { base, index, .. } = target else {
             return;
         };
         // **Only where the read is nullable**, which is only a map. Where the
@@ -18438,15 +18483,15 @@ impl<'a> Checker<'a> {
     fn several_arrive(&self, guarded: &Expr) -> bool {
         let name = match guarded {
             Expr::Call { func, .. } => match func.as_ref() {
-                Expr::Variable(name) => self.parsed.text(*name).to_string(),
-                Expr::Path(segments) => segments
+                Expr::Variable(name, _) => self.parsed.text(*name).to_string(),
+                Expr::Path(segments, _) => segments
                     .iter()
                     .map(|s| self.parsed.text(*s))
                     .collect::<Vec<_>>()
                     .join("::"),
                 _ => return false,
             },
-            Expr::Try(inner) => return self.several_arrive(inner),
+            Expr::Try(inner, _) => return self.several_arrive(inner),
             _ => return false,
         };
         let key = self.parsed.unaliased(&name);
@@ -18471,15 +18516,15 @@ impl<'a> Checker<'a> {
     fn the_one_error(&self, expr: &Expr) -> Option<Ty> {
         let name = match expr {
             Expr::Call { func, .. } => match &**func {
-                Expr::Variable(name) => self.parsed.text(*name).to_string(),
-                Expr::Path(segments) => segments
+                Expr::Variable(name, _) => self.parsed.text(*name).to_string(),
+                Expr::Path(segments, _) => segments
                     .iter()
                     .map(|s| self.parsed.text(*s))
                     .collect::<Vec<_>>()
                     .join("::"),
                 _ => return None,
             },
-            Expr::Try(inner) => return self.the_one_error(inner),
+            Expr::Try(inner, _) => return self.the_one_error(inner),
             _ => return None,
         };
         let key = self.parsed.unaliased(&name);
@@ -18524,7 +18569,7 @@ impl<'a> Checker<'a> {
         if !self.caught_several {
             return;
         }
-        if !matches!(value, Expr::Variable(name) if self.parsed.text(*name) == "error") {
+        if !matches!(value, Expr::Variable(name, _) if self.parsed.text(*name) == "error") {
             return;
         }
         let caught = arms
@@ -18650,7 +18695,7 @@ impl<'a> Checker<'a> {
         if name == "bool" {
             let mut seen = BTreeSet::new();
             for arm in arms {
-                if let MatchPattern::Literal(Expr::LitBool(value)) = &arm.pattern {
+                if let MatchPattern::Literal(Expr::LitBool(value, _)) = &arm.pattern {
                     seen.insert(*value);
                 }
             }
@@ -18768,14 +18813,14 @@ impl<'a> Checker<'a> {
         let mut runs_a_grammar = false;
         crate::emit::visit_expr(value, &mut |expr: &Expr| match expr {
             Expr::Call { func, .. } => {
-                if let Expr::Path(path) = &**func
+                if let Expr::Path(path, _) = &**func
                     && let Some(head) = path.first()
                 {
                     runs_a_grammar |= grammars.contains(self.parsed.text(*head));
                 }
             }
             Expr::MethodCall { receiver, .. } => {
-                if let Expr::Variable(name) = &**receiver {
+                if let Expr::Variable(name, _) = &**receiver {
                     runs_a_grammar |= grammars.contains(self.parsed.text(*name));
                 }
             }
@@ -18807,12 +18852,13 @@ impl<'a> Checker<'a> {
         let mut assets: Vec<Option<String>> = Vec::new();
         crate::emit::visit_expr(value, &mut |expr: &Expr| match expr {
             Expr::Call { func, args, .. } => match &**func {
-                Expr::Variable(name) if self.parsed.text(*name) == crate::assets::ASSET => assets
-                    .push(match args.as_slice() {
+                Expr::Variable(name, _) if self.parsed.text(*name) == crate::assets::ASSET => {
+                    assets.push(match args.as_slice() {
                         [Expr::LitStr { text, .. }] => build_time::decoded(text),
                         _ => None,
-                    }),
-                Expr::Path(path)
+                    })
+                }
+                Expr::Path(path, _)
                     if path.len() == 2 && enums.contains(self.parsed.text(path[0])) => {}
                 _ => calls = true,
             },
@@ -18848,7 +18894,7 @@ impl<'a> Checker<'a> {
                 &mut value,
                 &mut |expr: &mut Expr| {
                     if let Expr::Call { func, args, .. } = expr
-                        && matches!(&**func, Expr::Variable(name)
+                        && matches!(&**func, Expr::Variable(name, _)
                             if parsed.text(*name) == crate::assets::ASSET)
                         && let [Expr::LitStr { text, .. }] = args.as_slice()
                         && let Some(content) =
@@ -18857,6 +18903,7 @@ impl<'a> Checker<'a> {
                         *expr = Expr::LitStr {
                             text: build_time::written(content),
                             at: 0,
+                            id: crate::ast::NodeId::fresh(),
                         };
                     }
                 },
@@ -19260,7 +19307,7 @@ impl<'a> Checker<'a> {
         // **A list with a `null` in it is a list of `T?`**, met as the arms of
         // a choice meet (`arms_meet_at_null`): `[null, 7]` holds `Some(7)`
         // below, where the `7` reached `rustc` bare beside a `None` (#312).
-        if items.iter().any(|item| matches!(item, Expr::LitNull)) {
+        if items.iter().any(|item| matches!(item, Expr::LitNull(_))) {
             let arms: Vec<(Option<&Expr>, Ty)> = items
                 .iter()
                 .zip(&founds)
@@ -19626,7 +19673,7 @@ impl<'a> Checker<'a> {
         };
         let mut named: BTreeSet<String> = BTreeSet::new();
         crate::emit::visit_block(body, &mut |e| {
-            if let Expr::Variable(name) = e {
+            if let Expr::Variable(name, _) = e {
                 named.insert(self.parsed.text(*name).to_string());
             }
         });
@@ -19660,7 +19707,7 @@ impl<'a> Checker<'a> {
         };
         let mut named: BTreeSet<String> = BTreeSet::new();
         crate::emit::visit_block(body, &mut |e| {
-            if let Expr::Variable(name) = e {
+            if let Expr::Variable(name, _) = e {
                 named.insert(self.parsed.text(*name).to_string());
             }
         });
@@ -19731,7 +19778,7 @@ impl<'a> Checker<'a> {
                 can_throw: throws,
                 ..
             },
-            Expr::Variable(name),
+            Expr::Variable(name, _),
         ) = (want, value)
         {
             let named = self.parsed.text(*name).to_string();
@@ -19769,7 +19816,8 @@ impl<'a> Checker<'a> {
     /// as. The parts that are not literals keep the type they were found to
     /// have, so a view among them is still refused.
     fn tuple_literal(&mut self, found: &Ty, want: &Ty, value: &Expr) -> Option<Ty> {
-        let (Ty::Tuple(wants), Ty::Tuple(founds), Expr::Tuple(parts)) = (want, found, value) else {
+        let (Ty::Tuple(wants), Ty::Tuple(founds), Expr::Tuple(parts, _)) = (want, found, value)
+        else {
             return None;
         };
         if wants.len() != parts.len() || founds.len() != parts.len() {
@@ -19933,7 +19981,7 @@ impl<'a> Checker<'a> {
                     args,
                     view: false,
                 },
-                Expr::LitChar(written),
+                Expr::LitChar(written, _),
             ) if name == "u8" && args.is_empty() && a_byte(written) => {
                 self.checked.byte_literals.insert(value_node(value));
                 Some(Ty::named("u8"))
@@ -19964,7 +20012,7 @@ impl<'a> Checker<'a> {
                 let arms: Vec<Option<&Expr>> = arms.iter().map(|arm| Some(&arm.body)).collect();
                 self.every_arm(want, &arms, owned)
             }
-            (_, Expr::Block(block)) => self.every_arm(want, &[tail_of(block)], owned),
+            (_, Expr::Block(block, _)) => self.every_arm(want, &[tail_of(block)], owned),
             (
                 Ty::Named {
                     name,
@@ -20017,9 +20065,9 @@ impl<'a> Checker<'a> {
         // (ADR-285), so it agrees with whatever the other arms say, and
         // `Some(1)` is resolved by the `T?` it goes into.
         let a_number = |arm: &Option<&Expr>| {
-            matches!(arm, Some(Expr::LitInt { .. } | Expr::LitFloat(_)))
-                || matches!(arm, Some(Expr::Unary { op: crate::ast::UnaryOp::Neg, expr })
-                    if matches!(&**expr, Expr::LitInt { .. } | Expr::LitFloat(_)))
+            matches!(arm, Some(Expr::LitInt { .. } | Expr::LitFloat(_, _)))
+                || matches!(arm, Some(Expr::Unary { op: crate::ast::UnaryOp::Neg, expr, .. })
+                    if matches!(&**expr, Expr::LitInt { .. } | Expr::LitFloat(_, _)))
         };
         // **And a text literal takes `String` where its neighbours are text
         // of their own** (ADR-282 D4, as [`Checker::arms_meet_at_text`]
@@ -20071,7 +20119,7 @@ impl<'a> Checker<'a> {
         for (arm, ty) in arms {
             if let Some(arm) = arm
                 && !matches!(ty, Ty::Nullable(_))
-                && !matches!(arm, Expr::LitNull)
+                && !matches!(arm, Expr::LitNull(_))
             {
                 if literals && a_text_literal(&Some(*arm)) {
                     self.text_literal(&text, arm, true);
@@ -20106,7 +20154,7 @@ impl<'a> Checker<'a> {
                     }
                 }
             }
-            Expr::Block(block) if tail_of(block).is_some() => {
+            Expr::Block(block, _) if tail_of(block).is_some() => {
                 if let Some(tail) = tail_of(block) {
                     self.some_at_the_tails(tail);
                 }
@@ -20116,7 +20164,7 @@ impl<'a> Checker<'a> {
                     self.some_at_the_tails(&each.body);
                 }
             }
-            Expr::LitNull => {}
+            Expr::LitNull(_) => {}
             _ => {
                 self.checked.some_tails.insert(arm as *const Expr as usize);
             }
@@ -20201,7 +20249,7 @@ impl<'a> Checker<'a> {
             Ty::Named {
                 name, args: wanted, ..
             },
-            Expr::ListLit { items, at },
+            Expr::ListLit { items, at, .. },
         ) = (want, value)
         else {
             return None;
@@ -21273,7 +21321,7 @@ impl<'a> Checker<'a> {
     /// come to a value, and a field read or an index is already taken apart by
     /// the lowering that wrote it.
     fn a_cast_over_a_lent_binding(&mut self, operand: &Expr, span: &Span) {
-        let Expr::Variable(name) = operand else {
+        let Expr::Variable(name, _) = operand else {
             return;
         };
         let name = self.parsed.text(*name).to_string();
@@ -21323,7 +21371,7 @@ impl<'a> Checker<'a> {
         // is not — so the same answer here would be a copy the source did not
         // write, which [ADR-283](../../docs/specification/adr/adr-283.md) D3
         // forbids in as many words.
-        let Expr::Variable(name) = value else {
+        let Expr::Variable(name, _) = value else {
             return;
         };
         let name = self.parsed.text(*name).to_string();
@@ -21483,6 +21531,7 @@ impl<'a> Checker<'a> {
                         params,
                         mutable,
                         body,
+                        ..
                     },
                     Some(Ty::Fn {
                         params: given,
@@ -21587,8 +21636,8 @@ impl<'a> Checker<'a> {
                     let found = self.expr(arg, span);
                     // **A declared function, run by a parameter that may pause**
                     // (#516): the emitter wraps the one that never does.
-                    let named = matches!(arg, Expr::Path(_))
-                        || matches!(arg, Expr::Variable(name)
+                    let named = matches!(arg, Expr::Path(_, _))
+                        || matches!(arg, Expr::Variable(name, _)
                             if self.s.binding(self.parsed.text(*name)).is_none());
                     if declared_here
                         && named
@@ -21609,8 +21658,8 @@ impl<'a> Checker<'a> {
                         && !self.a_run_parameter(arg)
                         // A declared function named here is no kept value: it
                         // is passed as it is (#502).
-                        && !matches!(arg, Expr::Path(_))
-                        && !matches!(arg, Expr::Variable(name)
+                        && !matches!(arg, Expr::Path(_, _))
+                        && !matches!(arg, Expr::Variable(name, _)
                             if self.s.binding(self.parsed.text(*name)).is_none())
                     {
                         self.checked
@@ -21652,7 +21701,7 @@ impl<'a> Checker<'a> {
     /// Whether `expr` names a parameter of the function being walked that is
     /// code it only runs: a closure argument below, not a kept value.
     fn a_run_parameter(&self, expr: &Expr) -> bool {
-        matches!(expr, Expr::Variable(name) if self.s.run_code.contains(self.parsed.text(*name)))
+        matches!(expr, Expr::Variable(name, _) if self.s.run_code.contains(self.parsed.text(*name)))
     }
 
     /// Whether the callee only **runs** its `at`th parameter: the absence of
@@ -21839,7 +21888,7 @@ impl<'a> Checker<'a> {
                 // mention anywhere else is a read.
                 if let Stmt::Assign { target, op, value } = &stmt.node
                     && op.is_none()
-                    && matches!(target, Expr::Variable(n) if self.parsed.text(*n) == name)
+                    && matches!(target, Expr::Variable(n, _) if self.parsed.text(*n) == name)
                 {
                     assigned = true;
                     // **And the value being stored is still a read**:
@@ -21901,7 +21950,7 @@ impl<'a> Checker<'a> {
         // The name, where the target is one. A field or an index into a hull is
         // a shape nothing decides yet, and saying nothing is the direction that
         // cannot refuse a program that is right.
-        let Expr::Variable(bound) = target else {
+        let Expr::Variable(bound, _) = target else {
             return;
         };
         let bound = self.parsed.text(*bound).to_string();
@@ -21930,15 +21979,16 @@ impl<'a> Checker<'a> {
     /// specification's own example writes (`kasse = 42`) is a literal.
     fn written(&self, value: &Expr) -> String {
         match value {
-            Expr::LitInt { value, negative } => {
-                crate::ast::int_value(*value, *negative).to_string()
-            }
-            Expr::LitBool(yes) => yes.to_string(),
+            Expr::LitInt {
+                value, negative, ..
+            } => crate::ast::int_value(*value, *negative).to_string(),
+            Expr::LitBool(yes, _) => yes.to_string(),
             Expr::LitStr { text, .. } => format!("{text:?}"),
-            Expr::Variable(name) => self.parsed.text(*name).to_string(),
+            Expr::Variable(name, _) => self.parsed.text(*name).to_string(),
             Expr::Unary {
                 op: UnaryOp::Neg,
                 expr,
+                ..
             } => format!("-{}", self.written(expr)),
             _ => "…".to_string(),
         }
@@ -22000,7 +22050,7 @@ impl<'a> Checker<'a> {
         // views of the tuple's, and a number, a `bool` or a `char` among them
         // is read out of its view where it is bound, as a loop binding is.
         let lent = self.checked.lent_lets.contains(&span.at())
-            || matches!(value, Expr::Variable(name) if self.lent_here(self.parsed.text(*name)));
+            || matches!(value, Expr::Variable(name, _) if self.lent_here(self.parsed.text(*name)));
         let frame = self.s.scope.len().saturating_sub(1);
         for (name, part) in names.iter().zip(parts) {
             let bound = self.parsed.text(*name).to_string();
@@ -22182,15 +22232,17 @@ impl<'a> Checker<'a> {
         };
         let name = self.parsed.interner.intern_string("__nikaia_dsl");
         let call = Expr::Call {
-            func: Box::new(Expr::Path(vec![
-                target,
-                self.parsed.interner.intern_string(&entry),
-            ])),
+            func: Box::new(Expr::Path(
+                vec![target, self.parsed.interner.intern_string(&entry)],
+                crate::ast::NodeId::fresh(),
+            )),
             args: vec![Expr::LitStr {
                 text: build_time::written(content.trim()),
                 at: 0,
+                id: crate::ast::NodeId::fresh(),
             }],
             config: Vec::new(),
+            id: crate::ast::NodeId::fresh(),
         };
         // Recorded under the statement, as a `comptime`'s is, and moved to the
         // block's own node: two blocks in one statement are two values.
@@ -22620,6 +22672,7 @@ impl<'a> Checker<'a> {
             written @ Expr::Unary {
                 op: crate::ast::UnaryOp::Ref,
                 expr: inner,
+                ..
             },
         ) = value
             && self.s.hands_back_a_view_of_the_subject(&self.world, inner)
@@ -22857,7 +22910,7 @@ impl<'a> Checker<'a> {
         while let Expr::Field { base, .. } = root {
             root = base;
         }
-        let Expr::Variable(name) = root else {
+        let Expr::Variable(name, _) = root else {
             return false;
         };
         let name = self.parsed.text(*name);
@@ -22913,7 +22966,7 @@ impl<'a> Checker<'a> {
     /// block, whose statements are its own, and only where nothing in it binds
     /// the name again.
     fn a_lent_part_is_handed_on_as_it_is(&mut self, body: &Expr, lent: &BTreeSet<String>) {
-        let Expr::Block(block) = body else {
+        let Expr::Block(block, _) = body else {
             self.a_lent_part_in_an_expression_arm(body, lent);
             return;
         };
@@ -22926,10 +22979,10 @@ impl<'a> Checker<'a> {
         let holes: std::cell::RefCell<Vec<Expr>> = std::cell::RefCell::new(Vec::new());
         let parsed = self.parsed;
         let mut look = |expr: &Expr| match expr {
-            Expr::Variable(name) if lent.contains(parsed.text(*name)) => {
+            Expr::Variable(name, _) if lent.contains(parsed.text(*name)) => {
                 shapes.insert(argument_shape(expr));
             }
-            Expr::Block(inner) => {
+            Expr::Block(inner, _) => {
                 bound_again |= inner.stmts.iter().any(|stmt| {
                     matches!(&stmt.node, Stmt::Let { names, .. }
                         if names.iter().any(|n| lent.contains(parsed.text(*n))))
@@ -22971,10 +23024,10 @@ impl<'a> Checker<'a> {
         let mut named: Vec<usize> = Vec::new();
         let mut bound_again = false;
         crate::emit::visit_expr(body, &mut |expr: &Expr| match expr {
-            Expr::Variable(name) if lent.contains(parsed.text(*name)) => {
+            Expr::Variable(name, _) if lent.contains(parsed.text(*name)) => {
                 named.push(value_node(expr));
             }
-            Expr::Block(inner) => {
+            Expr::Block(inner, _) => {
                 bound_again |= inner.stmts.iter().any(|stmt| {
                     matches!(&stmt.node, Stmt::Let { names, .. }
                         if names.iter().any(|n| lent.contains(parsed.text(*n))))
@@ -23086,7 +23139,7 @@ fn grown_text(parsed: &Parsed, body: &Block) -> BTreeSet<String> {
     fn walk(parsed: &Parsed, block: &Block, out: &mut BTreeSet<String>) {
         for stmt in &block.stmts {
             if let Stmt::Assign {
-                target: Expr::Variable(name),
+                target: Expr::Variable(name, _),
                 op,
                 value,
             } = &stmt.node
@@ -23305,9 +23358,9 @@ type Literals = Vec<(usize, i128)>;
 /// may owe it.
 fn literals_in(expr: &Expr, out: &mut Literals) {
     match expr {
-        Expr::LitInt { value, negative } => {
-            out.push((value_node(expr), crate::ast::int_value(*value, *negative)))
-        }
+        Expr::LitInt {
+            value, negative, ..
+        } => out.push((value_node(expr), crate::ast::int_value(*value, *negative))),
         Expr::Binary { lhs, rhs, .. } => {
             literals_in(lhs, out);
             literals_in(rhs, out);
@@ -23330,7 +23383,7 @@ fn number_branches(expr: &Expr) -> Option<Vec<&Expr>> {
     fn leaves(expr: &Expr) -> bool {
         matches!(
             expr,
-            Expr::Return(_) | Expr::Break | Expr::Continue | Expr::Throw(_)
+            Expr::Return(_, _) | Expr::Break(_) | Expr::Continue(_) | Expr::Throw(_, _)
         )
     }
     fn of_block<'e>(block: &'e Block, out: &mut Vec<&'e Expr>) -> Option<()> {
@@ -23347,7 +23400,7 @@ fn number_branches(expr: &Expr) -> Option<Vec<&Expr>> {
     fn of_value<'e>(value: &'e Expr, out: &mut Vec<&'e Expr>) -> Option<()> {
         match value {
             Expr::If { .. } | Expr::Match { .. } => out.extend(number_branches(value)?),
-            Expr::Block(block) => of_block(block, out)?,
+            Expr::Block(block, _) => of_block(block, out)?,
             value if leaves(value) => {}
             value => out.push(value),
         }
@@ -23394,8 +23447,11 @@ pub fn byte_literal(written: &str) -> String {
     }
 }
 
+/// **What a table about an expression is keyed on**: the id the parser gave the
+/// node ([ADR-340](../../docs/specification/adr/adr-340.md) D4), which a clone
+/// keeps and an address does not.
 pub fn value_node(expr: &Expr) -> usize {
-    expr as *const Expr as usize
+    crate::ast::id_of(expr) as usize
 }
 
 /// **`an i32` and `a u64`**: the article as the name is said (`NK1116`'s rule).
@@ -23440,8 +23496,8 @@ fn tail_of(block: &Block) -> Option<&Expr> {
 /// `null`, or a block whose last value is `null`.
 fn ends_in_null(expr: &Expr) -> bool {
     match expr {
-        Expr::LitNull => true,
-        Expr::Block(block) => tail_of(block).is_some_and(ends_in_null),
+        Expr::LitNull(_) => true,
+        Expr::Block(block, _) => tail_of(block).is_some_and(ends_in_null),
         _ => false,
     }
 }
@@ -23462,7 +23518,7 @@ fn ends_in_text(expr: &Expr) -> bool {
         Expr::Match { arms, .. } => {
             !arms.is_empty() && arms.iter().all(|arm| ends_in_text(&arm.body))
         }
-        Expr::Block(block) => tail_of(block).is_some_and(ends_in_text),
+        Expr::Block(block, _) => tail_of(block).is_some_and(ends_in_text),
         _ => false,
     }
 }
@@ -23471,11 +23527,11 @@ fn ends_in_text(expr: &Expr) -> bool {
 /// a `return`. Either needs the part itself and not a view of it.
 fn gives_back(body: &Expr, name: &str, parsed: &Parsed) -> bool {
     fn is_name(expr: &Expr, name: &str, parsed: &Parsed) -> bool {
-        matches!(expr, Expr::Variable(n) if parsed.text(*n) == name)
+        matches!(expr, Expr::Variable(n, _) if parsed.text(*n) == name)
     }
     fn tail(expr: &Expr, name: &str, parsed: &Parsed) -> bool {
         match expr {
-            Expr::Block(block) => block_tail(block, name, parsed),
+            Expr::Block(block, _) => block_tail(block, name, parsed),
             Expr::If {
                 then_branch,
                 else_branch,
@@ -23513,14 +23569,14 @@ fn gives_back(body: &Expr, name: &str, parsed: &Parsed) -> bool {
     fn returns(expr: &Expr, name: &str, parsed: &Parsed) -> bool {
         let mut found = false;
         crate::emit::visit_expr(expr, &mut |inner| match inner {
-            Expr::Return(value)
+            Expr::Return(value, _)
                 if (**value)
                     .as_ref()
                     .is_some_and(|value| is_name(value, name, parsed)) =>
             {
                 found = true
             }
-            Expr::Block(block) | Expr::Unsafe(block) => {
+            Expr::Block(block, _) | Expr::Unsafe(block, _) => {
                 found |= block_returns(block, name, parsed);
             }
             Expr::If {
@@ -23547,7 +23603,7 @@ impl Checker<'_> {
     /// Whether `given` names a parameter the function being checked is lent,
     /// by the same answer its declaration is written off.
     fn a_lent_parameter(&self, given: &Expr) -> bool {
-        let Expr::Variable(name) = given else {
+        let Expr::Variable(name, _) = given else {
             return false;
         };
         let name = self.parsed.text(*name);
@@ -23599,10 +23655,10 @@ impl Checker<'_> {
     /// is asked by its form, a text literal or a name, because the `Index` arm
     /// has walked it already and a second walk would record its reads twice.
     fn a_map_first_written(&mut self, target: &Expr, found: &Ty) {
-        let Expr::Index { base, index } = target else {
+        let Expr::Index { base, index, .. } = target else {
             return;
         };
-        let Expr::Variable(name) = &**base else {
+        let Expr::Variable(name, _) = &**base else {
             return;
         };
         let name = self.parsed.text(*name).to_string();
@@ -23620,7 +23676,7 @@ impl Checker<'_> {
                 args: Vec::new(),
                 view: false,
             },
-            Expr::Variable(key) => match self.s.lookup(self.parsed.text(*key)) {
+            Expr::Variable(key, _) => match self.s.lookup(self.parsed.text(*key)) {
                 Some(ty) if !ty.is_unknown() => value_of_a_copy(ty),
                 _ => return,
             },
@@ -23725,9 +23781,9 @@ pub fn claims_report(
 /// here.
 fn is_a_literal_other_than(expr: &Expr, kind: &str) -> bool {
     match expr {
-        Expr::LitBool(_) => kind != "bool",
+        Expr::LitBool(_, _) => kind != "bool",
         Expr::LitStr { .. } | Expr::LitInterpolated { .. } => kind != "text",
-        Expr::LitInt { .. } | Expr::LitFloat(_) | Expr::LitChar(_) | Expr::LitNull => true,
+        Expr::LitInt { .. } | Expr::LitFloat(_, _) | Expr::LitChar(_, _) | Expr::LitNull(_) => true,
         _ => false,
     }
 }
