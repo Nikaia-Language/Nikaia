@@ -12095,8 +12095,6 @@ impl<'p> Emitter<'p> {
             })
     }
 
-    /// Whether the code a call hands `callee` at argument `i` is only run
-    /// there, not kept - by its entry, or by every method of that name.
     /// Whether `callee`'s parameter at `i` is written `mut` (ADR-094 D3).
     fn changes_at(&self, callee: &str, i: usize) -> bool {
         let changes = |contract: &crate::contracts::FnContract| {
@@ -12115,6 +12113,8 @@ impl<'p> Emitter<'p> {
         }
     }
 
+    /// Whether the code a call hands `callee` at argument `i` is only run
+    /// there, not kept - by its entry, or by every method of that name.
     fn runs_code_at(&self, callee: &str, i: usize) -> bool {
         let runs = |contract: &crate::contracts::FnContract| {
             contract
