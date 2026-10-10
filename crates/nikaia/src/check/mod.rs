@@ -1513,6 +1513,9 @@ fn walked<'a>(
         caught_one: None,
         read_at: Vec::new(),
         written_at: Vec::new(),
+        parts_out: Vec::new(),
+        gives: Vec::new(),
+        ways_out: Vec::new(),
         repeats: Vec::new(),
         reading_only: false,
         read_seq: 0,
@@ -3625,6 +3628,13 @@ struct Checker<'a> {
     /// Every **path** assigned to - a name, or a part of one, `p.name` - by
     /// the byte its statement starts at.
     written_at: Vec<(String, usize)>,
+    /// **The parts of a `mut` parameter an arm took out** (`NK2108`), the
+    /// assignments that may give them back and the ways out of the function
+    /// they must not be missing at. Asked once the body has been seen, as
+    /// `NK2105` is.
+    parts_out: Vec<PartOut>,
+    gives: Vec<Give>,
+    ways_out: Vec<WayOut>,
     /// **The loops and lambdas around the expression being walked**, innermost
     /// last ([ADR-293](../../docs/specification/adr/adr-293.md) D19): where each
     /// begins in `scope`, and what would let a sequence taken inside it be
@@ -3981,6 +3991,43 @@ struct Read {
     seq: usize,
     /// Which binding of the path's first name it read ([`Local::id`]).
     binding: Option<usize>,
+}
+
+/// **A part taken out of a `mut` parameter** ([ADR-094](../../docs/specification/adr/adr-094.md)
+/// D7, `NK2108`): the arm of a `match` over the parameter bound it and handed
+/// it to something that keeps it, so the parameter is missing it until an
+/// assignment gives it back.
+struct PartOut {
+    /// The parameter, or the place in it, that was matched: `e`, `e.kind`.
+    subject: String,
+    /// The name the arm bound the part to.
+    part: String,
+    /// Which binding that is ([`Local::id`]).
+    binding: usize,
+    /// The hand-over that took it, in [`Checker::handed`].
+    handed: usize,
+}
+
+/// **An assignment**, where it stands: what gives a part back
+/// ([`Checker::parts_out`]).
+struct Give {
+    path: String,
+    at: usize,
+    choices: Choices,
+}
+
+/// **A way out of the function, or a call that can fail**, where it stands:
+/// what a part taken out of a `mut` parameter may not be missing at
+/// ([`Checker::parts_out`]).
+struct WayOut {
+    /// `"return"`, `"throw"`, or `"fails"` for a call that can.
+    how: &'static str,
+    /// The call, for `"fails"`.
+    word: String,
+    at: usize,
+    seq: usize,
+    choices: Choices,
+    span: Span,
 }
 
 /// An expression's address, which is what tells two reads of one name apart
@@ -5790,6 +5837,7 @@ impl<'a> Checker<'a> {
         // questions are asked here; `a_task_took_what_is_used_again` empties
         // `read_at`, and this one reads it.
         self.a_sequence_was_walked_twice();
+        self.a_part_left_out();
         self.data_handed_over_is_used_again();
         self.reads_on_paths.clear();
         self.read_index.clear();
@@ -12087,6 +12135,11 @@ impl<'a> Checker<'a> {
                 // **And a part of one** (ADR-293 D32): `p.name = …` gives back
                 // what `xs.push(p.name)` took.
                 if let Some(path) = self.place_path(target) {
+                    self.gives.push(Give {
+                        path: path.clone(),
+                        at: span.at(),
+                        choices: self.branch.clone(),
+                    });
                     self.written_at.push((path, span.at()));
                 }
                 // **D3**: an assignment into a parameter, or into a place
@@ -12468,6 +12521,7 @@ impl<'a> Checker<'a> {
 
             Stmt::Return(value) => {
                 self.returns(value.as_ref(), span, false);
+                self.a_way_out("return", "", span);
                 Ty::Unknown
             }
 
@@ -13385,6 +13439,7 @@ impl<'a> Checker<'a> {
                         changed_from,
                     );
                     self.a_branch_that_leaves(from, self.exits(&arm.body), span);
+                    self.parts_taken_out_of_a_mut_parameter(value, &parts, from.1);
                     self.branch.pop();
                     self.scope.pop();
                     // **An arm that jumps is not one of the types that have to
@@ -14980,6 +15035,7 @@ impl<'a> Checker<'a> {
             Expr::Throw(inner) => {
                 let thrown = self.expr(inner, span);
                 self.a_thrown_value_that_is_not_an_error(inner, &thrown, span);
+                self.a_way_out("throw", "", span);
                 Ty::Unknown
             }
 
@@ -14990,6 +15046,7 @@ impl<'a> Checker<'a> {
             // the same wherever it is written.
             Expr::Return(value) => {
                 self.returns((**value).as_ref(), span, true);
+                self.a_way_out("return", "", span);
                 Ty::Unknown
             }
             Expr::Break | Expr::Continue => {
@@ -18750,6 +18807,13 @@ impl<'a> Checker<'a> {
     /// method calls keep, C.4). So it never refuses a program that is right,
     /// and it grows as the ledger does.
     fn may_fail_here(&mut self, key: &str, contract: &FnContract, span: &Span) {
+        // **`NK2108`: a call that can fail stands between a part taken out of
+        // a `mut` parameter and its giving back.** Asked of the ledger's
+        // word, as everything here is; a callee nothing describes says
+        // nothing (C.4).
+        if !contract.fails_with.is_empty() {
+            self.a_way_out("fails", key.rsplit("::").next().unwrap_or(key), span);
+        }
         // **Before the early return**, because the guard's question is asked of
         // exactly the calls this one declines to report: inside a `catch`,
         // `self.caught` is what sends this function home, and a call that
@@ -20016,6 +20080,239 @@ impl<'a> Checker<'a> {
         }
         for handed in &mut self.handed[from.1..] {
             handed.until.get_or_insert(span.stop());
+        }
+    }
+
+    /// A way out of the function, or a call that can fail, where the walk
+    /// stands (`NK2108`). Not inside a lambda: its `return` leaves the lambda,
+    /// and what it calls is the lambda's.
+    fn a_way_out(&mut self, how: &'static str, word: &str, span: &Span) {
+        if self.repeats.iter().any(|r| r.what == "lambda") {
+            return;
+        }
+        self.ways_out.push(WayOut {
+            how,
+            word: word.to_string(),
+            at: span.at(),
+            seq: self.read_seq,
+            choices: self.branch.clone(),
+            span: *span,
+        });
+    }
+
+    /// **The parts of a `mut` parameter an arm took out** (`NK2108`,
+    /// [ADR-094](../../docs/specification/adr/adr-094.md) D7): the arm of a
+    /// `match` over the parameter, or a place in it, bound a part and handed
+    /// it to something that keeps it. A part only read, or changed in place
+    /// through a `mut` parameter of its own, is still in the value.
+    fn parts_taken_out_of_a_mut_parameter(
+        &mut self,
+        subject: &Expr,
+        parts: &BTreeMap<String, Ty>,
+        handed_from: usize,
+    ) {
+        if self.repeats.iter().any(|r| r.what == "lambda") {
+            return;
+        }
+        let Some(path) = self.place_path(subject) else {
+            return;
+        };
+        let root = path.split('.').next().unwrap_or_default();
+        // The arm's own names are in the innermost frame; the parameter is
+        // looked up under any name an arm shadows it with.
+        if !self
+            .scope
+            .iter()
+            .rev()
+            .skip(1)
+            .find_map(|frame| frame.iter().find(|local| local.name == root))
+            .is_some_and(|local| local.changing)
+        {
+            return;
+        }
+        let Some(frame) = self.scope.last() else {
+            return;
+        };
+        let found: Vec<(String, usize)> = parts
+            .keys()
+            .filter_map(|name| {
+                let local = frame.iter().find(|local| local.name == *name)?;
+                Some((name.clone(), local.id))
+            })
+            .collect();
+        for (part, binding) in found {
+            let Some(at) = self.handed[handed_from..]
+                .iter()
+                .position(|taken| taken.binding == Some(binding))
+            else {
+                continue;
+            };
+            self.parts_out.push(PartOut {
+                subject: path.clone(),
+                part,
+                binding,
+                handed: handed_from + at,
+            });
+        }
+    }
+
+    /// **`NK2108`: a part taken out of a `mut` parameter and not given back**
+    /// ([ADR-094](../../docs/specification/adr/adr-094.md) D7, Part I 6.5).
+    ///
+    /// The parameter is the caller's, and is whole whenever the caller can see
+    /// it: on every way out of the function, and with no call that can fail
+    /// between the taking and the giving back. The question is asked once the
+    /// body has been seen, per part taken, of what can follow the taking: a
+    /// `return`, a `throw` and a call that can fail where it stands after it
+    /// on a path that passes both, and the end of the function unless the arm
+    /// left. An assignment gives the part back when it stands on every path
+    /// from the taking to that point - in the same arm or in the one that
+    /// leads to the point - and before it.
+    fn a_part_left_out(&mut self) {
+        let outs = std::mem::take(&mut self.parts_out);
+        let gives = std::mem::take(&mut self.gives);
+        let ways = std::mem::take(&mut self.ways_out);
+        // One report per place the parts are missing at, naming all of them.
+        let mut reports: Vec<(&str, (usize, usize), Option<&WayOut>, Vec<&PartOut>)> = Vec::new();
+        for out in &outs {
+            let Some(taken) = self.handed.get(out.handed) else {
+                continue;
+            };
+            if taken.binding != Some(out.binding) {
+                continue;
+            }
+            let here = (taken.from, taken.seq);
+            let mut ahead: Vec<((usize, usize), Option<&WayOut>)> = ways
+                .iter()
+                .filter(|way| {
+                    (way.at, way.seq) >= here
+                        && !apart(&taken.choices, &way.choices)
+                        && taken.until.is_none_or(|end| way.at < end)
+                })
+                .map(|way| ((way.at, way.seq), Some(way)))
+                .collect();
+            if taken.until.is_none() {
+                ahead.push(((usize::MAX, 0), None));
+            }
+            ahead.sort_by_key(|(position, _)| *position);
+            for (position, way) in ahead {
+                let choices: &Choices = match way {
+                    Some(way) => &way.choices,
+                    None => &Vec::new(),
+                };
+                let given_back = gives.iter().any(|give| {
+                    (give.at, usize::MAX) > here
+                        && (give.at, usize::MAX) <= position
+                        && (revives(&give.path, &out.subject) || give.path == out.part)
+                        && give
+                            .choices
+                            .iter()
+                            .all(|c| taken.choices.contains(c) || choices.contains(c))
+                });
+                if given_back {
+                    continue;
+                }
+                match reports
+                    .iter_mut()
+                    .find(|(subject, at, _, _)| *subject == out.subject && *at == position)
+                {
+                    Some((_, _, _, parts)) => parts.push(out),
+                    None => reports.push((&out.subject, position, way, vec![out])),
+                }
+                break;
+            }
+        }
+        let findings: Vec<Finding> = reports
+            .into_iter()
+            .map(|(_, _, way, parts)| self.a_part_is_missing(&parts, way))
+            .collect();
+        self.checked.findings.extend(findings);
+    }
+
+    fn a_part_is_missing(&self, parts: &[&PartOut], way: Option<&WayOut>) -> Finding {
+        let out = parts[0];
+        let taken = &self.handed[out.handed];
+        let subject = &out.subject;
+        let names: Vec<String> = parts.iter().map(|p| format!("`{}`", p.part)).collect();
+        let part = match names.as_slice() {
+            [one] => one.clone(),
+            [first @ .., last] => format!("{} and {last}", first.join(", ")),
+            [] => String::new(),
+        };
+        let from = Span::new(taken.from, taken.at);
+        let (message, span, label) = match way {
+            Some(way) if way.how == "fails" => (
+                format!(
+                    "`{}` can fail, and {part} is out of `{subject}` at that point.",
+                    way.word
+                ),
+                way.span,
+                Label {
+                    span: way.span,
+                    word: way.word.clone(),
+                    text: "can fail while the part is out".to_string(),
+                    main: true,
+                },
+            ),
+            Some(way) => (
+                format!("This `{}` leaves `{subject}` without {part}.", way.how),
+                way.span,
+                Label {
+                    span: way.span,
+                    word: way.how.to_string(),
+                    text: "leaves the function with the part still out".to_string(),
+                    main: true,
+                },
+            ),
+            None => (
+                format!(
+                    "`{subject}` is left without {part}: it was taken out and never given back."
+                ),
+                from,
+                Label {
+                    span: from,
+                    word: out.part.clone(),
+                    text: "taken out here and not given back".to_string(),
+                    main: true,
+                },
+            ),
+        };
+        let mut labels = vec![label];
+        if way.is_some() {
+            labels.push(Label {
+                span: from,
+                word: out.part.clone(),
+                text: format!("taken out of `{subject}` here"),
+                main: false,
+            });
+        }
+        let kept = match way {
+            Some(way) if way.how == "fails" => format!(
+                "Between taking {part} out of `{subject}` and giving it back, no call that \
+                 can fail may stand: the caller would be left a `{subject}` with a part \
+                 missing."
+            ),
+            _ => format!(
+                "`{subject}` is a `mut` parameter, so it is the caller's and is whole whenever \
+                 the caller can see it. `{}` was {}, and nothing has put it back.",
+                out.part, taken.to
+            ),
+        };
+        Finding {
+            severity: Severity::Error,
+            span,
+            code: "NK2108",
+            message,
+            notes: vec![kept],
+            help: Some(format!(
+                "Assign `{subject}` (or the part) before the function is left{}, or build the \
+                 value by value with `fn f({subject}: T) -> T`.",
+                match way {
+                    Some(way) if way.how == "fails" => " and move the call out from between",
+                    _ => "",
+                }
+            )),
+            labels,
         }
     }
 

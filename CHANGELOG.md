@@ -8,6 +8,11 @@ or the specification. A change only to the guide, the notes, the README, the
 website, the tests, the examples or the tooling around them raises nothing and
 has no heading here; `CLAUDE.md` draws the line.
 
+## [0.0.768] — 2026-10-10
+
+**`NK2108` is built: a part taken out of a `mut` parameter is given back before the function is left ([ADR-094](docs/specification/adr/adr-094.md) D7, #576).**
+- The checker follows, per `mut` parameter, which parts an arm of a `match` over it took out (handed to something that keeps it). A `return`, a `throw` or the end of the function with a part still out is `NK2108`, and so is a call that can fail between the taking and the assignment that gives it back; the assignment has to stand on every path from the taking to that point. Naming the part, where it was taken and the way out. Test: `mut_parameter_parts.rs`.
+
 ## [0.0.767] — 2026-10-10
 
 **A part taken out of a `mut` parameter is given back before the function is left ([ADR-094](docs/specification/adr/adr-094.md) D7, #576).**
