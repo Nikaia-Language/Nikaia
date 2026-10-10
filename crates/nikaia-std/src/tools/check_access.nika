@@ -1,0 +1,284 @@
+// crates/nikaia-std/src/tools/check_access.nika
+//
+// **Refusals about what a name reaches** - a private field, an option nobody
+// declared, a struct literal written like a call, a pattern whose alternatives
+// bind different names - moved from the compiler's checker (ADR-294, #125,
+// #558).
+
+use std::collections
+
+impl CheckState {
+    /// `NK2103`: a `spawn`'s lambda names an argument, and a task is handed
+    /// nothing.
+    ///
+    /// `spawn fn (x) { … }` reads as though `x` arrives from somewhere, and
+    /// nothing gives it to a task (Part I 8.2). Dropping the name silently would
+    /// be the worse answer: the body would then refer to something nothing
+    /// declared, which `NK1117` reports about a name the author *did* write.
+    pub fn a_task_takes_no_arguments(ref mut self, world: ref CheckWorld, params: ref Vec[winnow_grammar::Symbol], span: ref Span) sync {
+        if params.len() == 0 {
+            return
+        }
+        let mut named: Vec[String] = []
+        for param in params {
+            named.push(f"`{world.words.resolve(param)}`")
+        }
+        let first = world.words.resolve(params[0]).clone()
+        self.findings.push(check_refusal("NK2103", span, f"This task's lambda takes {named.join(", ")}, but a task isn't given any arguments.", ["`spawn` starts a body without arguments; the body takes what it needs from the code around it.".clone()], f"Remove the argument list: `spawn fn {{ … }}`. If `{first}` is a value from here, declare it before the task and use it inside."))
+    }
+
+    /// **Part I 9.2, for a field** (`NK1110`).
+    ///
+    /// A type's fields are private to its package unless they say `pub`, and
+    /// until the ledger recorded that ([`FieldContract`]) a type whose fields
+    /// were private could be built by name from another package with nothing
+    /// saying no. The language below cannot help here the way it does for an
+    /// item: the emitted struct is in the **same crate**, so `pub` on a field
+    /// buys nothing there ([ADR-286](../../../../docs/specification/adr/adr-286.md)
+    /// D2).
+    ///
+    /// Only for a **qualified** type, which is the same spelling rule
+    /// [`Checker::reachable`] uses: a type named `http::Request` is another
+    /// package's, and one named `Request` is this package's, where every field is
+    /// visible however it is declared.
+    pub fn field_is_reachable(ref mut self, ty: ref String, field: ref FieldContract, span: ref Span) sync {
+        if field.public {
+            return
+        }
+        let shown = ty.trim_start_matches('&')
+        let at = shown.find("::") ?? return
+        let package = shown[0..<at].clone()
+        if !self.modules.contains(package) {
+            return
+        }
+        let name = field.name.clone()
+        self.findings.push(check_refusal("NK1110", span, f"You can't reach `{ty}.{name}` from here: it's private to `{package}`.", ["A field is private to its package unless it's declared `pub`.".clone()], f"Write `pub {name}` in `{package}`, or use a public method the type offers."))
+    }
+
+    /// Part I 9.2: an item is private to its **package** unless it says `pub`.
+    ///
+    /// The language below enforces this too - `pub` becomes `pub` - but a reader
+    /// should not meet the rule as a `rustc` message about a file they did not
+    /// write, which is what Part III C.1 calls a bug in this compiler.
+    ///
+    /// Only a call written `package::item` can leave the package: a call inside
+    /// it writes `secret()`, unqualified. So this needs no notion of "which
+    /// package am I in" - the spelling says it.
+    ///
+    /// **No program reaches this today**, and that is [ADR-286](../../../../docs/specification/adr/adr-286.md)
+    /// D1 rather than an oversight. The boundary used to be the file, and it is
+    /// the package now: the files of one package share a namespace, so a
+    /// qualified name is a name from *another* package - and depending on one is
+    /// not built (D2). The check stays because the boundary it is about is the
+    /// one that is left, and it is the day a package arrives that a private name
+    /// needs refusing.
+    pub fn reachable(ref mut self, name: ref String, contract: ref FnContract, span: ref Span) sync {
+        let at = name.find("::") ?? return
+        let module = name[0..<at].clone()
+        let item = name[at + 2..<name.len()].clone()
+        if !self.modules.contains(module) || contract.public {
+            return
+        }
+        self.findings.push(check_refusal("NK1110", span, f"You can't use `{item}` from here: it's private to `{module}`.", ["Everything is private to its package unless it's declared `pub`.".clone()], f"Write `pub fn {item}` in `{module}`, or use something it makes public."))
+    }
+
+    /// `NK1109`: an option a function does not have.
+    pub fn no_such_option(ref mut self, key: ref String, name: ref String, signature: ref Signature, span: ref Span) sync {
+        let mut names: Vec[String] = []
+        for option in signature.config {
+            names.push(option.name.clone())
+        }
+        let near = nearest_name(name, names)
+        let note: String = match names.len() {
+            0 => f"`{key}` takes no options: its declaration has no `;`.",
+            else => f"Its options are {names_listed(names)}.",
+        }
+        let mut help: String = "Use one of the options it has."
+        if near != null {
+            help = f"Did you mean `{near ?? ""}`?"
+        } else if names.len() == 0 {
+            help = "Pass it as a plain argument, without a name.".clone()
+        }
+        self.findings.push(check_refusal("NK1109", span, f"`{key}` has no option called `{name}`.", [note], help))
+    }
+
+    /// `NK1135` for a struct literal, with the sentence a *call* needs.
+    ///
+    /// The same code a written annotation gets, because it is the same claim -
+    /// a name in type position that nothing declares. What differs is the way
+    /// out, and it differs because of one shape: where the name is a **function**
+    /// the author almost certainly meant
+    /// [ADR-133](../../docs/specification/adr/adr-133.md) D1's options-only call,
+    /// which this compiler does not parse yet, and *nothing declares a struct*
+    /// would send them looking for a `struct` they never wanted.
+    pub fn a_struct_nothing_declares(ref mut self, world: ref CheckWorld, name: ref String, span: ref Span) sync {
+        let is_a_function = world.own.functions.contains_key(name) || world.library.functions.contains_key(name) || world.own.functions.contains_key(f"{name}::new")
+        let mut note: String = "Braces after a name build a struct, and no struct of that name is declared here or in a package you use."
+        let mut help: String = "Declare the `struct`, or fix the name."
+        if is_a_function {
+            note = f"`{name}` is a function, not a type. A call that passes only options is written with parentheses: `{name}(option: value)`."
+            help = f"Write `{name}(option: value)`."
+        }
+        self.findings.push(check_refusal("NK1135", span, f"There's no struct called `{name}`.", [note], help))
+    }
+
+    /// `NK1146`: a struct literal written like a call
+    /// ([ADR-140](../../docs/specification/adr/adr-140.md) D1).
+    ///
+    /// `Stats(min: first, max: first)` and `Reading { name, temp }` both built a
+    /// struct, and `Stats(first)` called the anonymous constructor - so `Foo(x: 1)`
+    /// went *round* a type's invariants and `Foo(1)` went *through* them, told
+    /// apart by a colon. D1 keeps the braces and gives the parentheses to the
+    /// call, which is also what freed [ADR-133](../../docs/specification/adr/adr-133.md)
+    /// D1's options-only call: the two were one spelling.
+    ///
+    /// The message carries the whole rewrite rather than the rule, because the
+    /// rewrite is mechanical and the reader has the fields in hand.
+    pub fn a_literal_written_like_a_call(ref mut self, world: ref CheckWorld, name: ref String, config: ref Vec[ConfigArg], span: ref Span) sync {
+        let mut fields: Vec[String] = []
+        for setting in config {
+            fields.push(world.words.resolve(setting.name).clone())
+        }
+        self.findings.push(check_refusal("NK1146", span, f"Build a `{name}` with braces, not parentheses.", ["Parentheses after a type call its constructor; a struct literal with field names uses braces.".clone()], f"Write `{name} {{ {fields.join(": …, ")}: … }}`."))
+    }
+
+    /// **`NK1155`: an or-pattern whose alternatives do not bind the same
+    /// names** ([ADR-291](../../docs/specification/adr/adr-291.md) D10).
+    ///
+    /// That rule is what keeps the arm's body answerable: a name the body reads
+    /// has to be bound whichever alternative matched, and `(0, y) | (x, 0)` is
+    /// a body that can read `y` or `x` and never knows which.
+    ///
+    /// **Refused here rather than below.** `rustc` refuses it too, in a message
+    /// about a generated file ([Part III
+    /// C.1](../../docs/specification/30-nikaia-tooling.md)) — and it is a rule
+    /// of *this* language, stated by the record that added the form.
+    ///
+    /// Recursive, because a pattern nests: an or-pattern inside a tuple's part
+    /// is the same rule one level down.
+    pub fn an_or_pattern_that_binds_unevenly(ref mut self, world: ref CheckWorld, pattern: ref MatchPattern, span: ref Span) sync {
+        match pattern {
+            MatchPattern::Or(alternatives) => {
+                let mut first: collections::BTreeSet[String] = collections::BTreeSet()
+                for name in pattern_names(world, alternatives[0]) {
+                    first.insert(name)
+                }
+                let mut at = 1
+                while at < alternatives.len() {
+                    let mut names: collections::BTreeSet[String] = collections::BTreeSet()
+                    for name in pattern_names(world, alternatives[at]) {
+                        names.insert(name)
+                    }
+                    if names != first {
+                        let mut missing: Vec[String] = []
+                        for name in first {
+                            if !names.contains(name) {
+                                missing.push(name.clone())
+                            }
+                        }
+                        for name in names {
+                            if !first.contains(name) {
+                                missing.push(name.clone())
+                            }
+                        }
+                        missing.sort()
+                        self.findings.push(check_refusal("NK1155", span, f"The alternatives of this pattern don't all bind the same names: `{missing.join("`, `")}`.", ["Every alternative of an `|` pattern has to bind the same names, because the arm's body doesn't know which one matched.".clone()], "Bind the same names in each alternative, or write a separate arm for each.".clone()))
+                        break
+                    }
+                    at = at + 1
+                }
+                for alternative in alternatives {
+                    self.an_or_pattern_that_binds_unevenly(world, alternative, span)
+                }
+            }
+            MatchPattern::Tuple { parts, .. } => {
+                for part in parts {
+                    self.an_or_pattern_that_binds_unevenly(world, part, span)
+                }
+            }
+            else => {}
+        }
+    }
+
+    /// The message [`a_match_that_misses_a_case`] raises, with what is missing
+    /// already spelled: the variants for an enum, `else` for everything else.
+    pub fn a_case_is_missing(ref mut self, missing: ref String, span: ref Span) sync {
+        self.findings.push(check_refusal("NK1151", span, f"This `match` doesn't handle `{missing}`.", ["A `match` has to handle every case, so that adding a variant to a type shows you every place that needs to know.".clone()], "Add an arm for it, or `else => …` for everything else.".clone()))
+    }
+}
+
+/// What to call one argument of a call in a message: its own name where it
+/// has one, and its place where it does not.
+///
+/// **Two answers, because two readers want it.** The first is prose for the
+/// headline (*the `state` this passes*); the second is the bare name where
+/// there is one, which `NK2503`'s way out writes a path onto
+/// (`state.counts.get()`) and which is `None` for an argument that is not a
+/// name at all.
+pub fn names_the_argument(world: ref CheckWorld, expr: ref Expr, at: i64) -> (String, String?) sync {
+    let prose: String = match expr {
+        Expr::Variable(name) => f"`{world.words.resolve(name)}`",
+        Expr::Field { name, .. } => f"the `{world.words.resolve(name)}` this passes",
+        else => f"argument {at + 1}",
+    }
+    return (prose, dotted_path(world, expr))
+}
+
+/// The argument written back as a path a program could paste, where it is
+/// one: `state`, `state.inner`, and `None` for anything else.
+///
+/// Rebuilt from the tree rather than read from the source, because an
+/// expression has no span ([ADR-081](../../docs/specification/adr/adr-081.md)
+/// D2). So the answer is exact where it is `Some` - a name and a chain of
+/// fields is all of it - and absent where a guess would be needed, which is
+/// the same polarity as the ellipsis `NK2204` prints.
+pub fn dotted_path(world: ref CheckWorld, expr: ref Expr) -> String? sync {
+    return match expr {
+        Expr::Variable(name) => world.words.resolve(name).clone(),
+        Expr::Field { base, name } => dotted_field(world, base, name),
+        else => null,
+    }
+}
+
+fn dotted_field(world: ref CheckWorld, base: ref Expr, name: winnow_grammar::Symbol) -> String? sync {
+    let held = dotted_path(world, base) ?? return null
+    return f"{held}.{world.words.resolve(name)}"
+}
+
+/// **`NK1151`: a `match` that misses a case**
+/// ([ADR-291](../../docs/specification/adr/adr-291.md) D19).
+///
+/// Part I 3.4's own first sentence says a `match` *ensures that every
+/// possible case is handled*, and nothing here ensured it: Rust refuses a
+/// non-exhaustive `match`, so the reader got the backend's words on a Nikaia
+/// line ([Part III C.1](../../../docs/specification/30-nikaia-tooling.md)).
+///
+/// **The question asked first is *does anything catch everything*,** and
+/// only where nothing does is the scrutinee's type asked about at all — an
+/// `else` ([ADR-291](../../docs/specification/adr/adr-291.md)) or a bare
+/// name, which binds and matches anything (D2).
+/// The variants one pattern names, recursing through an or-pattern
+/// ([ADR-291](../../docs/specification/adr/adr-291.md) D10).
+///
+/// A **tuple's parts** are deliberately not walked: a part names a variant
+/// of some *other* type, and what this is collecting is the cases of the
+/// one being matched on.
+pub fn variants_named(world: ref CheckWorld, pattern: ref MatchPattern, mut out: collections::BTreeSet[String]) sync {
+    match pattern {
+        MatchPattern::Path(path) => a_last_segment(world, path, out),
+        MatchPattern::Tuple { path, .. } => a_last_segment(world, path, out),
+        MatchPattern::Named { path, .. } => a_last_segment(world, path, out),
+        MatchPattern::Or(alternatives) => {
+            for alternative in alternatives {
+                variants_named(world, alternative, out)
+            }
+        }
+        else => {}
+    }
+}
+
+fn a_last_segment(world: ref CheckWorld, path: ref Vec[winnow_grammar::Symbol], mut out: collections::BTreeSet[String]) sync {
+    if path.len() > 0 {
+        out.insert(world.words.resolve(path[path.len() - 1]).clone())
+    }
+}

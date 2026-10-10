@@ -1,0 +1,96 @@
+// crates/nikaia-std/src/tools/check_scope.nika
+//
+// **The names in scope and the functions a call may mean**, moved from the
+// compiler's checker (ADR-294, #125, #558): the innermost binding of a name,
+// and the contract a written name resolves to. Each answer is an owned copy -
+// a method that returns a view into the state and a name it was given cannot
+// say which of the two the view points into (`NK2302`).
+
+/// A function a written name resolves to: the key the ledger records it under,
+/// and its contract.
+pub struct CheckResolved {
+    pub key: String,
+    pub contract: FnContract,
+}
+
+impl CheckState {
+    /// The innermost binding of a name, whole.
+    pub fn binding(ref self, name: ref String) -> CheckLocal? sync {
+        let mut frame_at = self.scope.len()
+        while frame_at > 0 {
+            frame_at = frame_at - 1
+            let frame = self.scope[frame_at]
+            let mut at = frame.len()
+            while at > 0 {
+                at = at - 1
+                if frame[at].name == name {
+                    return frame[at].clone()
+                }
+            }
+        }
+        return null
+    }
+
+    /// The type of the innermost binding of a name.
+    pub fn lookup(ref self, name: ref String) -> Ty? sync {
+        let found = self.binding(name) ?? return null
+        return found.ty.clone()
+    }
+}
+
+/// A function by the name a call wrote: this unit's, then a constructor, then a
+/// library's - the same order the `sync` check resolves in.
+pub fn resolve_call(world: ref CheckWorld, name: ref String) -> CheckResolved? sync {
+    if world.own.functions.contains_key(name) {
+        return CheckResolved { key: name.clone(), contract: world.own.functions[name]?.clone() ?? return null }
+    }
+    let constructed = f"{name}::new"
+    if world.own.functions.contains_key(constructed) {
+        return CheckResolved { key: constructed.clone(), contract: world.own.functions[constructed]?.clone() ?? return null }
+    }
+    if world.library.functions.contains_key(name) {
+        return CheckResolved { key: name.clone(), contract: world.library.functions[name]?.clone() ?? return null }
+    }
+    // **`std`'s own types are constructed the same way** (ADR-140 D2): `Vec()`
+    // is the anonymous constructor, exactly as `Stats(first)` is for a type a
+    // `.nika` file declares. The ledger's key stays `Vec::new`, because that is
+    // the name the **lowering** writes and the lowering is name for name
+    // (ADR-296 D17).
+    if world.library.functions.contains_key(constructed) {
+        return CheckResolved { key: constructed.clone(), contract: world.library.functions[constructed]?.clone() ?? return null }
+    }
+    return null
+}
+
+/// A method on a type, by the name `Type::method` the ledger records it under.
+/// A library writes the module in front of it (`fs::Mapped::deref`) and the
+/// receiver's type may or may not carry one, so both directions are tried.
+///
+/// **The receiver's own module is dropped on the second try**, since ADR-313 D3
+/// put a type in one: a value of `collections::HashMap` has its methods keyed
+/// `HashMap::len`, because the module is where the **type** lives and the method
+/// belongs to the type.
+pub fn resolve_method(world: ref CheckWorld, key: ref String) -> CheckResolved? sync {
+    if world.own.functions.contains_key(key) {
+        return CheckResolved { key: key.clone(), contract: world.own.functions[key]?.clone() ?? return null }
+    }
+    let suffix = f"::{key}"
+    for (entry_name, entry_value) in world.library.functions {
+        if entry_name == key || entry_name.ends_with(ref suffix) {
+            return CheckResolved { key: entry_name.clone(), contract: entry_value.clone() }
+        }
+    }
+    // `collections::HashMap::len` was asked for; `HashMap::len` is the key.
+    let at = key.find("::") ?? return null
+    let without_the_module = key[at + 2..<key.len()].clone()
+    if !without_the_module.contains("::") {
+        return null
+    }
+    if world.own.functions.contains_key(without_the_module) {
+        return CheckResolved { key: without_the_module.clone(), contract: world.own.functions[without_the_module]?.clone() ?? return null }
+    }
+    if world.library.functions.contains_key(without_the_module) {
+        return CheckResolved { key: without_the_module.clone(), contract: world.library.functions[without_the_module]?.clone() ?? return null }
+    }
+    return null
+}

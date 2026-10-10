@@ -821,7 +821,7 @@ impl Program {
                 span: pause
                     .and_then(|pause| pause.site.as_ref())
                     .map_or(crate::ast::Span { start: 0, end: 0 }, |(span, _)| *span),
-                code: "NK2211",
+                code: "NK2211".to_string(),
                 message: format!("`{key}` could not pause before, and now it can."),
                 notes,
                 help: Some(format!(

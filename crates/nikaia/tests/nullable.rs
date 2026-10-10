@@ -12,6 +12,7 @@
 //! or handed over - is in `tests/language/src/nullable.nika`, run by `nikaia
 //! test`. Here stay the refusals, the lowerings, and the one program that
 //! needs a file.
+use nikaia::check::CodeOps;
 
 mod common;
 
@@ -376,7 +377,10 @@ fn main() {
     let findings = check::check(&parsed, &own, &library).findings;
     assert_eq!(findings.len(), 1, "{findings:#?}");
     let it = &findings[0];
-    assert_eq!((it.code, it.severity), ("NK1217", check::Severity::Warning));
+    assert_eq!(
+        (it.code.as_str(), it.severity),
+        ("NK1217", check::Severity::Warning)
+    );
     assert!(it.message.contains("`User`"), "{it:#?}");
     assert!(
         it.help.as_deref() == Some("Write `.name`."),
@@ -413,7 +417,7 @@ fn reaching_through_a_list_index_is_refused() {
 #[test]
 fn a_reached_method_on_a_plain_text_runs_as_the_plain_call() {
     let source = "fn main() {\n    let s: String = \"abc\".clone()\n    let n = s?.len()\n    println(f\"{n}\")\n}\n";
-    let codes: Vec<&str> = findings(source).iter().map(|f| f.code).collect();
+    let codes: Vec<&str> = findings(source).iter().map(|f| f.code_str()).collect();
     assert_eq!(codes, vec!["NK1217"]);
     let parsed = parse_to_ast(source).expect("the source parses");
     let rust = emit_program(&parsed, Build::default())

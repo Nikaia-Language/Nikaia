@@ -15,6 +15,7 @@
 //!
 //! What the constants hold when the program runs is
 //! `tests/build-time/src/comptime_item.nika`.
+use nikaia::check::CodeOps;
 
 mod common;
 
@@ -95,7 +96,7 @@ fn a_function_above_the_constant_still_sees_it() {
 #[test]
 fn an_item_that_cannot_fold_is_refused() {
     let found = findings("comptime BAD = doubled(21)\n\nfn main() { }\n");
-    let codes: Vec<&str> = found.iter().map(|f| f.code).collect();
+    let codes: Vec<&str> = found.iter().map(|f| f.code_str()).collect();
     assert!(
         codes.contains(&"NK1127"),
         "the same refusal the body form gets: {found:#?}"

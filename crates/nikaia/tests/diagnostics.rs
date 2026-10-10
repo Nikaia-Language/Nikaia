@@ -492,7 +492,7 @@ fn a_finding_is_laid_out_in_characters() {
     let finding = nikaia::check::Finding {
         severity: nikaia::check::Severity::Error,
         span: nikaia::ast::Span::new(changed, changed + "grüße += 1".len()),
-        code: "NK1139",
+        code: "NK1139".to_string(),
         message: "you're changing `grüße`, but it wasn't declared as mutable".to_string(),
         notes: vec!["a name is fixed unless it says `mut`".to_string()],
         help: Some("add `mut` where it's declared".to_string()),

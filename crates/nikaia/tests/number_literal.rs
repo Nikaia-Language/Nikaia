@@ -6,6 +6,7 @@
 //! `0xFF` was `0` beside `xFF`. That is a **misparse** — [Part III
 //! C.1](../../../docs/specification/30-nikaia-tooling.md)'s class, and the one
 //! `NK1117` was built to report rather than hand to `rustc`.
+use nikaia::check::CodeOps;
 
 use nikaia::contracts::LedgerOps;
 use nikaia::emit::{Build, emit_program};
@@ -370,8 +371,9 @@ fn an_upper_case_exponent_is_refused_with_its_spelling() {
 /// It used to fit anything and reach `rustc`.
 #[test]
 fn a_number_literal_where_text_is_declared_is_refused() {
-    let codes =
-        |source: &str| -> Vec<&'static str> { findings(source).iter().map(|f| f.code).collect() };
+    let codes = |source: &str| -> Vec<&'static str> {
+        findings(source).iter().map(|f| f.code_str()).collect()
+    };
     assert_eq!(
         codes("fn main() {\n    let s: String = 3\n    println(s)\n}\n"),
         ["NK1103"]

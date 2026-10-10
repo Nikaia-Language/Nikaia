@@ -6,6 +6,7 @@
 //! of a `ref` parameter, a `for` binding over a list or a `let` over a place
 //! passed the check and reached `rustc`, whose *cannot move out of `l.ty`
 //! which is behind a shared reference* is about a file nobody wrote.
+use nikaia::check::CodeOps;
 
 use nikaia::check::{Finding, Severity};
 use nikaia::contracts::{Ledger, LedgerOps, STD};
@@ -47,7 +48,7 @@ fn with(function: &str) -> Vec<Finding> {
 
 fn refused(function: &str, field: &str) {
     let found = with(function);
-    let codes: Vec<_> = found.iter().map(|f| f.code).collect();
+    let codes: Vec<_> = found.iter().map(|f| f.code_str()).collect();
     assert_eq!(codes, ["NK1131"], "{function}\n{found:#?}");
     assert!(
         found[0].message.contains(&format!("`{field}`")),
@@ -110,7 +111,7 @@ fn the_tail_of_a_ref_self_method_is_refused_as_its_return_is() {
     let found = errors(&format!(
         "{HEAD}impl L {{\n    fn t(ref self) -> Ty {{\n        self.ty\n    }}\n}}\n"
     ));
-    let codes: Vec<_> = found.iter().map(|f| f.code).collect();
+    let codes: Vec<_> = found.iter().map(|f| f.code_str()).collect();
     assert_eq!(codes, ["NK1131"], "{found:#?}");
 }
 

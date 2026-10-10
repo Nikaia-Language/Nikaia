@@ -1,0 +1,286 @@
+// crates/nikaia-std/src/tools/check_buildtime.nika
+//
+// **Refusals about a value built while the program is built, about a list, a
+// constructor and the members a reflected field or variant has** - moved from
+// the compiler's checker (ADR-294, #125, #558).
+
+impl CheckState {
+    /// **`NK1167` one level in**: the value is a `struct` a `const` could hold,
+    /// and a **field** of it is not
+    /// ([ADR-311](../../docs/specification/adr/adr-311.md) D2).
+    ///
+    /// The field is named because a reader cannot see which half of
+    /// `Bag { items: [1, 2, 3] }` the language below refuses — the struct is
+    /// fine and the `Vec` in it is not, and *this cannot be evaluated* leaves
+    /// them to work that out.
+    pub fn a_field_that_owns_memory(ref mut self, bound: ref String, field: ref String, held: ref String, holder: ref String, span: ref Span) sync {
+        let carries = field.contains("::")
+        let mut message: String = f"`{bound}.{field}` is a `{held}`, which {holder} can't hold."
+        let mut note: String = "A value computed at build time can't own memory, so every field has to be one that doesn't."
+        let mut help: String = f"Declare `{field}` with a fixed-size type (`Array[T, N]` instead of a `Vec`, `&str` instead of a `String`), or build it while the program runs instead of in a `comptime`."
+        if carries {
+            message = f"`{field}` carries a `{held}`, which {holder} can't hold."
+            note = "A value computed at build time can't own memory. Another variant of the same `enum` may be fine.".clone()
+            help = f"Declare what `{field}` carries with a fixed-size type (`Array[T, N]` instead of a `Vec`, `&str` instead of a `String`), or build it while the program runs instead of in a `comptime`."
+        }
+        self.findings.push(check_refusal("NK1167", span, message, [note], help))
+    }
+
+    /// **`NK1167`: a `comptime` whose value owns memory**
+    /// ([ADR-311](../../docs/specification/adr/adr-311.md) D2).
+    ///
+    /// *"A `comptime` binding whose value owns memory is refused because of
+    /// what it **is**, and the way out is the view-shaped equivalent."* A `Vec`
+    /// allocates and `const X: Vec<T>` is not a thing the language below has,
+    /// where `const X: [T; N]` is.
+    ///
+    /// **And the way out names the number**, which is the whole reason this is
+    /// worth a code rather than a note on `NK1127`: the build has just computed
+    /// the value, so it knows the length the reader would otherwise have to
+    /// work out by reading the body.
+    pub fn a_constant_that_owns_memory(ref mut self, bound: ref String, held: ref Ty, computed: ref BuildValue, holder: ref String, span: ref Span) sync {
+        let mut owns: String = "a `String`"
+        let mut fixed: String = "`ref String`"
+        // **Text is the case with no length in it**, which is why the way out is
+        // shorter: `ref String` says the whole thing.
+        let mut way_out: String = "Declare it as `ref String`: the text is built into the program, and the program holds a view of it."
+        match computed {
+            BuildValue::List(items) => {
+                let mut element: String = "T"
+                match held {
+                    Ty::Named { args, .. } => {
+                        if args.len() > 0 && args[0].text() != "?" {
+                            element = args[0].text()
+                        }
+                    }
+                    else => {}
+                }
+                owns = "a `Vec`".clone()
+                fixed = "`Array[T, N]`".clone()
+                way_out = f"Declare it as `Array[{element}, {items.len()}]`: the build computed {counted(items.len(), "element")}."
+            }
+            else => {}
+        }
+        self.findings.push(check_refusal("NK1167", span, f"`{bound}` is a `{held.text()}`, which {holder} can't hold.", [f"{capitalised(owns)} allocates memory, and a value computed at build time can't. It can hold {fixed} instead."], way_out))
+    }
+
+    /// `NK1154`: two elements of one list literal are not the same type
+    /// ([ADR-135](../../docs/specification/adr/adr-135.md) D1).
+    ///
+    /// **Named rather than widened.** A list holds one type, so the two are a
+    /// mistake in one of them and the message says which two - exactly as a
+    /// `let` with an annotation does, which is the shape this borrows.
+    pub fn a_list_whose_elements_disagree(ref mut self, first_kind: ref String, first: ref String, other_kind: ref String, other: ref Ty, span: ref Span) sync {
+        let mut one = first_kind.clone()
+        if first != "?" && first.len() > 0 {
+            one = f"`{first}`"
+        }
+        let other_text = other.text()
+        let mut two = other_kind.clone()
+        if other_text != "?" && other_text.len() > 0 {
+            two = f"`{other_text}`"
+        }
+        self.findings.push(check_refusal("NK1154", span, f"This list mixes {one} and {two}, but a list holds one type.", ["The first element with a known type sets the type for the rest.".clone()], "Convert the element that doesn't fit, or use two lists.".clone()))
+    }
+
+    /// `NK1153`: an empty list whose element type nothing ever says
+    /// ([ADR-135](../../docs/specification/adr/adr-135.md) D2).
+    ///
+    /// **Refused and not guessed.** A default element type would be a type
+    /// nobody wrote, and claiming something the program does not say is the one
+    /// thing this checker may never do
+    /// ([Part III C.4](../../docs/specification/30-nikaia-tooling.md)).
+    ///
+    /// **Asked only where nothing at all uses the name**, which is the case D2
+    /// writes down. A use this checker cannot read a type out of -
+    /// `xs.len()` and nothing else - leaves the question to the language below
+    /// rather than answering it wrongly, for C.4's reason again: the cost of
+    /// silence is a backend message, and the cost of speaking is a correct
+    /// program refused.
+    pub fn an_empty_list_with_no_element_type(ref mut self, name: ref String, span: ref Span) sync {
+        self.findings.push(check_refusal("NK1153", span, f"`{name}` is an empty list, and nothing says what it holds.", ["An empty list gets its element type from how it's used, and it isn't used here.".clone()], f"Write the type, `let {name}: Vec[i64] = []`, or give it a first element."))
+    }
+
+    /// The call-depth limit, which is **not** a step budget
+    /// ([ADR-287](../../docs/specification/adr/adr-287.md) D16).
+    ///
+    /// That record deliberately has none and wrote down what it costs: a body
+    /// that does not terminate hangs the build. A *recursion* that does not
+    /// terminate is a different failure — it takes this compiler's stack down
+    /// with it, and a compiler that falls over is not the hang D4 accepted.
+    pub fn a_build_time_call_went_too_deep(ref mut self, callee: ref String, span: ref Span) sync {
+        self.findings.push(check_refusal("NK1152", span, f"`{callee}` calls itself too deeply to be computed while the program is built.", ["The build limits how deep calls may go, so that a recursion without an end is reported instead of crashing the compiler.".clone()], "Give the recursion a base case, or compute it while the program runs.".clone()))
+    }
+
+    /// `NK1149`: a type's constructor written `Type::new`
+    /// ([ADR-140](../../docs/specification/adr/adr-140.md) D2).
+    ///
+    /// The anonymous constructor is what a `.nika` file writes
+    /// (`pub fn(first: i32)`, Part I 4.2) and `new` is Rust's convention
+    /// reaching through a hand-written ledger. One convention, and it is this
+    /// language's own: `Vec()`, `String()`, `HashMap()`, `Stats(first)`.
+    ///
+    /// **Asked of the name and not of the position**, so the value form is
+    /// refused too — `par_fold(M, Summary::new, …)` is how `1brc.nika` wrote it,
+    /// which is the case D2 names.
+    ///
+    /// The ledger's key stays `Type::new`, because that is what the **lowering**
+    /// writes and the lowering is name for name
+    /// ([ADR-296](../../docs/specification/adr/adr-296.md) D17). What this
+    /// refuses is the *source* spelling.
+    pub fn a_constructor_written_as_new(ref mut self, world: ref CheckWorld, name: ref String, span: ref Span) sync {
+        let ty = name.strip_suffix("::new") ?? return
+        if !world.own.functions.contains_key(name) && !world.library.functions.contains_key(name) {
+            return
+        }
+        self.findings.push(check_refusal("NK1149", span, f"Make a `{ty}` with `{ty}(…)`, not `{ty}::new`.", ["In Nikaia a type's constructor has no name: it's called as the type itself.".clone()], f"Write `{ty}(…)`, or just `{ty}` where you pass the constructor itself."))
+    }
+
+    /// **`NK1171`, for a shape member written where no bound reaches it.**
+    ///
+    /// `T::fields` is reached under `[T: Struct]` and `T::variants` under
+    /// `[T: Enum]` (Part II 10.3). A reader who writes either has read that
+    /// section, so the message names the bound that makes it reachable rather
+    /// than saying the type has no such member.
+    pub fn a_shape_that_is_not_reachable_yet(ref mut self, ty: ref String, member: ref String, span: ref Span) sync {
+        let mut bound: String = "Struct"
+        if member == "variants" {
+            bound = "Enum"
+        }
+        let mut note: String = f"A type's fields and variants are reached through a bound, not by the type's name: `fn describe[T: {bound}](value: T)`, and then `T::{member}` inside it."
+        if self.type_parameters.contains_key(ty) {
+            note = f"A type's fields and variants are reached through a bound: `{ty}::{member}` needs `[{ty}: {bound}]`."
+        }
+        self.findings.push(check_refusal("NK1171", span, f"You can't reach `{ty}::{member}` directly: it's reached through a type parameter bound by `{bound}`.", [note], f"Write `fn describe[T: {bound}](value: T)`, and use `T::{member}` inside it."))
+    }
+
+    /// `NK1144`: a `let` whose only name is the ignore pattern
+    /// ([ADR-291](../../docs/specification/adr/adr-291.md) D7).
+    pub fn a_let_that_binds_nothing(ref mut self, span: ref Span) sync {
+        self.findings.push(check_refusal("NK1144", span, "`let _ = …` binds nothing, so there's no reason for the `let`.".clone(), ["A call made for its effect is written as the call on its own, `f()`.".clone(), "`_` would also throw the value away on the spot, so its cleanup would run right here instead of at the end of the block.".clone()], "Write the expression on its own, or give it a name.".clone()))
+    }
+
+    /// **`NK1172`: one field, named twice.**
+    ///
+    /// `Point { x: 1, x: 2 }` lowered, and `rustc` answered about the
+    /// **generated file** — [Part III
+    /// C.1](../../docs/specification/30-nikaia-tooling.md)'s class. The rule is
+    /// the literal's and [ADR-118](../../docs/specification/adr/adr-118.md) D1
+    /// restates it for `with`, which borrows the braces; both come here, because
+    /// one rule written twice is two rules waiting to disagree.
+    pub fn a_field_written_twice(ref mut self, ty: ref String, field: ref String, span: ref Span) sync {
+        self.findings.push(check_refusal("NK1172", span, f"You're setting `{ty}.{field}` twice.", ["Each field gets its value once; Nikaia won't silently pick one of the two.".clone()], f"Remove one of the two `{field}`."))
+    }
+
+    /// **`NK1183`: a `let` that declares the element's type over a `for`
+    /// binding** ([ADR-185](../../docs/specification/adr/adr-185.md) D1).
+    ///
+    /// A `for` lends ([ADR-094](../../docs/specification/adr/adr-094.md) D4),
+    /// so the binding is a **view** of the element and an annotation naming the
+    /// element is a type the value does not have. What came back was `rustc`'s
+    /// *mismatched types*, with *consider using clone here* as the way out —
+    /// an instruction to insert exactly the copy
+    /// [ADR-283](../../docs/specification/adr/adr-283.md) D3 says is written
+    /// and never inserted, about a file nobody wrote
+    /// ([Part III C.1](../../docs/specification/30-nikaia-tooling.md)).
+    ///
+    /// **The way out is the annotation coming off**, and it is a way out the
+    /// program can take: a view reads the same — `copy.a` reaches through it —
+    /// which is what makes this [C.2](../../docs/specification/30-nikaia-tooling.md)'s
+    /// shape rather than C.1's alone. The compiler knew both that the
+    /// annotation was wrong and what to write instead, and said neither.
+    ///
+    /// **And the copy is named as the other answer**, because sometimes it is
+    /// the one that was meant — but it is the *program's* to write.
+    pub fn a_copy_the_source_did_not_write(ref mut self, name: ref String, want: ref String, span: ref Span) sync {
+        self.findings.push(check_refusal("NK1183", span, f"`{name}` is a view of a `{want}`, but this `let` declares a `{want}` of its own.", [f"A `for` lends each element, so `{name}` points at an element the collection still owns. A `{want}` of its own would be a copy, and Nikaia never copies behind your back."], f"Remove the type: `let … = {name}` keeps the view, which reads the same. If you want a copy, write `{name}.clone()`."))
+    }
+
+    /// **`NK1180`: a reflected field answers `.name` and `.of(value)`**
+    /// ([ADR-304](../../docs/specification/adr/adr-304.md) D2).
+    ///
+    /// The two are the whole of what Part II 10.3 gives one, and the list is
+    /// short enough to print — which is what makes this a misspelling rather
+    /// than something nobody has told the compiler about.
+    /// **`NK1180` for a variant**: a reflected variant answers `.name` and
+    /// `.is(value)`.
+    pub fn a_reflected_variant_has_two_members(ref mut self, member: ref String, span: ref Span) sync {
+        self.findings.push(check_refusal("NK1180", span, f"A variant from `T::variants` has no `{member}`.", ["A variant from `T::variants` has `.name`, its name as text, `.is(value)`, whether a value is that variant, and `.attribute(X)` and `.attributes(X)`, what its attributes say.".clone()], "Use `.name`, `.is(value)`, `.attribute(X)` or `.attributes(X)`. To read what a variant carries, use a `match`.".clone()))
+    }
+
+    /// `NK1180`: a member a field from `T::fields` does not have.
+    pub fn a_reflected_field_has_two_members(ref mut self, member: ref String, span: ref Span) sync {
+        self.findings.push(check_refusal("NK1180", span, f"A field from `T::fields` has no `{member}`.", ["A field from `T::fields` has `.name`, its name as text, `.of(value)`, what that field holds in a value, `.default`, its default as a `T?`, and `.attribute(X)` and `.attributes(X)`, what its attributes say.".clone()], "Use `.name`, `.of(value)`, `.default`, `.attribute(X)` or `.attributes(X)`.".clone()))
+    }
+
+    /// **`NK1179`: a run this body owns, put where a view of one is declared**
+    /// ([ADR-179](../../docs/specification/adr/adr-179.md) D2).
+    ///
+    /// `&[T]` is the **crossed** form: what a build hands the program, and what
+    /// another view may be copied from. A `Vec[T]` a body just built is not
+    /// one, and there is no `&` the compiler may write here — a struct outlives
+    /// the expression that fills it, so a view into a local would be a
+    /// reference to something already gone
+    /// ([ADR-282](../../docs/specification/adr/adr-282.md) D7: no copy and no
+    /// borrow the program did not write).
+    ///
+    /// **A parameter is the case where the `&` *is* the compiler's**
+    /// ([ADR-094](../../docs/specification/adr/adr-094.md) D1): the callee reads
+    /// and the caller keeps, so `total(xs)` for a `Vec[i64]` needs no word. This
+    /// is the other side of that line, and it is worth a message of its own
+    /// because the two look identical on the page.
+    ///
+    /// Without it `rustc` answered *expected `&[Setting]`, found
+    /// `Vec<Setting>`* about the generated file, which is
+    /// [Part III C.1](../../docs/specification/30-nikaia-tooling.md)'s class —
+    /// and the line it answered about was a **grammar action**, where the way
+    /// out is not *write a `&`* at all.
+    pub fn a_run_this_body_owns(ref mut self, owner: ref String, field: ref String, held: ref String, span: ref Span) sync {
+        let known = held != "?"
+        let mut owned: String = "a value this body owns"
+        let mut way_out: String = f"Declare `{field}` as `Vec[T]`, which is what parsing builds. If you need a view, run the grammar in a `comptime` declared `&[T]`."
+        if known {
+            owned = f"a `{held}` this body owns"
+            way_out = f"Declare `{field}` as `{held}` if the program builds it while it runs, or fill it from a `comptime`, whose values are built into the program."
+        }
+        self.findings.push(check_refusal("NK1179", span, f"`{owner}.{field}` only views a list something else keeps, but this is {owned}.", ["A view points at values something else keeps, and a value built on this line is gone when the line ends.".clone(), "Passing a list to a parameter lends it automatically; a field doesn't.".clone()], way_out))
+    }
+
+    /// **A parser that did not build where the program has another error is
+    /// that error's** (#479): an action that calls a function that can pause
+    /// is `NK2209`, and its lowering writes an `.await` no parser compiles.
+    /// `NK1178`'s *a bug in the compiler* beside it, once per entry rule, was a
+    /// second and wrong account of one mistake. Decided once the whole program
+    /// is checked, because a `comptime` above the grammar runs it before its
+    /// actions are walked; where nothing else is wrong, it is still said.
+    pub fn walls_a_refusal_explains(ref mut self) sync {
+        let mut other_errors = false
+        for found in self.findings {
+            if !did_not_build(found) {
+                match found.severity {
+                    CheckSeverity::Error => {
+                        other_errors = true
+                    }
+                    else => {}
+                }
+            }
+        }
+        if !other_errors {
+            return
+        }
+        let mut kept: Vec[CheckFinding] = []
+        for found in self.findings {
+            if !did_not_build(found) {
+                kept.push(found.clone())
+            }
+        }
+        self.findings = kept
+    }
+}
+
+fn did_not_build(found: ref CheckFinding) -> bool sync {
+    if found.code != "NK1178" || found.notes.len() == 0 {
+        return false
+    }
+    return found.notes[0].starts_with("This is a bug in the compiler")
+}

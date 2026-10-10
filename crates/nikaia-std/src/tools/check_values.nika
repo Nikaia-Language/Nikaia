@@ -1,0 +1,209 @@
+// crates/nikaia-std/src/tools/check_values.nika
+//
+// **Whether a value is taken away or copied, and the refusals about a value
+// handed where the callee says what it keeps** - moved from the compiler's
+// checker (ADR-294, #125, #558). A type copies when the language says so, when
+// `std`'s ledger says so, or when the program declares it so.
+
+impl CheckState {
+    /// [`moves_away`], where a type the library says **copies** is copied
+    /// ([ADR-294](../../docs/specification/adr/adr-294.md) D9.1, the reading):
+    /// a `winnow_grammar::Symbol` handed on is still there to hand on again.
+    pub fn takes_away(ref self, world: ref CheckWorld, ty: ref Ty) -> bool sync {
+        return moves_away(ty) && !a_ledger_copies(ty, [world.library]) && !self.a_package_copy(world, ty)
+    }
+
+    /// **A type this package declares that copies**, nullable or in a tuple
+    /// of such: handed on, it is still there to hand on again, as a number
+    /// is. `one.kind` for a `kind: Kind?` of a lent `one` was refused as
+    /// taken out of a loan (`NK2106`), and a `Count` declared in another file
+    /// as used after it was kept (`NK2105`) - found moving `sharing`'s classes
+    /// into Nikaia (#125).
+    pub fn a_package_copy(ref self, world: ref CheckWorld, ty: ref Ty) -> bool sync {
+        return match ty {
+            Ty::Named { name, args, view } => !view && args.len() == 0 && self.copies_in_the_package.contains(name),
+            Ty::Nullable(inner) => self.a_package_copy(world, inner) || !self.takes_away(world, inner),
+            Ty::Tuple(parts) => self.no_part_is_taken_away(world, parts),
+            else => false,
+        }
+    }
+
+    fn no_part_is_taken_away(ref self, world: ref CheckWorld, parts: ref Vec[Ty]) -> bool sync {
+        for part in parts {
+            if self.takes_away(world, part) {
+                return false
+            }
+        }
+        return true
+    }
+
+    /// Whether handing a value of this type out takes nothing away, by the
+    /// language or by `std`'s ledger.
+    pub fn copied(ref self, world: ref CheckWorld, ty: ref Ty) -> bool sync {
+        return copies_plainly(ty) || a_ledger_copies(ty, [world.library])
+    }
+
+    /// **A type no number can be**: text, a `bool`, a `char`, a tuple, a
+    /// container, or a struct or an enum declared here. A name this checker
+    /// does not know - a type parameter, a library's type - is not claimed.
+    pub fn no_number_is(ref self, ty: ref Ty) -> bool sync {
+        return match ty {
+            Ty::Named { name, args, .. } => name == "String" || name == "str" || name == "bool" || name == "char" || (args.len() > 0 && !a_number_name(name)) || self.structs.contains_key(name) || self.enums.contains_key(name),
+            Ty::Tuple(_) => true,
+            else => false,
+        }
+    }
+
+    /// **Owned text is not a pattern** (found moving `Ty::parse` into Nikaia,
+    /// ADR-294). `starts_with`, `ends_with` and `contains` take a view of text
+    /// or a character, which is why the ledger writes their parameter `?`, and
+    /// `line.starts_with(f"{word}[")` passed and reached `rustc` as *the trait
+    /// `Pattern` is not implemented for `String`* about a file nobody wrote
+    /// (Part III C.1). It is the ordinary argument refusal, with the way out
+    /// every method argument has: a view, written `ref`. A literal is a view
+    /// already (ADR-282 D5), and a type this compiler could not work out is
+    /// left alone (C.4).
+    pub fn a_pattern_of_owned_text(ref mut self, key: ref String, given: ref Vec[Expr], found: ref Vec[Ty], span: ref Span) sync {
+        let mut param: String = ""
+        if key == "str::starts_with" {
+            param = "prefix"
+        } else if key == "str::ends_with" {
+            param = "suffix"
+        } else if key == "str::contains" {
+            param = "part"
+        } else {
+            return
+        }
+        if found.len() == 0 {
+            return
+        }
+        let owned = match found[0] {
+            Ty::Named { name, args, view } => !view && args.len() == 0 && name == "String",
+            else => false,
+        }
+        let mut literal = false
+        if given.len() > 0 {
+            literal = match given[0] {
+                Expr::LitStr { .. } => true,
+                else => false,
+            }
+        }
+        if !owned || literal {
+            return
+        }
+        self.findings.push(check_refusal("NK1102", span, f"`{key}` expects `{param}` to be `ref String` here, but you're passing `String`.", ["What it looks for is a view of text or a character; text of its own is neither.".clone()], "Write `ref` in front of it to pass a view of it.".clone()))
+    }
+
+    /// **A view of a value that does not copy, where the receiver keeps the
+    /// value** (found moving the compiler's `views` into Nikaia, #125): `for p
+    /// in found { out.push(p) }` lends each element, so `p` is a `ref P`, and a
+    /// `Vec[P]` keeps a `P` of its own. The signature says `$T`, which a view
+    /// fits, and the call reached `rustc` as *expected `P`, found `&P`* about
+    /// a file nobody wrote (Part III C.1). Text has its own sentence above; a
+    /// view of what copies is copied out at the call (ADR-233 D4).
+    pub fn a_view_of_what_does_not_copy(ref self, world: ref CheckWorld, found: ref Ty, want: ref Ty) -> bool sync {
+        return match found {
+            Ty::Named { name, args, view } => view && self.is_a_view_of(world, name, args, want),
+            else => false,
+        }
+    }
+
+    fn is_a_view_of(ref self, world: ref CheckWorld, viewed: ref String, viewed_args: ref Vec[Ty], want: ref Ty) -> bool sync {
+        return match want {
+            Ty::Named { name, args, view } => !view && viewed == name && viewed_args == args && a_type_base(name) != "String" && a_type_base(name) != "str" && !self.copied(world, want) && !self.copies_in_the_package.contains(name),
+            else => false,
+        }
+    }
+
+    /// The refusal [`Checker::a_view_of_what_does_not_copy`] answers with.
+    pub fn a_view_kept_whole(ref mut self, key: ref String, name: ref String, found: ref Ty, want: ref Ty, span: ref Span) sync {
+        self.findings.push(check_refusal("NK1102", span, f"`{key}` expects `{name}` to be `{want.text()}` here, but you're passing `{found.text()}`.", [f"This is a view: it points into a `{want.text()}` that something else owns.", f"`{key}` keeps its `{name}` after the call returns, so it needs a `{want.text()}` of its own."], "Write `.clone()` to copy it here.".clone()))
+    }
+
+    /// **`NK2206` and `NK2606`: a handler that does more than its type allows**
+    /// ([ADR-277](../../docs/specification/adr/adr-277.md) D7).
+    ///
+    /// A lambda that does **less** fits a type that allows more: one that never
+    /// pauses goes where pausing is allowed, one that cannot fail goes where
+    /// failing is. The other direction is the assertion
+    /// [ADR-288](../../docs/specification/adr/adr-288.md) makes about a
+    /// declaration, made about somebody else's code — a caller who writes
+    /// `fn() sync` in a signature has promised their own callers something, and
+    /// a handler that pauses takes the promise away without saying so.
+    ///
+    /// **Two codes and not one**, because the reader is doing two different
+    /// things: `NK2206` is the shape `NK2202` has one level over — a body that
+    /// pauses where the word says it does not — and `NK2606` is `NK2605`'s, a
+    /// failure with nowhere declared to go.
+    ///
+    /// **Only where the ledger answered.** A call whose callee nothing
+    /// describes leaves both flags where they were, which is the silence every
+    /// other rule here keeps about an absent claim
+    /// ([Part III C.4](../../../docs/specification/30-nikaia-tooling.md)): a
+    /// refusal on a guess is a correct program refused, and it is the worse of
+    /// the two mistakes.
+    pub fn a_handler_that_does_more_than_the_type_allows(ref mut self, promised: ref CheckPromises, seen: ref CheckHanded, span: ref Span) sync {
+        if seen.pauses && !promised.may_pause {
+            self.findings.push(check_refusal("NK2206", span, "This lambda can pause, but the parameter it's passed to is `sync`.".clone(), ["A function type says what the code passed in may do, and `sync` means it must never pause.".clone(), "A lambda that does less fits a type that allows more, never the other way round.".clone()], "Do the pausing work outside the lambda and pass the result in, or remove `sync` from the parameter's type.".clone()))
+        }
+        if seen.fails && !promised.may_fail {
+            self.findings.push(check_refusal("NK2606", span, "This lambda can fail, but the parameter it's passed to doesn't say `throws`.".clone(), ["A failure passes straight through a call, and here it has nowhere to go: the parameter's type says the lambda never fails.".clone()], "Handle it inside the lambda with `… catch { … }`, or add `throws` to the parameter's type.".clone()))
+        }
+    }
+
+    /// **`NK1189`: a copy under another name than `.clone()`**
+    /// ([ADR-282](../../docs/specification/adr/adr-282.md) D8).
+    ///
+    /// `.to_owned()` is the language below's name for a copy of a view -
+    /// needed there because `.clone()` of a reference copies the reference.
+    /// This language has no reference to copy: a copy of text is text of its
+    /// own, whatever the text was, and the compiler writes whichever call the
+    /// language below needs (ADR-293 D24). So there is one word, and the other
+    /// is refused naming it, as `..=` and `Type::new` were.
+    ///
+    /// **`.to_string()` is not this**, and stays: it is *the text form of a
+    /// value*, for every type, which for text happens to be a copy. Refused on
+    /// text alone, one expression would be right or wrong by its receiver's
+    /// type - `x.to_string()` in a body generic over `x` among them.
+    ///
+    /// Not where the program declares a method of that name itself.
+    pub fn a_copy_under_another_name(ref mut self, world: ref CheckWorld, receiver: ref Expr, method: winnow_grammar::Symbol, args: ref Vec[Expr], span: ref Span) sync {
+        let written = world.words.resolve(method).clone()
+        if args.len() != 0 || written != "to_owned" || ledger_candidates(world.own, written).len() != 0 {
+            return
+        }
+        let shown: String = match receiver {
+            Expr::Variable(name) => world.words.resolve(name).clone(),
+            else => "…",
+        }
+        self.findings.push(check_refusal("NK1189", span, f"To copy a value, write `.clone()`, not `.{written}()`.", ["Nikaia has one word for a copy, for text and for everything else.".clone()], f"Write `{shown}.clone()`."))
+    }
+
+    /// **`NK2106`: a part of something lent, handed to what keeps it**
+    /// ([ADR-293](../../docs/specification/adr/adr-293.md) D32).
+    ///
+    /// `xs.push(p.name)` with `p` a view takes the field out of a value this
+    /// body does not own: the language below said *cannot move out of
+    /// `p.name` which is behind a shared reference*, about a file nobody wrote.
+    pub fn a_part_of_a_loan_handed_over(ref mut self, path: ref String, root: ref String, to: ref String, span: ref Span) sync {
+        self.findings.push(check_refusal("NK2106", span, f"`{path}` is {to}, but `{root}` is only borrowed here.", [f"`{root}` belongs to whoever lent it (a `ref` parameter, a `for` over a list, a `let` over a place), so you can't give a part of it away.", "Nikaia never makes a copy behind your back.".clone()], f"Hand over a copy: `{path}.clone()`."))
+    }
+}
+
+/// Every entry a bare method name could resolve to, as the keys: an entry whose
+/// signature takes no `self` is a function a call names by its path, and
+/// `x.lines()` never reaches `io::lines()`. An entry with no signature is still
+/// a candidate - what it takes is unknown.
+pub fn ledger_candidates(ledger: ref Ledger, method: ref String) -> Vec[String] sync {
+    let suffix = f"::{method}"
+    let mut out: Vec[String] = []
+    for (entry_name, entry_value) in ledger.functions {
+        if !entry_name.ends_with(ref suffix) {
+            continue
+        }
+        if takes_self(entry_value) {
+            out.push(entry_name.clone())
+        }
+    }
+    return out
+}

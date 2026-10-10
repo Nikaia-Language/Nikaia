@@ -37,8 +37,7 @@ pub fn check(parsed: &Parsed, own: &Ledger) -> Vec<Finding> {
 
 /// **A finding a check written in Nikaia handed back**, as the compiler's own
 /// (`tools/findings.nika`, ADR-294). The one conversion there is: what the
-/// check said is what is reported. A code is a `&'static str` here and text
-/// there, so each code is kept once for the life of the compiler.
+/// check said is what is reported.
 pub fn from_nikaia(found: nikaia_std::tools::findings::Finding) -> Finding {
     Finding {
         severity: match found.warning {
@@ -46,25 +45,10 @@ pub fn from_nikaia(found: nikaia_std::tools::findings::Finding) -> Finding {
             false => crate::check::Severity::Error,
         },
         span: found.span,
-        code: static_code(&found.code),
+        code: found.code,
         message: found.message,
         notes: found.notes,
         help: found.help,
         labels: Vec::new(),
     }
-}
-
-/// A code as the `&'static str` a `Finding` holds: kept once per code.
-fn static_code(code: &str) -> &'static str {
-    static CODES: std::sync::Mutex<std::collections::BTreeSet<&'static str>> =
-        std::sync::Mutex::new(std::collections::BTreeSet::new());
-    let mut codes = CODES
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    if let Some(kept) = codes.get(code) {
-        return kept;
-    }
-    let kept: &'static str = Box::leak(code.to_string().into_boxed_str());
-    codes.insert(kept);
-    kept
 }

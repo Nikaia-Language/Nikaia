@@ -2,6 +2,7 @@
 //! where it can be, and checked when the program runs where it cannot**
 //! ([ADR-269](../../../docs/specification/adr/adr-269.md) D4). A proved claim
 //! leaves nothing behind in the emitted Rust.
+use nikaia::check::CodeOps;
 
 mod common;
 
@@ -21,7 +22,7 @@ fn findings(source: &str) -> Vec<nikaia::check::Finding> {
 }
 
 fn codes(source: &str) -> Vec<&'static str> {
-    findings(source).iter().map(|f| f.code).collect()
+    findings(source).iter().map(|f| f.code_str()).collect()
 }
 
 /// How each `assert` of the program is held, in the order they are written.

@@ -188,7 +188,7 @@ pub fn render_refusal(message: &str, at: usize, path: &str, source: &str) -> Str
     let finding = crate::check::Finding {
         severity: crate::check::Severity::Error,
         span: crate::ast::Span::new(at, at),
-        code: "",
+        code: String::new(),
         message: message.to_string(),
         notes: Vec::new(),
         help: None,

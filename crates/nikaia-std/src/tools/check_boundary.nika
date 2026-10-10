@@ -1,0 +1,296 @@
+// crates/nikaia-std/src/tools/check_boundary.nika
+//
+// **What a type is called below, what a field of a `const` may be, where a
+// place is rooted and when a `??` lends** - questions about a type or a place
+// that need the program's declarations, moved from the compiler's checker
+// (ADR-294, #125, #558).
+
+impl CheckState {
+    /// **What a declared type is called below**, where `rust_constant_type`
+    /// cannot say.
+    ///
+    /// That function knows the types Part I 2.2 offers and nothing else, which
+    /// is right for a free function: it has no program to ask. This has one —
+    /// a `struct` a `.nika` file declares is a `struct` in the generated file
+    /// under the same name, so `const P: Point = …` and
+    /// `const ROWS: [Setting; 2] = …` are both things the language below holds.
+    ///
+    /// **Only the shape, never the fields.** Whether a `Point`'s fields can be
+    /// written into a `const` is [`Checker::unwritable_field`]'s question, and
+    /// it asks the declaration.
+    pub fn declared_below(ref self, world: ref CheckWorld, ty: ref Ty) -> String? sync {
+        return match ty {
+            Ty::Named { name, args, view } => self.a_declared_name(world, name, args, view),
+            Ty::Pointed { item, slice, mutable } => if slice && !mutable { self.a_run_of(world, item, "&[", "]") } else { null },
+            else => null,
+        }
+    }
+
+    fn a_declared_name(ref self, world: ref CheckWorld, name: ref String, args: ref Vec[Ty], view: bool) -> String? sync {
+        if !view && args.len() == 0 && (self.fields_of(world, name) != null || self.enums.contains_key(name)) {
+            return name.clone()
+        }
+        if !view && name == "Array" && args.len() == 2 {
+            return match args[1] {
+                Ty::Count(n) => self.a_run_of(world, args[0], "[", f"; {n}]"),
+                else => null,
+            }
+        }
+        return null
+    }
+
+    fn a_run_of(ref self, world: ref CheckWorld, element: ref Ty, open: ref String, close: ref String) -> String? sync {
+        let mut written = rust_constant_type(world.library, element)
+        if written == null {
+            written = self.declared_below(world, element)
+        }
+        let held = written ?? return null
+        return f"{open}{held}{close}"
+    }
+
+    /// **The first field of a declared `struct` that has no `const` form.**
+    ///
+    /// Asked of the **declaration** and not of the value, which is the whole of
+    /// why it is a method: `Bag { items: [1, 2, 3] }` is the same literal
+    /// whether `items` is a `Vec[i64]` or an `Array[i64, 3]`, and only one of
+    /// those is something a `const` holds. Asking the value instead produced a
+    /// way out that could not be taken — *declare it `Array[T, N]`*, on a
+    /// program that already had.
+    ///
+    /// One level, deliberately: a struct inside a struct reports the outer
+    /// field, which is the one the reader wrote on this line.
+    pub fn unwritable_field(ref self, world: ref CheckWorld, ty: ref Ty) -> Vec[String] sync {
+        let name = match ty {
+            Ty::Named { name, .. } => name.clone(),
+            else => return [],
+        }
+        let fields = self.fields_of(world, name) ?? return []
+        for field in fields {
+            if rust_constant_type(world.library, field.ty) != null || self.declared_below(world, field.ty) != null {
+                let inner = self.unwritable_field(world, element_of(field.ty))
+                if inner.len() > 0 {
+                    return inner
+                }
+                continue
+            }
+            // A field that is itself a declared `struct` is fine where *its*
+            // fields are, which is the same question one level in.
+            if self.names_a_struct(world, field.ty) && self.unwritable_field(world, field.ty).len() == 0 {
+                continue
+            }
+            return [field.name.clone(), field.ty.text()]
+        }
+        return []
+    }
+
+    fn names_a_struct(ref self, world: ref CheckWorld, ty: ref Ty) -> bool sync {
+        return match ty {
+            Ty::Named { name, .. } => self.fields_of(world, name) != null,
+            else => false,
+        }
+    }
+
+    /// **Whether this argument is a count a C declaration takes in `size_t`**
+    /// ([ADR-302](../../docs/specification/adr/adr-302.md) D6).
+    ///
+    /// `usize` is not a type this language's own values have
+    /// ([ADR-285](../../docs/specification/adr/adr-285.md) D1) — a length is an
+    /// `i64` and the machine-width type left the surface a program can write —
+    /// so a foreign declaration that writes one is naming C's `size_t`, and
+    /// what a caller hands it is the integer this language does have. The
+    /// emitter writes the conversion, exactly as it does for `str::repeat`.
+    ///
+    /// **Only a foreign declaration**, because only there does `usize` mean
+    /// *the other language's word for this*. A `usize` anywhere else is a type
+    /// like any other and is measured like one.
+    pub fn a_count_at_the_boundary(ref self, written: ref String, want: ref Ty, found: ref Ty) -> bool sync {
+        if !self.foreign_names.contains(written) {
+            return false
+        }
+        let wants_a_size = match want {
+            Ty::Named { name, args, .. } => name == "usize" && args.len() == 0,
+            else => false,
+        }
+        let hands_a_number = match found {
+            Ty::Unknown => true,
+            Ty::Named { name, args, .. } => args.len() == 0 && a_number_name(name),
+            else => false,
+        }
+        return wants_a_size && hands_a_number
+    }
+
+    /// Whether every method this name may be takes its receiver as a view and
+    /// changes nothing: a call that only reads what it is called on. A name
+    /// nothing describes is claimed nothing about (Part III C.4).
+    pub fn only_reads_its_receiver(ref self, world: ref CheckWorld, method: ref String) -> bool sync {
+        let mut candidates: Vec[FnContract] = []
+        for key in ledger_candidates(world.own, method) {
+            candidates.push(world.own.functions[key]?.clone() ?? FnContract::empty())
+        }
+        for key in ledger_candidates(world.library, method) {
+            candidates.push(world.library.functions[key]?.clone() ?? FnContract::empty())
+        }
+        if candidates.len() == 0 {
+            return false
+        }
+        for contract in candidates {
+            if contract.mutates {
+                return false
+            }
+            let signature = contract.signature ?? return false
+            if !signature.takes_a_receiver() || !signature.params[0].1.is_a_view() {
+                return false
+            }
+        }
+        return true
+    }
+
+    /// **A type whose value is one machine word or less by what kind of type
+    /// it is** ([ADR-279](../../docs/specification/adr/adr-279.md) D8): a
+    /// number, a `bool`, a `char`, an enum of this program whose variants hold
+    /// nothing, and a type the library's ledger says copies. No size is
+    /// computed: a type made of parts is never one.
+    pub fn a_word_by_its_kind(ref self, world: ref CheckWorld, ty: ref Ty) -> bool sync {
+        return match ty {
+            Ty::Named { name, args, view } => !view && args.len() == 0 && (a_number_name(name) || name == "bool" || name == "char" || name == "scalar" || self.a_payloadless_enum(name) || a_ledger_copies(ty, [world.library])),
+            else => false,
+        }
+    }
+
+    fn a_payloadless_enum(ref self, name: ref String) -> bool sync {
+        if !self.enums.contains_key(name) {
+            return false
+        }
+        let parts = self.enum_payloads[name] ?? return true
+        return parts.len() == 0
+    }
+
+    /// **Whether a `??` over a name may lend it** (ADR-279 D5), and how the
+    /// option is opened where it does. The left side is a `T?` whose `T` is
+    /// taken rather than copied; the fallback is one a view of which exists
+    /// for as long as the answer does: a text literal (a view already), a
+    /// name, or a variant of an enum this file declares. Anything else is
+    /// taken as before, which is the direction that cannot be wrong below.
+    pub fn a_coalesce_that_may_lend(ref self, world: ref CheckWorld, left: ref Ty, fallback: ref Expr, other: ref Ty) -> String? sync {
+        let held = match left {
+            Ty::Nullable(inner) => inner.clone(),
+            else => return null,
+        }
+        let unseen = held.unseen()
+        if !self.takes_away(world, unseen) && self.a_word_by_its_kind(world, unseen) {
+            return null
+        }
+        let text = match held {
+            Ty::Named { name, args, view } => !view && args.len() == 0 && name == "String",
+            else => false,
+        }
+        let viewable = match fallback {
+            Expr::LitStr { .. } => text,
+            // A name of text is viewed either way below; a name of anything else
+            // is lent by a `&`, which a view already is not.
+            Expr::Variable(_) => text || !other.is_a_view(),
+            Expr::Path(segments) => !text && segments.len() == 2 && self.is_variant(world.words.resolve(segments[0]), world.words.resolve(segments[1])),
+            else => false,
+        }
+        if !viewable {
+            return null
+        }
+        if text {
+            return ".as_deref()"
+        }
+        return ".as_ref()"
+    }
+
+    /// The name a place is **rooted** at: `out` for `out`, `out.f` and
+    /// `out[i].f`, and nothing for anything that is not a place.
+    ///
+    /// A field of a parameter is the parameter's, which is why the whole chain
+    /// is followed rather than only its last step: `row.total = 0` changes
+    /// `row` ([ADR-094](../../docs/specification/adr/adr-094.md) D3).
+    pub fn rooted_at(ref self, world: ref CheckWorld, place: ref Expr) -> String? sync {
+        return match place {
+            Expr::Variable(name) => world.words.resolve(name).clone(),
+            Expr::Field { base, .. } => self.rooted_at(world, base),
+            Expr::SafeField { base, .. } => self.rooted_at(world, base),
+            Expr::Index { base, .. } => self.rooted_at(world, base),
+            else => null,
+        }
+    }
+
+    /// Whether this value is a **view of the subject**: a place inside a
+    /// borrowed `self`, handed back where the function declares a view.
+    ///
+    /// Purely about what the source wrote — the receiver, the declared result
+    /// and the shape of the place — because it decides whether to *ask*
+    /// `NK1131`, and asking that question types the expression. The types are
+    /// still measured: [`Checker::returns`] compares the view against the
+    /// declared result, so a field of the wrong type is `NK1104` as before.
+    ///
+    /// **A place inside the subject and not the subject itself.** `return self`
+    /// out of a `ref self` method is a different sentence — the subject is
+    /// already a view there, and nothing is owed.
+    ///
+    /// **Or a parameter lent to the function** (#96): `fn a(row: ref Row) ->
+    /// ref String { return row.name }` hands back a view of the caller's row,
+    /// exactly as `return self.name` does of a borrowed subject. Only a
+    /// parameter declared `ref T`: its buffer is the caller's. A `let` bound to
+    /// a view of something this body owns is not one, and keeps its words.
+    pub fn hands_back_a_view_of_the_subject(ref self, world: ref CheckWorld, value: ref Expr) -> bool sync {
+        let expected = self.expected?.clone() ?? return false
+        if !expected.is_a_view() {
+            return false
+        }
+        let a_place = match value {
+            Expr::Field { .. } => true,
+            Expr::Index { .. } => true,
+            else => false,
+        }
+        if !a_place {
+            return false
+        }
+        let root = self.rooted_at(world, value) ?? return false
+        if root == "self" {
+            return self.borrowing_self
+        }
+        let found = self.binding(root) ?? return false
+        let mut a_parameter = false
+        if found.immutable != null {
+            let held = found.immutable ?? return false
+            a_parameter = held.kind == CheckKind::Parameter
+        }
+        let a_view = match found.ty {
+            Ty::Named { view, .. } => view,
+            else => false,
+        }
+        return a_parameter && a_view
+    }
+
+    /// A place as a path - `name`, `p.name`, `a.b.c` - where it is one.
+    pub fn place_path(ref self, world: ref CheckWorld, expr: ref Expr) -> String? sync {
+        return dotted_path(world, expr)
+    }
+
+    /// The place a `match` is over where it is a `mut` parameter or a place in
+    /// one, as a path: `e`, `e.kind` (ADR-094 D3).
+    pub fn a_mut_parameter_place(ref self, world: ref CheckWorld, subject: ref Expr) -> String? sync {
+        let path = dotted_path(world, subject) ?? return null
+        let parts: Vec[ref String] = path.split(".").collect()
+        let found = self.binding(parts[0]) ?? return null
+        if found.changing {
+            return path
+        }
+        return null
+    }
+}
+
+/// What an `Array[T, N]` holds, and the type itself where it is not one.
+///
+/// One step, because that is what the question above needs: whether the
+/// fields of what a field *holds* can be written.
+pub fn element_of(ty: ref Ty) -> Ty sync {
+    return match ty {
+        Ty::Named { name, args, .. } => if name == "Array" && args.len() > 0 { args[0].clone() } else { ty.clone() },
+        Ty::Pointed { item, slice, mutable } => if slice && !mutable { item.clone() } else { ty.clone() },
+        else => ty.clone(),
+    }
+}

@@ -20,6 +20,7 @@
 //! **They are slow on purpose**: each one compiles a small Cargo project. That
 //! is the cost [ADR-310](../../../docs/specification/adr/adr-310.md) Q4 named,
 //! and it is paid once per grammar rather than once per build.
+use nikaia::check::CodeOps;
 
 mod common;
 
@@ -405,7 +406,7 @@ fn an_action_that_reaches_c_is_refused_once() {
          fn main() {\n    println(f\"{N} {T}\")\n}\n";
     let found = findings_in(source, &reads);
     std::fs::remove_dir_all(&dir).ok();
-    let codes: Vec<&str> = found.iter().map(|f| f.code).collect();
+    let codes: Vec<&str> = found.iter().map(|f| f.code_str()).collect();
     assert_eq!(codes, ["NK2209"], "{found:#?}");
     assert!(found[0].message.contains("`doubled`"), "{found:#?}");
 }

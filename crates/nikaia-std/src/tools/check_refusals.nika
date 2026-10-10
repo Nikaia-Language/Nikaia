@@ -1,0 +1,296 @@
+// crates/nikaia-std/src/tools/check_refusals.nika
+//
+// **Refusals that need a name, a type or two and nothing else of the walk** -
+// the sentence a mistake is told in and the way out it is shown - moved from
+// the compiler's checker (ADR-294, #125, #558). Each is a method of
+// `CheckState`: it pushes the finding where the walk's others go.
+
+impl CheckState {
+    /// `NK1195`: an `assert` written in a shape other than `assert(cond)` or
+    /// `assert(cond; message: "…")`.
+    pub fn an_assert_of_another_shape(ref mut self, message: String, span: ref Span) sync {
+        self.findings.push(check_refusal("NK1195", span, message, ["Write it as `assert(cond)` or `assert(cond; message: \"…\")`.".clone()], null))
+    }
+
+    /// **A view of a copied value compared with the value** (0.0.238).
+    ///
+    /// `for c in word { if c == 'x' { … } }` lends `word`, so `c` is a view of a
+    /// `char`, and the language below compares a `char` with a `char` and not
+    /// with a `&char`: *can't compare `char` with `&char`* about a file nobody
+    /// wrote. ADR-233 D4 already reads a view of a number as the number for
+    /// arithmetic; this is the same reading for a comparison. Recorded only
+    /// where the other side is known and is not a view, so two views still
+    /// compare as they are.
+    /// **A `T?` compared with a `T`** (`NK1102`, Part I 2.3): the two sides
+    /// disagree, and the language below said *expected `Option<i64>`, found
+    /// `i64`* about a file nobody wrote (found moving `sharing` into Nikaia,
+    /// #125). A `T?` is a type of its own, read with `??` or `?.`; `x == null`
+    /// is the one comparison it takes with something that is not one. Asked
+    /// only where both sides are known (C.4).
+    pub fn a_maybe_compared_with_a_value(ref mut self, left: ref Ty, right: ref Ty, span: ref Span) sync {
+        let first = a_known_maybe(left) && a_known_value(right)
+        let second = a_known_maybe(right) && a_known_value(left)
+        if !first && !second {
+            return
+        }
+        let mut maybe = left.clone()
+        let mut value = right.clone()
+        if !first {
+            maybe = right.clone()
+            value = left.clone()
+        }
+        self.findings.push(check_refusal("NK1102", span, f"This compares `{maybe.text()}` with `{value.text()}`.", ["A `T?` is a type of its own (Part I 2.3): it is read with `??` or `?.`, and compared with nothing but `null` or another `T?`.".clone()], "Say what an absent value compares as, `(x ?? fallback) == y`, or ask `x != null` first.".clone()))
+    }
+
+    /// **`NK1234`: a struct literal leaves out a field that has no default**
+    /// (ADR-331 D5, Part I 4.1).
+    pub fn fields_left_out(ref mut self, owner: ref String, missing: ref Vec[String], span: ref Span) sync {
+        let listed = left_out_text(missing)
+        let mut one: String = "fields"
+        let mut them: String = "them"
+        let mut has: String = "have"
+        if missing.len() == 1 {
+            one = "field"
+            them = "it"
+            has = "has"
+        }
+        self.findings.push(check_refusal("NK1234", span, f"This `{owner}` literal leaves out the {one} {listed}, which {has} no default.", ["A literal may leave out only a field declared with a default (`size: i64 = 50`).".clone()], f"Give {them} in the literal, or declare a default for {them} in `{owner}`."))
+    }
+
+    /// **Part I 2.3: a `T?` is a type of its own, and `.` is not one of its
+    /// members** ([ADR-278](../../../docs/specification/adr/adr-278.md) D14).
+    ///
+    /// `NK1125`, and it is [`Checker::reaches_through_a_plain_value`] the other
+    /// way round: that one refuses a `?.` where there is nothing to reach
+    /// through, this one refuses a plain `.` where there is.
+    ///
+    /// **What the other languages do here is crash.** In a language where
+    /// `null` inhabits every reference type, `a?.b.c` guards `a` and leaves
+    /// `a.b` unguarded, so a `null` there is a `NullReferenceException` at run
+    /// time. This language has no such value to crash on: types are
+    /// non-nullable by default and `T?` is a **separate type**, so `.c` on one
+    /// is a member the type does not have — the same kind of mistake as `.c` on
+    /// an `i64`, and answerable where it is written.
+    ///
+    /// So the short-circuit is unchanged and is not what this is about: `?.`
+    /// still stops at its own member and still answers `null`. What changes is
+    /// that the *next* access is refused rather than emitted, which is what
+    /// `find(1)?.b.c` used to become —
+    /// `find(1).map(|it| it.b).c`, a field read off an `Option` (Part III C.1).
+    pub fn reaches_into_a_nullable(ref mut self, on: ref Ty, kind: ref String, name: ref String, span: ref Span) sync {
+        let mut safe: String = f"?.{name}"
+        if kind == "method" {
+            safe = f"?.{name}(…)"
+        }
+        let mut message: String = f"A `{on.text()}` may be missing, so you can't reach its {kind} directly."
+        match on {
+            Ty::Nullable(inner) => {
+                if inner.is_unknown() {
+                    message = f"This value may be missing, so you can't reach its {kind} directly."
+                }
+            }
+            else => {}
+        }
+        // **Rust's question about an option is a comparison here** (ADR-286
+        // D36): `is_some` and `is_none` are no method of a `T?`.
+        let mut help: String = f"Write `{safe}`, which gives `null` when the value is missing, or give a fallback with `??` first and reach into that."
+        if kind == "method" && name == "is_some" {
+            help = "Compare with `null`: `value != null`.".clone()
+        }
+        if kind == "method" && name == "is_none" {
+            help = "Compare with `null`: `value == null`.".clone()
+        }
+        self.findings.push(check_refusal("NK1125", span, message, ["A `T?` is its own type, not a `T` that might be missing, so it doesn't have `T`'s members. That's why a missing value can never crash here.".clone()], help))
+    }
+
+    /// **`NK1137`: the `&` is the compiler's to write**
+    /// ([ADR-094](../../docs/specification/adr/adr-094.md) D4).
+    ///
+    /// A `for` lends what it iterates and a `let` over a place is a view of it,
+    /// so a `&` written in front of either says what the line already means.
+    /// Left alone it would be a second reference — `&&Vec<Entry>`, which Rust
+    /// does not iterate — and reported about a file nobody wrote
+    /// ([Part III C.1](../../docs/specification/30-nikaia-tooling.md)).
+    ///
+    /// **Refused rather than absorbed**, which is D1's rule and is the whole
+    /// point of the record: two spellings for one thing is the state a reader
+    /// cannot tell a rule from a habit in. A `&` in a **declaration** is
+    /// untouched (D6) — that is where it lives.
+    ///
+    /// **The `for` position only, and the `let` one is open work.** A `for`
+    /// lends whatever place it is given, so a written `&` there is always the
+    /// compiler's line said twice. A `let` lends only where the checker could
+    /// *type* the place ([`Checked::lent_lets`]), and where it could not, the
+    /// written `&` is the program's only way to say what the line means — so
+    /// refusing it there would take away the escape hatch before the inference
+    /// that replaces it exists. issue #96 carries that as the rest of D4.
+    pub fn the_caller_writes_no_reference(ref mut self, value: ref Expr, span: ref Span, because: ref String) sync {
+        let written = match value {
+            Expr::Unary { op, .. } => match op {
+                UnaryOp::Ref => true,
+                else => false,
+            },
+            else => false,
+        }
+        if !written {
+            return
+        }
+        self.findings.push(check_refusal("NK1137", span, "You don't need the `ref` here: the compiler lends where it's needed.".clone(), [f"{capitalised(because)}, so it's lent already."], "Remove the `ref`.".clone()))
+    }
+
+    /// **`NK1190`: a `std` type called as its constructor, where nothing
+    /// describes one** (0.0.232).
+    ///
+    /// `collections::HashSet()` passed the check and lowered as it was written,
+    /// and the language below said *expected function, found type alias* about
+    /// a file nobody wrote ([Part III
+    /// C.1](../../docs/specification/30-nikaia-tooling.md)). The constructor is
+    /// the ledger entry `Name::new` ([ADR-140](../../docs/specification/adr/adr-140.md)
+    /// D2), the emitter writes one only where that entry exists, and the ledger
+    /// described `HashSet`, `BTreeMap` and `BTreeSet` as types without one.
+    ///
+    /// **Only a type the library names exactly, and only with nothing in the
+    /// parentheses.** A type this compiler cannot see is not asked about, and a
+    /// call with arguments may be a foreign tuple struct's own constructor.
+    /// `NK1190` for a struct of the program's own: it declares no anonymous
+    /// constructor (`impl T { pub fn(…) … }`, ADR-140 D2), so a call has
+    /// nothing to be lowered to, and the literal is the way it is built.
+    pub fn a_struct_called_without_a_constructor(ref mut self, name: ref String, span: ref Span) sync {
+        let mut fields: Vec[String] = []
+        let declared = self.structs[name]?.clone() ?? []
+        for field in declared {
+            fields.push(f"{field.name}: …")
+        }
+        self.findings.push(check_refusal("NK1190", span, f"You can't call `{name}(…)`: it has no constructor.", [f"A type is called through a constructor, `impl {name} {{ pub fn(…) … }}`, and `{name}` doesn't declare one."], f"Build it with a literal: `{name} {{ {fields.join(", ")} }}`."))
+    }
+
+    /// `NK1190`: `T()` of a `std` type whose description has no `T::new`.
+    pub fn a_constructor_nothing_describes(ref mut self, world: ref CheckWorld, name: ref String, args: ref Vec[Expr], span: ref Span) sync {
+        if args.len() != 0 || !world.library.types.contains_key(name) || resolve_call(world, name) != null {
+            return
+        }
+        self.findings.push(check_refusal("NK1190", span, f"You can't call `{name}(…)`: it has no constructor.", [f"Calling `{name}()` runs `{name}::new` from the type's description, and that description has no `{name}::new`."], null))
+    }
+
+    /// A name nothing declares (`NK1117`).
+    ///
+    /// **This exists because a misparse is otherwise a different program.** The
+    /// grammar is scannerless, so a word this language does not know is read as a
+    /// name and a name in statement position is a legal statement. Measured,
+    /// before the keyword boundaries went in (`parser::KW_*`) and after:
+    ///
+    /// ```text
+    /// assert c                 ->  assert;  c;
+    /// unsafe { println("x") }  ->  unsafe;  { println!("x") }
+    /// let n = 1_000            ->  let n = 1;  _000;
+    /// ```
+    ///
+    /// **The third one is history now**
+    /// ([ADR-285](../../docs/specification/adr/adr-285.md)): `1_000` is the
+    /// number `1000`, so this message stopped naming it — a help text that
+    /// explains a form the language has is worse than no help at all.
+    ///
+    /// Every one of those reached `rustc`, which refused it about a file nobody
+    /// wrote - the Part III C.1 class. The boundary rules stop the *worse* half,
+    /// where the word was swallowed into a neighbour; this stops the rest, here,
+    /// in this language's words.
+    ///
+    /// **Only a statement that is exactly one name**, which is the narrowest rule
+    /// that covers the class. A name inside a larger expression is refused by the
+    /// type checker if it is refused at all, and a name that is the *value* of a
+    /// block - `fn f() -> i64 { x }` - is this same shape, where an undeclared `x`
+    /// is equally wrong.
+    ///
+    /// **Four things count as declaring it**, and the list is the fail-safe
+    /// direction (ADR-010 D1 applied to a refusal rather than to a permission): a
+    /// local or parameter in scope, a function either ledger describes, a type
+    /// declared here, and a module of this program. Anything this cannot see is a
+    /// name it must not refuse, because refusing a correct program is the one
+    /// thing this checker may never do (Part III, C.4).
+    pub fn nothing_declares_it(ref mut self, world: ref CheckWorld, expr: ref Expr, span: ref Span) sync {
+        let name = match expr {
+            Expr::Variable(symbol) => world.words.resolve(symbol).clone(),
+            else => return,
+        }
+        // A grammar's name stands where a callee stands (ADR-296 D24), so it is
+        // declared in exactly the way a module is.
+        let declared = self.lookup(name) != null || resolve_call(world, name) != null || self.structs.contains_key(name) || self.enums.contains_key(name) || world.own.types.contains_key(name) || self.modules.contains(name) || self.grammars.contains_key(name)
+        if declared {
+            return
+        }
+        // **What each word used to be told a reserved one, this tells a stray
+        // one** (ADR-298 D2).
+        let help = reserved_elsewhere(name) ?? f"If `{name}` is meant to be a value, declare it with `let`. If you meant a keyword, Nikaia doesn't have one called `{name}`."
+        self.findings.push(check_refusal("NK1117", span, f"`{name}` isn't declared anywhere.", ["A word the language doesn't know is read as a name, and a name has to be declared before it's used.".clone()], help))
+    }
+
+    /// **`NK2601`: an `impl Cleanup` is the one method `fn cleanup(ref mut
+    /// self)`** ([ADR-297](../../docs/specification/adr/adr-297.md) D1). The
+    /// synchronous fallback a type may also have is its own `impl Drop`, which
+    /// runs after the cleanup, or alone where the cleanup cannot run - so a
+    /// `drop` written here is named and pointed there.
+    pub fn a_cleanup_shaped(ref mut self, world: ref CheckWorld, target: ref String, methods: ref Vec[Spanned[Item]], span: ref Span) sync {
+        let mut wrote_cleanup = false
+        let note: String = "`impl Cleanup` has exactly one method, `fn cleanup(ref mut self)`, and it may pause and may fail."
+        for method in methods {
+            match method.node {
+                Item::Fn { name, receiver, args, config, spread, ret_type, .. } => {
+                    let mut written: String = ""
+                    if name != null {
+                        written = world.words.resolve(name ?? return).clone()
+                    }
+                    let mut message: String = f"`{written}` doesn't belong in `impl Cleanup for {target}`."
+                    let mut help: String = f"Move it to `impl {target}`, with the type's other methods."
+                    if written == "cleanup" {
+                        wrote_cleanup = true
+                        let mut shaped = false
+                        if receiver != null {
+                            let held = receiver ?? return
+                            shaped = held.is_ref && held.is_mut && args.len() == 0 && config.len() == 0 && spread == null && ret_type == null
+                        }
+                        if shaped {
+                            continue
+                        }
+                        message = f"`cleanup` of `{target}` has to take `ref mut self`, nothing else, and return nothing."
+                        help = "Write it as `fn cleanup(ref mut self)`, with `throws` if it can fail.".clone()
+                    } else if written == "drop" {
+                        message = f"`drop` doesn't belong in `impl Cleanup for {target}`."
+                        help = f"Put it in its own `impl Drop for {target} {{ fn drop(ref mut self) {{ … }} }}`, which runs after `cleanup`, or alone where `cleanup` can't run."
+                    }
+                    self.findings.push(check_refusal("NK2601", method.span, message, [note.clone()], help))
+                }
+                else => {}
+            }
+        }
+        if !wrote_cleanup {
+            self.findings.push(check_refusal("NK2601", span, f"`impl Cleanup for {target}` is missing its `cleanup` method.", [note.clone()], "Add `fn cleanup(ref mut self) { … }`.".clone()))
+        }
+    }
+}
+
+fn a_known_maybe(ty: ref Ty) -> bool sync {
+    return match ty {
+        Ty::Nullable(inner) => !inner.is_unknown(),
+        else => false,
+    }
+}
+
+fn a_known_value(ty: ref Ty) -> bool sync {
+    if ty.is_unknown() {
+        return false
+    }
+    return match ty {
+        Ty::Nullable(_) => false,
+        else => true,
+    }
+}
+
+/// The fields of a literal's struct it left out that have no default, as
+/// the way out spells them.
+pub fn left_out_text(missing: ref Vec[String]) -> String sync {
+    let mut quoted: Vec[String] = []
+    for field in missing {
+        quoted.push(f"`{field}`")
+    }
+    return quoted.join(", ")
+}

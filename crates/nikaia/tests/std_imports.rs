@@ -7,6 +7,7 @@
 //! `HashMap` works with no `use` at all, because it is a name this compiler
 //! already knows. A line that reads like an import and does nothing is what
 //! this closes.
+use nikaia::check::CodeOps;
 
 use nikaia::contracts::{Ledger, LedgerOps, STD};
 use nikaia::parser::parse_to_ast;
@@ -266,7 +267,7 @@ fn a_prefix_that_is_not_a_module_is_not_importable() {
     assert_eq!(refused("use std::list\nfn main() { }\n").len(), 1);
     for word in ["str", "i64"] {
         let source = format!("use std::{word}\nfn main() {{ }}\n");
-        let codes: Vec<&str> = findings(&source).iter().map(|f| f.code).collect();
+        let codes: Vec<&str> = findings(&source).iter().map(|f| f.code_str()).collect();
         assert!(
             codes.contains(&"NK1156") || codes.contains(&"NK1186"),
             "`use std::{word}` is refused by this compiler: {codes:?}"

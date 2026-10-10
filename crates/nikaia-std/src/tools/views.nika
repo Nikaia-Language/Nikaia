@@ -919,7 +919,33 @@ fn subject_destination(unit: ref Unit, asked: ref Asked, span: ref Span, mut her
     if known && !can_hold {
         return
     }
+    // **A subject another file of the package declares** is known from the
+    // ledger, which holds every type of the package: one whose fields and
+    // variants hold no view has nowhere to keep one either.
+    if !known && !declared_elsewhere_with_a_view(asked, owner) {
+        return
+    }
     here.found.push((span.clone(), Destination::Subject { owner: owner }))
+}
+
+// Whether the package's ledger knows this type and it may hold a view: a field
+// or a variant part that is one, or one nobody worked out. A type the ledger
+// does not know is one this walk cannot see into, so it may.
+fn declared_elsewhere_with_a_view(asked: ref Asked, owner: ref String) -> bool {
+    let declared = asked.own.types[owner] ?? return true
+    for field in declared.fields {
+        if a_ledger_type_with_a_view(field.ty) {
+            return true
+        }
+    }
+    for variant in declared.variants {
+        for part in variant.holds {
+            if a_ledger_type_with_a_view(part.ty) {
+                return true
+            }
+        }
+    }
+    return false
 }
 
 // A store into the field `field` of the subject, where that field holds a

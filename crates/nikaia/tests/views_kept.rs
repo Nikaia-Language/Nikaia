@@ -64,3 +64,41 @@ fn owned_text_handed_to_a_pattern_is_refused() {
         }
     }
 }
+
+/// **A call on a subject another file of the package declares** keeps nothing
+/// where that subject holds no view, and is still refused where it does: the
+/// subject is known from the package's ledger, not only from the file the
+/// `impl` stands in (found moving the checker's state into Nikaia, #558).
+#[test]
+fn a_subject_declared_in_another_file_is_known_from_the_ledger() {
+    let declaring = parse_to_ast(
+        "struct Plain {\n    n: i64,\n}\n\nstruct Holds {\n    name: ref String,\n}\n",
+    )
+    .expect("the declarations parse");
+    let methods = parse_to_ast(
+        "impl Plain {\n    fn peek(ref self, label: ref String) -> i64 {\n        return self.n\n    }\n\n\
+         \x20   fn show(ref self, label: ref String) -> i64 {\n        return self.peek(label)\n    }\n}\n\n\
+         impl Holds {\n    fn peek(ref self, label: ref String) -> i64 {\n        return 1\n    }\n\n\
+         \x20   fn show(ref self, label: ref String) -> i64 {\n        return self.peek(label)\n    }\n}\n",
+    )
+    .expect("the methods parse");
+    let library =
+        nikaia::contracts::Ledger::parse(nikaia::contracts::STD).expect("std ships a ledger");
+    let own = nikaia::contracts::Ledger::infer_package(&[&declaring, &methods], &library);
+    let checked = nikaia::check::check_against(
+        &methods,
+        &[&declaring],
+        &own,
+        &library,
+        &std::collections::BTreeSet::new(),
+        &nikaia::check::Newly::default(),
+        &nikaia::assets::Reads::none(),
+    );
+    let refused: Vec<&nikaia::check::Finding> = checked
+        .findings
+        .iter()
+        .filter(|f| f.code == "NK2302")
+        .collect();
+    assert_eq!(refused.len(), 1, "{refused:#?}");
+    assert!(refused[0].message.contains("Holds.show"), "{refused:#?}");
+}

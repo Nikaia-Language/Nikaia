@@ -6,6 +6,7 @@
 //! The caller's value is whole whenever the caller can see it. Before this the
 //! checker accepted a function that took a part and kept it, and `rustc` refused
 //! the result in its own words.
+use nikaia::check::CodeOps;
 
 use nikaia::check::{Finding, Severity};
 use nikaia::contracts::{Ledger, LedgerOps, STD};
@@ -58,7 +59,7 @@ fn with(function: &str) -> Vec<Finding> {
 
 fn refused(function: &str, words: &[&str]) {
     let found = with(function);
-    let codes: Vec<_> = found.iter().map(|f| f.code).collect();
+    let codes: Vec<_> = found.iter().map(|f| f.code_str()).collect();
     assert_eq!(codes, ["NK2108"], "{found:#?}");
     let text = format!(
         "{} {} {}",

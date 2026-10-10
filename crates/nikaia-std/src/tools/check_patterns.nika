@@ -1,0 +1,175 @@
+// crates/nikaia-std/src/tools/check_patterns.nika
+//
+// **What a `match` arm's pattern binds, and to what type** - moved from the
+// compiler's checker (ADR-294, #125, #558). The state holds the program's
+// structs and enums; a pattern is read against them.
+
+use std::collections
+
+impl CheckState {
+    /// **The types of the names an arm binds**, where the variant says them: a
+    /// positional variant's parts in order, a variant with named fields by name.
+    /// Nested patterns are typed from their part; or-patterns are left untyped,
+    /// which leaves their names bound as they always were.
+    pub fn pattern_parts(ref self, world: ref CheckWorld, pattern: ref MatchPattern, on: ref Ty) -> collections::BTreeMap[String, Ty] sync {
+        let mut out: collections::BTreeMap[String, Ty] = collections::BTreeMap()
+        // **A bare name binds the whole value** (ADR-291 D1), as it does in the
+        // language below: `other => other` is of the type matched, unless the
+        // name is one of the type's own variants.
+        match pattern {
+            MatchPattern::Path(one) => {
+                if one.len() == 1 && !on.is_unknown() {
+                    let word = world.words.resolve(one[0]).clone()
+                    let mut a_variant = false
+                    match on {
+                        Ty::Named { name, .. } => {
+                            a_variant = self.is_variant(name, word) || self.variant_parts.contains_key(f"{name}::{word}")
+                        }
+                        else => {}
+                    }
+                    if !a_variant && word != "_" {
+                        out.insert(word, on.clone())
+                        return out
+                    }
+                }
+            }
+            else => {}
+        }
+        // **A tuple's parts are the types at their positions** (#522):
+        // `(Op::Times, n)` over an `(Op, i64)` binds `n` as the `i64`.
+        match on {
+            Ty::Tuple(types) => {
+                match pattern {
+                    MatchPattern::Tuple { path, parts } => {
+                        if path.len() == 0 {
+                            let mut at = 0
+                            while at < parts.len() && at < types.len() {
+                                self.bind_a_part(world, parts[at], types[at], out)
+                                at = at + 1
+                            }
+                            return out
+                        }
+                    }
+                    else => {}
+                }
+            }
+            else => {}
+        }
+        let owner = match on {
+            Ty::Named { name, .. } => name.clone(),
+            else => return out,
+        }
+        match pattern {
+            MatchPattern::Tuple { path, parts } => {
+                if path.len() > 0 {
+                    let key = self.pattern_variant(world, path, owner)
+                    let mut types: Vec[Ty] = []
+                    if self.variant_parts.contains_key(key) {
+                        types = self.variant_parts[key]?.clone() ?? []
+                    } else {
+                        let fields = self.structs[key]?.clone() ?? []
+                        for field in fields {
+                            types.push(field.ty.clone())
+                        }
+                    }
+                    let mut at = 0
+                    while at < parts.len() && at < types.len() {
+                        self.bind_a_part(world, parts[at], types[at], out)
+                        at = at + 1
+                    }
+                }
+            }
+            MatchPattern::Named { path, bindings, .. } => {
+                let key = self.pattern_variant(world, path, owner)
+                let fields = self.structs[key]?.clone() ?? []
+                for binding in bindings {
+                    let name = world.words.resolve(binding).clone()
+                    for field in fields {
+                        if field.name == name {
+                            out.insert(name.clone(), field.ty.clone())
+                            break
+                        }
+                    }
+                }
+            }
+            else => {}
+        }
+        return out
+    }
+
+    /// The ledger's key of the variant a pattern names: `Owner::One` for one
+    /// segment, the path as written otherwise.
+    fn pattern_variant(ref self, world: ref CheckWorld, path: ref Vec[winnow_grammar::Symbol], owner: ref String) -> String sync {
+        let mut written: Vec[String] = []
+        for part in path {
+            written.push(world.words.resolve(part).clone())
+        }
+        if written.len() == 1 {
+            return f"{owner}::{written[0]}"
+        }
+        return written.join("::")
+    }
+
+    /// One part of a tuple pattern: a name binds the type at its place, and a
+    /// pattern inside a pattern binds from its part's type (ADR-291 D10):
+    /// `Add(Num(x), Num(y))`.
+    fn bind_a_part(ref self, world: ref CheckWorld, part: ref MatchPattern, ty: ref Ty, mut out: collections::BTreeMap[String, Ty]) sync {
+        match part {
+            MatchPattern::Path(one) => {
+                if one.len() == 1 {
+                    out.insert(world.words.resolve(one[0]).clone(), ty.clone())
+                }
+            }
+            MatchPattern::Tuple { .. } => {
+                for (entry_name, entry_value) in self.pattern_parts(world, part, ty) {
+                    out.insert(entry_name.clone(), entry_value.clone())
+                }
+            }
+            MatchPattern::Named { .. } => {
+                for (entry_name, entry_value) in self.pattern_parts(world, part, ty) {
+                    out.insert(entry_name.clone(), entry_value.clone())
+                }
+            }
+            else => {}
+        }
+    }
+}
+
+/// The names one pattern binds, in the order it writes them.
+///
+/// **Recursive, because a pattern nests**
+/// ([ADR-291](../../docs/specification/adr/adr-291.md) D10): a tuple's parts
+/// are patterns, so `Event::Click(Point { x, .. })` binds what the part
+/// inside it binds.
+///
+/// **An or-pattern hands back its first alternative's names**, which is the
+/// answer that is right *once `NK1155` has run*: every alternative binds the
+/// same set, so any of them will do — and where they do not, the refusal is
+/// the finding rather than a scope this guessed at.
+pub fn pattern_names(world: ref CheckWorld, pattern: ref MatchPattern) -> Vec[String] sync {
+    return match pattern {
+        MatchPattern::Path(segments) => if segments.len() == 1 { [world.words.resolve(segments[0]).clone()] } else { [] },
+        MatchPattern::Tuple { parts, .. } => names_of_parts(world, parts),
+        MatchPattern::Named { bindings, .. } => names_of_bindings(world, bindings),
+        MatchPattern::Or(alternatives) => if alternatives.len() > 0 { pattern_names(world, alternatives[0]) } else { [] },
+        else => [],
+    }
+}
+
+fn names_of_parts(world: ref CheckWorld, parts: ref Vec[MatchPattern]) -> Vec[String] sync {
+    let mut out: Vec[String] = []
+    for part in parts {
+        for name in pattern_names(world, part) {
+            out.push(name)
+        }
+    }
+    return out
+}
+
+fn names_of_bindings(world: ref CheckWorld, bindings: ref Vec[winnow_grammar::Symbol]) -> Vec[String] sync {
+    let mut out: Vec[String] = []
+    for binding in bindings {
+        out.push(world.words.resolve(binding).clone())
+    }
+    return out
+}

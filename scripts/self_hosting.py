@@ -113,6 +113,20 @@ COMPILER_NIKA = {
     "proofs_book.nika": "proofs: nikaia.proofs as text, read back and rendered (0.0.763)",
     "check_state.nika": "check: the records the checker's state holds - a name in scope, what was taken or read of a path, a way out, a body that repeats - and the questions each answers (0.0.774)",
     "check_walk.nika": "check: the expressions and the blocks an expression or a statement holds, for the checker's walks (0.0.774)",
+    "check_decls.nika": "check: what the program declares - structs, enums, bounds, grammars - and what a type is called to the checker (0.0.775)",
+    "check_imports.nika": "check: what a `use` may name, a grammar's names and a `sync(f)` (0.0.775)",
+    "check_scope.nika": "check: the names in scope and the function a written name resolves to (0.0.775)",
+    "check_refusals.nika": "check: refusals that need a name, a type or two and nothing else of the walk (0.0.775)",
+    "check_names.nika": "check: a reserved word used as a name, a module used without its line, a bit operator on something with no bits (0.0.775)",
+    "check_patterns.nika": "check: what a `match` arm's pattern binds, and to what type (0.0.775)",
+    "check_values.nika": "check: whether a value is taken away or copied, and a value handed to a callee that keeps it (0.0.775)",
+    "check_access.nika": "check: what a name reaches - private fields, options, struct literals, patterns that bind unevenly (0.0.775)",
+    "check_literals.nika": "check: tables, an index computed at build time, a thrown value and a C handle (0.0.775)",
+    "check_buildtime.nika": "check: values built at build time, lists, constructors and the members of a reflected field or variant (0.0.775)",
+    "check_with.nika": "check: `asset`, `with`, a missing field, a `catch` over nothing and a statement after a jump (0.0.775)",
+    "check_shapes.nika": "check: the shape of an expression, a pattern or a type - where a place roots, what a `const` is called, whether a block leaves (0.0.775)",
+    "check_lookups.nika": "check: what a name in an expression stands for, and how the checker learns what the program and `std` declare (0.0.775)",
+    "check_boundary.nika": "check: what a declared type is called below, what a field of a `const` may be, where a `??` lends (0.0.775)",
 }
 
 

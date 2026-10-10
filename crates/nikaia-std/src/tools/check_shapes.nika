@@ -1,0 +1,286 @@
+// crates/nikaia-std/src/tools/check_shapes.nika
+//
+// **Questions the checker asks of the shape of an expression, a pattern or a
+// type** - where a place roots, whether a pattern catches everything, what a
+// `const` is called below, whether a block leaves - moved from the compiler's
+// checker (ADR-294, #125, #558).
+
+/// Whether an expression names a **place that outlives the statement**
+/// ([ADR-278](../../docs/specification/adr/adr-278.md) D19).
+///
+/// Stricter than [`crate::emit::is_a_place`] on purpose, and the difference is
+/// the whole of what makes a view safe here. That one asks whether an
+/// expression *can be written to*, which a `?.` reach can; this one asks whose
+/// storage the value lives in, and follows the chain down to its **root**. A
+/// root that is a name is a binding the enclosing block owns; a root that is a
+/// call is a temporary that dies at the `;`, and a view of one bound past that
+/// is `rustc`'s *temporary value dropped while borrowed* about a file nobody
+/// wrote ([Part III C.1](../../docs/specification/30-nikaia-tooling.md)).
+///
+/// Measured rather than reasoned: `find(1)?.home?.city` passes
+/// [`crate::emit::is_a_place`] at every link and roots in a call.
+pub fn roots_in_a_binding(expr: ref Expr) -> bool sync {
+    return match expr {
+        Expr::Variable(_) => true,
+        Expr::Field { base, .. } => roots_in_a_binding(base),
+        Expr::SafeField { base, .. } => roots_in_a_binding(base),
+        Expr::Index { base, .. } => roots_in_a_binding(base),
+        Expr::Try(inner) => roots_in_a_binding(inner),
+        Expr::Cast { expr, .. } => roots_in_a_binding(expr),
+        else => false,
+    }
+}
+
+/// Whether a pattern matches every value of its type
+/// ([ADR-291](../../docs/specification/adr/adr-291.md) D10,
+/// [ADR-291](../../docs/specification/adr/adr-291.md) D16).
+///
+/// **A bare name is a catch-all, and covers**: one segment and no brackets is
+/// the binding form — `Op::Times` is two, and `Message::Write(text)` is a
+/// tuple. An **or-pattern** covers where one of its alternatives does, which
+/// makes `Op::Plus | else` the odd thing it looks like and not a hole.
+pub fn catches_everything(pattern: ref MatchPattern) -> bool sync {
+    return match pattern {
+        MatchPattern::Otherwise => true,
+        MatchPattern::Path(path) => path.len() == 1,
+        MatchPattern::Or(alternatives) => any_catches_everything(alternatives),
+        else => false,
+    }
+}
+
+fn any_catches_everything(alternatives: ref Vec[MatchPattern]) -> bool sync {
+    for alternative in alternatives {
+        if catches_everything(alternative) {
+            return true
+        }
+    }
+    return false
+}
+
+/// The half of `NK1141`'s question that is safe to answer from the shape. A
+/// call and a method call are deliberately not here: whether one comes to a
+/// value is a question about its callee, and answering it wrongly is a correct
+/// program refused ([Part III C.4](../../docs/specification/30-nikaia-tooling.md)).
+pub fn plainly_a_value(expr: ref Expr) -> bool sync {
+    return match expr {
+        Expr::Variable(_) => true,
+        Expr::LitInt { .. } => true,
+        Expr::LitFloat(_) => true,
+        Expr::LitStr { .. } => true,
+        Expr::LitBool(_) => true,
+        Expr::Binary { .. } => true,
+        Expr::Field { .. } => true,
+        Expr::Index { .. } => true,
+        Expr::Tuple(_) => true,
+        else => false,
+    }
+}
+
+/// Whether `expr` is a list element, or a field reached through one
+/// (`items[1].tags`): a place a call that changes it writes through.
+pub fn an_element_beneath(expr: ref Expr) -> bool sync {
+    return match expr {
+        Expr::Index { index, .. } => match index {
+            Expr::Range { .. } => false,
+            else => true,
+        },
+        Expr::Field { base, .. } => an_element_beneath(base),
+        else => false,
+    }
+}
+
+/// How a `comptime`'s type is spelled in the language below, where this compiler
+/// can spell it ([ADR-287](../../docs/specification/adr/adr-287.md) D6).
+///
+/// **A short list on purpose.** Rust's `const` takes a type and no inference,
+/// so a Nikaia type this cannot name is a `comptime` this cannot write - and
+/// `None` here becomes `NK1127` rather than a guess. The list grows with D5's
+/// stages: a `String` is missing because Rust has no `const String`, and what
+/// a literal string would become - a `&'static str` - is a different type from
+/// the one Part I gives it, which is a decision rather than a mapping.
+pub fn rust_constant_type(library: ref Ledger, ty: ref Ty) -> String? sync {
+    return match ty {
+        Ty::Named { name, args, view } => a_named_constant_type(library, name, args, view),
+        Ty::Pointed { item, slice, mutable } => if slice && !mutable { wrapped_constant(library, item, "&[", "]") } else { null },
+        else => null,
+    }
+}
+
+fn a_named_constant_type(library: ref Ledger, name: ref String, args: ref Vec[Ty], view: bool) -> String? sync {
+    if args.len() == 0 && !view {
+        if name == "i32" || name == "i64" || name == "u8" || name == "u32" || name == "u64" || name == "f32" || name == "f64" || name == "bool" || name == "char" || name == "scalar" {
+            return name.clone()
+        }
+        // **A `std` type its ledger gives a `constant` constructor** (ADR-318 D5)
+        // is a `const` too: the constructor is a `const fn`.
+        let entry = library.types[name]
+        if entry != null {
+            let held = entry ?? return null
+            if held.constant.len() > 0 {
+                return name.clone()
+            }
+        }
+        return null
+    }
+    // **`&str` is the crossed form of text** (ADR-311 D1).
+    if name == "str" && args.len() == 0 && view {
+        return "&str"
+    }
+    // **`Array[T, N]` is `[T; N]`**, the one aggregate a `const` holds
+    // (ADR-152): a `Vec` allocates.
+    if name == "Array" && !view && args.len() == 2 {
+        return match args[1] {
+            Ty::Count(n) => wrapped_constant(library, args[0], "[", f"; {n}]"),
+            else => null,
+        }
+    }
+    return null
+}
+
+fn wrapped_constant(library: ref Ledger, inner: ref Ty, open: ref String, close: ref String) -> String? sync {
+    let element = rust_constant_type(library, inner) ?? return null
+    return f"{open}{element}{close}"
+}
+
+/// The `const` type of a list's element, where the list is a `Vec` or a `List`.
+pub fn element_below(library: ref Ledger, found: ref Ty) -> String? sync {
+    return match found {
+        Ty::Named { name, args, .. } => if (name == "Vec" || name == "List") && args.len() > 0 { rust_constant_type(library, args[0]) } else { null },
+        else => null,
+    }
+}
+
+/// What a `&[T]` is a view of, and `None` for anything else.
+///
+/// **`&mut [T]` is not one.** It is the C boundary's
+/// ([ADR-302](../../docs/specification/adr/adr-302.md) D5) and is refused away
+/// from it, so a position that may be written through never reaches here — and
+/// a `const` that could be written through would not be a `const`.
+pub fn slice_element(ty: ref Ty) -> Ty? sync {
+    return match ty {
+        Ty::Pointed { item, slice, mutable } => if slice && !mutable { item.clone() } else { null },
+        else => null,
+    }
+}
+
+/// Whether a declared type is the table a `comptime` map crosses as
+/// ([ADR-311](../../docs/specification/adr/adr-311.md) D8).
+pub fn is_fixed(ty: ref Ty) -> bool sync {
+    return match ty {
+        Ty::Named { name, args, view } => !view && name == "Fixed" && args.len() == 2,
+        else => false,
+    }
+}
+
+/// Whether a type is one this language grows — a `Vec` or a `List`.
+///
+/// The pair [ADR-311](../../docs/specification/adr/adr-311.md) D1 is about:
+/// growable going in, and a `const` below that cannot hold one.
+pub fn is_growable(ty: ref Ty) -> bool sync {
+    return match ty {
+        Ty::Named { name, view, .. } => name == "Vec" || name == "List" || (name == "String" && !view),
+        else => false,
+    }
+}
+
+/// The type a `constant` constructor makes: its path without the last
+/// segment, `time::Duration` for `time::Duration::new`.
+pub fn constructed(constructor: ref String) -> String? sync {
+    let parts: Vec[ref String] = constructor.split("::").collect()
+    if parts.len() < 2 {
+        return null
+    }
+    let mut kept: Vec[String] = []
+    let mut at = 0
+    while at < parts.len() - 1 {
+        kept.push(parts[at].clone())
+        at = at + 1
+    }
+    return kept.join("::")
+}
+
+impl CheckState {
+    /// **`panic(…)` never comes back** (#506), so its type is *never* as a
+    /// `return`'s is: `m[k] ?? panic(…)` is what the map holds, and an arm
+    /// that panics is not one of the answers that have to agree. The
+    /// prelude's `panic`, not a function or a binding of that name.
+    pub fn a_panic(ref self, world: ref CheckWorld, expr: ref Expr) -> bool sync {
+        return match expr {
+            Expr::Call { func, .. } => match func {
+                Expr::Variable(name) => world.words.resolve(name) == "panic" && self.lookup("panic") == null && !world.own.functions.contains_key("panic"),
+                else => false,
+            },
+            else => false,
+        }
+    }
+
+    /// Whether this expression **leaves** rather than coming to a value
+    /// (ADR-276 D20). Its type is *never*, which is not a type this checker's
+    /// `Ty` spells: what never means here is *this is not one of the answers
+    /// that have to agree*. A block counts where its last statement is one of the
+    /// four, which is the shape an arm written `=> { throw NotFound }` still has.
+    pub fn exits(ref self, world: ref CheckWorld, expr: ref Expr) -> bool sync {
+        return match expr {
+            Expr::Throw(_) => true,
+            Expr::Return(_) => true,
+            Expr::Block(block) => self.block_exits(world, block),
+            else => self.a_panic(world, expr),
+        }
+    }
+
+    /// Whether the last statement of a block is a `return`, or an expression
+    /// that exits.
+    pub fn block_exits(ref self, world: ref CheckWorld, block: ref Block) -> bool sync {
+        if block.stmts.len() == 0 {
+            return false
+        }
+        return match block.stmts[block.stmts.len() - 1].node {
+            Stmt::Return(_) => true,
+            Stmt::Expr(inner) => self.exits(world, inner),
+            else => false,
+        }
+    }
+
+    /// Whether this expression leaves the turn or the function: a jump, or a
+    /// block that ends in one.
+    pub fn leaves(ref self, world: ref CheckWorld, expr: ref Expr) -> bool sync {
+        if self.jumps(world, expr) {
+            return true
+        }
+        return match expr {
+            Expr::Block(block) => self.block_leaves(world, block),
+            else => false,
+        }
+    }
+
+    /// The same question about a **block**, which is what a `select` arm's body is
+    /// ([ADR-292](../../docs/specification/adr/adr-292.md) D12).
+    ///
+    /// Part II 12.4's own example has two arms and both of them jump, so this is
+    /// what decides that the `select` around them carries no value.
+    pub fn block_leaves(ref self, world: ref CheckWorld, block: ref Block) -> bool sync {
+        if block.stmts.len() == 0 {
+            return false
+        }
+        return match block.stmts[block.stmts.len() - 1].node {
+            Stmt::Return(_) => true,
+            Stmt::Break => true,
+            Stmt::Continue => true,
+            Stmt::Expr(inner) => self.leaves(world, inner),
+            else => false,
+        }
+    }
+
+    /// One of the five jumps written where a value stands, not a block
+    /// ending in one: `?? return`, `?? panic(…)`.
+    pub fn jumps(ref self, world: ref CheckWorld, expr: ref Expr) -> bool sync {
+        let plain = match expr {
+            Expr::Throw(_) => true,
+            Expr::Return(_) => true,
+            Expr::Break => true,
+            Expr::Continue => true,
+            else => false,
+        }
+        return plain || self.a_panic(world, expr)
+    }
+}

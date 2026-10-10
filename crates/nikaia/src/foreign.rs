@@ -123,7 +123,7 @@ fn has_moved(crate_name: &str, files: &[String], span: &Span) -> Finding {
     Finding {
         severity: Severity::Error,
         span: *span,
-        code: "NK2505",
+        code: "NK2505".to_string(),
         message: format!("`{crate_name}` has changed since its description was reviewed."),
         notes: vec![
             format!(
@@ -146,7 +146,7 @@ fn undescribed(crate_name: &str, span: &Span) -> Finding {
     Finding {
         severity: Severity::Error,
         span: *span,
-        code: "NK2504",
+        code: "NK2504".to_string(),
         message: format!("`{crate_name}` has no description yet."),
         notes: vec![
             "Nikaia needs to know what a Rust crate's functions do: whether they pause, \

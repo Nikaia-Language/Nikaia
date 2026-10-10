@@ -229,7 +229,7 @@ fn nothing_in_the_corpus_is_newly_refused() {
                 continue;
             }
             for finding in findings(&source) {
-                if matches!(finding.code, "NK2204" | "NK2205") {
+                if matches!(finding.code.as_str(), "NK2204" | "NK2205") {
                     refused.push(format!("{}: {}", path.display(), finding.message));
                 }
             }

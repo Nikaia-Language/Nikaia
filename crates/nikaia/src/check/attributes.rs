@@ -119,7 +119,7 @@ impl Checker<'_> {
         let mut marks = BTreeMap::new();
         // **A dependency's, from its ledger** (D8), under the name the type
         // has there and the name a program writes after its package.
-        for (key, contract) in self.library.types.iter().chain(&self.own.types) {
+        for (key, contract) in self.world.library.types.iter().chain(&self.world.own.types) {
             if !contract.mark.is_empty() {
                 marks.insert(key.clone(), Mark::read(&contract.mark));
             }
@@ -158,7 +158,7 @@ impl Checker<'_> {
                 self.the_mark(attribute, place);
                 continue;
             }
-            let Some(fields) = self.fields_of(&name) else {
+            let Some(fields) = self.s.fields_of(&self.world, &name) else {
                 self.an_attribute_nothing_declares(&name, &attribute.span);
                 continue;
             };
@@ -185,8 +185,8 @@ impl Checker<'_> {
             return;
         }
         if attribute.args.is_empty() {
-            self.checked.findings.push(Finding {
-                code: "NK1101",
+            self.s.findings.push(Finding {
+                code: "NK1101".to_string(),
                 severity: Severity::Error,
                 span: attribute.span,
                 message: "`@meta::Attribute` names where the attribute may stand, and this \
@@ -207,8 +207,8 @@ impl Checker<'_> {
                 _ => String::new(),
             };
             if !PLACES.contains(&word.as_str()) {
-                self.checked.findings.push(Finding {
-                    code: "NK1102",
+                self.s.findings.push(Finding {
+                    code: "NK1102".to_string(),
                     severity: Severity::Error,
                     span: attribute.span,
                     message: match word.is_empty() {
@@ -226,8 +226,8 @@ impl Checker<'_> {
         for option in &attribute.config {
             let option_name = self.parsed.text(option.name).to_string();
             if option_name != "repeatable" {
-                self.checked.findings.push(Finding {
-                    code: "NK1109",
+                self.s.findings.push(Finding {
+                    code: "NK1109".to_string(),
                     severity: Severity::Error,
                     span: attribute.span,
                     message: format!("`@meta::Attribute` has no option called `{option_name}`."),
@@ -236,8 +236,8 @@ impl Checker<'_> {
                     labels: Vec::new(),
                 });
             } else if !matches!(option.value, Expr::LitBool(_)) {
-                self.checked.findings.push(Finding {
-                    code: "NK1102",
+                self.s.findings.push(Finding {
+                    code: "NK1102".to_string(),
                     severity: Severity::Error,
                     span: attribute.span,
                     message: "`repeatable` is `true` or `false`.".to_string(),
@@ -269,8 +269,8 @@ impl Checker<'_> {
                 .map(|f| format!("`{}`", f.name))
                 .collect::<Vec<_>>()
                 .join(", ");
-            self.checked.findings.push(Finding {
-                code: "NK1101",
+            self.s.findings.push(Finding {
+                code: "NK1101".to_string(),
                 severity: Severity::Error,
                 span: attribute.span,
                 message: format!(
@@ -300,8 +300,8 @@ impl Checker<'_> {
                     let known: Vec<String> =
                         options.iter().map(|f| format!("`{}`", f.name)).collect();
                     let positional = required.iter().any(|f| f.name == option_name);
-                    self.checked.findings.push(Finding {
-                        code: "NK1109",
+                    self.s.findings.push(Finding {
+                        code: "NK1109".to_string(),
                         severity: Severity::Error,
                         span: attribute.span,
                         message: format!("`@{name}` has no option called `{option_name}`."),
@@ -356,8 +356,8 @@ impl Checker<'_> {
         let found = self.expr(arg, &span);
         let (owner, field_name) = (owner.to_string(), field.name.clone());
         if let Some(kind) = literal_misfit(arg, &want) {
-            self.checked.findings.push(Finding {
-                code: "NK1102",
+            self.s.findings.push(Finding {
+                code: "NK1102".to_string(),
                 severity: Severity::Error,
                 span,
                 message: format!(
@@ -386,8 +386,8 @@ impl Checker<'_> {
                 .collect::<Vec<_>>()
                 .join("::"),
             _ => {
-                self.checked.findings.push(Finding {
-                    code: "NK1101",
+                self.s.findings.push(Finding {
+                    code: "NK1101".to_string(),
                     severity: Severity::Error,
                     span: *span,
                     message: "`.attribute(X)` takes one type, the attribute to read.".to_string(),
@@ -399,7 +399,7 @@ impl Checker<'_> {
             }
         };
         let name = self.parsed.unaliased(&written);
-        if self.fields_of(&name).is_none() {
+        if self.s.fields_of(&self.world, &name).is_none() {
             self.an_attribute_nothing_declares(&name, span);
             return None;
         }
@@ -416,15 +416,17 @@ impl Checker<'_> {
         let Ty::Named { name, .. } = ty else {
             return None;
         };
-        if let Some(variants) = self.enums.get(name) {
+        if let Some(variants) = self.s.enums.get(name) {
             return Some(variants.iter().cloned().collect());
         }
         let suffix = format!("::{name}");
-        self.own
+        self.world
+            .own
             .types
             .get(name)
             .or_else(|| {
-                self.library
+                self.world
+                    .library
                     .types
                     .iter()
                     .find(|(key, _)| *key == name || key.ends_with(&suffix))
@@ -435,8 +437,8 @@ impl Checker<'_> {
     }
 
     fn an_attribute_nothing_declares(&mut self, name: &str, span: &Span) {
-        self.checked.findings.push(Finding {
-            code: "NK1135",
+        self.s.findings.push(Finding {
+            code: "NK1135".to_string(),
             severity: Severity::Error,
             span: *span,
             message: format!("There's no struct called `{name}`."),
@@ -497,8 +499,8 @@ impl Checker<'_> {
                 },
             ),
         };
-        self.checked.findings.push(Finding {
-            code: "NK1235",
+        self.s.findings.push(Finding {
+            code: "NK1235".to_string(),
             severity: Severity::Error,
             span: *span,
             message,
@@ -510,8 +512,8 @@ impl Checker<'_> {
 
     /// `NK1236`: the same attribute twice before one declaration.
     fn an_attribute_written_twice(&mut self, name: &str, span: &Span) {
-        self.checked.findings.push(Finding {
-            code: "NK1236",
+        self.s.findings.push(Finding {
+            code: "NK1236".to_string(),
             severity: Severity::Error,
             span: *span,
             message: format!("`@{name}` stands twice before one declaration."),

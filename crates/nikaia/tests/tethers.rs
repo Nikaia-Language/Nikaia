@@ -10,6 +10,7 @@
 //! That order is the point. An analysis nothing depends on can be held against
 //! the whole corpus and read, and being wrong costs a wrong line in a file
 //! rather than a wrong program.
+use nikaia::check::CodeOps;
 
 use nikaia::contracts::tether::State;
 use nikaia::contracts::{Ledger, LedgerOps, STD};
@@ -294,7 +295,7 @@ fn nothing_in_the_corpus_needs_a_tether() {
 #[test]
 fn no_attribute_stands_above_a_struct() {
     let found = findings("@borrowed\nstruct Reading { name: ref String }\n");
-    let codes: Vec<&str> = found.iter().map(|f| f.code).collect();
+    let codes: Vec<&str> = found.iter().map(|f| f.code_str()).collect();
     assert_eq!(codes, vec!["NK1135"], "{found:#?}");
     let help = found[0].help.clone().unwrap_or_default();
     assert!(!help.contains("borrowed"), "{help}");
@@ -308,7 +309,7 @@ fn no_attribute_stands_above_a_struct() {
 #[test]
 fn no_word_is_written_for_a_tether() {
     let found = findings("@tethers\nstruct Token { text: ref String }\n");
-    let codes: Vec<&str> = found.iter().map(|f| f.code).collect();
+    let codes: Vec<&str> = found.iter().map(|f| f.code_str()).collect();
     assert_eq!(codes, vec!["NK1135"], "{found:#?}");
 }
 

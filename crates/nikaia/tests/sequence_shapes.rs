@@ -14,6 +14,7 @@
 //! What the programs compute is in `tests/language/src/sequence_shapes.nika`,
 //! run at both settings of `user_parallelism`; every refusal is asked of the
 //! checker here.
+use nikaia::check::CodeOps;
 
 use nikaia::contracts::LedgerOps;
 
@@ -40,7 +41,7 @@ fn findings(source: &str) -> Vec<nikaia::check::Finding> {
 }
 
 fn codes(source: &str) -> Vec<&'static str> {
-    findings(source).iter().map(|f| f.code).collect()
+    findings(source).iter().map(|f| f.code_str()).collect()
 }
 
 // --- D1: the words ------------------------------------------------------------

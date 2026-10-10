@@ -1,0 +1,186 @@
+// crates/nikaia-std/src/tools/check_with.nika
+//
+// **Refusals about `asset`, `with`, a field that is not there, a `catch` over
+// nothing and a statement after a jump** - moved from the compiler's checker
+// (ADR-294, #125, #558).
+
+/// Why a value cannot be the base of a `with`.
+pub enum CheckCopyable {
+    /// The type is an `enum`, and which fields it has depends on the variant.
+    AnEnum,
+    /// A view: `with` would move out of what something else keeps.
+    AView,
+    /// A type that is no struct with fields.
+    NotAStruct,
+    /// A value whose type could not be worked out.
+    Unnamed,
+}
+
+impl CheckState {
+    /// **`NK1177`: `asset("…")` written where it cannot stand**
+    /// ([ADR-310](../../docs/specification/adr/adr-310.md) D3).
+    ///
+    /// It is the compiler's name and not `std`'s: it is recognised inside a
+    /// `comptime` initialiser, where the read happens while the program is
+    /// built. Written anywhere else there is nothing to recognise it, and the
+    /// message says what a file read **while the program runs** is called —
+    /// because that is what a reader who wrote it here almost certainly meant.
+    pub fn an_asset_outside_a_comptime(ref mut self, span: ref Span) sync {
+        self.findings.push(check_refusal("NK1177", span, "`asset` reads a file while the program is built, so it only works in a `comptime`.".clone(), ["`comptime` says when, `asset(\"…\")` says where the bytes come from, and the call around it says what to do with them.".clone()], "Write `comptime NAME = …` to build the bytes into the program, or `fs::read(…, root)` to read the file while it runs.".clone()))
+    }
+
+    /// **`NK1176`: a path that is not a literal**
+    /// ([ADR-310](../../docs/specification/adr/adr-310.md) D7).
+    ///
+    /// The cost is real and the record accepts it: a build that wants
+    /// `config/linux.toml` and `config/wasm.toml` writes both, in the code and
+    /// in the list. What it buys is that *named in the code* stays decidable by
+    /// looking at the line — which is the whole of D3, and which a path assembled
+    /// from a constant would quietly take away.
+    pub fn a_path_that_is_not_a_literal(ref mut self, span: ref Span) sync {
+        self.findings.push(check_refusal("NK1176", span, "`asset` needs the path written out, not computed.".clone(), ["The list of files a build may read is checked against the path as written, so a reader can see from the line which file is read.".clone()], "Write the path out. For two files, write two `asset(\"…\")` calls.".clone()))
+    }
+
+    /// **`NK1174`: a `with` that names no field**
+    /// ([ADR-118](../../docs/specification/adr/adr-118.md) D1).
+    ///
+    /// *A copy that changes nothing is a line the reader would puzzle over* —
+    /// which is the record's own reason, and it is about **meaning** rather
+    /// than syntax, so it is read here. The parser could refuse `{ }` and did
+    /// for an afternoon; its caret landed on the line *after* the braces,
+    /// because by then it had consumed them and the whitespace behind them.
+    pub fn a_with_that_changes_nothing(ref mut self, ty: ref String, span: ref Span) sync {
+        self.findings.push(check_refusal("NK1174", span, f"This `with` changes no field, so it's just a copy of the `{ty}`.", ["`with` means \"this value, with these fields different\", so one without fields makes a reader look for a change that isn't there.".clone()], "Name the fields that change, or remove the `with`.".clone()))
+    }
+
+    /// **`NK1173`: a `with` over a value it cannot copy**
+    /// ([ADR-118](../../docs/specification/adr/adr-118.md) D1, D3, §4).
+    ///
+    /// One claim — *this is not a value `with` copies* — and four reasons, each
+    /// with a way out that can be taken
+    /// ([Part III C.2](../../docs/specification/30-nikaia-tooling.md)). The
+    /// enum's is the one the record names by hand: `m with { x: 1 }` cannot be
+    /// typed without knowing the variant, and `match` is where a variant is
+    /// known.
+    pub fn a_with_over_something_else(ref mut self, ty: ref String, why: ref CheckCopyable, span: ref Span) sync {
+        let mut message: String = ""
+        let mut note: String = ""
+        let mut way_out: String = ""
+        match why {
+            CheckCopyable::AnEnum => {
+                message = f"`with` copies a struct, but `{ty}` is an `enum`."
+                note = f"`{ty}` is an `enum`, and which fields it has depends on the variant."
+                way_out = "`match` on it first, and build the new value in the arm for its variant.".clone()
+            }
+            CheckCopyable::AView => {
+                message = f"`with` needs the value itself, but this is only a view of a `{ty}`."
+                note = f"`with` moves the fields it doesn't change out of the value, but a `ref {ty}` only looks at a value something else keeps, and Nikaia never copies behind your back."
+                way_out = f"Use the value itself instead of a view, or write `{ty} {{ … }}` with every field."
+            }
+            CheckCopyable::NotAStruct => {
+                message = f"`with` copies a struct, but this is a `{ty}`."
+                note = f"`with` copies a struct field by field, and `{ty}` isn't a struct with fields."
+                way_out = "Make the value with the type's constructor instead.".clone()
+            }
+            // A type this compiler could not work out prints as `?`, which is a
+            // headline about nothing. What the reader needs to know is that it
+            // is the *type* that is missing, not the value.
+            CheckCopyable::Unnamed => {
+                message = "`with` copies a struct, but the type of this value couldn't be worked out.".clone()
+                note = "`with` needs to know the value's type, and the type of this value couldn't be worked out.".clone()
+                way_out = "Write the type on the `let` this reads, or write the value out with every field.".clone()
+            }
+        }
+        self.findings.push(check_refusal("NK1173", span, message, [note], way_out))
+    }
+
+    /// `NK1107`: a field a type does not have.
+    pub fn no_such_field(ref mut self, ty: ref String, field: ref String, declared: ref Vec[FieldContract], span: ref Span) sync {
+        let mut names: Vec[String] = []
+        for one in declared {
+            names.push(one.name.clone())
+        }
+        let near = nearest_name(field, names)
+        let mut help: String = f"Add `{field}` to `{ty}`, or use one of the fields it has."
+        if near != null {
+            help = f"Did you mean `{near ?? ""}`?"
+        }
+        self.findings.push(check_refusal("NK1107", span, f"`{ty}` has no field called `{field}`.", [f"Its fields are {names_listed(names)}."], help))
+    }
+
+    /// `NK1134`: a `catch` over an expression that cannot fail
+    /// ([ADR-308](../../../docs/specification/adr/adr-308.md)).
+    ///
+    /// The lowering makes a `catch` a `match` over a `Result`, so a guarded
+    /// expression that is not one produces `E0308` about the generated file -
+    /// [Part III C.1](../../../docs/specification/30-nikaia-tooling.md)'s class,
+    /// naming a `match` and an `Ok` arm nobody wrote.
+    ///
+    /// **Refused rather than dropped**, and that is the decision rather than
+    /// the smaller change. Emitting the expression without the `match` would
+    /// take the program the author wrote and quietly delete a block from it -
+    /// including a `return` inside the handler, which
+    /// [ADR-292](../../../docs/specification/adr/adr-292.md) makes the
+    /// *function's* return. A handler that never runs is a belief about the
+    /// program, and a belief that is wrong is worth a sentence.
+    ///
+    /// **Only where the ledger says so.** [`Self::may_fail_here`] refuses a
+    /// call that can fail outside a `catch`, reported "only where the callee's
+    /// contract **says** it can fail"; this is that standard read from the
+    /// other end, and [`Guarded`] carries the two answers apart so that *could
+    /// not look it up* never becomes *cannot fail*.
+    pub fn nothing_here_can_fail(ref mut self, guarded: ref CheckGuarded, span: ref Span) sync {
+        if guarded.fallible || guarded.unanswered {
+            return
+        }
+        self.findings.push(check_refusal("NK1134", span, "Nothing here can fail, so the `catch` has nothing to handle.".clone(), ["Only a call to a function declared with `throws` can fail.".clone(), "None of the calls here is declared with `throws`.".clone(), "(A call the compiler knows nothing about would not be reported here.)".clone()], "Remove the `catch` and its handler.".clone()))
+    }
+
+    /// **The witness takes no `&`, and a written one is `NK1137`**
+    /// ([ADR-094](../../docs/specification/adr/adr-094.md) D1, at
+    /// [ADR-281](../../docs/specification/adr/adr-281.md) D26's door).
+    ///
+    /// The ledger declares `seen: &$T` — the witness is read and never stored,
+    /// so the caller keeps it — and the `&` that says so is the compiler's, as
+    /// it is everywhere else. It is refused here rather than through `lends`
+    /// because `lends` withholds its claim on every *method* argument
+    /// ([ADR-288](../../docs/specification/adr/adr-288.md): the emitter cannot
+    /// resolve a receiver), and this one position the emitter is told about
+    /// outright. Without the refusal a written `&` would come out `&&`, which
+    /// is `rustc`'s words about a file nobody wrote (Part III C.1).
+    pub fn the_witness_takes_no_reference(ref mut self, seen: ref Expr, span: ref Span) sync {
+        let written = match seen {
+            Expr::Unary { op, .. } => match op {
+                UnaryOp::Ref => true,
+                else => false,
+            },
+            else => false,
+        }
+        if !written {
+            return
+        }
+        self.findings.push(check_refusal("NK1137", span, "You don't need the `ref` here: the compiler lends where it's needed.".clone(), ["`after:` is only read, so it's lent already.".clone()], "Remove the `ref`.".clone()))
+    }
+
+    /// `NK1133`: a statement after a `break` or a `continue`, in the same block.
+    ///
+    /// **The shape this is really about is `break i`**
+    /// ([ADR-276](../../../docs/specification/adr/adr-276.md) D13). A `break` in
+    /// Rust carries a value out of a `loop`; here a loop is a statement and
+    /// hands back nothing ([ADR-276](../../../docs/specification/adr/adr-276.md)
+    /// D2), so the word takes no value - and a value written after it parses as
+    /// a statement of its own. Without this the program compiles, the value is
+    /// dropped, and nothing says so.
+    ///
+    /// It is stated as what it is rather than as a guess at intent: the
+    /// statement is not reached. That covers `break i`, `continue x` and the
+    /// line somebody left below a `break` while editing, in one sentence and
+    /// with one caret.
+    pub fn nothing_follows_a_jump(ref mut self, jump: ref Stmt, span: ref Span) sync {
+        let word: String = match jump {
+            Stmt::Break => "break",
+            else => "continue",
+        }
+        self.findings.push(check_refusal("NK1133", span, f"Nothing after `{word}` in the same block can run.", [f"`{word}` takes no value, so `{word} x` is two statements, and the second never runs."], f"Delete it. To get a value out of the loop, assign to a `let` declared before it, or `return` the value if the function is done after the `{word}`."))
+    }
+}

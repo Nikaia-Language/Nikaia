@@ -4,6 +4,7 @@
 //! `tests/language/src/defects_found_running.nika`; here is what the checker
 //! refuses beside them, what the lowering writes, and the programs that read
 //! files, run at both settings of `user_parallelism`.
+use nikaia::check::CodeOps;
 
 mod common;
 
@@ -106,7 +107,7 @@ fn a_bare_call_nothing_declares_is_refused() {
     );
     let messages: Vec<(&str, &str, Option<&str>)> = found
         .iter()
-        .map(|f| (f.code, f.message.as_str(), f.help.as_deref()))
+        .map(|f| (f.code_str(), f.message.as_str(), f.help.as_deref()))
         .collect();
     assert!(
         messages.contains(&(
@@ -468,7 +469,7 @@ fn a_maybe_compared_with_a_value_is_refused() {
          \x20   println(f\"{same(3, 3)} {after(null, \"a\")}\")\n\
          }\n",
     );
-    let codes: Vec<&str> = found.iter().map(|f| f.code).collect();
+    let codes: Vec<&str> = found.iter().map(|f| f.code_str()).collect();
     assert_eq!(codes, ["NK1102", "NK1102"], "{found:#?}");
     assert!(found[0].message.contains("`i64?` with `i64`"), "{found:#?}");
     // `null` and another `T?` are what a `T?` compares with.

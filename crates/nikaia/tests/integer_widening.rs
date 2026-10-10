@@ -5,6 +5,7 @@
 //! lose a value and stays refused at each of them. What the programs that
 //! widen compute is `tests/language/src/integer_widening.nika`; here are the
 //! refusals, the lowering and what needs a build of its own.
+use nikaia::check::CodeOps;
 
 mod common;
 
@@ -148,7 +149,7 @@ fn a_list_that_exists_is_not_converted() {
 }
 
 fn codes(source: &str) -> Vec<&'static str> {
-    errors(source).into_iter().map(|f| f.code).collect()
+    errors(source).into_iter().map(|f| f.code_str()).collect()
 }
 
 /// **`u64` with a signed type has no common type** (D32): the operator stays

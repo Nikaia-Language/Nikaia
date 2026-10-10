@@ -1,0 +1,353 @@
+// crates/nikaia-std/src/tools/check_lookups.nika
+//
+// **What a name in an expression stands for** - a binding, a function, a
+// grammar, a driver - and how the checker learns what the program and `std`
+// declare, moved from the compiler's checker (ADR-294, #125, #558).
+
+use std::collections
+
+impl CheckState {
+    /// **The `enum`s of a package and of `std`**, under the names a consumer
+    /// writes them.
+    ///
+    /// Part I 3.4 promises that a `match` handles every possible case, and that
+    /// promise is only checkable where the cases are known. They come from the
+    /// source for this unit's own types and from the ledger's `variants` column
+    /// for every other — the same column, read one file over, which is what
+    /// [ADR-288](../../docs/specification/adr/adr-288.md) D11 says the ledger is
+    /// for.
+    ///
+    /// **This unit's own types win**, which is why this runs after the source
+    /// walk and inserts nothing that is already there: a package's ledger is
+    /// absorbed under qualified keys, so a collision would be a program that
+    /// declares a type under a dependency's name — refused elsewhere, and not
+    /// silently taken from the dependency here.
+    pub fn collect_library_enums(ref mut self, world: ref CheckWorld) sync {
+        self.collect_enums_of(world.own)
+        self.collect_enums_of(world.library)
+    }
+
+    fn collect_enums_of(ref mut self, ledger: ref Ledger) sync {
+        for (entry_name, entry_value) in ledger.types {
+            let name = entry_name
+            let contract = entry_value
+            if contract.variants.len() == 0 || self.enums.contains_key(name) {
+                continue
+            }
+            for variant in contract.variants {
+                let key = f"{name}::{variant.name}"
+                self.variant_owner.insert(key.clone(), name.clone())
+                // **A positional variant is built by its constructor**, as a
+                // declared enum's is: `fs::Root::Dir("site")` has to meet
+                // `Dir(fs::Path)` so the literal is made a name of its own
+                // (ADR-282 D4, ADR-319 D2).
+                if variant.positional && variant.holds.len() > 0 {
+                    let mut parts: Vec[Ty] = []
+                    for held in variant.holds {
+                        parts.push(held.ty.clone())
+                    }
+                    self.variant_parts.insert(key, parts)
+                } else if variant.holds.len() > 0 {
+                    self.structs.insert(key, variant.holds.clone())
+                }
+            }
+            let mut variants: collections::BTreeSet[String] = collections::BTreeSet()
+            for variant in contract.variants {
+                variants.insert(variant.name.clone())
+            }
+            self.enums.insert(name.clone(), variants)
+        }
+    }
+
+    /// One function's bounds, under the key a call to it resolves to. The key is
+    /// built the way `function` builds its own, the anonymous constructor
+    /// included - two spellings of one name would make this table silently miss
+    /// whichever the call site used.
+    pub fn bounds_declared_by(ref mut self, world: ref CheckWorld, item: ref Item, target: ref String?) sync {
+        match item {
+            Item::Fn { name, generics, .. } => {
+                let mut bounds: collections::BTreeMap[String, Vec[String]] = collections::BTreeMap()
+                for generic in generics {
+                    if generic.bounds.len() == 0 {
+                        continue
+                    }
+                    let mut traits: Vec[String] = []
+                    for bound in generic.bounds {
+                        traits.push(world.words.resolve(bound).clone())
+                    }
+                    bounds.insert(world.words.resolve(generic.name).clone(), traits)
+                }
+                if bounds.len() == 0 {
+                    return
+                }
+                let mut own: String = "new"
+                if name != null {
+                    own = world.words.resolve(name ?? return).clone()
+                }
+                let mut key = own.clone()
+                if target != null {
+                    key = f"{target ?? ""}::{own}"
+                }
+                self.declared_bounds.insert(key, bounds)
+            }
+            else => {}
+        }
+    }
+
+    /// **What a DSL driver hands back** (ADR-296 D5): `db.prepare(query; id:
+    /// 501)`, the parameters that call gave, as a type of that call's own.
+    pub fn a_drivers_row(ref self, world: ref CheckWorld, expr: ref Expr) -> bool sync {
+        return match expr {
+            Expr::MethodCall { method, .. } => self.dsl_drivers.contains(world.words.resolve(method)),
+            Expr::Call { func, .. } => match func {
+                Expr::Variable(name) => self.dsl_drivers.contains(world.words.resolve(name)),
+                else => false,
+            },
+            else => false,
+        }
+    }
+
+    /// **What the lowering refuses in words of its own**: a `dsl` block for a
+    /// language no grammar here is (`dsl markdown { … }`), and an entry a
+    /// grammar does not have (`Tiny::two(…)`). Each is refused at its line
+    /// when it is lowered, naming what is missing, which says more than that
+    /// its type is not known.
+    pub fn refused_where_it_is_lowered(ref self, world: ref CheckWorld, expr: ref Expr) -> bool sync {
+        return match expr {
+            Expr::Dsl { .. } => true,
+            Expr::Call { func, .. } => match func {
+                Expr::Path(segments) => self.names_a_grammar_rule(world, segments),
+                else => false,
+            },
+            else => false,
+        }
+    }
+
+    fn names_a_grammar_rule(ref self, world: ref CheckWorld, segments: ref Vec[winnow_grammar::Symbol]) -> bool sync {
+        let mut written: Vec[String] = []
+        for part in segments {
+            written.push(world.words.resolve(part).clone())
+        }
+        let name = written.join("::")
+        let at = name.find("::") ?? return false
+        let owner = name[0..<at].clone()
+        return self.grammars.contains_key(owner) && !world.own.functions.contains_key(name)
+    }
+
+    /// **A member of a value of a generic type whose argument nothing has
+    /// typed yet** (#497): `Holder { value: 21 }.value` is the `21`, whose
+    /// type its uses decide, as `hand(7)` is; `(spawn fn { 21 * 2 }).join()`
+    /// is the task's open number. Every other way to an unknown argument
+    /// passes through a part that was refused itself.
+    pub fn a_member_of_an_open_argument(ref self, world: ref CheckWorld, expr: ref Expr) -> bool sync {
+        let base = match expr {
+            Expr::Field { base, .. } => base,
+            Expr::Index { base, .. } => base,
+            Expr::MethodCall { receiver, .. } => receiver,
+            else => return false,
+        }
+        return match base {
+            Expr::Variable(name) => self.has_an_open_argument(world.words.resolve(name)),
+            else => false,
+        }
+    }
+
+    fn has_an_open_argument(ref self, name: ref String) -> bool sync {
+        let found = self.binding(name) ?? return false
+        return match found.ty {
+            Ty::Named { args, .. } => any_unknown(args),
+            else => false,
+        }
+    }
+
+    /// Whether an expression names something: a binding, a function, or a
+    /// call, method, path or operator over such.
+    pub fn names_something_here(ref self, world: ref CheckWorld, expr: ref Expr) -> bool sync {
+        return match expr {
+            Expr::Variable(name) => self.names_a_binding_or_a_function(world, world.words.resolve(name)),
+            Expr::Field { base, .. } => self.names_something_here(world, base),
+            Expr::MethodCall { receiver, .. } => self.names_something_here(world, receiver),
+            Expr::SafeMethod { receiver, .. } => self.names_something_here(world, receiver),
+            Expr::Call { func, args, .. } => self.names_something_here(world, func) || self.any_names_something(world, args),
+            Expr::Path(segments) => self.names_a_function_by_path(world, segments),
+            Expr::Binary { lhs, rhs, .. } => self.names_something_here(world, lhs) || self.names_something_here(world, rhs),
+            Expr::Unary { expr, .. } => self.names_something_here(world, expr),
+            else => false,
+        }
+    }
+
+    fn names_a_binding_or_a_function(ref self, world: ref CheckWorld, name: ref String) -> bool sync {
+        return self.lookup(name) != null || resolve_call(world, name) != null
+    }
+
+    fn names_a_function_by_path(ref self, world: ref CheckWorld, segments: ref Vec[winnow_grammar::Symbol]) -> bool sync {
+        let mut written: Vec[String] = []
+        for part in segments {
+            written.push(world.words.resolve(part).clone())
+        }
+        return resolve_call(world, written.join("::")) != null
+    }
+
+    fn any_names_something(ref self, world: ref CheckWorld, args: ref Vec[Expr]) -> bool sync {
+        for arg in args {
+            if self.names_something_here(world, arg) {
+                return true
+            }
+        }
+        return false
+    }
+
+    /// Whether an expression is certainly a number, where its *type* says
+    /// nothing.
+    ///
+    /// A literal has no type of its own (Part I 2.4), and neither has the name a
+    /// bare `let` binds one to - but the constant fold watched both, so the
+    /// absence of a type is not the absence of knowledge here.
+    pub fn is_a_number(ref self, world: ref CheckWorld, expr: ref Expr) -> bool sync {
+        return match expr {
+            Expr::LitInt { .. } => true,
+            Expr::LitFloat(_) => true,
+            Expr::Variable(name) => self.folds_to_a_number(world.words.resolve(name)),
+            else => false,
+        }
+    }
+
+    fn folds_to_a_number(ref self, name: ref String) -> bool sync {
+        let found = self.binding(name) ?? return false
+        return found.constant != null
+    }
+
+    /// `NK1111`: braces in a plain string that look like a hole. A warning, and
+    /// not an error, because `"{ margin: 0 }"` is correct CSS.
+    pub fn warn_migration(ref mut self, span: ref Span, message: String, help: String) sync {
+        self.findings.push(CheckFinding { severity: CheckSeverity::Warning, span: span.clone(), code: "NK1111".clone(), message: message, notes: ["Only `f\"…\"` strings fill in `{…}`; a plain string keeps the braces as they are.".clone()], help: help, labels: [] })
+    }
+
+    /// The walk under [`Checker::declared`], over a written type and everything
+    /// inside it.
+    pub fn spelling(ref mut self, world: ref CheckWorld, ty: ref Type, span: ref Span) sync {
+        if world.words.resolve(ty.name) == "Shared" && ty.generics.len() > 0 && world.words.resolve(ty.generics[0].name) == "Locked" {
+            let held = ty.generics[0]
+            let mut inside: String = "T"
+            if held.generics.len() > 0 {
+                inside = world.words.resolve(held.generics[0].name).clone()
+            }
+            self.findings.push(check_refusal("NK1123", span, f"Write `SharedMut[{inside}]` instead of a `Shared` around a lock.", ["The common case has a short name, and it's the only way to write it: one type, one spelling.".clone()], f"Write `SharedMut[{inside}]`."))
+        }
+        for inner in ty.generics {
+            self.spelling(world, inner, span)
+        }
+    }
+}
+
+fn any_unknown(types: ref Vec[Ty]) -> bool sync {
+    for ty in types {
+        if ty.is_unknown() {
+            return true
+        }
+    }
+    return false
+}
+
+/// Whether an expression names anything that exists here - a variable in
+/// scope or a function some ledger has. This is what keeps the warning off
+/// a stylesheet: `margin` is nobody's variable.
+/// The name an expression writes, where it writes one.
+///
+/// For `NK1115`'s help line, which has to say `let db: Shared[…] = …` with
+/// the caller's own name in it. A value that is not a name has no such line
+/// to be pointed at, and the message says so instead of inventing one.
+pub fn names_of(world: ref CheckWorld, expr: ref Expr) -> String? sync {
+    return match expr {
+        Expr::Variable(name) => world.words.resolve(name).clone(),
+        else => null,
+    }
+}
+
+/// A trait a package's signature names, spelled the way **this** program
+/// writes it.
+///
+/// A package writes its own names bare — `[H: Handler]` inside `handler` —
+/// and a consumer writes `handler::Handler`, because privacy and naming are
+/// per package ([ADR-286](../../docs/specification/adr/adr-286.md) D1). So
+/// the bound arrives in the *declaring* package's namespace and has to be
+/// read in the consumer's, or [`Checker::answers_for`] fails open on a trait
+/// it has under another spelling and the refusal never lands.
+///
+/// **Only a spelling this program actually has.** Every prefix of the entry's
+/// own key is tried and the first one the trait map knows wins; where none
+/// does, the name stands as written and the fail-open line below it does what
+/// it always did ([Part III
+/// C.4](../../docs/specification/30-nikaia-tooling.md)). It is the same
+/// *under both spellings* arrangement `absorb_renaming` already uses for the
+/// `implementations` map, asked from the reading side.
+pub fn as_this_program_says(world: ref CheckWorld, key: ref String, trait_name: ref String) -> String sync {
+    if world.own.traits.contains_key(trait_name) {
+        return trait_name.clone()
+    }
+    let segments: Vec[ref String] = key.split("::").collect()
+    let mut take = segments.len() - 1
+    while take >= 1 {
+        let mut prefix: Vec[String] = []
+        let mut at = 0
+        while at < take {
+            prefix.push(segments[at].clone())
+            at = at + 1
+        }
+        let qualified = f"{prefix.join("::")}::{trait_name}"
+        if world.own.traits.contains_key(qualified) {
+            return qualified
+        }
+        take = take - 1
+    }
+    return trait_name.clone()
+}
+
+/// One function's bounds, under the key a call to it resolves to.
+///
+/// The key is built the way `function` builds its own, the anonymous
+/// constructor included - two spellings of one name would make this table
+/// silently miss whichever the call site used.
+/// The bounds a **ledger** records for this key, read off the `signature`.
+///
+/// Both ledgers, because a package's entries and `std`'s arrive the same way
+/// and a call resolves to one key either way. `std` declares no bound today,
+/// so this is a package's answer in practice — and it is the same answer the
+/// source gives one file over, which is what
+/// [ADR-288](../../docs/specification/adr/adr-288.md) D11 says the ledger is
+/// for.
+///
+/// **A parameter with no bound is not an entry here**, which keeps the map
+/// and this reader agreeing: `bounds_declared_by` skips one too, so a
+/// signature that records `[T]` for a bare parameter answers `None` rather
+/// than an empty claim.
+pub fn bounds_in_a_signature(world: ref CheckWorld, key: ref String) -> collections::BTreeMap[String, Vec[String]]? sync {
+    let contract = ledger_function(world, key) ?? return null
+    let signature = contract.signature ?? return null
+    let mut bounds: collections::BTreeMap[String, Vec[String]] = collections::BTreeMap()
+    for bound in signature.bounds {
+        if bound.1.len() == 0 {
+            continue
+        }
+        let mut traits: Vec[String] = []
+        for one in bound.1 {
+            traits.push(as_this_program_says(world, key, one))
+        }
+        bounds.insert(bound.0.clone(), traits)
+    }
+    if bounds.len() == 0 {
+        return null
+    }
+    return bounds
+}
+
+/// A function's contract by its exact key: this unit's, then the library's.
+pub fn ledger_function(world: ref CheckWorld, key: ref String) -> FnContract? sync {
+    if world.own.functions.contains_key(key) {
+        return world.own.functions[key]?.clone()
+    }
+    if world.library.functions.contains_key(key) {
+        return world.library.functions[key]?.clone()
+    }
+    return null
+}

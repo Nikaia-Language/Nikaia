@@ -365,3 +365,222 @@ pub fn a_jump_leaves(block: ref Block, loops: i64) -> bool {
     }
     return false
 }
+
+/// Whether it stops the build.
+///
+/// Almost everything the checker says is an **error**. A warning is for a
+/// finding that may be about a program that is right, such as `NK1111`: it
+/// cannot be an error, because `"{ margin: 0 }"` is correct CSS, and it cannot
+/// be silence, because a silent change of meaning is what Part III C.1 calls a
+/// compiler bug.
+pub enum CheckSeverity {
+    /// The build stops.
+    Error,
+    /// The build goes on and the programmer is told.
+    Warning,
+}
+
+/// One place a [`CheckFinding`] points at, and what it says there.
+///
+/// The checker knows a statement and not the bytes of the source, so a label
+/// names the **word** it is about and the renderer, which holds the text,
+/// underlines that word where it first stands at or after the statement's
+/// start.
+pub struct CheckLabel {
+    /// The statement it is in.
+    pub span: Span,
+    /// What to underline, as written.
+    pub word: String,
+    /// What happens there, in a few words.
+    pub text: String,
+    /// The place the error is: `^` under it, where another place gets `-`.
+    pub main: bool,
+}
+
+/// One thing the checker is sure about.
+pub struct CheckFinding {
+    /// Whether it stops the build.
+    pub severity: CheckSeverity,
+    /// The statement it is in.
+    pub span: Span,
+    /// Its `NK` code, from the catalogue in Part III, C.3.
+    pub code: String,
+    /// The headline, which says what is wrong and never how to think about it.
+    pub message: String,
+    /// Why the compiler believes it - the two types, and where each came from.
+    pub notes: Vec[String],
+    /// One concrete way out. Part III C.2 requires it of every diagnostic.
+    pub help: String?,
+    /// **The places in the source it points at**, each with what happens
+    /// there (Part III C.2, rule 5).
+    pub labels: Vec[CheckLabel],
+}
+
+/// A refusal at `span`: an error with no labels.
+pub fn check_refusal(code: ref String, span: ref Span, message: String, notes: Vec[String], help: String?) -> CheckFinding {
+    return CheckFinding { severity: CheckSeverity::Error, span: span.clone(), code: code.clone(), message: message, notes: notes, help: help, labels: [] }
+}
+
+/// **What the checker looks at and does not own**: the file's names, this
+/// unit's contracts and `std`'s. Apart from `CheckState` so that the state
+/// holds no view: a call on a struct that holds one might keep what it is given
+/// (`NK2302`), and nothing in the state does.
+pub struct CheckWorld {
+    /// The names of the file, to read an identifier back.
+    pub words: ref winnow_grammar::InternerContext,
+    /// This unit's own contracts, inferred from the source being checked.
+    pub own: ref Ledger,
+    /// `std`'s, as `std` ships them.
+    pub library: ref Ledger,
+}
+
+/// **What the checker keeps while it walks a program**: the findings, the
+/// scope, and what the program declares. The Rust `Checker` holds it as one
+/// field and the questions that need only this move here, a method at a time.
+pub struct CheckState {
+    /// Every mistake it is sure about.
+    pub findings: Vec[CheckFinding],
+    /// Every struct declared here, with its fields. A type whose fields are
+    /// not known is simply absent, and an absent type is never an error.
+    pub structs: collections::BTreeMap[String, Vec[FieldContract]],
+    /// **Every type of the package that copies**, this file's and the ones
+    /// beside it (`collect_copies`): what a view of a value is read as, where
+    /// `Checked::copies` is what this file derives `Copy` for.
+    pub copies_in_the_package: collections::BTreeSet[String],
+    /// Every enum declared here, with its variant names.
+    pub enums: collections::BTreeMap[String, collections::BTreeSet[String]],
+    /// What each declared `enum`'s variants **hold**, flattened across them.
+    ///
+    /// A `Named` variant's fields are in `structs` under the qualified key,
+    /// because a struct literal wears that shape; a **positional** one's are in
+    /// no map at all, which is what made `Json::Number(f64)` look like a variant
+    /// holding nothing. This is the one question that needs all of them at once —
+    /// does every part of this type compare — so it is a map of its own rather
+    /// than a second meaning for `structs`.
+    pub enum_payloads: collections::BTreeMap[String, Vec[Ty]],
+    /// **What each positional variant of a declared `enum` holds**, by
+    /// `Enum::Variant` and in order: what a `match` arm binds by position
+    /// (`Shape::Named(n)` binds a `String`). A variant with named fields is in
+    /// `structs`, as a library's variants are.
+    pub variant_parts: collections::BTreeMap[String, Vec[Ty]],
+    /// `Shape::Spot` → `Shape`, for every variant that carries **named**
+    /// fields — the ones a struct literal builds.
+    ///
+    /// Two facts at one key: that this name is a variant and not a type, and
+    /// which `enum` a literal for it has. [`Self::structs`] holds its fields
+    /// under the same key, so one field check serves both shapes.
+    pub variant_owner: collections::BTreeMap[String, String],
+    /// **The functions whose body walks a type's fields**, and which type
+    /// parameter each one walks ([ADR-304](../../docs/specification/adr/adr-304.md)
+    /// D1): `describe` → `T`.
+    ///
+    /// Collected before any body is walked, because a call may stand **above**
+    /// the function it names - items are order-independent here - and what a
+    /// call has to do about one of these is decided at the call.
+    pub walks_fields: collections::BTreeMap[String, String],
+    /// Every **grammar** declared here, with the names of its `entry` rules
+    /// ([ADR-296](../../docs/specification/adr/adr-296.md) D24, D25).
+    ///
+    /// A grammar is entered by an ordinary call — `Json.value(input)` — so its
+    /// name has to be something `NK1117` counts as declared, and which rules
+    /// may stand after the dot is what says `Json.internal(x)` is not an entry.
+    pub grammars: collections::BTreeMap[String, collections::BTreeSet[String]],
+    /// Names in scope, innermost frame last.
+    pub scope: Vec[Vec[CheckLocal]],
+    /// The `std` modules this file wrote a `use std::…` for
+    /// ([ADR-313](../../docs/specification/adr/adr-313.md), Part I 9.1's
+    /// *a prefix is introduced before it is used*).
+    pub std_in_scope: collections::BTreeSet[String],
+    /// Every module `std`'s ledger has entries in — the prefix of a key that is
+    /// not a type's name.
+    ///
+    /// Read off the ledger and not written here, so a `std` that grows a module
+    /// needs no edit in this file. `fs::Mapped` is a **type in** a module, so
+    /// `fs` is one of these and `HashMap` is not.
+    pub std_modules: collections::BTreeSet[String],
+    /// What the function being walked declared it hands back.
+    pub expected: Ty?,
+    /// The type parameters in scope where the body being walked stands - the
+    /// function's own `[T]` and the `[T]` of the `impl` around it.
+    ///
+    /// A name in here is a **type** while the body is walked and a **variable**
+    /// at every call site ([ADR-295](../../docs/specification/adr/adr-295.md)
+    /// D1). Empty everywhere else, which is every function written today.
+    pub type_parameters: collections::BTreeMap[String, Vec[String]],
+    /// Every generic struct declared here, with its parameters in **declaration
+    /// order** - which is what makes a type argument's position mean something.
+    ///
+    /// Absent for a struct with no parameters, which is every struct written
+    /// today, so the two questions below cost a failed lookup and nothing else.
+    pub struct_parameters: collections::BTreeMap[String, Vec[String]],
+    /// Whether the method being walked took its subject by **reference**.
+    ///
+    /// `&self` and `&mut self` borrow it; a bare `self` owns it. What hangs on
+    /// the difference is whether a field may be handed out by value at all
+    /// ([ADR-083](../../docs/specification/adr/adr-083.md)). `false` for a free
+    /// function, which has no subject to borrow.
+    pub borrowing_self: bool,
+    /// The `[T]` of the `impl` whose methods are being walked, on its own.
+    ///
+    /// Separate from the field above because `function` rebuilds that one per
+    /// method and has to start from what the `impl` put in scope rather than
+    /// from nothing.
+    pub enclosing: collections::BTreeMap[String, Vec[String]],
+    /// **What the `impl` header writes in its own brackets**, in declaration
+    /// order - `[T]` for `impl Holder[T]`, `[i64]` for `impl Holder[i64]`.
+    ///
+    /// The receiver's type is built from this rather than from the bare name,
+    /// and that is what lets a field reach the body as something
+    /// ([ADR-295](../../docs/specification/adr/adr-295.md) D1). `self` typed as
+    /// a bare `Holder` binds none of the struct's parameters, so `self.value`
+    /// substituted a `T` nothing had bound and came out `?` - and a `?` is the
+    /// one thing this checker says nothing about. Every refusal a `T` earns as
+    /// a *parameter* - `NK1126` for a member on it, `NK1104` for a slot it does
+    /// not fit, `NK1131` for handing one out of a borrowed subject - was silent
+    /// through a field, and the program went to `rustc` about the generated
+    /// file, which is [Part III C.1](../../docs/specification/30-nikaia-tooling.md)'s
+    /// class.
+    ///
+    /// Empty outside an `impl`, and empty for one whose target takes no
+    /// arguments - which is the same as what it was before.
+    pub subject_arguments: Vec[Ty],
+    /// The bounds each function's parameters were declared with, by the key a
+    /// call resolves to - `tell` for a free function, `Dog::tell` for a method.
+    ///
+    /// Not read off the ledger, which has no column for a bound: its signature
+    /// writes `(x: $T) -> String` and the `: Speaks` is nowhere in it. So what
+    /// this table reaches is a call to a function of **this build** — every unit
+    /// of it is walked, so every such `fn` is in one of these ASTs — and a call
+    /// into a package whose generic function carries a bound is not checked
+    /// against it. That is the column a ledger would need, and nothing asks for
+    /// it yet: a bound may name a path since
+    /// [ADR-295](../../docs/specification/adr/adr-295.md) D10, and what a caller
+    /// gets wrong is caught where the callee's body reads the parameter.
+    pub declared_bounds: collections::BTreeMap[String, collections::BTreeMap[String, Vec[String]]],
+    /// The modules this program is made of (Part I, 9.1). Empty for a single
+    /// file, where no call crosses a file boundary.
+    pub modules: collections::BTreeSet[String],
+    /// **The names an `extern "C"` block declares**
+    /// ([ADR-302](../../docs/specification/adr/adr-302.md) D3).
+    ///
+    /// Collected from the item tree rather than read off the ledger, because
+    /// the ledger records what a name *is* and this asks where it **came
+    /// from**: a Nikaia function and a C declaration are both entries, and only
+    /// one of them has to be called inside an `unsafe` block.
+    pub foreign_names: collections::BTreeSet[String],
+    /// **The opaque handles this file declares**
+    /// ([ADR-302](../../docs/specification/adr/adr-302.md) D7), by name.
+    ///
+    /// A handle is an address the language never dereferences, so it has no
+    /// fields and no indexing — and both are refused here rather than left to
+    /// the language below, where the words would be about a file nobody wrote
+    /// (Part III, C.1).
+    pub opaque_handles: collections::BTreeSet[String],
+    /// The parameters of the function being walked that are code it only
+    /// runs, which stay closure arguments below.
+    pub run_code: collections::BTreeSet[String],
+    /// The functions that take a DSL's parameters as `...args: Self::dsl`
+    /// (ADR-296 D5), by name: what one hands back is the statement's
+    /// parameters, a type of each call site's own.
+    pub dsl_drivers: collections::BTreeSet[String],
+}

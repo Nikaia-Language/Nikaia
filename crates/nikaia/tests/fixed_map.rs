@@ -14,6 +14,7 @@
 //! that look a key up run the program, and they are
 //! `tests/build-time/src/fixed_map.nika`; this file keeps the shape of the table
 //! in the generated file, the refusals, and the two hashes side by side.
+use nikaia::check::CodeOps;
 
 use nikaia::check::{self, Finding};
 use nikaia::contracts::{Ledger, LedgerOps, STD};
@@ -109,7 +110,10 @@ fn a_key_written_twice_is_refused_once() {
          fn main() {\n\
          \x20   println(f\"{ROUTES.len()}\")\n\
          }";
-    let codes: Vec<&str> = findings(source).iter().map(|found| found.code).collect();
+    let codes: Vec<&str> = findings(source)
+        .iter()
+        .map(|found| found.code_str())
+        .collect();
     assert_eq!(codes, vec!["NK1169"]);
 }
 
@@ -125,7 +129,10 @@ fn a_key_that_is_not_text_is_refused_once() {
          fn main() {\n\
          \x20   println(f\"{ROUTES.len()}\")\n\
          }";
-    let codes: Vec<&str> = findings(source).iter().map(|found| found.code).collect();
+    let codes: Vec<&str> = findings(source)
+        .iter()
+        .map(|found| found.code_str())
+        .collect();
     assert_eq!(codes, vec!["NK1170"]);
 }
 

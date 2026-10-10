@@ -12,6 +12,7 @@
 //! What a program with tasks computes is in `tests/language/src/tasks.nika`;
 //! what stays here needs the order of a program's output, files, a runtime
 //! configuration, a build switch, the checker or the emitted Rust.
+use nikaia::check::CodeOps;
 
 mod common;
 
@@ -453,7 +454,7 @@ fn a_scoped_task_that_changes_a_shared_name_is_refused_and_one_that_pauses_is_no
          \x20   println(f\"{total}\")\n\
          }",
     );
-    let codes: Vec<&str> = found.iter().map(|f| f.code).collect();
+    let codes: Vec<&str> = found.iter().map(|f| f.code_str()).collect();
     assert_eq!(codes, ["NK2107"], "{found:?}");
 }
 

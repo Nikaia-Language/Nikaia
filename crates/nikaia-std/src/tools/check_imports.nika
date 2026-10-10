@@ -1,0 +1,270 @@
+// crates/nikaia-std/src/tools/check_imports.nika
+//
+// **What a `use` may name, and what a grammar or a `sync(f)` may mention** -
+// the refusals about names the program writes at its top level, moved from the
+// compiler's checker (ADR-294, #125, #558). Each is a method of `CheckState`:
+// the findings go where the walk's other findings go.
+
+use std::collections
+
+/// **`std` modules a page or a record names and this compiler does not describe
+/// yet** ([Part III C.4](../../docs/specification/30-nikaia-tooling.md)).
+///
+/// `std.contracts` is the list of what `std` *offers*, and it is the right list
+/// for every other question asked of `std`. It is the wrong one for a **refusal**:
+/// a module the specification promises and the compiler has not built is a
+/// correct program refused. `use std::db` is how
+/// [ADR-299](../../docs/specification/adr/adr-299.md)'s driver is reached, and
+/// the day it exists nothing about that line changes.
+///
+/// So the refusal stands on the join of two lists, and this half is **written
+/// down rather than derived**, because there is nothing to derive it from: each
+/// name is one a page or a record writes after `use std::`, and a name on
+/// neither list is one nobody has written down anywhere. Where each comes from,
+/// in the order they appear below: `use std::backend::x86`
+/// ([ADR-296](../../docs/specification/adr/adr-296.md), Part III 16); the build
+/// script's own API (Part III 13.4);
+/// [ADR-299](../../docs/specification/adr/adr-299.md)'s driver protocol; Part III
+/// 17.1's *other key modules*; Part I 2.6's panic hook, `panic::on_panic`
+/// ([ADR-141](../../docs/specification/adr/adr-141.md)); Part III 17.2's table,
+/// which says what a target withholds; Part II 12.7's `task::scope`; and that
+/// table again.
+///
+/// **The provenance is here and not beside each name** because `cargo fmt`
+/// reflows a trailing comment onto the line above it, and a list where every
+/// reason has slid one entry along is worse than one with no reasons in it.
+fn is_promised(name: ref String) -> bool sync {
+    return name == "backend" || name == "build" || name == "db" || name == "json" || name == "panic" || name == "process" || name == "task" || name == "thread"
+}
+
+/// Whether a contract's signature takes `self`: a method, and not a function a
+/// call names by its path.
+fn has_a_self_parameter(contract: ref FnContract) -> bool sync {
+    let signature = contract.signature ?? return false
+    return signature.params.len() > 0 && signature.params[0].0 == "self"
+}
+
+/// Whether a name starts with a capital: a type, and not a module.
+fn starts_with_a_capital(name: ref String) -> bool sync {
+    let letters: Vec[scalar] = name.chars().collect()
+    if letters.len() == 0 {
+        return false
+    }
+    return letters[0].to_ascii_lowercase() != letters[0]
+}
+
+/// **Prefixes `std`'s ledger keys that are not modules a program imports.**
+///
+/// The ledger files a method under the thing it is called on, so `str::len`,
+/// `i64::to_string` and `list::ListExt::map` sit beside `fs::read` and look the
+/// same from the outside. They are not the same: a primitive and a trait are
+/// reached without a line (Part I 1.3, 2.2), and `use std::str` is as wrong as
+/// `use std::nosuchthing`.
+///
+/// **Subtracted rather than listed**, which is the direction that needs no
+/// upkeep: a module `std` gains is a module a program may import the day it
+/// lands, and what this file has to know is only which prefixes are *not* one.
+/// A derivation was tried and does not hold — a module's function has a named
+/// first parameter where a method has a receiver, except that every entry of
+/// `collections` is a method on `HashMap` and `collections` is imported by name.
+fn not_a_module(name: ref String) -> bool sync {
+    return name == "f64" || name == "i32" || name == "i64" || name == "list" || name == "str"
+}
+
+impl CheckState {
+    /// `NK1156`: a `use` that names a **type** rather than a module
+    /// ([ADR-140](../../docs/specification/adr/adr-140.md) D5).
+    ///
+    /// [ADR-286](../../docs/specification/adr/adr-286.md) D11's rule is *no name
+    /// is brought in*, and `std` was the one place it was not followed:
+    /// `use std::collections::HashMap` parsed, and what it did was **nothing** —
+    /// `HashMap` works with no `use` at all, because it is a name this compiler
+    /// already knows. A line that reads like an import and does nothing is the
+    /// shape this record is about.
+    ///
+    /// **Asked of the ledger and not of a list**, and the question is *does it
+    /// have a receiver*. A module and a type read the same way in a key —
+    /// `fs::read_to_string` and `HashMap::len` are both `X::y` — so what tells
+    /// them apart is the **`self`**: a type's entries are called on a value and
+    /// a module's are not. So `use std::fs` names a module and is left alone,
+    /// and `use std::collections::HashMap` names a type and is not.
+    ///
+    /// `use std::db::postgres` and `use std::backend::x86` name modules nothing
+    /// describes yet, and are left alone too: refusing on a surface that does
+    /// not exist is [Part III
+    /// C.4](../../docs/specification/30-nikaia-tooling.md)'s correct program
+    /// refused.
+    pub fn an_import_that_brings_a_name_in(ref mut self, world: ref CheckWorld, path: ref Vec[winnow_grammar::Symbol], span: ref Span) sync {
+        let mut segments: Vec[String] = []
+        for part in path {
+            segments.push(world.words.resolve(part).clone())
+        }
+        if segments.len() < 2 || segments[0] != "std" {
+            return
+        }
+        let last = segments[segments.len() - 1].clone()
+        // **By the last segment**, because a `std` type carries its module
+        // since ADR-313 D3: the key is `collections::HashMap` and the word
+        // after the last `::` of the `use` is `HashMap`.
+        let mut a_type = false
+        for (entry_name, _) in world.library.types {
+            if a_type_base(entry_name) == last {
+                a_type = true
+            }
+        }
+        if !a_type {
+            // A method **of this name**, and not of something inside it:
+            // `fs::Mapped::deref` is called on a value and says that `Mapped`
+            // is a type, which is true and is not a fact about `fs`.
+            let prefix = f"{last}::"
+            for (entry_name, entry_value) in world.library.functions {
+                let rest = entry_name.strip_prefix(ref prefix) ?? continue
+                if rest.contains("::") {
+                    continue
+                }
+                if has_a_self_parameter(entry_value) {
+                    a_type = true
+                }
+            }
+        }
+        if !a_type {
+            self.a_std_module_nobody_declared(segments[1], segments, span)
+            return
+        }
+        let mut help: String = f"Remove the line: `{last}` is always available, no `use` needed."
+        let tail = f"::{last}"
+        for (entry_name, _) in world.library.types {
+            if entry_name.ends_with(ref tail) {
+                let module = entry_name.strip_suffix(ref tail) ?? ""
+                help = f"Write `use std::{module}`, and then `{module}::{last}` where you need it."
+                break
+            }
+        }
+        self.findings.push(check_refusal("NK1156", span, f"`use {segments.join("::")}` does nothing: `{last}` is a type, and `use` brings in modules.", ["A `use` line names a module, never a single type or function inside one."], help))
+    }
+
+    /// **`use std::<anything>` is refused here and not by `rustc`** (`NK1186`,
+    /// [Part III C.1](../../docs/specification/30-nikaia-tooling.md)).
+    ///
+    /// It used to lower: the `use` became a comment in the generated Rust, the
+    /// call was emitted verbatim, and what the programmer read was *failed to
+    /// resolve: use of unresolved module or unlinked crate `nosuchthing`* about a
+    /// file they did not write, with a `help` telling them to `cargo add` a crate
+    /// that does not exist.
+    ///
+    /// **The list is the join of two**, and neither half alone is right.
+    /// [`Checker::std_modules`] is what `std`'s ledger declares, which is what
+    /// `std` has; [`PROMISED`] is what a page or a record names and the compiler
+    /// has not built, which is what `std` is going to have — and refusing that is
+    /// [Part III C.4](../../docs/specification/30-nikaia-tooling.md)'s correct
+    /// program refused, since the day the module lands the line is unchanged.
+    ///
+    /// **Only the second segment**, so a longer path is answered by the module it
+    /// starts at: `use std::db::postgres` is `db`'s question and
+    /// `use std::backend::x86` is `backend`'s, which is the reading
+    /// [ADR-140](../../docs/specification/adr/adr-140.md) already gave them.
+    pub fn a_std_module_nobody_declared(ref mut self, module: ref String, segments: ref Vec[String], span: ref Span) sync {
+        let mut offered: Vec[String] = []
+        for name in self.std_modules {
+            if !starts_with_a_capital(name) && !not_a_module(name) {
+                offered.push(name.clone())
+            }
+        }
+        offered.sort()
+        if offered.contains(module) || is_promised(module) {
+            return
+        }
+        let written = segments.join("::")
+        let near = nearest_name(module, offered)
+        let mut why: String = f"`{module}` is not one of the modules `std` offers."
+        if module == "tools" {
+            why = "`tools` is the toolchain's own, not `std`'s: it holds the compiler's Rust-signature grammar, which `nikaia describe` calls and a program cannot reach".clone()
+        }
+        let mut help: String = f"`std` offers: {offered.join(", ")}."
+        if near != null {
+            help = f"Did you mean `use std::{near ?? ""}`?"
+        }
+        self.findings.push(check_refusal("NK1186", span, f"`std` has no module called `{written}`.", [why], help))
+    }
+
+    /// A grammar's action blocks are Nikaia, and they build the rule's value.
+    ///
+    /// What a pattern binds has no type here - that is the parser backend's,
+    /// and Stage 0 does not read it - so every binding is `?`. What is written
+    /// down is the rule's **return type**, and an action that builds something
+    /// else is the mistake worth catching: a rule is where a struct literal is
+    /// most often typed out in full.
+    /// **Two names the engine has and a grammar may not write** (`NK1187`,
+    /// [ADR-296](../../docs/specification/adr/adr-296.md) D34).
+    ///
+    /// `tag("x")` is `"x"` and `digit1` is `digit+`: each is the engine's
+    /// spelling for something the grammar can already say, and D1 makes Part II
+    /// 10.8 the whole vocabulary — *an element that is not on the page is not in
+    /// the language*. Refused **with the spelling**, because the alternative is
+    /// what the reader used to get: `digit1` reached the engine, worked, and the
+    /// page it is not on said nothing.
+    ///
+    /// The surface and the engine's own spelling are allowed to differ, as they
+    /// already do for `dec[i64]`; what this closes is a second way to write one
+    /// thing.
+    pub fn a_name_the_page_does_not_have(ref mut self, world: ref CheckWorld, pattern: ref Spanned[Pattern]) sync {
+        match pattern.node {
+            Pattern::Ref { name, args, .. } => {
+                let written = world.words.resolve(name).clone()
+                if written == "tag" {
+                    self.findings.push(check_refusal("NK1187", pattern.span, f"`{written}` is not something a grammar can use.", [capitalised("a literal is written as itself")], "Write `\"x\"` instead.".clone()))
+                }
+                if written == "digit1" {
+                    self.findings.push(check_refusal("NK1187", pattern.span, f"`{written}` is not something a grammar can use.", [capitalised("one or more characters of a class are written as the class and a `+`, which gives the text it matched")], "Write `digit+` instead.".clone()))
+                }
+                for arg in args {
+                    self.a_name_the_page_does_not_have(world, arg)
+                }
+            }
+            Pattern::Seq(parts) => {
+                for part in parts {
+                    self.a_name_the_page_does_not_have(world, part)
+                }
+            }
+            Pattern::Choice(parts) => {
+                for part in parts {
+                    self.a_name_the_page_does_not_have(world, part)
+                }
+            }
+            Pattern::Bind { pat, .. } => self.a_name_the_page_does_not_have(world, pat),
+            Pattern::Repeat { pat, .. } => self.a_name_the_page_does_not_have(world, pat),
+            Pattern::Group(inner) => self.a_name_the_page_does_not_have(world, inner),
+            Pattern::Literal(_) => {}
+            Pattern::Cut => {}
+            Pattern::Fold(_) => {}
+        }
+    }
+
+    /// `NK2210`: `sync(f)` names what is not code the call runs
+    /// ([ADR-288](../../docs/specification/adr/adr-288.md) D31). A name that is
+    /// no parameter, a parameter that is not a function, and one the function
+    /// keeps - hands to a task or stores - so that its lambda runs after the
+    /// call, where nobody the caller counts is waiting on it (ADR-288 D16).
+    pub fn a_lambda_the_promise_names(ref mut self, world: ref CheckWorld, key: ref String, named: ref String, args: ref Vec[FnArg], at: ref Span) sync {
+        let mut why: String? = null
+        let mut found = false
+        for arg in args {
+            if !found && world.words.resolve(arg.name) == named {
+                found = true
+                if arg.ty.code == null {
+                    why = f"`{named}` is not a function, so there is no lambda of it to answer for"
+                } else {
+                    let contract = world.own.functions[key]?.clone() ?? FnContract::empty()
+                    if contract.keeps.contains(named) {
+                        why = f"`{key}` keeps `{named}`, so its lambda runs after the call, where no caller is waiting on it"
+                    }
+                }
+            }
+        }
+        if !found {
+            why = f"`{key}` has no parameter `{named}`"
+        }
+        let reason = why ?? return
+        self.findings.push(check_refusal("NK2210", at, f"`sync({named})` names `{named}`, but `{key}` doesn't run it as code.", [reason, "`sync(f)` promises the function pauses only where the lambda passed as `f` does, so `f` has to be a lambda the function itself calls.".clone()], f"Name a parameter of `{key}` that takes a function and calls it, or write plain `sync` if nothing it's given can pause."))
+    }
+}

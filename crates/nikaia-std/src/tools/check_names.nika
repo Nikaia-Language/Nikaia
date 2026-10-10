@@ -1,0 +1,184 @@
+// crates/nikaia-std/src/tools/check_names.nika
+//
+// **Refusals about a name and the words around it** - a reserved word used
+// as a name, a module used without its line, a bit operator on something that
+// has no bits - moved from the compiler's checker (ADR-294, #125, #558).
+
+impl CheckState {
+    /// `NK1119`: `self` used as a name.
+    pub fn not_self(ref mut self, name: ref String, span: ref Span, what: ref String) sync {
+        if name != "self" {
+            return
+        }
+        self.findings.push(check_refusal("NK1119", span, f"You can't call {what} `self`: that name is reserved.", ["`self` always means the value a method was called on.".clone()], "Pick another name, such as `it`, `this` or `me`.".clone()))
+    }
+
+    /// **`NK1128`: a name the language below reserves and cannot escape.**
+    ///
+    /// `let crate = 3` used to lower to `let crate = 3;` and `rustc` answered
+    /// `E0532` about a module — about a file nobody wrote, which is
+    /// [Part III C.1](../../docs/specification/30-nikaia-tooling.md)'s class.
+    /// Every other such word is escaped where it is written
+    /// ([ADR-298](../../docs/specification/adr/adr-298.md) D9); these three have
+    /// no escape, so a refusal here is the only thing left that is not a message
+    /// in the backend's words.
+    ///
+    /// Three words rather than twenty-seven, and that is the whole point of D1:
+    /// `type` is the field name of every tagged record anybody has written and
+    /// it stays available. `crate` and `super` name a module tree this language
+    /// does not have, and `Self` is already how it writes the type an `impl` is
+    /// on — so the vocabulary this costs is one nobody reaches for.
+    pub fn not_unescapable(ref mut self, name: ref String, span: ref Span, what: ref String) sync {
+        if name != "crate" && name != "super" && name != "Self" {
+            return
+        }
+        let mut instead: String = "own"
+        if name == "crate" {
+            instead = "package"
+        }
+        if name == "super" {
+            instead = "parent"
+        }
+        self.findings.push(check_refusal("NK1128", span, f"You can't call {what} `{name}`: that name is reserved.", ["Most reserved words are fine as names - a field called `type` works. `crate`, `super` and `Self` are the three that can't be used.".clone()], f"Pick another name, such as `{instead}`."))
+    }
+
+    /// Every question about whether a name may be one, in one place.
+    ///
+    /// Two rules with the same six call sites, kept together so that adding a
+    /// position adds it to both: `self` is this language's own reserved word
+    /// (`NK1119`) and `crate`, `super` and `Self` are the language below's
+    /// (`NK1128`).
+    pub fn nameable(ref mut self, name: ref String, span: ref Span, what: ref String) sync {
+        self.not_self(name, span, what)
+        self.not_unescapable(name, span, what)
+    }
+
+    /// **`NK1117`: a module used before it is introduced**
+    /// ([ADR-313](../../docs/specification/adr/adr-313.md), Part I 9.1's D4 for
+    /// `std` rather than for a package).
+    ///
+    /// `fs::read_to_string(p, fs::Root::Anywhere)` without `use std::fs` at the top. A file lists
+    /// what it depends on, and a reader should not have to know which module a
+    /// prefix belongs to in order to find out.
+    ///
+    /// **Only a module `std`'s ledger has**, so a package's prefix and a name
+    /// this compiler cannot see are both left alone (Part III, C.4).
+    pub fn a_module_used_before_it_is_introduced(ref mut self, name: ref String, span: ref Span) sync {
+        let at = name.find("::") ?? return
+        let module = name[0..<at].clone()
+        if !self.std_modules.contains(module) || self.std_in_scope.contains(module) {
+            return
+        }
+        // **A hull is a type and not a module**: `SharedMut::supervised(…)` is
+        // reached as `SharedMut(…)` is, without a `use` (ADR-328 D9).
+        if is_a_hull(module) {
+            return
+        }
+        // A module of **this program** wins: a package called `text` beside a
+        // `std::text` is the consumer's to name apart, and until they collide
+        // the local one is what the prefix means.
+        if self.modules.contains(module) {
+            return
+        }
+        self.findings.push(check_refusal("NK1117", span, f"You're using `{module}` without a `use` line for it.", ["A file lists the modules it uses at the top, `std`'s included.".clone()], f"Write `use std::{module}` at the top of the file."))
+    }
+
+    /// **`NK1163`: a name that needs no `use`, written with a module in front
+    /// of it** ([ADR-313](../../docs/specification/adr/adr-313.md) D9).
+    ///
+    /// [ADR-313](../../docs/specification/adr/adr-313.md) enforced the list
+    /// in one direction — a name that lives in a module, written without it —
+    /// and `NK1117` above is that half. This is the same rule read the other
+    /// way: `io::println("x")` is a spelling a reader reaches for because every
+    /// *other* `std` name wants its module, and what it got was `rustc` saying
+    /// *cannot find function `println` in module `io`* about a file nobody
+    /// wrote ([Part III C.1](../../docs/specification/30-nikaia-tooling.md)).
+    ///
+    /// **It cannot refuse a correct program**, which is the test
+    /// [C.4](../../docs/specification/30-nikaia-tooling.md) sets: the program
+    /// this refuses does not compile today under any reading, because the
+    /// module genuinely has no such name. That is what separates it from
+    /// `use std::db::postgres` — a module nothing describes **yet**, which
+    /// [ADR-140](../../docs/specification/adr/adr-140.md) D5 leaves alone for
+    /// exactly this reason.
+    pub fn a_prelude_name_with_a_module_in_front(ref mut self, world: ref CheckWorld, name: ref String, span: ref Span) sync {
+        let at = name.find("::") ?? return
+        let module = name[0..<at].clone()
+        let last = name[at + 2..<name.len()].clone()
+        // A module of **this program** wins, as it does for `NK1117`.
+        if !self.std_modules.contains(module) || self.modules.contains(module) {
+            return
+        }
+        // The module genuinely has no such name, and the **bare** one is a name
+        // `std` keys. Both halves, or this is a guess.
+        if world.library.functions.contains_key(name) || !world.library.functions.contains_key(last) {
+            return
+        }
+        self.findings.push(check_refusal("NK1163", span, f"`{last}` isn't in `{module}`: it's always available on its own.", [f"`{last}` needs no `use` and no module in front of it.", "Every other `std` name is reached through its module.".clone()], f"Write `{last}(…)` without the `{module}::`."))
+    }
+
+    /// **`NK1198`: `&`, `|`, `^` or a shift on something that is not an
+    /// integer** ([ADR-285](../../docs/specification/adr/adr-285.md) D9). A
+    /// `bool` is pointed at `&&` and `||`; a side whose type is not known is not
+    /// asked about (Part III C.4).
+    pub fn a_bit_operator_on_something_else(ref mut self, op: BinaryOp, left: ref Ty, right: ref Ty, at: ref Span) sync {
+        let written: String = match op {
+            BinaryOp::BitAnd => "&",
+            BinaryOp::BitOr => "|",
+            BinaryOp::BitXor => "^",
+            BinaryOp::Shl => "<<",
+            else => ">>",
+        }
+        for side in [left.clone(), right.clone()] {
+            let side = value_of_a_copy(side.unseen())
+            if side.is_unknown() || integer_named(side) != null {
+                continue
+            }
+            let mut a_bool = false
+            match side {
+                Ty::Named { name, .. } => {
+                    a_bool = name == "bool"
+                }
+                else => {}
+            }
+            let mut help: String = "bit operators work on the bits of an integer: `i32`, `i64`, `u8`, `u32` or `u64`"
+            if a_bool {
+                match op {
+                    BinaryOp::BitAnd => {
+                        help = "`&&` joins two `bool`s".clone()
+                    }
+                    BinaryOp::BitOr => {
+                        help = "`||` joins two `bool`s".clone()
+                    }
+                    BinaryOp::BitXor => {
+                        help = "to ask whether two `bool`s differ, write `a != b`".clone()
+                    }
+                    else => {}
+                }
+            }
+            self.findings.push(check_refusal("NK1198", at, f"`{written}` works on integers, but this is a `{side.text()}`.", ["Bit operators work on the bits of an integer.".clone()], help))
+            return
+        }
+    }
+}
+
+/// The name of an integer type, held and not viewed: the five of Part I 2.2.
+pub fn integer_named(ty: ref Ty) -> String? sync {
+    return match ty {
+        Ty::Named { name, args, view } => if args.len() == 0 && !view && (name == "i32" || name == "i64" || name == "u8" || name == "u32" || name == "u64") { name.clone() } else { null },
+        else => null,
+    }
+}
+
+/// Whether an expression is a literal.
+pub fn is_a_literal(expr: ref Expr) -> bool sync {
+    return match expr {
+        Expr::LitInt { .. } => true,
+        Expr::LitFloat(_) => true,
+        Expr::LitStr { .. } => true,
+        Expr::LitInterpolated { .. } => true,
+        Expr::LitChar(_) => true,
+        Expr::LitBool(_) => true,
+        else => false,
+    }
+}

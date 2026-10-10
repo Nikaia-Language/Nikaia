@@ -246,7 +246,9 @@ fn a_rebound_name_is_no_longer_a_statement() {
          }\n",
     );
     assert!(
-        found.iter().all(|f| !matches!(f.code, "NK1112" | "NK1113")),
+        found
+            .iter()
+            .all(|f| !matches!(f.code.as_str(), "NK1112" | "NK1113")),
         "{found:#?}"
     );
 }
@@ -257,7 +259,9 @@ fn a_rebound_name_is_no_longer_a_statement() {
 fn a_complete_call_is_silent() {
     let found = findings(&fixture("sql_statement.nika"));
     assert!(
-        found.iter().all(|f| !matches!(f.code, "NK1112" | "NK1113")),
+        found
+            .iter()
+            .all(|f| !matches!(f.code.as_str(), "NK1112" | "NK1113")),
         "{found:#?}"
     );
 }
@@ -323,7 +327,9 @@ fn parameters_handed_to_a_callee_that_is_no_driver_are_refused() {
     assert_eq!(line, 4, "{refused:#?}");
     // One refusal, and not a second one about the same call.
     assert!(
-        found.iter().all(|f| !matches!(f.code, "NK1112" | "NK1113")),
+        found
+            .iter()
+            .all(|f| !matches!(f.code.as_str(), "NK1112" | "NK1113")),
         "{found:#?}"
     );
 

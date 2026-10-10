@@ -11,6 +11,7 @@
 //! What the programs that are not refused compute is
 //! `tests/language/src/handed_over.nika`; this file keeps the refusals and what
 //! the lowering writes.
+use nikaia::check::CodeOps;
 
 mod common;
 
@@ -40,7 +41,7 @@ fn findings(source: &str) -> Vec<nikaia::check::Finding> {
 // --- D3: used after it was handed over -----------------------------------------
 
 fn codes_of(found: &[nikaia::check::Finding]) -> Vec<&'static str> {
-    found.iter().map(|f| f.code).collect()
+    found.iter().map(|f| f.code_str()).collect()
 }
 
 fn one_refusal(source: &str, words: &str) {

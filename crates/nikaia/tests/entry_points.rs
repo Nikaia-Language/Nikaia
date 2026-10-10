@@ -3,6 +3,7 @@
 //! four shapes are refused at the declaration. The checker knows nothing of
 //! the build, so an entry point is `NK1238` here; a library build drops it
 //! (`project::check`, `tests/c_library.rs`).
+use nikaia::check::CodeOps;
 
 use nikaia::check;
 use nikaia::contracts::{Ledger, LedgerOps, STD};
@@ -20,7 +21,7 @@ fn found(source: &str) -> Vec<check::Finding> {
 }
 
 fn codes(source: &str) -> Vec<&'static str> {
-    found(source).into_iter().map(|f| f.code).collect()
+    found(source).into_iter().map(|f| f.code_str()).collect()
 }
 
 /// `extern` before a body parses, and an entry point C may call is refused

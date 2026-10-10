@@ -19,6 +19,7 @@
 //! compiler never refuses a correct program — so every shape that worked before
 //! is run, in `tests/language/src/borrowed_subject.nika`, beside every shape
 //! that leaked here.
+use nikaia::check::CodeOps;
 
 use nikaia::check;
 use nikaia::contracts::{Ledger, LedgerOps, STD};
@@ -391,7 +392,7 @@ fn a_written_ref_at_a_lending_return_is_refused() {
                 "return row.name"
             },
         );
-        let codes: Vec<&str> = findings(&source).iter().map(|f| f.code).collect();
+        let codes: Vec<&str> = findings(&source).iter().map(|f| f.code_str()).collect();
         assert_eq!(codes, vec!["NK1137"], "`{body}`");
     }
 }

@@ -656,7 +656,7 @@ fn a_parse_finding(
     crate::check::Finding {
         severity: crate::check::Severity::Error,
         span: ast::Span::new(at, at),
-        code: "",
+        code: String::new(),
         message,
         notes,
         help,

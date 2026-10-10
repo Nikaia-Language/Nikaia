@@ -3,6 +3,7 @@
 //! help; after any other value it is the warning `NK1216` and the line is its
 //! left side; after an index into a list of `T?` it replaces a `null` element,
 //! and an index past the end still stops.
+use nikaia::check::CodeOps;
 
 mod common;
 
@@ -75,7 +76,7 @@ fn a_plain_number_warns_and_is_its_left_side() {
     let found = findings(source);
     let codes: Vec<(&str, bool)> = found
         .iter()
-        .map(|f| (f.code, f.severity == nikaia::check::Severity::Warning))
+        .map(|f| (f.code_str(), f.severity == nikaia::check::Severity::Warning))
         .collect();
     assert_eq!(codes, vec![("NK1216", true)], "{found:#?}");
     let (ran, out, _) = run("coalesce-plain", source);
@@ -94,7 +95,7 @@ fn a_narrowed_callee_does_not_break_its_callers() {
          \x20   let b = find(2)?.name\n\
          \x20   println(f\"{a.name} {b}\")\n\
          }\n";
-    let codes: Vec<&str> = findings(source).iter().map(|f| f.code).collect();
+    let codes: Vec<&str> = findings(source).iter().map(|f| f.code_str()).collect();
     assert_eq!(codes, vec!["NK1216", "NK1217"]);
     let (ran, out, _) = run("coalesce-narrowed", source);
     assert!(ran);

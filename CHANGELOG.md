@@ -8,6 +8,13 @@ or the specification. A change only to the guide, the notes, the README, the
 website, the tests, the examples or the tooling around them raises nothing and
 has no heading here; `CLAUDE.md` draws the line.
 
+## [0.0.775] — 2026-10-10
+
+**The checker's state, its scope and the refusals that need only these are Nikaia (#558, #125).**
+- `Checker` holds a `CheckState` (`tools/check_state.nika`): the findings, the scope and what the program declares. A `Finding` is Nikaia's `CheckFinding`, so its code is text, and `CodeOps::code_str` gives the `&'static str` the tables and tests compare.
+- About 2 200 lines of the checker move into `tools/check_*.nika`: lookups of what a name stands for, a pattern's bindings, whether a value is taken away or copied, the refusals about names, imports, tables, build-time values, `with` and `catch`. Their order and wording are unchanged.
+- `NK2302` knows a subject declared in another file of the package from the ledger: a call on a struct that holds no view keeps nothing. Test: `views_kept.rs`.
+
 ## [0.0.774] — 2026-10-10
 
 **The checker's state begins to be Nikaia (#558, #125).**
