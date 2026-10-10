@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part III: Tooling, Ecosystem & Interoperability**
-**Version:** 0.0.738 (Draft)
+**Version:** 0.0.739 (Draft)
 **Date:** 2026-10-10
 
 ---
@@ -1623,7 +1623,7 @@ error[NK1101]: `io::read_to_string` takes 0 arguments, but you passed 1.
 
 **The note is the contract**, quoted from the ledger: the compiler shows the caller what the callee promised. **The underline is on the statement**, not the expression: this checker and `NK2202` report at statement granularity, and a message that knows the word it is about underlines that word. **Where the compiler could have written the fix and did not, it says why**: the text refusal names whose text it is, what keeps it, and what a copy made on its own would cost, and leads with the answer that copies nothing. **The help is paste-ready**, as C.2 requires: `.clone()` for text, `as i64` between numbers, and the nearest existing field when a name is close to one that exists.
 
-**A type is known, or the expression is refused.** An expression whose type the compiler cannot tell is `NK1245`. Not asked of what its uses type later: a number literal, a number nothing typed (Part I 2.4), an integer `comptime` without a type. Not asked of an operator, a branch, a block or a jump, which are unknown only because a part of them is, and not again where a part inside was refused: one cause, one refusal. A value whose type differs per unrolling, `field.of(value)` over `T::fields`, is asked where it is unrolled.
+**A type is known, or the expression is refused.** An expression whose type the compiler cannot tell is `NK1245`. Not asked of what its uses type later: a number literal, a number nothing typed (Part I 2.4), an integer `comptime` without a type. Not asked of an operator, a branch, a block or a jump, which are unknown only because a part of them is, and not again where a part inside was refused: one cause, one refusal. Where the file holds another error, `NK1245` is not said: a value another refusal left without a type is that refusal's. A value whose type differs per unrolling, `field.of(value)` over `T::fields`, is asked where it is unrolled.
 
 **A member is written down, or it does not exist.** Where the type of a receiver or the head of a path is known, what can be called on it is what the program declares, what `std`'s ledger lists, what a crate's description holds and what an `extern` block declares. A method, an associated function, a module's function or a field none of them holds is refused with `NK1171`, also where the backend has one by that name:
 

@@ -8,6 +8,13 @@ or the specification. A change only to the guide, the notes, the README, the
 website, the tests, the examples or the tooling around them raises nothing and
 has no heading here; `CLAUDE.md` draws the line.
 
+## [0.0.739] — 2026-10-10
+
+**`NK1245` waits for the other refusals** (ADR-286 D41, #497).
+- Where a file holds another error, `NK1245` is not said: a value another
+  refusal left without a type (a name never declared, a member a type does not
+  have, a jump that goes nowhere) is that refusal's, wherever it is used.
+
 ## [0.0.738] — 2026-10-10
 
 **An expression whose type is not known is refused: `NK1245`** (ADR-286 D41,

@@ -1608,6 +1608,21 @@ fn walked<'a>(
         .extend(crate::types::check(parsed, own, library));
     // **What no function body held**, typed the same way (ADR-285).
     checker.numbers_typed_by_their_uses();
+    // **`NK1245` comes after every other refusal** (ADR-286 D41): a type
+    // nothing can tell is most often what another refusal left behind - a
+    // name never declared, a member a type does not have, a body with a jump
+    // that goes nowhere - and the value it would have made is then unknown
+    // wherever it is used, lines away. Where the file holds another error,
+    // that error is the one said; what is still unknown once it is fixed is
+    // said then.
+    if checker
+        .checked
+        .findings
+        .iter()
+        .any(|f| f.severity == Severity::Error && f.code != "NK1245")
+    {
+        checker.checked.findings.retain(|f| f.code != "NK1245");
+    }
     checker.checked.findings.sort_by_key(|f| f.span.at());
     // **`a` or `an` by the word that follows** (#511): forty messages write
     // `a `{ty}`` by hand, and the type is known only when they are said - `a
