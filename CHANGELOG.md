@@ -8,6 +8,11 @@ or the specification. A change only to the guide, the notes, the README, the
 website, the tests, the examples or the tooling around them raises nothing and
 has no heading here; `CLAUDE.md` draws the line.
 
+## [0.0.785] — 2026-10-10
+
+**A field in a struct pattern takes a pattern ([ADR-291](docs/specification/adr/adr-291.md) D25, #573).**
+- Decided, not yet built: `Point { x: 0, y }` tests a field, `Move { x: px, .. }` binds it to another name, `Shape::Circle { center: Point { x, .. }, .. }` reaches inside; `x` alone is `x: x` (Part I 3.4). Today the parser still refuses the `:`.
+
 ## [0.0.784] — 2026-10-10
 
 **No table is keyed on the address of anything: a `match` arm's facts are keyed on its body's id, a `?.` reach on its receiver's (ADR-340 D4, #558, step 4).**

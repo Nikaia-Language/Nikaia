@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part I: The Language Core**
-**Version:** 0.0.784 (Draft)
+**Version:** 0.0.785 (Draft)
 **Date:** 2026-10-10
 
 ---
@@ -1006,13 +1006,13 @@ A pattern is one of six things, and each is read the way it is written:
 | `1`, `"text"`, `true`, `'n'` | that value |
 | `Op::Times` | that variant |
 | `Message::Write(text)` | that variant, binding what it carries |
-| `Message::Move { x, y }` | that variant, binding its fields by name |
+| `Message::Move { x, y }` | that variant, binding its fields by name: `x` is short for `x: x` |
 | `other` | anything, and **binds it** to that name |
 
 The last two rows are one rule: a path with `::` in it names a variant, and a
 bare name binds. `Quit` is a variant *of* `Message`, never on its own.
 
-**Six more shapes**:
+**Seven more shapes**:
 
 | pattern | matches |
 | :--- | :--- |
@@ -1021,6 +1021,7 @@ bare name binds. `Quit` is a variant *of* `Message`, never on its own.
 | `200..299` | a range, **inclusive at both ends**. An exclusive one is written by moving the end; `..<` is never written in a pattern |
 | `(x, y) if x == y` | a **guard**: the arm matches only where the condition holds, and the word is `if` |
 | `Event::Click(Point { x, .. })` | a pattern inside a pattern, and `..` for the fields this one does not name |
+| `Point { x: 0, y }`, `Move { x: px, .. }` | a field against a pattern: `x: 0` matches where the field is `0`, `x: px` binds the field to the name `px`, and `x: Op::Times` or `x: (0, y)` reaches inside it |
 
 **`..` means two different things**: in a range pattern it is the range, and
 in a struct pattern it is *the rest of the fields*. The position says which.
