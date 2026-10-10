@@ -8,6 +8,14 @@ or the specification. A change only to the guide, the notes, the README, the
 website, the tests, the examples or the tooling around them raises nothing and
 has no heading here; `CLAUDE.md` draws the line.
 
+## [0.0.756] — 2026-10-10
+
+**The grammar language can say what the compiler's own grammar says** (ADR-339, #557).
+- `span(p)` and `here` give a match's byte range and a position; `same_line`
+  fails where a line break precedes; `///` is a rule, and a grammar declares
+  no state and no `extern rule`. Part II 10.8.
+- Decided only; nothing is built yet (#557's *To build*).
+
 ## [0.0.755] — 2026-10-10
 
 **More of the toolchain is Nikaia** (ADR-294, #125).

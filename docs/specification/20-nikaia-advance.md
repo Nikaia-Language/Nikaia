@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part II: Advanced Features & Metaprogramming**
-**Version:** 0.0.755 (Draft)
+**Version:** 0.0.756 (Draft)
 **Date:** 2026-10-10
 
 ---
@@ -608,6 +608,9 @@ and `rule WS = "" { }` skips nothing.
 | `peek(p)` | `p` without consuming it | as `p` |
 | `until(p)` | everything up to `p`, not consuming `p`; an error where `p` never comes | text |
 | `text(p)` | `p`, handing back the text it covered instead of its value | text |
+| `span(p)` | `p`, handing back the byte range it covered | a `Span` (two `u32`) |
+| `here` | the position, consuming nothing | a `u32` |
+| `same_line` | nothing; fails where the whitespace skipped just before this position held a line break | nothing |
 | `dec[T](p)` | `p`, its text read as the number type `T`; an error where it does not fit | `T` |
 | `intern(p)`, `ident` | `p`'s text interned (10.6); `ident` is an identifier, interned | a symbol |
 | `raw_ident` | an identifier | text |
@@ -627,6 +630,11 @@ and `rule WS = "" { }` skips nothing.
 | `list(item, sep)` | `item`, separated by `sep`, zero or more | a list |
 | `fold(p, init, step)` | `p` repeated, each value folded into an accumulator started from `init`; nothing is collected | the accumulator |
 | `par_fold(F, init, step, merge)` | `fold` over the `@frame` rule `F`, cut into pieces and joined with `merge`; the whole body of its rule (10.7) | the accumulator |
+
+**Doc comments are a rule.** A grammar has no state of its own and no rule
+written outside it. `"///" until(line_ending)` is a rule like any other, used
+where a doc may stand, and a `WS` that skips `//` and not `///` leaves a `///`
+anywhere else a parse error.
 
 **Names for failures.** `rule expr -> Expr # "expression" = …` names the rule
 for the message where it fails at its own start, in place of the list of what
