@@ -75,6 +75,7 @@ COMPILER_NIKA = {
     "interpreter.nika": "interpreter: what `nikaia interpret` walks and says of `main` (0.0.744)",
     "parse_errors.nika": "parser: a parse error in the reader's words - what was expected, the mistake where it was made, the notes (0.0.747)",
     "tree_build.nika": "parser: what the grammar's actions build the tree with - the postfix steps, the folds of a head and its tails, a lambda's parameters, a guarded jump (0.0.749)",
+    "parsed_tree.nika": "parser: the aliases a file declares, and a file's declared types with their views written back as lists (0.0.751)",
     "libraries.nika": "libraries: the linker flags a package may be handed from `pkg-config`'s words, and the flags as `rustc` takes them (0.0.742)",
     "assets.nika": "assets: why a read at build time is refused and the way out, the allowlist's lines, a path that leaves the root, the entries nothing read (0.0.389)",
     "sync.nika": "contracts::sync: the greatest fixpoint of which functions keep their claim to be `sync`, the ones only their lambdas pause, and the shortest way to a pause (0.0.390), the walk of what a body does to its claim and the check of what a `sync` function may not call (0.0.398)",

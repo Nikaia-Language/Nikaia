@@ -1,0 +1,98 @@
+// crates/nikaia-std/src/tools/parsed_tree.nika
+//
+// **What the compiler asks of a parsed file's items**, beside the grammar that
+// read it: the aliases its `use` items declare (ADR-286 D12), and the file
+// with every `&[T]` in its declared types written back as the `Vec[T]` it is
+// a view of, for the sub-program a grammar run compiles (ADR-179 D3). Moved
+// from the compiler's `parser` (ADR-294, #125).
+
+use std::collections
+
+/// The aliases a file declares, read off its `use` items: `use http as h`
+/// makes `h` the file's name for `http`. Only a one-segment path is aliased,
+/// because only a package is.
+pub fn aliases_of(items: ref Vec[Spanned[Item]], words: ref winnow_grammar::InternerContext) -> collections::BTreeMap[String, String] {
+    let mut out: collections::BTreeMap[String, String] = collections::BTreeMap()
+    for item in items {
+        match item.node {
+            Item::Import { path, alias } => {
+                if path.len() == 1 && alias != null {
+                    let package = path[0]
+                    let name = alias ?? package
+                    out.insert(words.resolve(name).clone(), words.resolve(package).clone())
+                }
+            },
+            else => {},
+        }
+    }
+    return out
+}
+
+// A type with every `&[T]` in it written as `Vec[T]`.
+fn grown(ty: ref Type, vec: winnow_grammar::Symbol) -> Type {
+    let mut generics: Vec[Type] = []
+    for g in ty.generics {
+        generics.push(grown(g, vec))
+    }
+    let copy = ty.clone()
+    if ty.is_slice && !ty.is_mut {
+        return copy with { name: vec, generics: generics, is_view: false, is_slice: false, either: false }
+    }
+    return copy with { generics: generics }
+}
+
+fn grown_fields(fields: ref Vec[FieldDef], vec: winnow_grammar::Symbol) -> Vec[FieldDef] {
+    let mut out: Vec[FieldDef] = []
+    for field in fields {
+        let copy = field.clone()
+        out.push(copy with { ty: grown(field.ty, vec) })
+    }
+    return out
+}
+
+/// **Every `&[T]` written back as the `Vec[T]` it is a view of**, for the
+/// sub-program only. A `&[T]` is the **crossed** form: it is what the program
+/// holds once the build has handed it over. The build itself does not hold one -
+/// a parser produces a `Vec`, and a rule action writing `Section { name,
+/// settings }` with `settings: Vec<Setting>` cannot build a struct whose field
+/// is a view of a run nobody owns.
+///
+/// Fields and variant payloads, which is where a type may stand inside a value
+/// this crosses. A parameter or a result is untouched: nothing in the
+/// sub-program calls the program's functions.
+pub fn grown_items(items: ref Vec[Spanned[Item]], vec: winnow_grammar::Symbol) -> Vec[Spanned[Item]] {
+    let mut out: Vec[Spanned[Item]] = []
+    for item in items {
+        match item.node {
+            Item::Struct { name, generics, fields, is_public, is_extern } => {
+                let copy = item.clone()
+                out.push(copy with { node: Item::Struct { name: name, generics: generics.clone(), fields: grown_fields(fields, vec), is_public: is_public, is_extern: is_extern } })
+            },
+            Item::Enum { name, variants, is_public, is_extern } => {
+                let mut grown_variants: Vec[EnumVariant] = []
+                for variant in variants {
+                    let copy = variant.clone()
+                    grown_variants.push(copy with { fields: grown_variant(variant.fields, vec) })
+                }
+                let copy = item.clone()
+                out.push(copy with { node: Item::Enum { name: name, variants: grown_variants, is_public: is_public, is_extern: is_extern } })
+            },
+            else => out.push(item.clone()),
+        }
+    }
+    return out
+}
+
+fn grown_variant(fields: ref VariantFields, vec: winnow_grammar::Symbol) -> VariantFields {
+    match fields {
+        VariantFields::Unit => return VariantFields::Unit,
+        VariantFields::Tuple(types) => {
+            let mut out: Vec[Type] = []
+            for ty in types {
+                out.push(grown(ty, vec))
+            }
+            return VariantFields::Tuple(out)
+        },
+        VariantFields::Named(named) => return VariantFields::Named(grown_fields(named, vec)),
+    }
+}

@@ -406,52 +406,12 @@ impl Parsed {
     /// this crosses. A parameter or a result is untouched: nothing in the
     /// sub-program calls the program's functions.
     pub fn growing(&self) -> Parsed {
+        // The rewriting of the types is `tools/parsed_tree.nika`'s.
         let vec = self.interner.intern_string("Vec");
-        fn grown(ty: &ast::Type, vec: Symbol) -> ast::Type {
-            let mut out = ty.clone();
-            out.generics = out.generics.iter().map(|g| grown(g, vec)).collect();
-            if out.is_slice && !out.is_mut {
-                return ast::Type {
-                    name: vec,
-                    generics: out.generics,
-                    is_view: false,
-                    is_slice: false,
-                    either: false,
-                    ..out
-                };
-            }
-            out
-        }
-        let mut items = self.program.items.clone();
-        for item in &mut items {
-            match &mut item.node {
-                ast::Item::Struct { fields, .. } => {
-                    for field in fields.iter_mut() {
-                        field.ty = grown(&field.ty, vec);
-                    }
-                }
-                ast::Item::Enum { variants, .. } => {
-                    for variant in variants.iter_mut() {
-                        match &mut variant.fields {
-                            ast::VariantFields::Unit => {}
-                            ast::VariantFields::Tuple(types) => {
-                                for ty in types.iter_mut() {
-                                    *ty = grown(ty, vec);
-                                }
-                            }
-                            ast::VariantFields::Named(fields) => {
-                                for field in fields.iter_mut() {
-                                    field.ty = grown(&field.ty, vec);
-                                }
-                            }
-                        }
-                    }
-                }
-                _ => {}
-            }
-        }
         Parsed {
-            program: ast::Program { items },
+            program: ast::Program {
+                items: nikaia_std::tools::parsed_tree::grown_items(&self.program.items, vec),
+            },
             interner: self.interner.clone(),
             aliases: self.aliases.clone(),
             text_tiers: self.text_tiers.clone(),
@@ -477,28 +437,6 @@ impl Parsed {
         // In Nikaia (`tools/text_tiers.nika`, #125), which the tier pass
         // reads the dictionary with as well.
         nikaia_std::tools::text_tiers::unaliased_in(&self.aliases, name)
-    }
-
-    /// The aliases this file declares, read off its `use` items.
-    fn aliases_of(
-        program: &ast::Program,
-        interner: &InternerContext,
-    ) -> std::collections::BTreeMap<String, String> {
-        let mut out = std::collections::BTreeMap::new();
-        for item in &program.items {
-            if let ast::Item::Import {
-                path,
-                alias: Some(alias),
-            } = &item.node
-                && let [package] = path.as_slice()
-            {
-                out.insert(
-                    interner.resolve(*alias).to_string(),
-                    interner.resolve(*package).to_string(),
-                );
-            }
-        }
-        out
     }
 }
 
@@ -691,7 +629,7 @@ pub fn parse_to_ast(input: &str) -> Result<Parsed> {
         return Err(refuse_parsing(finding, input));
     }
 
-    let aliases = Parsed::aliases_of(&program, &interner);
+    let aliases = nikaia_std::tools::parsed_tree::aliases_of(&program.items, &interner);
     let mut parsed = Parsed {
         program,
         interner,

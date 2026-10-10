@@ -15903,6 +15903,81 @@ pub fn number_at(text: &str, signed: bool) -> Number {
 }
 
 
+// --- parsed_tree.nika ---
+
+pub fn aliases_of(items: &[Spanned<Item>], words: &winnow_grammar::InternerContext) -> collections::BTreeMap<String, String> {
+    let mut out: collections::BTreeMap<String, String> = collections::BTreeMap::new();
+    for item in items.iter() {
+        match &item.node {
+            Item::Import { path, alias } => {
+                let alias = *alias;
+                if path.len() == 1 && alias.is_some() {
+                    let package = *nikaia_std::index::get(&path, 0);
+                    let name = nikaia_std::index::or(alias, || package.into());
+                    out.insert(words.resolve(name).to_owned(), words.resolve(package).to_owned());
+                }
+            },
+            _ => { },
+        }
+    }
+    out
+}
+
+fn grown(ty: &Type, vec: winnow_grammar::Symbol) -> Type {
+    let mut generics: Vec<Type> = vec![];
+    for g in ty.generics.iter() { generics.push(grown(g, vec)); }
+    let copy = ty.clone();
+    if ty.is_slice && !ty.is_mut { return Type { name: vec, generics: generics, is_view: false, is_slice: false, either: false, ..copy }; }
+    Type { generics: generics, ..copy }
+}
+
+fn grown_fields(fields: &[FieldDef], vec: winnow_grammar::Symbol) -> Vec<FieldDef> {
+    let mut out: Vec<FieldDef> = vec![];
+    for field in fields.iter() {
+        let copy = field.clone();
+        out.push(FieldDef { ty: grown(&field.ty, vec), ..copy });
+    }
+    out
+}
+
+pub fn grown_items(items: &[Spanned<Item>], vec: winnow_grammar::Symbol) -> Vec<Spanned<Item>> {
+    let mut out: Vec<Spanned<Item>> = vec![];
+    for item in items.iter() {
+        match &item.node {
+            Item::Struct { name, generics, fields, is_public, is_extern } => {
+                let is_extern = *is_extern; let is_public = *is_public; let name = *name;
+                let copy = item.clone();
+                out.push(Spanned { node: Item::Struct { name, generics: generics.to_owned(), fields: grown_fields(fields, vec), is_public, is_extern }, ..copy });
+            },
+            Item::Enum { name, variants, is_public, is_extern } => {
+                let is_extern = *is_extern; let is_public = *is_public; let name = *name;
+                let mut grown_variants: Vec<EnumVariant> = vec![];
+                for variant in variants.iter() {
+                    let copy = variant.clone();
+                    grown_variants.push(EnumVariant { fields: grown_variant(&variant.fields, vec), ..copy });
+                }
+                let copy = item.clone();
+                out.push(Spanned { node: Item::Enum { name, variants: grown_variants, is_public, is_extern }, ..copy });
+            },
+            _ => out.push(item.clone()),
+        }
+    }
+    out
+}
+
+fn grown_variant(fields: &VariantFields, vec: winnow_grammar::Symbol) -> VariantFields {
+    match fields {
+        VariantFields::Unit => return VariantFields::Unit,
+        VariantFields::Tuple(types) => {
+            let mut out: Vec<Type> = vec![];
+            for ty in types.iter() { out.push(grown(ty, vec)); }
+            return VariantFields::Tuple(out);
+        },
+        VariantFields::Named(named) => return VariantFields::Named(grown_fields(named, vec)),
+    }
+}
+
+
 // --- paths.nika ---
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -27726,6 +27801,10 @@ pub mod parse_notes {
 pub mod parse_numbers {
     #[allow(unused_imports)]
     pub use super::{Number, Scale, float_end, number_at};
+}
+pub mod parsed_tree {
+    #[allow(unused_imports)]
+    pub use super::{aliases_of, grown_items};
 }
 pub mod paths {
     #[allow(unused_imports)]
