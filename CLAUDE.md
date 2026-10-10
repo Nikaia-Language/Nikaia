@@ -181,6 +181,16 @@ Rules from the sessions that moved the most; they save tokens, not just time.
 * **Tooling traps:** complex shell (computed `sed` ranges, `awk -v`, heredocs
   chained with `&&`) is refused in a worktree: write a small Python script and
   run it. Replace blocks bottom-up with exact-string asserts.
+* **Reproduce a lowering defect in seconds**, not with a cargo build:
+  `target/release/nikaia lower f.nika` or `nikaia run f.nika`. A defect that
+  shows only in `tools/*.nika` needs a throwaway probe function in a tools
+  file and `nikaia lower-std`; look at `package.rs`, then restore both. A
+  lowering change can change `package.rs`: run `lower-std` after building and
+  commit the diff.
+* **A version collision on rebase is routine.** Take upstream's version files
+  and re-run `python3 scripts/badges.py` with the next free number.
+* **A worktree-isolated agent cannot run compound shell** (heredocs, `$(...)`,
+  pipes that look like git): put multi-step work in a script file and call it.
 * **Known compiler defects, to fix in the compiler** (ADR-294 D3), meanwhile
   bind to a `let` first: `let v = f().trim_start()` drops a temporary (E0716);
   `??` with an index read as fallback emits an ambiguous `.into()`; a `match`
