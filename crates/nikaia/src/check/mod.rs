@@ -575,6 +575,13 @@ pub struct Checked {
     /// does not copy, and the arm does not keep it - so the name stays whole
     /// after the `match` (Part I 6.5, ADR-291).
     pub lent_bindings: BTreeMap<usize, BTreeSet<String>>,
+    /// **The arms of a `match` over a `mut` parameter that take a part out of
+    /// it**, by the arm's pattern, with what stands in the place while the
+    /// part is out ([ADR-094](../../docs/specification/adr/adr-094.md) D7): a
+    /// value of the type that costs nothing to make, written as the language
+    /// below reads it. The arm works on the value taken out of the place and
+    /// writes the whole back (#576).
+    pub taking_arms: BTreeMap<usize, String>,
     /// **A part an expression arm binds as a view, handed on**, by the node
     /// of the argument that names it (#456): it is a view already, so the
     /// call writes it without the compiler's `&`. A block arm's arguments are
@@ -2253,6 +2260,8 @@ pub struct Propagation {
     pub counted: BTreeSet<(usize, String)>,
     /// [`Checked::lent_bindings`].
     pub lent_bindings: BTreeMap<usize, BTreeSet<String>>,
+    /// [`Checked::taking_arms`].
+    pub taking_arms: BTreeMap<usize, String>,
     /// [`Checked::views_handed_on`].
     pub views_handed_on: BTreeSet<usize>,
     /// [`Checked::comptime_uses`].
@@ -2601,6 +2610,7 @@ fn propagation(
         text_in_lists: checked.text_in_lists,
         counted: checked.counted,
         lent_bindings: checked.lent_bindings,
+        taking_arms: checked.taking_arms,
         views_handed_on: checked.views_handed_on,
         comptime_uses: checked.comptime_uses,
         guards_inside_boxes: checked.guards_inside_boxes,
@@ -13201,6 +13211,15 @@ impl<'a> Checker<'a> {
                     _ => on.clone(),
                 };
                 let lendable = self.an_owned_place(value, &typed);
+                // **A `match` over a `mut` parameter, or a place in one**
+                // (#576): below it is a `&mut`, so the arms bind references,
+                // and an arm that takes a part, or reads a number it binds,
+                // works on the value instead.
+                let mut_subject = self.a_mut_parameter_place(value);
+                // The parameter itself is the `&mut` the arms bind through; a
+                // field of one is a place the arms bind out of.
+                let through_the_reference =
+                    mut_subject.is_some() && matches!(value.as_ref(), Expr::Variable(_));
                 // **A field reached through a view is matched as the view it
                 // is** (found moving `traits` into Nikaia, #125): `match
                 // item.node` for a lent `item` is a place behind a reference
@@ -13346,7 +13365,7 @@ impl<'a> Checker<'a> {
                     // D5): the arm opens the box it was lent, and what it
                     // takes apart is a view too - `Expr::Add(Expr::Num(n), b)
                     // => n` over a `ref Expr` handed back a `&i64`.
-                    if typed.is_a_view() {
+                    if typed.is_a_view() || through_the_reference {
                         let at = &arm.pattern as *const MatchPattern as usize;
                         let mut parts = self.pattern_parts(&arm.pattern, &typed);
                         self.typed_inside_boxes(&arm.pattern, &mut parts);
@@ -13437,9 +13456,18 @@ impl<'a> Checker<'a> {
                         &parts,
                         from,
                         changed_from,
+                        through_the_reference,
                     );
                     self.a_branch_that_leaves(from, self.exits(&arm.body), span);
-                    self.parts_taken_out_of_a_mut_parameter(value, &parts, from.1);
+                    if let Some(subject) = &mut_subject {
+                        self.parts_taken_out_of_a_mut_parameter(
+                            subject,
+                            &arm.pattern,
+                            &typed,
+                            &parts,
+                            from.1,
+                        );
+                    }
                     self.branch.pop();
                     self.scope.pop();
                     // **An arm that jumps is not one of the types that have to
@@ -20100,34 +20128,33 @@ impl<'a> Checker<'a> {
         });
     }
 
+    /// The place a `match` is over where it is a `mut` parameter or a place in
+    /// one, as a path: `e`, `e.kind` (ADR-094 D3).
+    fn a_mut_parameter_place(&self, subject: &Expr) -> Option<String> {
+        let path = self.place_path(subject)?;
+        let root = path.split('.').next().unwrap_or_default();
+        self.binding(root)
+            .is_some_and(|local| local.changing)
+            .then_some(path)
+    }
+
     /// **The parts of a `mut` parameter an arm took out** (`NK2108`,
     /// [ADR-094](../../docs/specification/adr/adr-094.md) D7): the arm of a
     /// `match` over the parameter, or a place in it, bound a part and handed
     /// it to something that keeps it. A part only read, or changed in place
     /// through a `mut` parameter of its own, is still in the value.
+    ///
+    /// **And the arm that does is told to the emitter** (#576): it works on
+    /// the value taken out of the place, and writes the whole back.
     fn parts_taken_out_of_a_mut_parameter(
         &mut self,
-        subject: &Expr,
+        path: &str,
+        pattern: &MatchPattern,
+        subject: &Ty,
         parts: &BTreeMap<String, Ty>,
         handed_from: usize,
     ) {
         if self.repeats.iter().any(|r| r.what == "lambda") {
-            return;
-        }
-        let Some(path) = self.place_path(subject) else {
-            return;
-        };
-        let root = path.split('.').next().unwrap_or_default();
-        // The arm's own names are in the innermost frame; the parameter is
-        // looked up under any name an arm shadows it with.
-        if !self
-            .scope
-            .iter()
-            .rev()
-            .skip(1)
-            .find_map(|frame| frame.iter().find(|local| local.name == root))
-            .is_some_and(|local| local.changing)
-        {
             return;
         }
         let Some(frame) = self.scope.last() else {
@@ -20140,6 +20167,7 @@ impl<'a> Checker<'a> {
                 Some((name.clone(), local.id))
             })
             .collect();
+        let mut any = false;
         for (part, binding) in found {
             let Some(at) = self.handed[handed_from..]
                 .iter()
@@ -20147,13 +20175,106 @@ impl<'a> Checker<'a> {
             else {
                 continue;
             };
+            any = true;
             self.parts_out.push(PartOut {
-                subject: path.clone(),
+                subject: path.to_string(),
                 part,
                 binding,
                 handed: handed_from + at,
             });
         }
+        if !any {
+            return;
+        }
+        let at = pattern as *const MatchPattern as usize;
+        // The guard and a pattern that looks inside a box keep the arm as it
+        // was: both are read before the arm opens anything.
+        if let Some(placeholder) = self.a_placeholder(subject) {
+            self.checked.taking_arms.insert(at, placeholder);
+            // The parts are values here, not references: nothing to copy out.
+            self.checked
+                .copied_bindings
+                .retain(|(pattern, _)| *pattern != at);
+        }
+    }
+
+    /// **What stands in a place while a part of it is out** (ADR-094 D7: the
+    /// lowering's choice, and not observable): a value of the subject's type
+    /// that costs nothing to make - a variant of an `enum` whose parts all have
+    /// a default, or a `struct` of such parts - written as the language below
+    /// reads it. `None` where the type has none, and the arm is lowered as it
+    /// was.
+    fn a_placeholder(&self, subject: &Ty) -> Option<String> {
+        let Ty::Named {
+            name,
+            args,
+            view: false,
+        } = subject
+        else {
+            return None;
+        };
+        if !args.is_empty() {
+            return None;
+        }
+        let made = |tys: &[Ty]| tys.iter().all(has_a_default);
+        for item in &self.parsed.program.items {
+            match &item.node {
+                Item::Enum {
+                    name: declared,
+                    variants,
+                    ..
+                } if self.parsed.text(*declared) == name => {
+                    let mut best: Option<(usize, String)> = None;
+                    for variant in variants {
+                        let written = format!("{name}::{}", self.parsed.text(variant.name));
+                        let (size, text) = match &variant.fields {
+                            ast::VariantFields::Unit => (0, written),
+                            ast::VariantFields::Tuple(types) => {
+                                let tys: Vec<Ty> =
+                                    types.iter().map(|t| Ty::from_ast(self.parsed, t)).collect();
+                                if !made(&tys) {
+                                    continue;
+                                }
+                                let holes = vec!["Default::default()"; tys.len()].join(", ");
+                                (tys.len(), format!("{written}({holes})"))
+                            }
+                            ast::VariantFields::Named(fields) => {
+                                let tys: Vec<Ty> = fields
+                                    .iter()
+                                    .map(|f| Ty::from_ast(self.parsed, &f.ty))
+                                    .collect();
+                                if !made(&tys) {
+                                    continue;
+                                }
+                                let holes: Vec<String> = fields
+                                    .iter()
+                                    .map(|f| {
+                                        format!("{}: Default::default()", self.parsed.text(f.name))
+                                    })
+                                    .collect();
+                                (tys.len(), format!("{written} {{ {} }}", holes.join(", ")))
+                            }
+                        };
+                        if best.as_ref().is_none_or(|(least, _)| size < *least) {
+                            best = Some((size, text));
+                        }
+                    }
+                    return best.map(|(_, text)| text);
+                }
+                _ => {}
+            }
+        }
+        let fields = self.structs.get(name)?;
+        if !self.struct_parameters.get(name).is_none_or(Vec::is_empty)
+            || !fields.iter().all(|f| has_a_default(&f.ty))
+        {
+            return None;
+        }
+        let holes: Vec<String> = fields
+            .iter()
+            .map(|f| format!("{}: Default::default()", f.name))
+            .collect();
+        Some(format!("{name} {{ {} }}", holes.join(", ")))
     }
 
     /// **`NK2108`: a part taken out of a `mut` parameter and not given back**
@@ -28133,6 +28254,7 @@ impl<'a> Checker<'a> {
         parts: &BTreeMap<String, Ty>,
         (_, from): (usize, usize),
         changed_from: usize,
+        bound_by_reference: bool,
     ) {
         let lent: BTreeSet<String> = parts
             .iter()
@@ -28146,8 +28268,13 @@ impl<'a> Checker<'a> {
             .collect();
         if !lent.is_empty() {
             self.a_lent_part_is_handed_on_as_it_is(body, &lent);
-            let at = pattern as *const MatchPattern as usize;
-            self.checked.lent_bindings.insert(at, lent);
+            // **Over a `mut` parameter the parts are references already**
+            // (the place is a `&mut` below), and `ref` in a pattern that
+            // borrows by itself is the language below's error (#576).
+            if !bound_by_reference {
+                let at = pattern as *const MatchPattern as usize;
+                self.checked.lent_bindings.insert(at, lent);
+            }
         }
     }
 
@@ -29158,6 +29285,34 @@ pub fn written(parsed: &Parsed, expr: &Expr) -> String {
 
 fn is_number(name: &str) -> bool {
     nikaia_std::tools::check_types::a_number_name(name)
+}
+
+/// Whether the language below can make a value of this type from nothing,
+/// `Default::default()`: a number, a `bool`, a `char`, text, a list, a map, a
+/// set, a `T?` and a tuple of such. Never a view, and never a type of the
+/// program's own - the placeholder of one of those is its own question.
+fn has_a_default(ty: &Ty) -> bool {
+    match ty {
+        Ty::Named {
+            name, view: false, ..
+        } => {
+            is_number(name)
+                || matches!(
+                    ty::base(name),
+                    "bool"
+                        | "char"
+                        | "String"
+                        | "Vec"
+                        | "HashMap"
+                        | "HashSet"
+                        | "BTreeMap"
+                        | "BTreeSet"
+                )
+        }
+        Ty::Nullable(_) => true,
+        Ty::Tuple(parts) => parts.len() <= 12 && parts.iter().all(has_a_default),
+        _ => false,
+    }
 }
 
 /// A float, written as a literal `rustc` reads — or nothing, where it cannot be.

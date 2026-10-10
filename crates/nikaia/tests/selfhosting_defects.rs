@@ -263,3 +263,98 @@ fn main() {
     );
     assert_eq!(said.trim(), "40 6 22 true 0 3");
 }
+
+/// #576, the open shape of `a_mut_parameter_is_assigned_and_read_through`: a
+/// `match` over a `mut` parameter whose arm takes the parts and assigns the
+/// whole (ADR-094 D7). The arm works on the value taken out of the place and
+/// writes the whole back; an arm that takes nothing reads a number it binds
+/// as the number, and the place can be a field of the parameter.
+#[test]
+fn an_arm_that_takes_parts_of_a_mut_parameter_writes_the_whole_back() {
+    let said = printed(
+        "mut-parameter-parts",
+        r#"
+enum E {
+    Num(i64),
+    Add(E, E),
+    Wrap(E),
+}
+
+fn wrap_nums(mut e: E) {
+    match e {
+        E::Num(n) => { e = E::Wrap(E::Num(n)) }
+        E::Add(a, b) => {
+            let mut l = a
+            let mut r = b
+            wrap_nums(l)
+            wrap_nums(r)
+            e = E::Add(l, r)
+        }
+        E::Wrap(x) => {}
+    }
+}
+
+fn swap_all(mut e: E) {
+    match e {
+        E::Num(n) => {}
+        E::Add(a, b) => {
+            let mut l = a
+            let mut r = b
+            swap_all(l)
+            swap_all(r)
+            e = E::Add(r, l)
+        }
+        E::Wrap(x) => { e = x }
+    }
+}
+
+fn bump(mut e: E) {
+    match e {
+        E::Num(n) => { e = E::Num(n + 1) }
+        E::Add(a, b) => {}
+        E::Wrap(x) => {}
+    }
+}
+
+struct Holder {
+    root: E,
+    count: i64,
+}
+
+fn rewrap(mut h: Holder) {
+    match h.root {
+        E::Num(n) => {}
+        E::Add(a, b) => { h.root = E::Wrap(a) }
+        E::Wrap(x) => { h.root = x }
+    }
+    h.count += 1
+}
+
+fn show(e: ref E) -> String {
+    match e {
+        E::Num(n) => f"{n}",
+        E::Add(a, b) => f"({show(a)}+{show(b)})",
+        E::Wrap(x) => f"[{show(x)}]",
+    }
+}
+
+fn main() {
+    let mut e = E::Add(E::Num(1), E::Add(E::Num(2), E::Num(3)))
+    wrap_nums(e)
+    println(show(e))
+    swap_all(e)
+    println(show(e))
+    bump(e)
+    println(show(e))
+    let mut one = E::Num(1)
+    bump(one)
+    println(show(one))
+    let mut h = Holder { root: E::Add(E::Num(7), E::Num(8)), count: 0 }
+    rewrap(h)
+    rewrap(h)
+    println(f"{show(h.root)} {h.count}")
+}
+"#,
+    );
+    assert_eq!(said.trim(), "([1]+([2]+[3]))\n((3+2)+1)\n((3+2)+1)\n2\n7 2");
+}

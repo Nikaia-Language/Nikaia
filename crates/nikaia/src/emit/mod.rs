@@ -1356,6 +1356,9 @@ struct Emitter<'p> {
     /// **The names a `match` arm binds as a view**, by the arm's pattern
     /// (ADR-291): written `ref name`, so the scrutinee stays whole.
     lent_bindings: std::collections::BTreeMap<usize, std::collections::BTreeSet<String>>,
+    /// **The arms that take a part out of a `mut` parameter**, by pattern, with
+    /// what stands in the place meanwhile (`check::Checked::taking_arms`).
+    taking_arms: std::collections::BTreeMap<usize, String>,
     /// Arguments that name a part an expression arm binds as a view (#456).
     views_handed_on: std::collections::BTreeSet<usize>,
     /// An integer `comptime` where a use asks a type, spelled in it (ADR-287 D21).
@@ -2846,6 +2849,7 @@ impl<'p> Emitter<'p> {
             copied_jump_reads: propagation.copied_jump_reads,
             counted: propagation.counted,
             lent_bindings: propagation.lent_bindings,
+            taking_arms: propagation.taking_arms,
             views_handed_on: propagation.views_handed_on,
             comptime_uses: propagation.comptime_uses,
             guards_inside_boxes: propagation.guards_inside_boxes,
@@ -8697,6 +8701,59 @@ impl<'p> Emitter<'p> {
                 out.push(" {\n");
                 for arm in arms {
                     out.push(&pad);
+                    // **An arm that takes a part out of a `mut` parameter
+                    // works on the value taken out of the place** (ADR-094 D7,
+                    // #576): the place holds a stand-in meanwhile, the arm
+                    // binds the parts by value, and writes the whole back
+                    // with its assignment. The first `match` only chooses the
+                    // arm, so it binds nothing.
+                    if arm.guard.is_none()
+                        && !self.looks_inside_a_box(&arm.pattern)
+                        && let Some(stand_in) = self
+                            .taking_arms
+                            .get(&(&arm.pattern as *const MatchPattern as usize))
+                    {
+                        self.pattern_written(
+                            out,
+                            &arm.pattern,
+                            Names::Wild,
+                            &mut None,
+                            depth + 1,
+                            flow,
+                        )?;
+                        out.push(" => ");
+                        let mut place = Out::default();
+                        self.expr(&mut place, value, depth, flow)?;
+                        let place = match &**value {
+                            Expr::Variable(_) => place.buf,
+                            _ => format!("&mut {}", place.buf),
+                        };
+                        let mut bound = Out::default();
+                        self.pattern_written(
+                            &mut bound,
+                            &arm.pattern,
+                            Names::Bind(None),
+                            &mut None,
+                            depth + 1,
+                            flow,
+                        )?;
+                        let lead = format!(
+                            "let {} = std::mem::replace({place}, {stand_in}) else {{ \
+                             unreachable!(\"the pattern matched it\") }}; ",
+                            bound.buf
+                        );
+                        self.arm_body_led(
+                            out,
+                            &arm.pattern,
+                            &[],
+                            &arm.body,
+                            depth + 1,
+                            flow,
+                            &lead,
+                        )?;
+                        out.push(",\n");
+                        continue;
+                    }
                     // **A part looked into through its box**
                     // ([ADR-246](../../docs/specification/adr/adr-246.md) D5):
                     // the language below matches no pattern through a box, so
@@ -12898,7 +12955,23 @@ impl<'p> Emitter<'p> {
         depth: usize,
         flow: Flow<'_>,
     ) -> Result<()> {
-        let mut taken_apart = String::new();
+        self.arm_body_led(out, pattern, nests, body, depth, flow, "")
+    }
+
+    /// [`Self::arm_body_opening`] with a line of its own first: the arm that
+    /// takes the value out of its place says so before anything else.
+    #[allow(clippy::too_many_arguments)]
+    fn arm_body_led(
+        &self,
+        out: &mut Out,
+        pattern: &MatchPattern,
+        nests: &[&MatchPattern],
+        body: &Expr,
+        depth: usize,
+        flow: Flow<'_>,
+        lead: &str,
+    ) -> Result<()> {
+        let mut taken_apart = lead.to_string();
         for (at, nest) in nests.iter().enumerate() {
             let mut written = Out::default();
             self.pattern_written(
@@ -12938,6 +13011,7 @@ impl<'p> Emitter<'p> {
             && opened.is_empty()
             && copied.is_empty()
             && nests.is_empty()
+            && lead.is_empty()
         {
             return self.block(out, block, depth, flow, Tail::Statement);
         }
@@ -12953,7 +13027,7 @@ impl<'p> Emitter<'p> {
             },
             false => flow,
         };
-        if opened.is_empty() && copied.is_empty() && nests.is_empty() {
+        if opened.is_empty() && copied.is_empty() && nests.is_empty() && lead.is_empty() {
             return self.expr(out, body, depth, body_flow);
         }
         // **A block arm opens with the names it binds**, inside its own

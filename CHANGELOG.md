@@ -8,6 +8,12 @@ or the specification. A change only to the guide, the notes, the README, the
 website, the tests, the examples or the tooling around them raises nothing and
 has no heading here; `CLAUDE.md` draws the line.
 
+## [0.0.769] — 2026-10-10
+
+**An arm that takes parts of a `mut` parameter and writes the whole back lowers ([ADR-094](docs/specification/adr/adr-094.md) D7, #576).**
+- A `match` over a `mut` parameter is a `match` over a `&mut` below, so the arms bound references and `rustc` refused `e = E::Add(l, r)` in words about a file nobody wrote. An arm that takes a part out of the parameter now works on the value taken out of the place (`std::mem::replace` with a variant that costs nothing to make), binds the parts by value and writes the whole back with its assignment; an arm that takes nothing reads a number it binds as the number, and writes no `ref` where the pattern borrows by itself. The place may be a field of the parameter. Test: `selfhosting_defects.rs`.
+- Not done: the children keep no box. The arm opens a boxed part and the construction boxes it again, one allocation per part per arm; keeping the boxes needs the checker's types in the emitter (#577).
+
 ## [0.0.768] — 2026-10-10
 
 **`NK2108` is built: a part taken out of a `mut` parameter is given back before the function is left ([ADR-094](docs/specification/adr/adr-094.md) D7, #576).**
