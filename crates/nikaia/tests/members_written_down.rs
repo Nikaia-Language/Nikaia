@@ -99,3 +99,16 @@ fn a_member_that_is_written_down_passes() {
     );
     assert!(found.is_empty(), "{found:#?}");
 }
+
+/// **A bare name in a pattern binds the whole value, typed** (#497): `x => …`
+/// over an `E` is an `E`, where it was unknown.
+#[test]
+fn a_bare_name_in_a_pattern_is_the_value_matched() {
+    let found = errors(
+        "enum E {\n    A(i64),\n    B,\n}\n\nfn f(e: E) -> i64 {\n    return match e {\n        E::A(n) => n,\n        x => {\n            let s: String = x\n            0\n        }\n    }\n}\n\nfn main() {\n    println(f\"{f(E::B)}\")\n}\n",
+    );
+    assert!(
+        found.iter().any(|f| f.code == "NK1103" && f.message == "This value is `E`, but the `let` declares `String`."),
+        "{found:#?}"
+    );
+}

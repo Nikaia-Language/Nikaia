@@ -8,6 +8,19 @@ or the specification. A change only to the guide, the notes, the README, the
 website, the tests, the examples or the tooling around them raises nothing and
 has no heading here; `CLAUDE.md` draws the line.
 
+## [0.0.735] — 2026-10-10
+
+**Three places the checker knew a type and kept it unknown** (#497).
+- A choice between numbers is a number nothing typed (ADR-285 D1): `let
+  taken = if c { 1 } else { 0 }`, and a `match` whose arms come to numbers, are
+  open numbers, decided by their uses and written into the generated `let`. A
+  branch that leaves is no value. A use no number can be is refused at it.
+- `for k in 0..<55` binds an open number of its own, given the two ends, where
+  it was unknown.
+- A bare name in a `match` pattern binds the whole value with its type
+  (`other => other`), unless the name is one of the type's variants.
+- `std`'s lowered tools now write `let mut taken: i64` and `let cost: i64`.
+
 ## [0.0.734] — 2026-10-10
 
 **What is written down is what can be called, and an error of several is an

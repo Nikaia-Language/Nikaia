@@ -11114,7 +11114,7 @@ pub fn group_verdict(run: &[Operation]) -> Verdict {
 }
 
 pub fn group_of(run: &[Operation]) -> i64 {
-    let mut taken = if !run.is_empty() { 1 } else { 0 };
+    let mut taken: i64 = if !run.is_empty() { 1 } else { 0 };
     while taken < run.len() as i64 {
         if !fits_with_the_front(run, taken) { break; }
         taken += 1;
@@ -16707,7 +16707,7 @@ pub fn distance(a: &str, b: &str) -> i64 {
     }
     for i in 1..rows {
         for j in 1..cols {
-            let cost = if *nikaia_std::index::get(&x, nikaia_std::index::at(i - 1)) == *nikaia_std::index::get(&y, nikaia_std::index::at(j - 1)) { 0 } else { 1 };
+            let cost: i64 = if *nikaia_std::index::get(&x, nikaia_std::index::at(i - 1)) == *nikaia_std::index::get(&y, nikaia_std::index::at(j - 1)) { 0 } else { 1 };
             let mut best = *nikaia_std::index::get(nikaia_std::index::get(&d, nikaia_std::index::at(i - 1)), nikaia_std::index::at(j)) + 1;
             if *nikaia_std::index::get(nikaia_std::index::get(&d, nikaia_std::index::at(i)), nikaia_std::index::at(j - 1)) + 1 < best { best = *nikaia_std::index::get(nikaia_std::index::get(&d, nikaia_std::index::at(i)), nikaia_std::index::at(j - 1)) + 1; }
             if *nikaia_std::index::get(nikaia_std::index::get(&d, nikaia_std::index::at(i - 1)), nikaia_std::index::at(j - 1)) + cost < best { best = *nikaia_std::index::get(nikaia_std::index::get(&d, nikaia_std::index::at(i - 1)), nikaia_std::index::at(j - 1)) + cost; }

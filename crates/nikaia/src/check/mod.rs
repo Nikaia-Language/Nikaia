@@ -10910,6 +10910,13 @@ impl<'a> Checker<'a> {
                     out.push(self.open_root(at));
                 }
             }
+            // **A choice between numbers is one number** (D1): each branch's
+            // value is the `if`'s.
+            Expr::If { .. } | Expr::Match { .. } => {
+                for tail in number_branches(expr).unwrap_or_default() {
+                    self.open_numbers_in(tail, out);
+                }
+            }
             Expr::Binary { op, lhs, rhs, .. } if an_operation_of_one_type(*op) => {
                 self.open_numbers_in(lhs, out);
                 if !matches!(op, BinaryOp::Shl | BinaryOp::Shr) {
@@ -10969,6 +10976,9 @@ impl<'a> Checker<'a> {
                 .binding(self.parsed.text(*name))
                 .is_some_and(|local| local.open_number.is_some()),
             Expr::Index { .. } => self.open_element_of(expr).is_some(),
+            Expr::If { .. } | Expr::Match { .. } => number_branches(expr).is_some_and(|tails| {
+                !tails.is_empty() && tails.iter().all(|tail| self.number_shaped(tail))
+            }),
             Expr::Binary { op, lhs, rhs, .. } if an_operation_of_one_type(*op) => {
                 self.number_shaped(lhs) && self.number_shaped(rhs)
             }
@@ -12233,6 +12243,32 @@ impl<'a> Checker<'a> {
                     self.open_numbers_joined(&open);
                     if let (Some(first), Some(local)) = (open.first(), frame.first_mut()) {
                         local.open_number = Some(self.open_root(*first));
+                    }
+                    // **Between two literals the binding is a number of its
+                    // own** (D1, D3): `for k in 0..<55` counts in the type its
+                    // uses ask for, and the ends are what it is given.
+                    if open.is_empty()
+                        && self.number_shaped(start)
+                        && self.number_shaped(end)
+                        && let Some(local) = frame.first_mut()
+                        && local.ty.is_unknown()
+                    {
+                        self.open_numbers.insert(
+                            span.at(),
+                            OpenNumber {
+                                name: local.name.clone(),
+                                element: false,
+                                at: *span,
+                                joined: span.at(),
+                                asks: Vec::new(),
+                                given: Vec::new(),
+                                derived: Vec::new(),
+                                written: Vec::new(),
+                            },
+                        );
+                        local.open_number = Some(span.at());
+                        self.open_number_given(span.at(), start, span);
+                        self.open_number_given(span.at(), end, span);
                     }
                 }
                 for local in &frame {
@@ -27135,6 +27171,25 @@ impl<'a> Checker<'a> {
     /// name. Nested patterns and or-patterns are left untyped, which leaves
     /// their names bound as they always were.
     fn pattern_parts(&self, pattern: &MatchPattern, on: &Ty) -> BTreeMap<String, Ty> {
+        // **A bare name binds the whole value** (ADR-291 D1), as it does in the
+        // language below: `other => other` is of the type matched, unless the
+        // name is one of the type's own variants.
+        if let MatchPattern::Path(one) = pattern
+            && let [name] = one.as_slice()
+            && !on.is_unknown()
+        {
+            let name = self.parsed.text(*name);
+            let a_variant = match on {
+                Ty::Named { name: owner, .. } => {
+                    self.enums.get(owner).is_some_and(|v| v.contains(name))
+                        || self.variant_parts.contains_key(&format!("{owner}::{name}"))
+                }
+                _ => false,
+            };
+            if !a_variant && name != "_" {
+                return BTreeMap::from([(name.to_string(), on.clone())]);
+            }
+        }
         // **A tuple's parts are the types at their positions** (#522):
         // `(Op::Times, n)` over an `(Op, i64)` binds `n` as the `i64`.
         if let (Ty::Tuple(types), MatchPattern::Tuple { path, parts }) = (on, pattern)
@@ -27681,8 +27736,57 @@ fn literals_in(expr: &Expr, out: &mut Literals) {
             literals_in(rhs, out);
         }
         Expr::Unary { expr, .. } => literals_in(expr, out),
+        Expr::If { .. } | Expr::Match { .. } => {
+            for tail in number_branches(expr).unwrap_or_default() {
+                literals_in(tail, out);
+            }
+        }
         _ => {}
     }
+}
+
+/// **The values a choice can come to**: each branch's last expression, for an
+/// `if` with an `else` and for a `match`. A branch that leaves - `return`,
+/// `break`, `continue`, `throw`, a `panic` - comes to nothing and is left out;
+/// a branch with no value makes the whole `None`.
+fn number_branches(expr: &Expr) -> Option<Vec<&Expr>> {
+    fn leaves(expr: &Expr) -> bool {
+        matches!(
+            expr,
+            Expr::Return(_) | Expr::Break | Expr::Continue | Expr::Throw(_)
+        )
+    }
+    fn of_block<'e>(block: &'e Block, out: &mut Vec<&'e Expr>) -> Option<()> {
+        let tail = tail_of(block)?;
+        of_value(tail, out)
+    }
+    fn of_value<'e>(value: &'e Expr, out: &mut Vec<&'e Expr>) -> Option<()> {
+        match value {
+            Expr::If { .. } | Expr::Match { .. } => out.extend(number_branches(value)?),
+            Expr::Block(block) => of_block(block, out)?,
+            value if leaves(value) => {}
+            value => out.push(value),
+        }
+        Some(())
+    }
+    let mut out = Vec::new();
+    match expr {
+        Expr::If {
+            then_branch,
+            else_branch: Some(else_branch),
+            ..
+        } => {
+            of_block(then_branch, &mut out)?;
+            of_block(else_branch, &mut out)?;
+        }
+        Expr::Match { arms, .. } => {
+            for arm in arms {
+                of_value(&arm.body, &mut out)?;
+            }
+        }
+        _ => return None,
+    }
+    Some(out)
 }
 
 /// A literal's node, as [`Checked::unsigned_literals`] keys it and the emitter

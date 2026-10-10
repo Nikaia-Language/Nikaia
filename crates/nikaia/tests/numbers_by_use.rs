@@ -227,3 +227,42 @@ fn a_lists_decided_type_is_written() {
     let rust = lowered("fn main() {\n    let xs = [1, 3000000000]\n    println(f\"{xs[1]}\")\n}\n");
     assert!(rust.contains("vec![1, 3000000000i64]"), "{rust}");
 }
+
+/// **A choice between numbers is one open number** (#497): `let taken = if c
+/// { 1 } else { 0 }` was unknown to the checker, as `let n = 1` is not. Its
+/// uses decide it, and a use that no number can be is refused.
+#[test]
+fn a_choice_between_numbers_is_an_open_number() {
+    let rust = lowered(
+        "fn main() {\n    let c = true\n    let taken = if c { 1 } else { 0 }\n    let x: u8 = taken\n    println(f\"{x}\")\n}\n",
+    );
+    assert!(rust.contains("let taken: u8 = if c { 1 } else { 0 };"), "{rust}");
+    let found = findings(
+        "fn pick(k: i64) -> String {\n    let n = match k {\n        1 => 10,\n        else => 20,\n    }\n    return n\n}\n\nfn main() {\n    println(pick(1))\n}\n",
+    );
+    assert!(
+        found.iter().any(|f| f.code == "NK1104"
+            && f.message == "You're returning a number, but the function is declared to return `String`."),
+        "{found:#?}"
+    );
+}
+
+/// **A range between two literals counts in the type its uses ask for** (#497):
+/// `for k in 0..<5` bound `k` as unknown.
+#[test]
+fn a_range_between_literals_binds_an_open_number() {
+    let found = findings(
+        "fn main() {\n    for j in 0..<3 {\n        let s: String = j\n    }\n}\n",
+    );
+    assert!(
+        found.iter().any(|f| f.code == "NK1103"
+            && f.message == "This value is a number, but the `let` declares `String`."),
+        "{found:#?}"
+    );
+    assert!(
+        findings(
+            "fn main() {\n    let mut cut: Vec[u8] = []\n    for k in 0..<5 {\n        let b: u8 = k\n        cut.push(b)\n    }\n    println(f\"{cut.len()}\")\n}\n"
+        )
+        .is_empty()
+    );
+}
