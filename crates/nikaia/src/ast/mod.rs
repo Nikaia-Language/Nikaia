@@ -28,3 +28,50 @@ pub fn int_literal(n: i128) -> Expr {
         id: crate::ast::NodeId::fresh(),
     }
 }
+
+/// Gives the node a new id: how a clone placed a second time in one tree stops
+/// being the same node as the first ([ADR-340](../../../docs/specification/adr/adr-340.md) D2).
+pub fn set_id(expr: &mut Expr, id: NodeId) {
+    match expr {
+        Expr::LitInt { id: slot, .. }
+        | Expr::Match { id: slot, .. }
+        | Expr::Range { id: slot, .. }
+        | Expr::ListLit { id: slot, .. }
+        | Expr::LitStr { id: slot, .. }
+        | Expr::LitInterpolated { id: slot, .. }
+        | Expr::If { id: slot, .. }
+        | Expr::Call { id: slot, .. }
+        | Expr::Spawn { id: slot, .. }
+        | Expr::Dsl { id: slot, .. }
+        | Expr::MethodCall { id: slot, .. }
+        | Expr::Field { id: slot, .. }
+        | Expr::StructLit { id: slot, .. }
+        | Expr::With { id: slot, .. }
+        | Expr::Closure { id: slot, .. }
+        | Expr::Unary { id: slot, .. }
+        | Expr::Binary { id: slot, .. }
+        | Expr::SafeField { id: slot, .. }
+        | Expr::SafeMethod { id: slot, .. }
+        | Expr::Index { id: slot, .. }
+        | Expr::Cast { id: slot, .. }
+        | Expr::Coalesce { id: slot, .. }
+        | Expr::Asm { id: slot, .. }
+        | Expr::TryCatch { id: slot, .. }
+        | Expr::Tuple(_, slot)
+        | Expr::LitChar(_, slot)
+        | Expr::LitBool(_, slot)
+        | Expr::Variable(_, slot)
+        | Expr::Block(_, slot)
+        | Expr::Overlap(_, slot)
+        | Expr::Select(_, slot)
+        | Expr::Path(_, slot)
+        | Expr::Try(_, slot)
+        | Expr::Throw(_, slot)
+        | Expr::Return(_, slot)
+        | Expr::LitFloat(_, slot)
+        | Expr::Unsafe(_, slot)
+        | Expr::LitNull(slot)
+        | Expr::Break(slot)
+        | Expr::Continue(slot) => *slot = id,
+    }
+}

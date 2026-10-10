@@ -97,6 +97,28 @@ fn tier_from(tier: nikaia_std::tools::text_tiers::Tier) -> Tier {
     }
 }
 
+/// **No two nodes of the tree share an id** ([ADR-340](../../../docs/specification/adr/adr-340.md)
+/// D2): a node the parser placed twice - `xs[a..]` holds `xs` as the base and
+/// again as the receiver of `len` - keeps its id where it is first met, and
+/// the second place takes a new one, so what is recorded about one place is not
+/// read at the other.
+fn separate_repeated_ids(parsed: &mut Parsed) {
+    let mut seen: BTreeSet<u32> = BTreeSet::new();
+    for item in &mut parsed.program.items {
+        each_block(&mut item.node, &mut |block| {
+            visit_block_mut(
+                block,
+                &mut |expr| {
+                    if !seen.insert(crate::ast::id_of(expr)) {
+                        crate::ast::set_id(expr, crate::ast::NodeId::fresh());
+                    }
+                },
+                &mut |_, _| {},
+            )
+        });
+    }
+}
+
 /// **Decide the tiers and write them into the types**, so that every later
 /// reader of the program reads one answer.
 ///
@@ -105,6 +127,7 @@ fn tier_from(tier: nikaia_std::tools::text_tiers::Tier) -> Tier {
 /// the fixpoint over them, and where a value is handed into a mixed one. What
 /// stays here is writing that answer into the syntax tree.
 pub fn refine(parsed: &mut Parsed) {
+    separate_repeated_ids(parsed);
     use nikaia_std::tools::text_tiers::{TierAsk, hand_number, text_tiers};
     let library = crate::contracts::std_ledger();
     let ask = TierAsk {

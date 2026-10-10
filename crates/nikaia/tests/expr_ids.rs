@@ -158,3 +158,101 @@ fn a_hole_takes_ids_the_file_has_not_given() {
         "two holes do not share one"
     );
 }
+
+/// A program the text-tier pass rewrites: a value of either kind is handed
+/// over as `value.into_either()` (ADR-282 D14).
+const REWRITTEN: &str = r##"use std::fs
+
+fn shout(s: String) -> String {
+    return f"{s}!"
+}
+
+fn main() throws {
+    let text = fs::read_to_string("extra.conf", fs::Root::Anywhere)
+    let mut last: String = f"nothing"
+    for line in text.lines() {
+        last = line.trim()
+    }
+    println(f"{shout(last)} {shout(f"x")}")
+}
+"##;
+
+#[test]
+fn a_rewritten_tree_gives_every_node_an_id_of_its_own() {
+    let parsed = parse_to_ast(REWRITTEN).expect("parse failed");
+    let ids = ids_in(&format!("{:#?}", parsed.program));
+    let built = ids
+        .iter()
+        .filter(|id| **id >= nikaia::ast::FIRST_BUILT)
+        .count();
+    assert!(built > 0, "the tier pass wrapped something: {ids:?}");
+    assert!(
+        ids.iter().any(|id| *id < nikaia::ast::FIRST_BUILT),
+        "and the parser's nodes are still there"
+    );
+    let distinct: BTreeSet<u32> = ids.iter().copied().collect();
+    assert_eq!(
+        distinct.len(),
+        ids.len(),
+        "no two nodes share an id: {ids:?}"
+    );
+}
+
+#[test]
+fn a_wrapped_hole_keeps_its_ids_and_the_wrapper_takes_a_new_one() {
+    let parsed = parse_to_ast("fn main() {}").expect("parse failed");
+    let (mut hole, _) = parse_expression_from(&parsed.interner, "a + b", 0).expect("parse");
+    let before = ids_in(&format!("{hole:#?}"));
+    let shape = nikaia::check::argument_shape(&hole);
+    let wrap = parsed.interner.intern_string("into_either");
+    nikaia::text_tiers::wrap_hole(&mut hole, &[(shape, wrap)]);
+
+    let after = ids_in(&format!("{hole:#?}"));
+    assert_eq!(after.len(), before.len() + 1, "one node more: {after:?}");
+    assert!(
+        before.iter().all(|id| after.contains(id)),
+        "the wrapped tree has the ids it had: {before:?} in {after:?}"
+    );
+    let wrapper: Vec<_> = after.iter().filter(|id| !before.contains(id)).collect();
+    assert_eq!(wrapper.len(), 1);
+    assert!(*wrapper[0] >= nikaia::ast::FIRST_BUILT);
+}
+
+#[test]
+fn a_cloned_subtree_has_the_ids_of_the_original() {
+    let parsed = parse_to_ast(A_FILE).expect("parse failed");
+    let original = format!("{:#?}", main_body(&parsed));
+    let copy = main_body(&parsed).clone();
+    assert_eq!(ids_in(&original), ids_in(&format!("{copy:#?}")));
+    assert!(!ids_in(&original).is_empty());
+}
+
+#[test]
+fn a_node_the_parser_places_twice_is_two_nodes() {
+    // `xs[a..]` is `xs[a..<xs.len()]`: `xs` stands as the base and as the
+    // receiver of `len`, and what is recorded about one place is not the other's.
+    let source = "fn main() { let xs = [1, 2, 3]\nlet rest = xs[1..] }";
+    let parsed = parse_to_ast(source).expect("parse failed");
+    let ids = ids_in(&format!("{:#?}", parsed.program));
+    let distinct: BTreeSet<u32> = ids.iter().copied().collect();
+    assert_eq!(
+        distinct.len(),
+        ids.len(),
+        "no two nodes share an id: {ids:?}"
+    );
+    // And the copy is equal to the original, ids apart (D3).
+    let Stmt::Let { value, .. } = &main_body(&parsed).stmts[1].node else {
+        panic!("a let");
+    };
+    let Expr::Index { base, index, .. } = value else {
+        panic!("an index");
+    };
+    let Expr::Range { end, .. } = &**index else {
+        panic!("a range");
+    };
+    let Expr::MethodCall { receiver, .. } = &**end else {
+        panic!("a call of len");
+    };
+    assert_eq!(base, receiver);
+    assert_ne!(nikaia::ast::id_of(base), nikaia::ast::id_of(receiver));
+}

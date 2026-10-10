@@ -8,6 +8,13 @@ or the specification. A change only to the guide, the notes, the README, the
 website, the tests, the examples or the tooling around them raises nothing and
 has no heading here; `CLAUDE.md` draws the line.
 
+## [0.0.778] — 2026-10-10
+
+**A node the compiler builds takes a new id, a clone keeps its own (ADR-340 D2, #558, step 3).**
+- Every `Expr` the checker, the text-tier pass or the folds of `tools/tree_build.nika` build is given `fresh_id()`; a node that is the same node after a rewrite keeps its id (`grouped` marks a `Binary` and does not rebuild its id).
+- A node the parser places twice (`xs[a..]` holds `xs` as the base and as the receiver of `len`) keeps its id where it is first met and takes a new one at the second place: `refine` separates repeated ids before the tier pass reads them.
+- Tests: `expr_ids.rs` - a rewritten tree has no two nodes with one id, a wrapped hole keeps its ids and the wrapper takes a new one, a cloned subtree has the ids of the original.
+
 ## [0.0.777] — 2026-10-10
 
 **Every `Expr` node carries an id the parser gave it (ADR-340, #558, step 2).**
