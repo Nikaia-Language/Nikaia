@@ -58,6 +58,32 @@ fn main() {
     assert_eq!(said.trim(), "[abc,d  ] 2 7");
 }
 
+/// #564: `drain()` over a `mut` parameter takes the elements out of the
+/// caller's list as owned values.
+#[test]
+fn drain_over_a_mut_parameter_empties_the_callers_list() {
+    let said = printed(
+        "drain-a-mut-parameter",
+        r#"
+fn take_all(mut from: Vec[String], mut into: Vec[String]) -> i64 {
+    let mut count = 0
+    for x in from.drain() {
+        into.push(x)
+        count += 1
+    }
+    return count
+}
+fn main() {
+    let mut source: Vec[String] = ["a", "b"]
+    let mut kept: Vec[String] = []
+    let n = take_all(source, kept)
+    println(f"{n} {source.len()} {kept.len()}")
+}
+"#,
+    );
+    assert_eq!(said.trim(), "2 0 2");
+}
+
 /// #561: a `??` whose fallback is an index read names a value, not a reference.
 #[test]
 fn a_fallback_read_at_an_index_is_a_value() {

@@ -8067,6 +8067,16 @@ impl<'p> Emitter<'p> {
             .is_some_and(|s| s.mutable.iter().any(|m| m == name))
     }
 
+    /// Whether `place` is a `mut` parameter of the function being emitted, or
+    /// a field of one: a value that stays the caller's (ADR-094 D3).
+    fn stays_the_callers(&self, place: &Expr, flow: Flow<'_>) -> bool {
+        match place {
+            Expr::Variable(name) => self.changes_in_place(flow, self.text(*name)),
+            Expr::Field { base, .. } => self.stays_the_callers(base, flow),
+            _ => false,
+        }
+    }
+
     fn index_expr(&self, out: &mut Out, index: &Expr, depth: usize, flow: Flow<'_>) -> Result<()> {
         self.bare_range(out, index, depth, flow)
     }
@@ -13348,6 +13358,22 @@ impl<'p> Emitter<'p> {
             out.push(", &");
             self.expr(out, &args[0], depth, flow)?;
             out.push(")");
+            return Ok(());
+        }
+        // **Where the container stays the caller's, `drain` empties it**
+        // (#564, [ADR-094](../../docs/specification/adr/adr-094.md) D3, D4): a
+        // `mut` parameter is lowered as `&mut T`, and `into_iter` over it
+        // neither takes the elements away nor hands out owned ones - what a
+        // body that stores them needs. `drain(..)` does both, and leaves the
+        // list empty in the caller's hands, which is what taking the elements
+        // away from something somebody still holds means.
+        if self.text(method) == "drain"
+            && args.is_empty()
+            && let Some(receiver) = receiver
+            && self.stays_the_callers(receiver, flow)
+        {
+            self.postfix_base(out, receiver, depth, flow)?;
+            out.push(".drain(..)");
             return Ok(());
         }
         let copies = match receiver {
