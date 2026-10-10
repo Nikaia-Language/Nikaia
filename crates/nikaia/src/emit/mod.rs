@@ -1650,20 +1650,20 @@ struct Emitter<'p> {
     code_parameter_runs: std::cell::RefCell<bool>,
     /// Part I 3.5: the `?.` reaches whose field is itself nullable and which
     /// therefore flatten (`check::Checked::flattened_reaches`).
-    flattened_reaches: std::collections::BTreeSet<(usize, String)>,
+    flattened_reaches: std::collections::BTreeSet<usize>,
     /// Part I 3.5: the `?.` reaches whose field **copies**, so the receiver can
     /// be taken by `as_ref()` and left where it was
     /// (`check::Checked::copied_reaches`).
-    copied_reaches: std::collections::BTreeSet<(usize, String)>,
+    copied_reaches: std::collections::BTreeSet<usize>,
     /// Part I 3.5: the `?.` reaches whose member comes out as a **view** of the
     /// receiver, and which of the two spellings it is taken with
     /// (`check::Checked::viewed_reaches`).
-    viewed_reaches: std::collections::BTreeMap<(usize, String), crate::check::Viewed>,
+    viewed_reaches: std::collections::BTreeMap<usize, crate::check::Viewed>,
     /// Part I 3.5: the `?.` reaches over a method that changes nothing, so the
     /// scrutinee can be taken by `as_ref()` (`check::Checked::lent_reaches`).
-    lent_reaches: std::collections::BTreeSet<(usize, String)>,
+    lent_reaches: std::collections::BTreeSet<usize>,
     /// `check::Checked::held_reaches` (ADR-278 D21).
-    held_reaches: std::collections::BTreeSet<(usize, String)>,
+    held_reaches: std::collections::BTreeSet<usize>,
     /// The receivers held before the statement being written, by address, and
     /// the name each is held under.
     held: std::cell::RefCell<HashMap<usize, String>>,
@@ -6808,7 +6808,7 @@ impl<'p> Emitter<'p> {
         };
         let mut found = Vec::new();
         let mut called = false;
-        self.held_in(value, span.at(), false, &mut called, &mut found);
+        self.held_in(value, false, &mut called, &mut found);
         for (receiver, safe) in found {
             if !safe || !holdable {
                 return Err(refused_at!(
@@ -6952,81 +6952,75 @@ impl<'p> Emitter<'p> {
     fn held_in<'e>(
         &self,
         expr: &'e Expr,
-        statement: usize,
         lazy: bool,
         called: &mut bool,
         found: &mut Vec<(&'e Expr, bool)>,
     ) {
         match expr {
-            Expr::SafeMethod {
-                receiver,
-                method,
-                args,
-                ..
-            } => {
+            Expr::SafeMethod { receiver, args, .. } => {
                 let held = self
                     .held_reaches
-                    .contains(&(statement, self.text(*method).to_string()))
+                    .contains(&crate::check::value_node(receiver))
                     && !matches!(receiver.as_ref(), Expr::Variable(_, _));
                 if held {
                     found.push((receiver, !lazy && !*called));
                 }
-                self.held_in(receiver, statement, lazy, called, found);
+                self.held_in(receiver, lazy, called, found);
                 for arg in args {
-                    self.held_in(arg, statement, lazy, called, found);
+                    self.held_in(arg, lazy, called, found);
                 }
                 *called = true;
             }
             Expr::Call { func, args, .. } => {
-                self.held_in(func, statement, lazy, called, found);
+                self.held_in(func, lazy, called, found);
                 for arg in args {
-                    self.held_in(arg, statement, lazy, called, found);
+                    self.held_in(arg, lazy, called, found);
                 }
                 *called = true;
             }
             Expr::MethodCall { receiver, args, .. } => {
-                self.held_in(receiver, statement, lazy, called, found);
+                self.held_in(receiver, lazy, called, found);
                 for arg in args {
-                    self.held_in(arg, statement, lazy, called, found);
+                    self.held_in(arg, lazy, called, found);
                 }
                 *called = true;
             }
             Expr::Coalesce {
                 value, fallback, ..
             } => {
-                self.held_in(value, statement, lazy, called, found);
-                self.held_in(fallback, statement, true, called, found);
+                self.held_in(value, lazy, called, found);
+                self.held_in(fallback, true, called, found);
             }
             Expr::Binary { lhs, rhs, op, .. } => {
-                self.held_in(lhs, statement, lazy, called, found);
+                self.held_in(lhs, lazy, called, found);
                 let short = matches!(op, crate::ast::BinaryOp::And | crate::ast::BinaryOp::Or);
-                self.held_in(rhs, statement, lazy || short, called, found);
+                self.held_in(rhs, lazy || short, called, found);
             }
             Expr::Match { value, arms, .. } => {
-                self.held_in(value, statement, lazy, called, found);
+                self.held_in(value, lazy, called, found);
                 for arm in arms {
-                    self.held_in(&arm.body, statement, true, called, found);
+                    self.held_in(&arm.body, true, called, found);
                 }
             }
-            Expr::If { cond, .. } => self.held_in(cond, statement, lazy, called, found),
+            Expr::If { cond, .. } => self.held_in(cond, lazy, called, found),
             Expr::Field { base, .. } | Expr::SafeField { base, .. } => {
-                self.held_in(base, statement, lazy, called, found)
+                self.held_in(base, lazy, called, found)
             }
             Expr::Index { base, index, .. } => {
-                self.held_in(base, statement, lazy, called, found);
-                self.held_in(index, statement, lazy, called, found);
+                self.held_in(base, lazy, called, found);
+                self.held_in(index, lazy, called, found);
             }
             Expr::Unary { expr, .. } | Expr::Try(expr, _) | Expr::Cast { expr, .. } => {
-                self.held_in(expr, statement, lazy, called, found)
+                self.held_in(expr, lazy, called, found)
             }
             Expr::Tuple(parts, _) | Expr::ListLit { items: parts, .. } => {
                 for part in parts {
-                    self.held_in(part, statement, lazy, called, found);
+                    self.held_in(part, lazy, called, found);
                 }
             }
             Expr::StructLit { fields, .. } => {
                 for value in fields.iter().filter_map(|f| f.value.as_ref()) {
-                    self.held_in(value, statement, lazy, called, found);
+                    self.held_in(value, lazy, called, found);
                 }
             }
             // A block, a lambda, a string's holes: statements of their own, or
@@ -8652,10 +8646,9 @@ impl<'p> Emitter<'p> {
                 config,
                 ..
             } => {
-                let name = self.text(*method).to_string();
                 let flattens = self
                     .flattened_reaches
-                    .contains(&(flow.statement, name.clone()));
+                    .contains(&crate::check::value_node(receiver));
                 // **The scrutinee is lent where the call changes nothing**
                 // ([ADR-278](../../docs/specification/adr/adr-278.md) D18):
                 // `find(1)?.greet("Hallo")` used to take `find(1)`'s value into
@@ -8663,7 +8656,10 @@ impl<'p> Emitter<'p> {
                 // afterwards and `rustc` said so about a file nobody wrote
                 // (Part III C.1). What comes out is the **call's** result, so
                 // nothing about the reach needs the state that is not built.
-                let lent = match self.lent_reaches.contains(&(flow.statement, name.clone())) {
+                let lent = match self
+                    .lent_reaches
+                    .contains(&crate::check::value_node(receiver))
+                {
                     true => ".as_ref()",
                     false => "",
                 };
@@ -8752,7 +8748,7 @@ impl<'p> Emitter<'p> {
                         if i > 0 {
                             out.push(" | ");
                         }
-                        self.match_pattern(out, &arm.pattern, depth + 1, flow)?;
+                        self.match_pattern(out, &arm.pattern, &arm.body, depth + 1, flow)?;
                     }
                     out.push(")");
                     return Ok(());
@@ -8780,9 +8776,8 @@ impl<'p> Emitter<'p> {
                     // arm, so it binds nothing.
                     if arm.guard.is_none()
                         && !self.looks_inside_a_box(&arm.pattern)
-                        && let Some(stand_in) = self
-                            .taking_arms
-                            .get(&(&arm.pattern as *const MatchPattern as usize))
+                        && let Some(stand_in) =
+                            self.taking_arms.get(&crate::check::value_node(&arm.body))
                     {
                         self.pattern_written(
                             out,
@@ -8832,9 +8827,7 @@ impl<'p> Emitter<'p> {
                     // whether it has the shape (the next arm is tried where it
                     // does not, as for any pattern), and the arm takes it
                     // apart before anything else.
-                    let lent = self
-                        .lent_bindings
-                        .get(&(&arm.pattern as *const MatchPattern as usize));
+                    let lent = self.lent_bindings.get(&crate::check::value_node(&arm.body));
                     let mut nests: Vec<&MatchPattern> = Vec::new();
                     self.pattern_written(
                         out,
@@ -8851,7 +8844,7 @@ impl<'p> Emitter<'p> {
                     // `false` where it does not.
                     let reads_inside = self
                         .guards_inside_boxes
-                        .get(&(&arm.pattern as *const MatchPattern as usize));
+                        .get(&crate::check::value_node(&arm.body));
                     if let (Some(copied), Some(guard)) = (reads_inside, &arm.guard)
                         && !nests.is_empty()
                     {
@@ -9036,7 +9029,7 @@ impl<'p> Emitter<'p> {
                 let field = self.text(*name).to_string();
                 let flattens = self
                     .flattened_reaches
-                    .contains(&(flow.statement, field.clone()));
+                    .contains(&crate::check::value_node(base));
                 let how = if flattens { "and_then" } else { "map" };
                 // **The receiver is lent where the member copies**
                 // ([ADR-278](../../docs/specification/adr/adr-278.md) D18):
@@ -9053,7 +9046,7 @@ impl<'p> Emitter<'p> {
                 // nothing about (Part III C.4). Both lower exactly as they did.
                 let copies = self
                     .copied_reaches
-                    .contains(&(flow.statement, field.clone()));
+                    .contains(&crate::check::value_node(base));
                 // **And where it comes out as a view** (0.0.244, issue #167
                 // issue #167): a view of the member is a view *into* the receiver,
                 // so the receiver has to be lent for it as well. `a.b?.c?.v`
@@ -9061,7 +9054,7 @@ impl<'p> Emitter<'p> {
                 // and handed back a view of the value it had just moved.
                 let viewed = self
                     .viewed_reaches
-                    .contains_key(&(flow.statement, field.clone()));
+                    .contains_key(&crate::check::value_node(base));
                 let lent = match copies || viewed {
                     true => ".as_ref()",
                     false => "",
@@ -9081,7 +9074,7 @@ impl<'p> Emitter<'p> {
                     false => format!("__nikaia_it.{field}"),
                 };
                 let reach = match (
-                    self.viewed_reaches.get(&(flow.statement, field.clone())),
+                    self.viewed_reaches.get(&crate::check::value_node(base)),
                     flattens,
                 ) {
                     (None, _) => place,
@@ -12082,7 +12075,7 @@ impl<'p> Emitter<'p> {
                 if at >= member_arms.len() {
                     out.push("#[allow(unreachable_patterns)] ");
                 }
-                self.match_pattern(out, &arm.pattern, depth + 2, flow)?;
+                self.match_pattern(out, &arm.pattern, &arm.body, depth + 2, flow)?;
                 if let Some(guard) = &arm.guard {
                     out.push(" if ");
                     self.expr(out, guard, depth + 2, flow)?;
@@ -13036,7 +13029,7 @@ impl<'p> Emitter<'p> {
         self.boxed_bindings(pattern, &mut opened);
         // **And a number bound out of a lent value is copied out** (0.0.236,
         // `check::Checked::copied_bindings`).
-        let at = pattern as *const MatchPattern as usize;
+        let at = crate::check::value_node(body);
         let copied: Vec<&String> = self
             .copied_bindings
             .range((at, String::new())..)
@@ -13216,12 +13209,11 @@ impl<'p> Emitter<'p> {
         &self,
         out: &mut Out,
         pattern: &MatchPattern,
+        body: &Expr,
         depth: usize,
         flow: Flow<'_>,
     ) -> Result<()> {
-        let lent = self
-            .lent_bindings
-            .get(&(pattern as *const MatchPattern as usize));
+        let lent = self.lent_bindings.get(&crate::check::value_node(body));
         self.pattern_lending(out, pattern, lent, depth, flow)
     }
 
@@ -16379,7 +16371,7 @@ pub(crate) fn nonnegative_names(body: &Block) -> HashSet<Symbol> {
 
 fn nonnegative_locals(body: &Block) -> HashSet<Symbol> {
     let mut statements: Vec<&Stmt> = Vec::new();
-    let mut seen: HashSet<*const Stmt> = HashSet::new();
+    let mut seen: HashSet<StatementKey> = HashSet::new();
     every_statement(body, &mut statements, &mut seen);
     let literal = |e: &Expr| {
         matches!(
@@ -16454,10 +16446,35 @@ fn nonnegative_locals(body: &Block) -> HashSet<Symbol> {
         .collect()
 }
 
+/// **A statement told from every other**: where it stands, what kind it is and
+/// the id of the expression it holds. `guarded` files a jump at the span of the
+/// `if` it stands in, so the span and the kind alone name two statements as one
+/// where the jump is a `throw` - and the id of what each holds tells them apart.
+type StatementKey = (u32, u32, std::mem::Discriminant<Stmt>, usize);
+
+fn statement_key(stmt: &Spanned<Stmt>) -> StatementKey {
+    let held = match &stmt.node {
+        Stmt::Expr(value) | Stmt::Return(Some(value)) | Stmt::Let { value, .. } => {
+            crate::check::value_node(value)
+        }
+        _ => 0,
+    };
+    (
+        stmt.span.start,
+        stmt.span.end,
+        std::mem::discriminant(&stmt.node),
+        held,
+    )
+}
+
 /// Every statement of `block` and of every block inside it, once each.
-fn every_statement<'b>(block: &'b Block, out: &mut Vec<&'b Stmt>, seen: &mut HashSet<*const Stmt>) {
+fn every_statement<'b>(
+    block: &'b Block,
+    out: &mut Vec<&'b Stmt>,
+    seen: &mut HashSet<StatementKey>,
+) {
     for stmt in &block.stmts {
-        if !seen.insert(&stmt.node as *const Stmt) {
+        if !seen.insert(statement_key(stmt)) {
             continue;
         }
         out.push(&stmt.node);

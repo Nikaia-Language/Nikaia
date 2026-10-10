@@ -337,6 +337,10 @@ where
 
 // --- Public API ---
 
+/// The parameters and the call a named function stands for where a function
+/// value is kept ([`Parsed::kept_function_call`]).
+type KeptCall = (Vec<Symbol>, ast::Expr);
+
 /// A parsed program together with the interner that produced its identifiers.
 ///
 /// Identifiers in the AST are `Symbol` handles, which are only meaningful with
@@ -389,7 +393,7 @@ pub struct Parsed {
     /// kept**, by the function's name and its arity: one tree for the checker
     /// that types it and the emitter that writes it, so the ids they look the
     /// call up by agree ([`Parsed::kept_function_call`]).
-    kept_calls: std::sync::Mutex<std::collections::HashMap<(String, usize), (Vec<Symbol>, ast::Expr)>>,
+    kept_calls: std::sync::Mutex<std::collections::HashMap<(String, usize), KeptCall>>,
     /// **The next id this file has not given**
     /// ([ADR-340](../../../docs/specification/adr/adr-340.md) D1): where the
     /// parse of the file stopped counting, and where a hole parsed later

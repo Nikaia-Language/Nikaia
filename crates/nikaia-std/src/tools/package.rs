@@ -30688,7 +30688,7 @@ fn receivers(names: &winnow_grammar::InternerContext, items: &[Spanned<Item>], t
                 if !wanted.known || same_receiver(match wanted.receiver.as_ref() {
                     Some(__nikaia_it) => Some(__nikaia_it.clone()),
                     None => None,
-                }, match receiver.as_ref() {
+                }, match receiver {
                     Some(__nikaia_it) => Some(__nikaia_it.to_owned()),
                     None => None,
                 }) { continue; }

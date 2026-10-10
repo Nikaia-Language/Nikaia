@@ -8,6 +8,14 @@ or the specification. A change only to the guide, the notes, the README, the
 website, the tests, the examples or the tooling around them raises nothing and
 has no heading here; `CLAUDE.md` draws the line.
 
+## [0.0.784] — 2026-10-10
+
+**No table is keyed on the address of anything: a `match` arm's facts are keyed on its body's id, a `?.` reach on its receiver's (ADR-340 D4, #558, step 4).**
+- `lent_bindings`, `taking_arms`, `guards_inside_boxes` and `copied_bindings` were keyed on the address of the arm's `MatchPattern`; they are keyed on the id of the arm's body (an arm has exactly one), so `match_pattern` and two checker functions take the body. `flattened_reaches`, `copied_reaches`, `viewed_reaches`, `lent_reaches` and `held_reaches` (`x?.f`, `x?.m()`) were keyed on a statement and a name; they are keyed on the id of the receiver the `?.` reaches through.
+- `every_statement`, the walk of `nonnegative_locals`, told a statement it had seen by its address; it is told by where it stands, its kind and the id of what it holds.
+- `nullable_fields` is keyed on the id of the literal and the field's name: a field written as a bare name has no value of its own to carry an id. The call a named function stands for where a function value is kept is built once per name and arity (`Parsed::kept_function_call`), so the checker and the emitter look the same nodes up.
+- `grep -c 'as \*const'` on `check` and `emit`: 0.
+
 ## [0.0.783] — 2026-10-10
 
 **`argument_shape` is gone: the call arguments, the struct-literal fields, the asserts and the tier pass's hole wraps are keyed on the id (ADR-340 D4, #558, step 4).**

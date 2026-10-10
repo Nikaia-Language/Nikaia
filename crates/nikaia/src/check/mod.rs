@@ -528,13 +528,12 @@ pub struct Checked {
     /// **`count()` calls that are `std`'s count of a sequence**, by the id of the receiver: the language below counts in `usize`, and a count
     /// is an `i64` here, as a length is (Part I 2.2, ADR-285 D1).
     pub counted: BTreeSet<usize>,
-    /// **The names a `match` arm binds as a view of its scrutinee**, by the
-    /// arm's pattern: the scrutinee is a place this function owns, the part
+    /// **The names a `match` arm binds as a view of its scrutinee**, by the id of the arm's body: the scrutinee is a place this function owns, the part
     /// does not copy, and the arm does not keep it - so the name stays whole
     /// after the `match` (Part I 6.5, ADR-291).
     pub lent_bindings: BTreeMap<usize, BTreeSet<String>>,
     /// **The arms of a `match` over a `mut` parameter that take a part out of
-    /// it**, by the arm's pattern, with what stands in the place while the
+    /// it**, by the id of the arm's body, with what stands in the place while the
     /// part is out ([ADR-094](../../docs/specification/adr/adr-094.md) D7): a
     /// value of the type that costs nothing to make, written as the language
     /// below reads it. The arm works on the value taken out of the place and
@@ -555,7 +554,7 @@ pub struct Checked {
     /// views they are here.
     pub lent_scrutinees: BTreeSet<usize>,
     /// **A guard that reads names bound inside a boxed part** (ADR-246 D5
-    /// item 2), by the arm's pattern, and which of those names copy: the
+    /// item 2), by the id of the arm's body, and which of those names copy: the
     /// lowering binds them again inside the guard, through the box, and copies
     /// those out.
     pub guards_inside_boxes: BTreeMap<usize, BTreeSet<String>>,
@@ -745,7 +744,7 @@ pub struct Checked {
     /// statement is left out of the set entirely rather than resolved by
     /// position, which keeps `map` - the answer that cannot make a nested
     /// option out of a plain field - as the one it falls back to.
-    pub flattened_reaches: BTreeSet<(usize, String)>,
+    pub flattened_reaches: BTreeSet<usize>,
     /// Part I 3.5: the `?.` reaches over a field this compiler knows to
     /// **copy**, as the byte the statement starts at and the field's name
     /// ([ADR-278](../../docs/specification/adr/adr-278.md) D18).
@@ -761,7 +760,7 @@ pub struct Checked {
     /// the certain cases rather than the complement: a field whose type is
     /// `Unknown` is left where it was, and the reach lowers exactly as it did
     /// before this set existed.
-    pub copied_reaches: BTreeSet<(usize, String)>,
+    pub copied_reaches: BTreeSet<usize>,
     /// Part I 3.5: the `?.` reaches over a field that does **not** copy and
     /// whose receiver is a **place**, so the member comes out as a *view* of it
     /// ([ADR-278](../../docs/specification/adr/adr-278.md) D19,
@@ -778,7 +777,7 @@ pub struct Checked {
     /// file nobody wrote. A temporary has no next line to stay usable on, so
     /// leaving it owned keeps [ADR-278](../../docs/specification/adr/adr-278.md)
     /// D1's promise where it means anything.
-    pub viewed_reaches: BTreeMap<(usize, String), Viewed>,
+    pub viewed_reaches: BTreeMap<usize, Viewed>,
     /// Part I 3.5: the `?.` reaches over a **method** that changes nothing, as
     /// the byte the statement starts at and the method's name
     /// ([ADR-278](../../docs/specification/adr/adr-278.md) D18).
@@ -793,13 +792,13 @@ pub struct Checked {
     /// **Only where every candidate for the name says it changes nothing**, the
     /// rule `NK1138` already uses one construct over: a name this compiler
     /// cannot resolve is not claimed about, and the reach lowers as it did.
-    pub lent_reaches: BTreeSet<(usize, String)>,
+    pub lent_reaches: BTreeSet<usize>,
     /// A lent `?.` method reach whose result is a **view** and whose receiver
     /// is a temporary - rooted in a call - by statement and method name
     /// ([ADR-278](../../docs/specification/adr/adr-278.md) D21). The receiver is
     /// held in a binding of its own before the statement, so the view has
     /// something to point into past the `;`.
-    pub held_reaches: BTreeSet<(usize, String)>,
+    pub held_reaches: BTreeSet<usize>,
     /// The **struct-literal fields** where a plain value stands in a nullable
     /// slot, by the id of the literal and the field's name (Part I 2.3,
     /// [ADR-340](../../docs/specification/adr/adr-340.md)).
@@ -892,8 +891,7 @@ pub struct Checked {
     /// emitter writes `(*base.field)`, the place that behaves as the unboxed
     /// field would ([ADR-246](../../docs/specification/adr/adr-246.md) D2).
     pub boxed_reads: BTreeSet<usize>,
-    /// **A number an arm binds out of a value it was lent** (0.0.236), by the
-    /// pattern's address and the name: the language below binds a `&i64`
+    /// **A number an arm binds out of a value it was lent** (0.0.236), by the id of the arm's body and the name: the language below binds a `&i64`
     /// there, and the emitter copies the number out at the head of the arm, so
     /// `Expr::Num(n) => n` is the `i64` the pattern's type says.
     pub copied_bindings: BTreeSet<(usize, String)>,
@@ -2084,15 +2082,15 @@ pub struct Propagation {
     /// [`Checked::nullable_sites`].
     pub nullable: BTreeMap<usize, Wrap>,
     /// [`Checked::flattened_reaches`].
-    pub flattened: BTreeSet<(usize, String)>,
+    pub flattened: BTreeSet<usize>,
     /// [`Checked::copied_reaches`].
-    pub copied: BTreeSet<(usize, String)>,
+    pub copied: BTreeSet<usize>,
     /// [`Checked::viewed_reaches`].
-    pub viewed: BTreeMap<(usize, String), Viewed>,
+    pub viewed: BTreeMap<usize, Viewed>,
     /// [`Checked::lent_reaches`].
-    pub lent_reaches: BTreeSet<(usize, String)>,
+    pub lent_reaches: BTreeSet<usize>,
     /// [`Checked::held_reaches`].
-    pub held_reaches: BTreeSet<(usize, String)>,
+    pub held_reaches: BTreeSet<usize>,
     /// [`Checked::nullable_fields`].
     pub nullable_in_fields: BTreeMap<(usize, String), Wrap>,
     /// [`Checked::nullable_args`].
@@ -5010,7 +5008,7 @@ impl<'a> Checker<'a> {
     /// which of those are a number, a `bool` or a `char`: those are copied out
     /// for the guard (`let n = *n;`), and the rest stay views of the part,
     /// which is what a guard does with them anyway - it reads.
-    fn a_guard_reading_inside_a_box(&mut self, pattern: &MatchPattern, guard: &Expr) {
+    fn a_guard_reading_inside_a_box(&mut self, pattern: &MatchPattern, body: &Expr, guard: &Expr) {
         let mut inside = Vec::new();
         self.names_inside_boxes(pattern, &mut inside);
         if inside.is_empty() {
@@ -5035,8 +5033,9 @@ impl<'a> Checker<'a> {
             .filter(|name| typed.get(*name).is_some_and(a_copy_by_value))
             .cloned()
             .collect();
-        let at = pattern as *const MatchPattern as usize;
-        self.checked.guards_inside_boxes.insert(at, copied);
+        self.checked
+            .guards_inside_boxes
+            .insert(value_node(body), copied);
     }
 
     /// The names a pattern binds **whole** to a boxed part: `a` in
@@ -5773,7 +5772,7 @@ impl<'a> Checker<'a> {
             && !matches!(receiver, Expr::Index { .. })
             && !inner.is_a_view();
         if lent {
-            self.checked.lent_reaches.insert((span.at(), name.clone()));
+            self.checked.lent_reaches.insert(value_node(receiver));
         }
         // **And a copy of a view is text of its own** (ADR-293 D24),
         // reached or not: `b?.clone()` for a `b: ref String?` is a
@@ -5795,14 +5794,14 @@ impl<'a> Checker<'a> {
             other => other.is_a_view(),
         };
         if lent && a_view && !roots_in_a_binding(receiver) {
-            self.checked.held_reaches.insert((span.at(), name.clone()));
+            self.checked.held_reaches.insert(value_node(receiver));
         }
         match reached {
             // The `and_then` case, recorded by name for the emitter
             // exactly as a nullable field is (ADR-288: the emitter has
             // no types and this is a question about one).
             Ty::Nullable(result) => {
-                self.checked.flattened_reaches.insert((span.at(), name));
+                self.checked.flattened_reaches.insert(value_node(receiver));
                 Ty::Nullable(result)
             }
             Ty::Unknown => Ty::Unknown,
@@ -5863,12 +5862,12 @@ impl<'a> Checker<'a> {
                     Ty::Nullable(inner) if place && crate::contracts::keeps::moves(inner) => {
                         self.checked
                             .viewed_reaches
-                            .insert((span.at(), field.clone()), viewed_as(inner));
-                        self.checked.flattened_reaches.insert((span.at(), field));
+                            .insert(value_node(base), viewed_as(inner));
+                        self.checked.flattened_reaches.insert(value_node(base));
                         Ty::Nullable(Box::new(inner.as_a_view()))
                     }
                     Ty::Nullable(_) => {
-                        self.checked.flattened_reaches.insert((span.at(), field));
+                        self.checked.flattened_reaches.insert(value_node(base));
                         declared.ty
                     }
                     // **A member that copies comes out of a view**
@@ -5892,7 +5891,7 @@ impl<'a> Checker<'a> {
                     // [ADR-278](../../docs/specification/adr/adr-278.md)
                     // D8's translation stays for it alone.
                     plain if !crate::contracts::keeps::moves(plain) => {
-                        self.checked.copied_reaches.insert((span.at(), field));
+                        self.checked.copied_reaches.insert(value_node(base));
                         Ty::Nullable(Box::new(plain.clone()))
                     }
                     // **And a member that does not copy comes out as a
@@ -5905,10 +5904,8 @@ impl<'a> Checker<'a> {
                     // D2 calls the free case.
                     plain if place => {
                         let viewed = viewed_as(plain);
-                        self.checked
-                            .viewed_reaches
-                            .insert((span.at(), field.clone()), viewed);
-                        self.checked.copied_reaches.insert((span.at(), field));
+                        self.checked.viewed_reaches.insert(value_node(base), viewed);
+                        self.checked.copied_reaches.insert(value_node(base));
                         Ty::Nullable(Box::new(plain.as_a_view()))
                     }
                     plain => Ty::Nullable(Box::new(plain.clone())),
@@ -10650,7 +10647,7 @@ impl<'a> Checker<'a> {
                     self.a_pattern_naming_a_member_a_type_does_not_have(&arm.pattern, span);
                     self.a_pattern_inside_a_box(&arm.pattern, span);
                     if let Some(guard) = &arm.guard {
-                        self.a_guard_reading_inside_a_box(&arm.pattern, guard);
+                        self.a_guard_reading_inside_a_box(&arm.pattern, &arm.body, guard);
                     }
                     // **Over a place this function owns, a part is lent**
                     // (ADR-291): the bindings are typed from the
@@ -10698,7 +10695,7 @@ impl<'a> Checker<'a> {
                     // takes apart is a view too - `Expr::Add(Expr::Num(n), b)
                     // => n` over a `ref Expr` handed back a `&i64`.
                     if typed.is_a_view() || through_the_reference {
-                        let at = &arm.pattern as *const MatchPattern as usize;
+                        let at = value_node(&arm.body);
                         let mut parts = self.s.pattern_parts(&self.world, &arm.pattern, &typed);
                         self.typed_inside_boxes(&arm.pattern, &mut parts);
                         for (name, ty) in parts {
@@ -10785,7 +10782,6 @@ impl<'a> Checker<'a> {
                     }
                     let ty = self.expr(&arm.body, span);
                     self.a_part_lent_where_it_is_not_kept(
-                        &arm.pattern,
                         &arm.body,
                         &parts,
                         from,
@@ -10795,11 +10791,7 @@ impl<'a> Checker<'a> {
                     self.a_branch_that_leaves(from, self.s.exits(&self.world, &arm.body), span);
                     if let Some(subject) = &mut_subject {
                         self.parts_taken_out_of_a_mut_parameter(
-                            subject,
-                            &arm.pattern,
-                            &typed,
-                            &parts,
-                            from.1,
+                            subject, &arm.body, &typed, &parts, from.1,
                         );
                     }
                     self.branch.pop();
@@ -16671,7 +16663,7 @@ impl<'a> Checker<'a> {
     fn parts_taken_out_of_a_mut_parameter(
         &mut self,
         path: &str,
-        pattern: &MatchPattern,
+        body: &Expr,
         subject: &Ty,
         parts: &BTreeMap<String, Ty>,
         handed_from: usize,
@@ -16708,7 +16700,7 @@ impl<'a> Checker<'a> {
         if !any {
             return;
         }
-        let at = pattern as *const MatchPattern as usize;
+        let at = value_node(body);
         // The guard and a pattern that looks inside a box keep the arm as it
         // was: both are read before the arm opens anything.
         if let Some(placeholder) = self.a_placeholder(subject) {
@@ -22702,7 +22694,6 @@ impl<'a> Checker<'a> {
     /// whole for what comes after the `match`.
     fn a_part_lent_where_it_is_not_kept(
         &mut self,
-        pattern: &MatchPattern,
         body: &Expr,
         parts: &BTreeMap<String, Ty>,
         (_, from): (usize, usize),
@@ -22725,7 +22716,7 @@ impl<'a> Checker<'a> {
             // (the place is a `&mut` below), and `ref` in a pattern that
             // borrows by itself is the language below's error (#576).
             if !bound_by_reference {
-                let at = pattern as *const MatchPattern as usize;
+                let at = value_node(body);
                 self.checked.lent_bindings.insert(at, lent);
             }
         }
