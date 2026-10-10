@@ -1,0 +1,192 @@
+// crates/nikaia-std/src/tools/comptime_driver.nika
+//
+// **A `comptime` that calls a function is compiled and run** (ADR-321 D1): the
+// text of the sub-program's `main`, of the bundle it is linked against, and the
+// map from the sub-program's lines back to the bytes of the file it came from.
+// Moved from the compiler's `comptime_run` (ADR-294, #125); compiling and running
+// stay Rust.
+
+use std::collections
+
+/// **The bundle's one file**: `std`, and the allocator every build-time run uses
+/// (ADR-321 D10). Here and not in each run's program, because a program linked
+/// against `std` dynamically uses the allocator of the library it links;
+/// `unsafe` because an allocator is, and generated because `std` has none
+/// (ADR-218).
+pub fn cr_bundle_source() -> String {
+    return "// GENERATED (ADR-321 D3, D10).
+pub extern crate nikaia_std;
+pub extern crate winnow;
+pub extern crate winnow_grammar;
+
+/// What every run has live, against the bound its program sets.
+pub static LIVE: nikaia_std::build_time::Counted = nikaia_std::build_time::Counted::new();
+
+struct Heap;
+
+// SAFETY: every request is the system allocator's, unchanged; this only counts.
+unsafe impl std::alloc::GlobalAlloc for Heap {
+unsafe fn alloc(&self, layout: std::alloc::Layout) -> *mut u8 {
+LIVE.take(layout.size());
+unsafe { std::alloc::GlobalAlloc::alloc(&std::alloc::System, layout) }
+}
+unsafe fn alloc_zeroed(&self, layout: std::alloc::Layout) -> *mut u8 {
+LIVE.take(layout.size());
+unsafe { std::alloc::GlobalAlloc::alloc_zeroed(&std::alloc::System, layout) }
+}
+unsafe fn dealloc(&self, ptr: *mut u8, layout: std::alloc::Layout) {
+LIVE.give(layout.size());
+unsafe { std::alloc::GlobalAlloc::dealloc(&std::alloc::System, ptr, layout) }
+}
+unsafe fn realloc(&self, ptr: *mut u8, layout: std::alloc::Layout, size: usize) -> *mut u8 {
+match size >= layout.size() {
+true => LIVE.take(size - layout.size()),
+false => LIVE.give(layout.size() - size),
+}
+unsafe { std::alloc::GlobalAlloc::realloc(&std::alloc::System, ptr, layout, size) }
+}
+}
+
+#[global_allocator]
+static HEAP: Heap = Heap;
+"
+}
+
+/// The bundle's manifest, with the dependencies a generated program gets.
+pub fn cr_bundle_manifest(dependencies: ref Vec[(String, String)]) -> String {
+    let mut manifest: String = "# GENERATED. The library build-time code links against (ADR-321 D3).
+
+[workspace]
+
+[package]
+name = \"nikaia_bundle\"
+version = \"0.0.0\"
+edition = \"2024\"
+
+[lib]
+path = \"src/lib.rs\"
+
+[dependencies]
+"
+    for (name, value) in dependencies {
+        manifest.push_str(f"{name} = {value}\n")
+    }
+    return manifest
+}
+
+/// The sub-program's `main`: the value is computed on a thread of its own, with
+/// a stack that holds `build_time::DEEPEST` calls, and against the budget (D7).
+fn cr_main(value_fn: ref String, dump: ref String, budget: u64, memory: u64) -> String {
+    return f"
+fn main() {{
+\x20   nikaia_std::abort::report_in_nikaia_terms(__NIKAIA_SITES);
+\x20   nikaia_bundle::LIVE.bound({memory});
+\x20   let computed = std::thread::Builder::new()
+\x20       .stack_size(nikaia_std::build_time::STACK)
+\x20       .spawn(|| {{
+\x20           nikaia_std::build_time::start({budget});
+\x20           let value = {value_fn}();
+\x20           let mut out = String::new();
+{dump}\x20           out
+\x20       }})
+\x20       .expect(\"the build-time thread\")
+\x20       .join();
+\x20   match computed {{
+\x20       Ok(out) => println!(\"{{out}}\"),
+\x20       Err(_) => std::process::exit(101),
+\x20   }}
+}}
+"
+}
+
+/// A `.nika` file's place in a row: the generated line, and the byte it starts at.
+struct CrRow {
+    line: i64,
+    unit: i64,
+    byte: i64,
+}
+
+/// The lowered sub-program with a `main` of its own: the generated one starts
+/// the runtime and runs the program's body, and this one reports a stop, computes
+/// the value and writes it. `rows` is the map the lowering made, as `(generated
+/// byte, byte, unit)`; nothing where the program has no `main` or no site table.
+///
+/// **A stop names the byte it came from**, where the program's own table names a
+/// `.nika` line (ADR-300 D9): the sub-program has no file of its own, and the
+/// checker turns the byte back into a place in the file it is checking.
+pub fn cr_with_driver(rust: ref String, rows: ref Vec[(i64, i64, i64)], value_fn: ref String, dump: ref String, helpers: ref String, stopped_at: ref String, budget: u64, memory: u64) -> String? {
+    let start = rust.find("\nfn main() {\n") ?? return null
+    let tail = rust[start + 1..<rust.len()].clone()
+    let found = tail.find("\n}\n") ?? return null
+    let end = start + 1 + found + 3
+    let main = cr_main(value_fn, dump, budget, memory)
+    // Where each line of the lowered program starts, by byte.
+    let mut starts: Vec[i64] = [0]
+    let mut byte = 0
+    for c in rust.chars() {
+        let code = c as i64
+        if code < 128 {
+            byte += 1
+        } else if code < 2048 {
+            byte += 2
+        } else if code < 65536 {
+            byte += 3
+        } else {
+            byte += 4
+        }
+        if c == '\n' {
+            starts.push(byte)
+        }
+    }
+    let mut placed: collections::BTreeMap[i64, CrRow] = collections::BTreeMap()
+    // A line below the `main` this replaces moves by what the new one adds.
+    let moved = cr_lines(main) - cr_lines(rust[start..<end].clone())
+    for (generated, at, unit) in rows {
+        if (generated >= start && generated < end) || at == 0 {
+            continue
+        }
+        // The line a byte is on: after the last line start not past it.
+        let mut low = 0
+        let mut high = starts.len()
+        while low < high {
+            let middle = (low + high) / 2
+            if starts[middle] <= generated {
+                low = middle + 1
+            } else {
+                high = middle
+            }
+        }
+        let mut line = low
+        if generated >= end {
+            line = line + moved
+        }
+        if !placed.contains_key(line) {
+            placed.insert(line, CrRow { line: line, unit: unit, byte: at })
+        }
+    }
+    let mut table: String = "const __NIKAIA_SITES: &[nikaia_std::abort::Site] = &[\n"
+    for (line, row) in placed {
+        table.push_str(f"    ({line}, \"{stopped_at}{row.unit}\", {row.byte}),\n")
+    }
+    table.push_str("];\n")
+    let rest = rust[end..<rust.len()].clone()
+    let empty = rest.find("const __NIKAIA_SITES") ?? return null
+    let after_empty = rest[empty..<rest.len()].find("];\n") ?? return null
+    let after = empty + after_empty + 3
+    // **Nothing goes in front of the program**: the table maps its lines, and one
+    // line more above them would name the wrong one.
+    let front = rust[0..<start].clone()
+    let middle = rest[0..<empty].clone()
+    let back = rest[after..<rest.len()].clone()
+    return f"{front}{main}{middle}{table}{back}{helpers}\nextern crate nikaia_bundle;\n"
+}
+
+fn cr_lines(text: ref String) -> i64 {
+    let mut count = 0
+    for c in text.chars() {
+        if c == '\n' {
+            count += 1
+        }
+    }
+    return count
+}

@@ -9108,6 +9108,148 @@ fn collect_maybe(expr: Option<&Expr>, words: &winnow_grammar::InternerContext, h
 fn each_name(exprs: &[Expr], words: &winnow_grammar::InternerContext, holes_of: &impl Fn(&Expr) -> Vec<Expr>, names: &mut collections::BTreeSet<String>) { for e in exprs.iter() { collect_names(e, words, holes_of, names); } }
 
 
+// --- comptime_driver.nika ---
+
+pub fn cr_bundle_source() -> String {
+    String::from("// GENERATED (ADR-321 D3, D10).
+pub extern crate nikaia_std;
+pub extern crate winnow;
+pub extern crate winnow_grammar;
+
+/// What every run has live, against the bound its program sets.
+pub static LIVE: nikaia_std::build_time::Counted = nikaia_std::build_time::Counted::new();
+
+struct Heap;
+
+// SAFETY: every request is the system allocator's, unchanged; this only counts.
+unsafe impl std::alloc::GlobalAlloc for Heap {
+unsafe fn alloc(&self, layout: std::alloc::Layout) -> *mut u8 {
+LIVE.take(layout.size());
+unsafe { std::alloc::GlobalAlloc::alloc(&std::alloc::System, layout) }
+}
+unsafe fn alloc_zeroed(&self, layout: std::alloc::Layout) -> *mut u8 {
+LIVE.take(layout.size());
+unsafe { std::alloc::GlobalAlloc::alloc_zeroed(&std::alloc::System, layout) }
+}
+unsafe fn dealloc(&self, ptr: *mut u8, layout: std::alloc::Layout) {
+LIVE.give(layout.size());
+unsafe { std::alloc::GlobalAlloc::dealloc(&std::alloc::System, ptr, layout) }
+}
+unsafe fn realloc(&self, ptr: *mut u8, layout: std::alloc::Layout, size: usize) -> *mut u8 {
+match size >= layout.size() {
+true => LIVE.take(size - layout.size()),
+false => LIVE.give(layout.size() - size),
+}
+unsafe { std::alloc::GlobalAlloc::realloc(&std::alloc::System, ptr, layout, size) }
+}
+}
+
+#[global_allocator]
+static HEAP: Heap = Heap;
+")
+}
+
+pub fn cr_bundle_manifest(dependencies: &[(String, String)]) -> String {
+    let mut manifest: String = String::from("# GENERATED. The library build-time code links against (ADR-321 D3).
+
+[workspace]
+
+[package]
+name = \"nikaia_bundle\"
+version = \"0.0.0\"
+edition = \"2024\"
+
+[lib]
+path = \"src/lib.rs\"
+
+[dependencies]
+");
+    for (name, value) in dependencies.iter() { manifest.push_str(&format!("{} = {}\n", name, value)); }
+    manifest
+}
+
+fn cr_main(value_fn: &str, dump: &str, budget: u64, memory: u64) -> String {
+    format!("
+fn main() {{
+\x20   nikaia_std::abort::report_in_nikaia_terms(__NIKAIA_SITES);
+\x20   nikaia_bundle::LIVE.bound({});
+\x20   let computed = std::thread::Builder::new()
+\x20       .stack_size(nikaia_std::build_time::STACK)
+\x20       .spawn(|| {{
+\x20           nikaia_std::build_time::start({});
+\x20           let value = {}();
+\x20           let mut out = String::new();
+{}\x20           out
+\x20       }})
+\x20       .expect(\"the build-time thread\")
+\x20       .join();
+\x20   match computed {{
+\x20       Ok(out) => println!(\"{{out}}\"),
+\x20       Err(_) => std::process::exit(101),
+\x20   }}
+}}
+", memory, budget, value_fn, dump)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct CrRow {
+    line: i64,
+    unit: i64,
+    byte: i64,
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn cr_with_driver(rust: &str, rows: &[(i64, i64, i64)], value_fn: &str, dump: &str, helpers: &str, stopped_at: &str, budget: u64, memory: u64) -> Option<String> {
+    let start = match nikaia_std::search::find(&rust, &"\nfn main() {\n", 0) { Some(__nikaia_value) => __nikaia_value, None => return None };
+    let tail = nikaia_std::index::get(&rust, nikaia_std::index::at(start + 1..)).to_owned();
+    let found = match nikaia_std::search::find(&tail, &"\n}\n", 0) { Some(__nikaia_value) => __nikaia_value, None => return None };
+    let end = start + 1 + found + 3;
+    let main = cr_main(value_fn, dump, budget, memory);
+    let mut starts: Vec<i64> = vec![0];
+    let mut byte = 0;
+    for c in rust.chars() {
+        let code = c as i64;
+        if code < 128 { byte += 1; } else if code < 2048 { byte += 2; } else if code < 65536 { byte += 3; } else { byte += 4; }
+        if c == '\n' { starts.push(byte); }
+    }
+    let mut placed: collections::BTreeMap<i64, CrRow> = collections::BTreeMap::new();
+    let moved = cr_lines(&main) - cr_lines(&nikaia_std::index::get(&rust, nikaia_std::index::at(start..end)).to_owned());
+    for (generated, at, unit) in rows.iter() {
+        let generated = nikaia_std::num::value(generated);let at = nikaia_std::num::value(at);let unit = nikaia_std::num::value(unit);
+        if generated >= start && generated < end || at == 0 { continue; }
+        let mut low: i64 = 0;
+        let mut high = starts.len() as i64;
+        while low < high {
+            let middle = (low + high) / 2;
+            if *nikaia_std::index::get(&starts, nikaia_std::index::at(middle)) <= generated { low = middle + 1; } else { high = middle; }
+        }
+        let mut line: i64 = low;
+        if generated >= end { line = line + moved; }
+        if !placed.contains_key(nikaia_std::index::AsKey::as_key(&line)) { placed.insert(line, CrRow { line, unit, byte: at }); }
+    }
+    let mut table: String = String::from("const __NIKAIA_SITES: &[nikaia_std::abort::Site] = &[\n");
+    for (line, row) in placed.iter() {
+        let line = nikaia_std::num::value(line);
+        table.push_str(&format!("    ({}, \"{}{}\", {}),\n", line, stopped_at, row.unit, row.byte));
+    }
+    table.push_str("];\n");
+    let rest = nikaia_std::index::get(&rust, nikaia_std::index::at(end..)).to_owned();
+    let empty = match nikaia_std::search::find(&rest, &"const __NIKAIA_SITES", 0) { Some(__nikaia_value) => __nikaia_value, None => return None };
+    let after_empty = match nikaia_std::search::find(&nikaia_std::index::get(&rest, nikaia_std::index::at(empty..)), &"];\n", 0) { Some(__nikaia_value) => __nikaia_value, None => return None };
+    let after = empty + after_empty + 3;
+    let front = nikaia_std::index::get(&rust, nikaia_std::index::at(0..start)).to_owned();
+    let middle = nikaia_std::index::get(&rest, nikaia_std::index::at(0..empty)).to_owned();
+    let back = nikaia_std::index::get(&rest, nikaia_std::index::at(after..)).to_owned();
+    Some(format!("{}{}{}{}{}{}\nextern crate nikaia_bundle;\n", front, main, middle, table, back, helpers))
+}
+
+fn cr_lines(text: &str) -> i64 {
+    let mut count: i64 = 0;
+    for c in text.chars() { if c == '\n' { count += 1; } }
+    count
+}
+
+
 // --- contract_changes.nika ---
 
 pub fn changed_contracts(now: &Ledger, committed: &Ledger, mine: &impl Fn(&str) -> bool, implies: &impl Fn(&[String], &[String], &collections::BTreeSet<String>) -> bool) -> String {
@@ -30172,6 +30314,10 @@ pub mod check_words {
 pub mod claim_names {
     #[allow(unused_imports)]
     pub use super::{claim_names_in, is_a_parameter};
+}
+pub mod comptime_driver {
+    #[allow(unused_imports)]
+    pub use super::{cr_bundle_source, cr_bundle_manifest, cr_with_driver};
 }
 pub mod contract_changes {
     #[allow(unused_imports)]

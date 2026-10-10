@@ -866,76 +866,21 @@ pub(crate) fn with_driver(
     dump: &str,
     bounds: Bounds,
 ) -> Option<String> {
-    let rust = &lowered.rust;
-    let start = rust.find("\nfn main() {\n")?;
-    let end = start + 1 + rust[start + 1..].find("\n}\n")? + 3;
-    // **The value is computed on a thread of its own**, with a stack that
-    // holds `build_time::DEEPEST` calls, and against the budget (D7).
-    let main = format!(
-        "\nfn main() {{\n\
-         \x20   nikaia_std::abort::report_in_nikaia_terms(__NIKAIA_SITES);\n\
-         \x20   nikaia_bundle::LIVE.bound({memory});\n\
-         \x20   let computed = std::thread::Builder::new()\n\
-         \x20       .stack_size(nikaia_std::build_time::STACK)\n\
-         \x20       .spawn(|| {{\n\
-         \x20           nikaia_std::build_time::start({budget});\n\
-         \x20           let value = {VALUE_FN}();\n\
-         \x20           let mut out = String::new();\n\
-         {dump}\
-         \x20           out\n\
-         \x20       }})\n\
-         \x20       .expect(\"the build-time thread\")\n\
-         \x20       .join();\n\
-         \x20   match computed {{\n\
-         \x20       Ok(out) => println!(\"{{out}}\"),\n\
-         \x20       Err(_) => std::process::exit(101),\n\
-         \x20   }}\n\
-         }}\n",
-        budget = bounds.steps,
-        memory = bounds.bytes
-    );
-    let mut starts = vec![0usize];
-    starts.extend(
-        rust.char_indices()
-            .filter(|(_, c)| *c == '\n')
-            .map(|(i, _)| i + 1),
-    );
-    let mut rows: std::collections::BTreeMap<usize, (usize, usize)> =
-        std::collections::BTreeMap::new();
-    // A line below the `main` this replaces moves by what the new one adds.
-    let lines = |text: &str| text.matches('\n').count() as isize;
-    let moved = lines(&main) - lines(&rust[start..end]);
-    for (generated, byte, unit) in lowered.map.rows() {
-        if (start..end).contains(&generated) || byte == 0 {
-            continue;
-        }
-        let line = match starts.binary_search(&generated) {
-            Ok(i) => i + 1,
-            Err(i) => i,
-        };
-        let line = match generated >= end {
-            true => (line as isize + moved) as usize,
-            false => line,
-        };
-        rows.entry(line).or_insert((unit, byte));
-    }
-    let mut table = String::from("const __NIKAIA_SITES: &[nikaia_std::abort::Site] = &[\n");
-    for (line, (unit, byte)) in rows {
-        table.push_str(&format!("    ({line}, \"{STOPPED_AT}{unit}\", {byte}),\n"));
-    }
-    table.push_str("];\n");
-    let rest = &rust[end..];
-    let empty = rest.find("const __NIKAIA_SITES")?;
-    let after = empty + rest[empty..].find("];\n")? + 3;
-    // **Nothing goes in front of the program**: the table maps its lines, and
-    // one line more above them would name the wrong one.
-    Some(format!(
-        "{}{main}{}{table}{}{}\nextern crate nikaia_bundle;\n",
-        &rust[..start],
-        &rest[..empty],
-        &rest[after..],
-        nikaia_std::tools::grammar_decode::gr_dump_helpers()
-    ))
+    let rows: Vec<(i64, i64, i64)> = lowered
+        .map
+        .rows()
+        .map(|(generated, byte, unit)| (generated as i64, byte as i64, unit as i64))
+        .collect();
+    nikaia_std::tools::comptime_driver::cr_with_driver(
+        &lowered.rust,
+        &rows,
+        VALUE_FN,
+        dump,
+        &nikaia_std::tools::grammar_decode::gr_dump_helpers(),
+        STOPPED_AT,
+        bounds.steps,
+        bounds.bytes,
+    )
 }
 
 /// **What a build-time run may spend** ([ADR-321](../../../docs/specification/adr/adr-321.md)
@@ -982,47 +927,6 @@ pub(crate) struct Bundle {
     stamp: String,
 }
 
-/// **The bundle's one file**: `std`, and the allocator every build-time run
-/// uses ([ADR-321](../../../docs/specification/adr/adr-321.md) D10). Here and
-/// not in each run's program, because a program linked against `std`
-/// dynamically uses the allocator of the library it links; `unsafe` because an
-/// allocator is, and generated because `std` has none (ADR-218).
-const BUNDLE: &str = "// GENERATED (ADR-321 D3, D10).\n\
-pub extern crate nikaia_std;\n\
-pub extern crate winnow;\n\
-pub extern crate winnow_grammar;\n\
-\n\
-/// What every run has live, against the bound its program sets.\n\
-pub static LIVE: nikaia_std::build_time::Counted = nikaia_std::build_time::Counted::new();\n\
-\n\
-struct Heap;\n\
-\n\
-// SAFETY: every request is the system allocator's, unchanged; this only counts.\n\
-unsafe impl std::alloc::GlobalAlloc for Heap {\n\
-    unsafe fn alloc(&self, layout: std::alloc::Layout) -> *mut u8 {\n\
-        LIVE.take(layout.size());\n\
-        unsafe { std::alloc::GlobalAlloc::alloc(&std::alloc::System, layout) }\n\
-    }\n\
-    unsafe fn alloc_zeroed(&self, layout: std::alloc::Layout) -> *mut u8 {\n\
-        LIVE.take(layout.size());\n\
-        unsafe { std::alloc::GlobalAlloc::alloc_zeroed(&std::alloc::System, layout) }\n\
-    }\n\
-    unsafe fn dealloc(&self, ptr: *mut u8, layout: std::alloc::Layout) {\n\
-        LIVE.give(layout.size());\n\
-        unsafe { std::alloc::GlobalAlloc::dealloc(&std::alloc::System, ptr, layout) }\n\
-    }\n\
-    unsafe fn realloc(&self, ptr: *mut u8, layout: std::alloc::Layout, size: usize) -> *mut u8 {\n\
-        match size >= layout.size() {\n\
-            true => LIVE.take(size - layout.size()),\n\
-            false => LIVE.give(layout.size() - size),\n\
-        }\n\
-        unsafe { std::alloc::GlobalAlloc::realloc(&std::alloc::System, ptr, layout, size) }\n\
-    }\n\
-}\n\
-\n\
-#[global_allocator]\n\
-static HEAP: Heap = Heap;\n";
-
 /// The crates the bundle names: `std`, and what a `grammar` lowers to.
 const NAMED: [&str; 3] = ["nikaia_std", "winnow", "winnow_grammar"];
 
@@ -1036,23 +940,18 @@ const NAMED: [&str; 3] = ["nikaia_std", "winnow", "winnow_grammar"];
 /// the first `comptime` could run. Cargo's lock on the target directory is what
 /// makes two builds at once wait for one another rather than collide.
 pub(crate) fn bundle(_workshop: &Path) -> Result<Bundle, String> {
-    let mut manifest = String::from(
-        "# GENERATED. The library build-time code links against (ADR-321 D3).\n\n\
-         [workspace]\n\n\
-         [package]\nname = \"nikaia_bundle\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n\
-         [lib]\npath = \"src/lib.rs\"\n\n[dependencies]\n",
+    let manifest = nikaia_std::tools::comptime_driver::cr_bundle_manifest(
+        &crate::project::runtime_dependencies_for(NAMED.join(" ").as_str()),
     );
-    for (name, value) in crate::project::runtime_dependencies_for(NAMED.join(" ").as_str()) {
-        manifest.push_str(&format!("{name} = {value}\n"));
-    }
-    let key = orchestrator::cache::sha256_hex(format!("{manifest}\n{BUNDLE}").as_bytes());
+    let bundle_source = nikaia_std::tools::comptime_driver::cr_bundle_source();
+    let key = orchestrator::cache::sha256_hex(format!("{manifest}\n{bundle_source}").as_bytes());
     let at = orchestrator::cache::Layout::user_cache_dir()
         .join("build-time-bundle")
         .join(&key[..16]);
     let dir = at.join("bundle");
     std::fs::create_dir_all(dir.join("src")).map_err(|e| format!("{}: {e}", dir.display()))?;
     write_if_changed(&dir.join("Cargo.toml"), &manifest)?;
-    write_if_changed(&dir.join("src").join("lib.rs"), BUNDLE)?;
+    write_if_changed(&dir.join("src").join("lib.rs"), &bundle_source)?;
     let built = Command::new(cargo())
         .current_dir(orchestrator::cache::Layout::where_tools_start())
         .args(["rustc", "--quiet", "--lib", "--crate-type", "dylib"])

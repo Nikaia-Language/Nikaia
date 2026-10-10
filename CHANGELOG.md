@@ -8,6 +8,13 @@ or the specification. A change only to the guide, the notes, the README, the
 website, the tests, the examples or the tooling around them raises nothing and
 has no heading here; `CLAUDE.md` draws the line.
 
+## [0.0.757] — 2026-10-10
+
+**More of the toolchain is Nikaia** (ADR-294, #125).
+- `comptime_run`: the `main` of a build-time sub-program, the map from its
+  lines back to bytes of the file, and the bundle it is linked against are
+  `tools/comptime_driver.nika`. Compiling and running stay Rust.
+
 ## [0.0.756] — 2026-10-10
 
 **The grammar language can say what the compiler's own grammar says** (ADR-339, #557).
