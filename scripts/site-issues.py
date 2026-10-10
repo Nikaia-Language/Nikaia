@@ -1,19 +1,20 @@
 #!/usr/bin/env python3
-"""Writes `issues.md`, the site's page of open issues, into a site copy.
+"""Writes `issues.md`, the site's page of open issues.
 
-    python3 scripts/site-issues.py <site copy>
+    python3 scripts/site-issues.py --generate <dir>   # the workflow
+    python3 scripts/site-issues.py <site copy>        # scripts/site-build.sh
 
-`scripts/site-build.sh` runs it on its throwaway copy, so the page is as fresh
-as the site's last build and is never committed. The issues are grouped by
-their status label (`docs/README.md`): `decision` first, since those wait for
-the owner, then `ready`, `blocked`, `note`, and any without one.
+**The workflow makes the page.** `.github/workflows/issues-page.yml` runs with
+the job's token (`issues: read`), reads every open issue and its comments, and
+keeps the page as the one file of the branch `site-issues`, replaced on each
+run. The issues are grouped by their status label (`docs/README.md`):
+`decision` first, since those wait for the owner, then `ready`, `blocked`,
+`note`, and any without one.
 
-The repository is public, so the issues are read without a token. With
-`GITHUB_TOKEN` or `GH_TOKEN` set, the token is sent, and each issue's comments
-are included as well: the history and the *To build* lists live there, and
-reading them for every issue would spend more requests than an anonymous
-caller gets in an hour. If GitHub cannot be reached the page says so, and the
-site is built anyway.
+**The site build takes it.** `scripts/site-build.sh` copies that file from the
+branch, which is served as a plain file and counts against no API limit. Only
+if it cannot be fetched does the build read the issues itself, with a token if
+one is set; and if that fails too, the page points to GitHub.
 """
 
 import json
@@ -129,8 +130,22 @@ def page(issues, comments):
     return "\n".join(out) + "\n"
 
 
+RAW = f"https://raw.githubusercontent.com/{REPO}/site-issues/issues.md"
+
+
 def main():
-    target = os.path.join(sys.argv[1], "issues.md")
+    generate = sys.argv[1] == "--generate"
+    target = os.path.join(sys.argv[-1], "issues.md")
+    os.makedirs(sys.argv[-1], exist_ok=True)
+    if not generate:
+        try:
+            with urllib.request.urlopen(RAW, timeout=30) as response:
+                text = response.read().decode("utf-8")
+            with open(target, "w", encoding="utf-8") as out:
+                out.write(text)
+            return
+        except Exception as error:
+            print(f"site-issues: {RAW} could not be read: {error}", file=sys.stderr)
     try:
         issues = [i for i in every(f"{API}/issues?state=open") if "pull_request" not in i]
         issues.sort(key=lambda i: i["number"], reverse=True)
@@ -140,11 +155,13 @@ def main():
                 if issue["comments"]:
                     comments[issue["number"]] = every(issue["comments_url"])
         text = page(issues, comments)
-    except Exception as error:  # the site is built without the page's contents
+    except Exception as error:
+        if generate:
+            raise
         print(f"site-issues: GitHub could not be read: {error}", file=sys.stderr)
         text = (
-            "# Open Issues\n\nGitHub could not be read when this site was built. "
-            f"The issues are at [github.com/{REPO}/issues](https://github.com/{REPO}/issues).\n"
+            "# Open Issues\n\n"
+            f"The open issues are on [GitHub](https://github.com/{REPO}/issues).\n"
         )
     with open(target, "w", encoding="utf-8") as out:
         out.write(text)

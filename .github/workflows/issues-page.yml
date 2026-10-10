@@ -1,0 +1,43 @@
+name: Issues page
+
+# The site's page of open issues (`scripts/site-issues.py`). This job reads the
+# issues and their comments with its own token and keeps the page as the one
+# file of the branch `site-issues`, which `scripts/site-build.sh` copies into
+# the site. The branch holds nothing else and one commit, replaced each run.
+on:
+  issues:
+  issue_comment:
+  schedule:
+    - cron: "41 * * * *"
+  workflow_dispatch:
+
+# Only the newest state matters.
+concurrency:
+  group: issues-page
+  cancel-in-progress: true
+
+jobs:
+  page:
+    runs-on: ubuntu-latest
+    permissions:
+      issues: read
+      # to replace the branch `site-issues`; nothing else is written
+      contents: write
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Write the page
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/site-issues.py --generate "$RUNNER_TEMP/page"
+
+      - name: Replace the branch site-issues
+        run: |
+          cd "$RUNNER_TEMP/page"
+          git init -q -b site-issues
+          git config user.name "github-actions[bot]"
+          git config user.email "41898+github-actions[bot]@users.noreply.github.com"
+          git add issues.md
+          git commit -q -m "Open issues, $(date -u +%Y-%m-%dT%H:%MZ)"
+          git push -q -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" site-issues
