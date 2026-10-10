@@ -564,33 +564,26 @@ fn a_loop_over_something_that_cannot_fail_says_nothing() {
 
 // --- what it deliberately does not catch -------------------------------------
 
-/// A method `std` does not write down is not an error.
+/// **A method `std` does not write down is `NK1171`** (ADR-286 D36, #509).
 ///
-/// This is `Unknown` doing its job: `insert_str` is Rust's and no ledger names
-/// it, and a checker that had an opinion about it would be guessing.
-///
-/// `push_str` used to stand here and no longer can, because the ledger now says
-/// what `String()` hands back (ADR-292 needed its touch set, and a
-/// signature came with it) - so the receiver has a type, the entry for
-/// `String::push_str` resolves, and three arguments to a method that takes one
-/// is caught. That is the ledger growing and the checker getting sharper
-/// together, which is what ADR-288 predicted it would look like.
+/// This was `Unknown` doing its job: `insert_str` is Rust's and no ledger names
+/// it, and the call said nothing and was answered by the language below. What
+/// is written down is what can be called; a type whose members the compiler
+/// has read refuses one it does not have.
 #[test]
-fn a_method_nobody_wrote_down_says_nothing() {
+fn a_method_nobody_wrote_down_is_refused() {
     // **The name is `common::UNDESCRIBED_METHOD`'s**, which is where this
-    // repository keeps *"no ledger describes this"* — see the reason there. The
-    // three arguments are deliberate: an entry would catch the arity, and the
-    // point is that without one nothing is claimed at all.
-    assert!(
-        findings(&format!(
-            "fn main() {{\n\
-         \x20   let mut out = String()\n\
-         \x20   out.{}(0, \"a\", \"b\")\n\
-         }}",
-            common::UNDESCRIBED_METHOD
-        ))
-        .is_empty()
-    );
+    // repository keeps *"no ledger describes this"* — see the reason there.
+    // It said nothing until ADR-286 D36 (#509): a member a known type does not
+    // have is `NK1171`, also where Rust has it.
+    let found = findings(&format!(
+        "fn main() {{\n\
+     \x20   let mut out = String()\n\
+     \x20   out.{}(0, \"a\", \"b\")\n\
+     }}",
+        common::UNDESCRIBED_METHOD
+    ));
+    assert!(found.len() == 1 && found[0].code == "NK1171", "{found:#?}");
 }
 
 /// A bare number fits every numeric type, as it does in the language below.
@@ -993,7 +986,7 @@ fn a_call_through_a_head_nothing_declares_is_refused() {
 fn a_lambda_that_reaches_for_a_withdrawn_name_is_refused() {
     for source in [
         "fn ids(xs: Vec[i64]) -> Vec[i64] { return xs.map fn { a + 1 } }",
-        "fn total(xs: Vec[i64]) -> i64 { return xs.reduce(0) fn { a + b } }",
+        "fn total(xs: Vec[i64]) -> Vec[i64] { return xs.map fn { a + b } }",
     ] {
         let found = findings(source);
         assert!(!found.is_empty(), "{source}");
@@ -1721,14 +1714,14 @@ fn a_name_something_declares_is_not_refused() {
 /// called `a`.
 #[test]
 fn a_declared_a_is_an_ordinary_name() {
-    let found = findings("fn f(s: ref String) {\n    s.map(fn { a })\n}");
+    let found = findings("fn f(xs: Vec[i64]) {\n    xs.map(fn { a })\n}");
     assert!(
         found.iter().any(|f| f.code == "NK1117"),
         "nothing declares `a` here: {found:#?}"
     );
 
     assert!(
-        findings("fn f(s: ref String) {\n    s.map(fn (a) { a })\n}").is_empty(),
+        findings("fn f(xs: Vec[i64]) {\n    xs.map(fn (a) { a })\n}").is_empty(),
         "and here it is the argument"
     );
 }

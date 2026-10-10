@@ -124,7 +124,7 @@
 30-nikaia-tooling.md #2 refused (as written) [NK1117]  test "a blank line is counted" {
 30-nikaia-tooling.md #3 lowered (as written)  fn divide(a: i64, b: i64) -> i64 sync {
 30-nikaia-tooling.md #4 fragment (as written)  struct User { name: String, age: i32 }
-30-nikaia-tooling.md #5 refused (as written) [NK1117,NK1135]  impl Generator for User {
+30-nikaia-tooling.md #5 refused (as written) [NK1117,NK1135,NK1171]  impl Generator for User {
 30-nikaia-tooling.md #6 refused (a body) [NK1117]  bench "Sorting" {
 30-nikaia-tooling.md #7 lowered (as written)  extern {
 30-nikaia-tooling.md #8 lowered (as written)  extern {

@@ -7873,10 +7873,16 @@ impl<'a> Checker<'a> {
                  have `T`'s members. That's why a missing value can never crash here."
                     .to_string(),
             ],
-            help: Some(format!(
-                "Write `{safe}`, which gives `null` when the value is missing, or give a \
-                 fallback with `??` first and reach into that."
-            )),
+            // **Rust's question about an option is a comparison here**
+            // (ADR-286 D36): `is_some` and `is_none` are no method of a `T?`.
+            help: Some(match member {
+                Reached::Method("is_some") => "Compare with `null`: `value != null`.".to_string(),
+                Reached::Method("is_none") => "Compare with `null`: `value == null`.".to_string(),
+                _ => format!(
+                    "Write `{safe}`, which gives `null` when the value is missing, or give a \
+                     fallback with `??` first and reach into that."
+                ),
+            }),
             labels: Vec::new(),
         });
     }
@@ -9422,6 +9428,39 @@ impl<'a> Checker<'a> {
     /// an argument it has to put a `&` in front of is found under `set`,
     /// because `set` is what is written on the line.
     fn call_on(&mut self, on: Ty, method: Ident, args: &[Expr], entry: &str, span: &Span) -> Ty {
+        // **An error, one of several, answers `Error`'s methods** (ADR-280
+        // D30); what only one member has is reached through a `match`.
+        if let Some(members) = several_errors(&on) {
+            args.iter().for_each(|a| {
+                self.expr(a, span);
+            });
+            self.reached_method(None);
+            self.method_pauses(method, false, span);
+            self.method_propagates(method, false, span);
+            if matches!(entry, "message" | "full") && args.is_empty() {
+                return Ty::named("String");
+            }
+            let members = members_named(members);
+            self.checked.findings.push(Finding {
+                severity: Severity::Error,
+                span: *span,
+                code: "NK1171",
+                message: format!(
+                    "This is an error, one of {members}, and an error has no method called `{entry}`."
+                ),
+                notes: vec![
+                    "What every error has is `message()` and `full()`; what one of them has \
+                     is reached once a `match` has said which it is."
+                        .to_string(),
+                ],
+                help: Some(format!(
+                    "Take it apart first: `match error {{ … }}`, and call `{entry}` in the arm \
+                     of the type that has it."
+                )),
+                labels: Vec::new(),
+            });
+            return Ty::Unknown;
+        }
         // **A produced sequence answers under its own word**
         // ([ADR-105](../../docs/specification/adr/adr-105.md) D1): `Seq` and
         // `Par` are what the ledger calls the receiver, so `Seq::collect` is
@@ -9558,6 +9597,7 @@ impl<'a> Checker<'a> {
             self.nothing_says_what_a_parameter_can_do(name, Reached::Method(entry), span);
             self.no_number_has_this_method(name, entry, span);
             self.a_list_collected(name, entry, args, span);
+            self.a_member_nothing_writes_down(name, entry, true, span);
             args.iter().for_each(|a| {
                 self.expr(a, span);
             });
@@ -12673,6 +12713,8 @@ impl<'a> Checker<'a> {
                     {
                         self.caught_one.clone().unwrap_or(Ty::Unknown)
                     }
+                    // Several: each arm's pattern names its member (D17, D18).
+                    (on, _) if several_errors(on).is_some() => Ty::Unknown,
                     _ => on.clone(),
                 };
                 let lendable = self.an_owned_place(value, &typed);
@@ -12732,7 +12774,35 @@ impl<'a> Checker<'a> {
                 let mut answered: Vec<(Option<&Expr>, Ty)> = Vec::new();
                 let choice = self.next_choice;
                 self.next_choice += 1;
+                // **An error, one of several, is taken apart by member**
+                // (ADR-280 D30, D17): an arm whose pattern names a member's
+                // variant reads its parts from that member.
+                let several: Option<Vec<Ty>> = several_errors(&on).map(<[Ty]>::to_vec);
                 for (taken, arm) in arms.iter().enumerate() {
+                    let typed = match &several {
+                        Some(members) => {
+                            let owner = match &arm.pattern {
+                                MatchPattern::Path(path)
+                                | MatchPattern::Tuple { path, .. }
+                                | MatchPattern::Named { path, .. }
+                                    if path.len() >= 2 =>
+                                {
+                                    path[..path.len() - 1]
+                                        .iter()
+                                        .map(|s| self.parsed.text(*s))
+                                        .collect::<Vec<_>>()
+                                        .join("::")
+                                }
+                                _ => String::new(),
+                            };
+                            members
+                                .iter()
+                                .find(|m| m.text() == owner)
+                                .cloned()
+                                .unwrap_or(Ty::Unknown)
+                        }
+                        None => typed.clone(),
+                    };
                     // **Every alternative of an or-pattern binds the same
                     // names** ([ADR-291](../../docs/specification/adr/adr-291.md)
                     // D1), asked before the body is walked so that the body's
@@ -13598,6 +13668,30 @@ impl<'a> Checker<'a> {
                 self.a_read_of_a_part(base, expr, &field, span);
                 if let Ty::Nullable(_) = &on {
                     self.reaches_into_a_nullable(&on, Reached::Field(&field), span);
+                    return Ty::Unknown;
+                }
+                // **A field of one member is reached through the `match`**
+                // (ADR-280 D30).
+                if let Some(members) = several_errors(&on) {
+                    let members = members_named(members);
+                    self.checked.findings.push(Finding {
+                        severity: Severity::Error,
+                        span: *span,
+                        code: "NK1107",
+                        message: format!(
+                            "This is an error, one of {members}, and an error has no field `{field}`."
+                        ),
+                        notes: vec![
+                            "A field belongs to one of them, and which one it is is said by a \
+                             `match`."
+                                .to_string(),
+                        ],
+                        help: Some(format!(
+                            "Take it apart first: `match error {{ … }}`, and read `{field}` in \
+                             the arm of the type that has it."
+                        )),
+                        labels: Vec::new(),
+                    });
                     return Ty::Unknown;
                 }
                 // **A tuple's part is the type written at its position**:
@@ -14876,6 +14970,17 @@ impl<'a> Checker<'a> {
                     guarded.thrown.iter().collect::<Vec<_>>().as_slice(),
                 ) {
                     (false, [one]) if *one != "?" => Ty::named(one.as_str()),
+                    // **Several: an `Error`, one of them**
+                    // ([ADR-280](../../docs/specification/adr/adr-280.md) D30):
+                    // known by its trait, with its members kept for what is
+                    // said about it.
+                    (false, members @ [_, _, ..]) if members.iter().all(|m| *m != "?") => {
+                        Ty::Named {
+                            name: "Error".to_string(),
+                            args: members.iter().map(|m| Ty::named(m.as_str())).collect(),
+                            view: false,
+                        }
+                    }
                     _ => Ty::Unknown,
                 };
                 self.nothing_here_can_fail(guarded, span);
@@ -16883,6 +16988,14 @@ impl<'a> Checker<'a> {
             if matches!(func, Expr::Variable(_)) {
                 self.a_function_nothing_declares(&name, span);
             }
+            if let Expr::Path(segments) = func
+                && let [head, member] = segments.as_slice()
+                && !shadowed
+            {
+                let head = self.parsed.unaliased(self.parsed.text(*head)).to_string();
+                let member = self.parsed.text(*member).to_string();
+                self.a_member_nothing_writes_down(&head, &member, false, span);
+            }
             // A call nothing describes is a call this compiler cannot see the
             // end of, and a thread of its own is among the things it may do
             // (ADR-303 D7). What it is handed is therefore handed across.
@@ -17949,13 +18062,29 @@ impl<'a> Checker<'a> {
             "const" => "NK1166",
             other => unreachable!("no code for `{other}`"),
         };
+        // **An error, one of several, is said as that** (ADR-280 D30).
+        let said = match several_errors(found) {
+            Some(members) => {
+                let text = found.text();
+                message(&text, &want.text()).replace(
+                    &format!("`{text}`"),
+                    &format!("an error, one of {}", members_named(members)),
+                )
+            }
+            None => message(&found.text(), &want.text()),
+        };
         let finding = Finding {
             severity: Severity::Error,
             span,
             code,
-            message: message(&found.text(), &want.text()),
+            message: said,
             notes: Vec::new(),
-            help: Some(convert(found, want)),
+            help: Some(match several_errors(found) {
+                Some(_) => "Take it apart first: `match error { … }`, and use what each arm \
+                            binds."
+                    .to_string(),
+                None => convert(found, want),
+            }),
             labels: Vec::new(),
         };
         // **Unless the walk may still show it is not negative** (D32): the
@@ -21179,6 +21308,11 @@ impl<'a> Checker<'a> {
         let Ty::Named { name, .. } = on else {
             return;
         };
+        // **An error, one of several**, is a handler's, whose `match` always
+        // needs `else` and is told so by its own rule (ADR-280 D4).
+        if several_errors(on).is_some() {
+            return;
+        }
 
         // **`bool` is the case that is neither** an enum nor open-ended: `true`
         // and `false` are two arms and a complete `match`, which no enum map
@@ -23981,6 +24115,179 @@ impl<'a> Checker<'a> {
             help: Some(format!(
                 "Write `{ty}(…)`, or just `{ty}` where you pass the constructor itself."
             )),
+            labels: Vec::new(),
+        });
+    }
+
+    /// **`NK1171`: a member a known type or module does not have**
+    /// ([ADR-286](../../docs/specification/adr/adr-286.md) D36): what is written
+    /// down is what can be called. `"x".as_str()` and `String::from("x")` are
+    /// Rust's, and passed here untyped to be answered by the language below.
+    /// Known is a type or module the program, `std`'s ledger or a crate's
+    /// description writes down; a type parameter, a head only a `use` names
+    /// and a foreign name are not claimed.
+    fn a_member_nothing_writes_down(
+        &mut self,
+        head: &str,
+        member: &str,
+        method: bool,
+        span: &Span,
+    ) {
+        // **Said already, in a sentence of its own**: `NK1189`'s `to_owned`,
+        // `NK1126`'s type parameter, `NK1210`'s number. One refusal a call.
+        if self
+            .checked
+            .findings
+            .iter()
+            .any(|f| f.span == *span && matches!(f.code, "NK1189" | "NK1126" | "NK1210"))
+        {
+            return;
+        }
+        // **A type that is seen through** (`deref` in its ledger, as a
+        // `Shared` is) answers with what it holds, which
+        // `fits_through_deref` asks one question at a time; not claimed here.
+        if method && self.method(&format!("{head}::deref")).is_some() {
+            return;
+        }
+        if self.type_parameters.contains_key(head)
+            || self.foreign_names.contains(head)
+            || self.opaque_handles.contains(head)
+            || self.grammars.contains_key(head)
+            || is_number(head)
+        {
+            return;
+        }
+        let prefix = format!("{head}::");
+        let under = |table: &BTreeMap<String, FnContract>| {
+            table
+                .range(prefix.clone()..)
+                .take_while(|(key, _)| key.starts_with(&prefix))
+                .map(|(key, _)| key[prefix.len()..].to_string())
+                .filter(|rest| !rest.contains("::"))
+                .collect::<Vec<_>>()
+        };
+        let mut members = under(&self.own.functions);
+        members.extend(under(&self.library.functions));
+        let declared = OFFERED.contains(&head)
+            || matches!(
+                head,
+                "Vec" | "HashMap" | "HashSet" | "Array" | "Seq" | "Par"
+            )
+            || self.structs.contains_key(head)
+            || self.enums.contains_key(head)
+            || self.own.types.contains_key(head)
+            || self.library.types.contains_key(head)
+            || self.beside.iter().any(|other| declares_a_type(other, head))
+            || (!method && self.std_modules.contains(head))
+            || !members.is_empty();
+        if !declared {
+            return;
+        }
+        // **A trait it implements may provide more than it writes**: `Error`
+        // provides `full` (Part I 7.1), and a trait of another ledger may
+        // provide what this compiler has no list of, so such a type is not
+        // claimed. A trait this program declares has no default bodies
+        // (ADR-295), so its methods are the type's own entries already.
+        if method {
+            let mut foreign_trait = false;
+            for unit in std::iter::once(self.parsed).chain(self.beside.iter().copied()) {
+                for item in &unit.program.items {
+                    let Item::Impl {
+                        trait_name: Some(trait_name),
+                        target,
+                        ..
+                    } = &item.node
+                    else {
+                        continue;
+                    };
+                    if unit.text(target.name) != head {
+                        continue;
+                    }
+                    let trait_name = unit.text(*trait_name);
+                    let declared_here = std::iter::once(self.parsed)
+                        .chain(self.beside.iter().copied())
+                        .any(|unit| {
+                            unit.program.items.iter().any(|item| {
+                                matches!(&item.node, Item::Trait { name, .. }
+                                    if unit.text(*name) == trait_name)
+                            })
+                        });
+                    match trait_name {
+                        "Error" if matches!(member, "message" | "full") => return,
+                        "Error" => {}
+                        _ if !declared_here => foreign_trait = true,
+                        _ => {}
+                    }
+                }
+            }
+            if foreign_trait {
+                return;
+            }
+        }
+        // A view of text has a `String`'s methods and the reverse (ADR-282
+        // D18); a list has `ListExt`'s.
+        let also: &[&str] = match head {
+            "String" => &["str"],
+            "str" => &["String"],
+            "Vec" => &["list::ListExt"],
+            "Par" => &["Seq"],
+            _ => &[],
+        };
+        for other in also {
+            let prefix = format!("{other}::");
+            members.extend(
+                self.library
+                    .functions
+                    .range(prefix.clone()..)
+                    .take_while(|(key, _)| key.starts_with(&prefix))
+                    .map(|(key, _)| key[prefix.len()..].to_string()),
+            );
+        }
+        // A view of text is text to the reader.
+        let shown = match head {
+            "str" => "String",
+            head => head,
+        };
+        let written = match method {
+            true => format!(".{member}()"),
+            false => format!("{head}::{member}"),
+        };
+        let help = match (head, member) {
+            ("String" | "str", "from") => {
+                "Write the text itself, `\"x\"`, or `\"x\".clone()` for text of its own."
+                    .to_string()
+            }
+            (_, "as_str") => "Leave it out: the text is already what is passed.".to_string(),
+            (_, "is_some") => "Compare with `null`: `value != null`.".to_string(),
+            (_, "is_none") => "Compare with `null`: `value == null`.".to_string(),
+            _ => {
+                let known: Vec<&str> = members.iter().map(String::as_str).collect();
+                match nearest(member, &known) {
+                    Some(near) => match method {
+                        true => format!("Did you mean `.{near}()`?"),
+                        false => format!("Did you mean `{head}::{near}`?"),
+                    },
+                    None => format!(
+                        "Only what is written down for `{shown}` can be called; a Rust \
+                         function or method of the same name is not reached."
+                    ),
+                }
+            }
+        };
+        let what = match method {
+            true => format!("`{shown}` has no method called `{member}`."),
+            false => format!("`{shown}` has no function called `{member}`."),
+        };
+        self.checked.findings.push(Finding {
+            severity: Severity::Error,
+            span: *span,
+            code: "NK1171",
+            message: what,
+            notes: vec![format!(
+                "What can be called is what is written down: `{written}` is in no declaration, \
+                 ledger or description this program reads."
+            )],
+            help: Some(help),
             labels: Vec::new(),
         });
     }
@@ -27410,6 +27717,28 @@ pub fn an_or_a(ty: &str) -> &'static str {
         true => "an",
         false => "a",
     }
+}
+
+/// **A handler's `error` where several error types arrive** (ADR-280 D30):
+/// an `Error` with its members.
+fn several_errors(ty: &Ty) -> Option<&[Ty]> {
+    match ty {
+        Ty::Named {
+            name,
+            args,
+            view: false,
+        } if name == "Error" && args.len() > 1 => Some(args.as_slice()),
+        _ => None,
+    }
+}
+
+/// The members, as a message names them: `` `ConfigError`, `io::IoError` ``.
+fn members_named(members: &[Ty]) -> String {
+    members
+        .iter()
+        .map(|m| format!("`{}`", m.text()))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 fn integer_named(ty: &Ty) -> Option<String> {

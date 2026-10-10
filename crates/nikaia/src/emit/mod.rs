@@ -11653,6 +11653,15 @@ impl<'p> Emitter<'p> {
                 "        }}\n\x20   }}\n}}\n\
                  impl{decl} std::error::Error for {name}{params} {{}}\n"
             ));
+            // **`error.message()` on an error, one of several**
+            // ([ADR-280](../../docs/specification/adr/adr-280.md) D30): the
+            // member's message, which is what its `Display` writes.
+            out.push(&format!(
+                "impl{decl} {name}{params} {{\n\
+                 \x20   #[allow(dead_code)]\n\
+                 \x20   fn message(&self) -> String {{ self.to_string() }}\n\
+                 }}\n"
+            ));
 
             // **The long form asks the member** (D2): a member the program
             // declares carries its envelope and therefore its site, and a

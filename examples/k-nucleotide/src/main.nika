@@ -161,7 +161,7 @@ fn main() throws {
 
     let mut dna = String()
     for section in sections {
-        if section.header.starts_with(wanted.as_str()) {
+        if section.header.starts_with(ref wanted) {
             for line in section.lines {
                 dna.push_str(ref line.to_uppercase())
             }

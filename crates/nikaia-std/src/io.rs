@@ -107,6 +107,12 @@ pub enum IoError {
 }
 
 impl IoError {
+    /// What went wrong, in words: `Error`'s `message` (Part I 7.1), which is
+    /// what the failure prints as.
+    pub fn message(&self) -> String {
+        self.to_string()
+    }
+
     /// One of the language below's failures, told apart and given what it was
     /// about.
     ///

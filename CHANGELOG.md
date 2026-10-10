@@ -8,6 +8,33 @@ or the specification. A change only to the guide, the notes, the README, the
 website, the tests, the examples or the tooling around them raises nothing and
 has no heading here; `CLAUDE.md` draws the line.
 
+## [0.0.734] — 2026-10-10
+
+**What is written down is what can be called, and an error of several is an
+`Error`** (ADR-286 D36, ADR-280 D30, #509, #507, #512).
+- A method, associated function or module function that a known type or head
+  does not have is `NK1171`, also where Rust has one of that name:
+  `String::from("x")`, `"x".as_str()`, `fs::frobnicate(…)`, a method a
+  program's own `struct` does not declare, a function a crate's description
+  does not list. The help names Nikaia's spelling (`"x"`, nothing, `!= null`)
+  or the nearest name. A type parameter, a head only a `use` names, a foreign
+  name, a type seen through (`deref`) and a type implementing a trait of
+  another ledger are not claimed; `Error`'s `message` and `full` are.
+- `is_some` and `is_none` on a `T?` (`NK1125`) are answered with `!= null` and
+  `== null`.
+- `std` writes down `Vec::first`, `Vec::last`, `collections::HashMap::clear`,
+  `io::IoError::message` and `io::IoError::full`; `io::IoError` has its
+  `message` in Rust too.
+- Where several error types arrive, a handler's `error` is *an `Error`, one of
+  these*: `message()` and `full()` are `String`s, `f"{error}"` and
+  `throw error` pass, an arm of a `match` reads its member's parts typed, and a
+  field or method of one member read outside the `match` is `NK1107` or
+  `NK1171`. A value refused is said as *an error, one of `ConfigError`,
+  `io::IoError`*. The generated sum has a `message()`.
+- `examples/k-nucleotide` writes `starts_with(ref wanted)` for
+  `wanted.as_str()`, and the `measurements` fixture `neg != null` for
+  `neg.is_some()`.
+
 ## [0.0.733] — 2026-10-10
 
 **Text becomes a number by a function per type** (ADR-285 D35, #504).

@@ -2896,6 +2896,28 @@ fn a_described_call_that_can_fail_is_propagated() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+/// **A described crate answers for its head** (ADR-286 D32, D36, #509): a
+/// call to a function its description does not list is `NK1171`, where it was
+/// lowered as written and `rustc` answered about the generated file.
+#[test]
+fn a_function_the_description_does_not_list_is_refused() {
+    let dir = a_project_with_a_failing_crate("project-described-missing");
+    std::fs::write(
+        dir.join("src/main.nika"),
+        "fn main() throws {\n    let n = fremd::vier()\n    println(f\"{n}\")\n}\n",
+    )
+    .expect("the program");
+    let built = nikaia(&["build"], &dir);
+    assert!(!built.status.success(), "{}", said(&built));
+    let complaint = said(&built);
+    assert!(
+        complaint.contains("NK1171")
+            && complaint.contains("`fremd` has no function called `vier`."),
+        "{complaint}"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 /// **A boundary the backend disagrees with is said as a stale description**
 /// (ADR-100 D6, ADR-290 D21). The description is edited by hand, as D5 expects
 /// a person to, and loses `throws`: the crate's sources have not moved, so

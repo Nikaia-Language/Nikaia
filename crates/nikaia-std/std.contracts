@@ -1747,6 +1747,13 @@ touches = []
 keeps = ["key"]
 signature = "[K, V](mut self: ref collections::HashMap[K, V], key: ?) -> Entry[V]"
 
+# Take every entry out of the map, keeping it.
+[fn."collections::HashMap::clear"]
+pub = true
+sync = true
+touches = []
+signature = "[K, V](mut self: ref collections::HashMap[K, V])"
+
 # `key: ?` and not `key: K`, deliberately. Rust's `get` takes anything the key
 # borrows as, so `m.get("x")` on a `HashMap[String, …]` is correct and `K`
 # would reject it. The rule is ADR-288's: a variable says what flows *out*, and
@@ -2163,6 +2170,20 @@ pub = true
 sync = true
 touches = []
 signature = "(ref mut self, text: ref String)"
+
+# The first element, or nothing where the list is empty.
+[fn."Vec::first"]
+pub = true
+sync = true
+touches = []
+signature = "[T](self: ref Vec[T]) -> T?"
+
+# The last element, or nothing where the list is empty.
+[fn."Vec::last"]
+pub = true
+sync = true
+touches = []
+signature = "[T](self: ref Vec[T]) -> T?"
 
 # Whether the list holds nothing.
 [fn."Vec::is_empty"]
@@ -3554,6 +3575,21 @@ pub = true
 # `touches` on. It neither suspends nor takes a lock, which is why neither
 # `NK2202` nor `NK2203` has anything to say about it and `NK2201` does.
 touches = ["file read"]
+
+# What went wrong, in words: `Error`'s `message` (Part I 7.1).
+[fn."io::IoError::message"]
+pub = true
+sync = true
+touches = []
+signature = "(self: ref io::IoError) -> String"
+
+# Everything about the failure, for an operator: `Error`'s `full` (Part I
+# 7.1). A library's failure has no site in the program, and says so.
+[fn."io::IoError::full"]
+pub = true
+sync = true
+touches = []
+signature = "(self: ref io::IoError) -> String"
 
 # A step of this one can **fail**, and that is a fact a caller cannot get from
 # anywhere else: a `for` over it is a place the enclosing function can fail

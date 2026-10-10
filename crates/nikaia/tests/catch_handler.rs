@@ -70,9 +70,26 @@ const SHAPES: &[(&str, &str, &str)] = &[
 fn program(handler: &str) -> String {
     format!(
         r#"
+enum Refused {{
+    Empty,
+}}
+
+impl Error for Refused {{
+    fn message(ref self) -> String {{
+        return "empty".clone()
+    }}
+}}
+
+fn read(text: ref String) -> i32 throws {{
+    if text == "" {{
+        throw Refused::Empty
+    }}
+    return 7
+}}
+
 fn parsed(text: ref String) -> i32 {{
     let errors = 5
-    return text.parse() {handler}
+    return read(text) {handler}
 }}
 
 fn main() {{
@@ -101,8 +118,25 @@ fn each_handler_binds_what_it_reads() {
 fn a_nested_block_is_a_mention() {
     let rust = lowered(
         r#"
+enum Refused {
+    Empty,
+}
+
+impl Error for Refused {
+    fn message(ref self) -> String {
+        return "empty".clone()
+    }
+}
+
+fn read(text: ref String) -> i32 throws {
+    if text == "" {
+        throw Refused::Empty
+    }
+    return 7
+}
+
 fn parsed(text: ref String) -> i32 {
-    return text.parse() catch {
+    return read(text) catch {
         if text.len() > 0 {
             println(f"{error}")
         }
@@ -125,16 +159,34 @@ fn main() {
 /// **The whole point, measured where the user stands**: `rustc` on the emitted
 /// file, and nothing about a name nobody wrote.
 ///
-/// The fixture is the line from `examples/n-body/src/main.nika` that found this.
+/// The fixture is the line from `examples/n-body/src/main.nika` that found this,
+/// with its `parse` (no Nikaia method, #509) replaced by a function that throws.
 #[test]
 fn the_reproduction_compiles_without_a_warning() {
     let rust = lowered(
         r#"
 use std::cli
 
+enum Refused {
+    Empty,
+}
+
+impl Error for Refused {
+    fn message(ref self) -> String {
+        return "empty".clone()
+    }
+}
+
+fn read(text: ref String) -> i32 throws {
+    if text == "" {
+        throw Refused::Empty
+    }
+    return 7
+}
+
 fn main() {
     let steps = cli::args().nth(1) ?? "1000"
-    let n: i32 = steps.parse() catch { 1000 }
+    let n: i32 = read(steps) catch { 1000 }
     println(f"{n}")
 }
 "#,
@@ -169,8 +221,25 @@ fn main() {
 fn a_handler_that_reads_the_error_still_can() {
     let rust = lowered(
         r#"
+enum Refused {
+    Empty,
+}
+
+impl Error for Refused {
+    fn message(ref self) -> String {
+        return "empty".clone()
+    }
+}
+
+fn read(text: ref String) -> i32 throws {
+    if text == "" {
+        throw Refused::Empty
+    }
+    return 7
+}
+
 fn parsed(text: ref String) -> i32 {
-    return text.parse() catch {
+    return read(text) catch {
         println(f"caught {error}")
         0
     }

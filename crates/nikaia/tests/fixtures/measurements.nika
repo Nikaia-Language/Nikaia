@@ -26,7 +26,7 @@ grammar Measurements {
             let mut value = 0
             for d in whole.chars() { value = value * 10 + text::digit_value(d) }
             value = value * 10 + text::digit_value(frac)
-            if neg.is_some() { -value } else { value }
+            if neg != null { -value } else { value }
         }
 
     // A measurement can be found from any offset by scanning to the next "\n",

@@ -9,21 +9,14 @@ mod common;
 
 use std::process::Command;
 
-/// A program whose lowering `rustc` still refuses: `String::from` has no type
-/// in the checker (#509), so the comparison beside a map's view is written as
-/// it stands. When #509 is built this needs another such program, or none.
-const REFUSED_BELOW: &str = "use std::collections\n\
-     \n\
-     fn same(m: ref collections::HashMap[String, String], k: ref String) -> bool {\n\
-     \x20   let s = m[k] ?? return false\n\
-     \x20   let other = String::from(\"x\")\n\
-     \x20   return s == other\n\
-     }\n\
-     \n\
-     fn main() {\n\
-     \x20   let mut m: collections::HashMap[String, String] = collections::HashMap()\n\
-     \x20   m.insert(\"a\", \"x\")\n\
-     \x20   println(f\"{same(m, \"a\")}\")\n\
+/// A program whose lowering `rustc` still refuses: a lambda's parameter has no
+/// type in the checker yet (#497), so `x + x` over text is written as it
+/// stands. When that gap is closed this needs another such program, or none.
+/// (It was `String::from`, which is `NK1171` since #509.)
+const REFUSED_BELOW: &str = "fn main() {\n\
+     \x20   let twice = fn(x) { x + x }\n\
+     \x20   let s = twice(\"a\")\n\
+     \x20   println(f\"{s}\")\n\
      }\n";
 
 #[test]
@@ -47,7 +40,7 @@ fn a_backend_refusal_names_the_file_that_was_run() {
         .lines()
         .find(|line| line.trim_start().starts_with("-->"))
         .unwrap_or_else(|| panic!("no location in:\n{said}"));
-    assert!(arrow.contains("written.nika:6:"), "{said}");
+    assert!(arrow.contains("written.nika:2:"), "{said}");
     assert!(
         !arrow.contains("/run/"),
         "the cache's copy is named:\n{said}"

@@ -95,3 +95,26 @@ test "a member the handler ignores falls through" {
     }
     assert(text == "fell through")
 }
+
+// **An error, one of several, answers what every error has** (ADR-280 D30,
+// #512): `message()` and `full()` on the handler's `error` without a `match`,
+// and a member's part, typed, once the `match` has said which member it is.
+test "an error of several answers its message without a match" {
+    let text = error_sums_load("nope.txt") catch {
+        let said: String = error.message()
+        let long: String = error.full()
+        let found = said.contains("nope.txt") && long.contains("nope.txt")
+        if found { "both".clone() } else { said }
+    }
+    assert(text == "both")
+    let empty = error_sums_load("") catch {
+        match error {
+            ErrorSumsConfig::Empty(p) => {
+                let at: ref String = p
+                at.clone()
+            }
+            else => error.message()
+        }
+    }
+    assert(empty == "config has no name")
+}
