@@ -9604,6 +9604,204 @@ pub fn a_number_that_does_not_fit(value: &Integer, beyond: bool, bare: bool, ty:
 }
 
 
+// --- check_state.nika ---
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CheckKind {
+    Parameter,
+    Let,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CheckImmutable {
+    pub at: Span,
+    pub kind: CheckKind,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct CheckLocal {
+    pub name: String,
+    pub written_mut: bool,
+    pub ty: Ty,
+    pub constant: Option<Integer>,
+    pub lent: bool,
+    pub immutable: Option<CheckImmutable>,
+    pub changing: bool,
+    pub built: Option<BuildValue>,
+    pub literal: Option<String>,
+    pub empty_list: Option<i64>,
+    pub open_number: Option<i64>,
+    pub id: i64,
+}
+
+impl CheckLocal {
+    pub fn free(name: String, ty: Ty, id: i64) -> CheckLocal { CheckLocal { name, written_mut: false, ty, constant: None, lent: false, immutable: None, changing: false, built: None, literal: None, empty_list: None, open_number: None, id } }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CheckPromises {
+    pub may_pause: bool,
+    pub may_fail: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CheckHanded {
+    pub pauses: bool,
+    pub fails: bool,
+    pub caught: bool,
+    pub promised: CheckPromises,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CheckGuarded {
+    pub fallible: bool,
+    pub unanswered: bool,
+    pub thrown: collections::BTreeSet<String>,
+}
+
+impl CheckGuarded {
+    pub fn nothing() -> CheckGuarded { CheckGuarded { fallible: false, unanswered: false, thrown: collections::BTreeSet::new() } }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CheckTaken {
+    pub path: String,
+    pub ty: Ty,
+    pub from: i64,
+    pub at: i64,
+    pub seq: i64,
+    pub choices: Vec<(i64, i64)>,
+    pub until: Option<i64>,
+    pub to: String,
+    pub binding: Option<i64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CheckRead {
+    pub path: String,
+    pub at: i64,
+    pub choices: Vec<(i64, i64)>,
+    pub seq: i64,
+    pub binding: Option<i64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CheckPartOut {
+    pub subject: String,
+    pub part: String,
+    pub binding: i64,
+    pub handed: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CheckGive {
+    pub path: String,
+    pub at: i64,
+    pub choices: Vec<(i64, i64)>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CheckWayOut {
+    pub how: String,
+    pub word: String,
+    pub at: i64,
+    pub seq: i64,
+    pub choices: Vec<(i64, i64)>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CheckPendingCoalesce {
+    pub key: (i64, String),
+    pub left: i64,
+    pub ty: Ty,
+    pub span: Span,
+    pub opened: String,
+}
+
+pub fn a_path_overlaps(read: &str, taken: &str) -> bool {
+    if read == taken { return true; }
+    if read.starts_with(taken) && nikaia_std::index::or(read.strip_prefix(taken), || "").starts_with(".") { return true; }
+    taken.starts_with(read) && nikaia_std::index::or(taken.strip_prefix(read), || "").starts_with(".")
+}
+
+pub fn a_path_revives(written: &str, taken: &str) -> bool {
+    if written == taken { return true; }
+    taken.starts_with(written) && nikaia_std::index::or(taken.strip_prefix(written), || "").starts_with(".")
+}
+
+pub fn choices_apart(a: &[(i64, i64)], b: &[(i64, i64)]) -> bool {
+    for mine in a.iter() { for theirs in b.iter() { if theirs.0 == mine.0 && theirs.1 != mine.1 { return true; } } }
+    false
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CheckRepeats {
+    pub frame: i64,
+    pub what: String,
+    pub revived: collections::BTreeSet<String>,
+    pub leaves: bool,
+}
+
+impl CheckRepeats {
+    pub fn a_loop(words: &winnow_grammar::InternerContext, frame: i64, body: &Block) -> CheckRepeats {
+        let mut found = CheckRepeats { frame, what: "loop".to_owned(), revived: collections::BTreeSet::new(), leaves: false };
+        what_a_loop_does(words, body, &mut found);
+        found
+    }
+    pub fn a_lambda(frame: i64) -> CheckRepeats { CheckRepeats { frame, what: "lambda".to_owned(), revived: collections::BTreeSet::new(), leaves: false } }
+    pub fn takes_again(&self, name: &str) -> bool { !(self.leaves || self.revived.contains(name)) }
+}
+
+fn what_a_loop_does(words: &winnow_grammar::InternerContext, block: &Block, found: &mut CheckRepeats) {
+    for stmt in block.stmts.iter() {
+        match &stmt.node {
+            Stmt::Break => { found.leaves = true; },
+            Stmt::Return(_) => { found.leaves = true; },
+            Stmt::Assign { target, .. } => {
+                match target {
+                    Expr::Variable(name) => {
+                        let name = *name;
+                        found.revived.insert(words.resolve(name).to_owned());
+                    },
+                    _ => { },
+                }
+            },
+            _ => { },
+        }
+        for inner in blocks_of_stmt(&stmt.node) { what_a_loop_does(words, inner, found); }
+    }
+}
+
+pub fn a_body_never_ends(body: &Block) -> bool {
+    if body.stmts.is_empty() { return false; }
+    let last = nikaia_std::index::get(&body.stmts, nikaia_std::index::at(body.stmts.len() as i64 - 1));
+    match last.node {
+        Stmt::While { ref cond, ref body } => { return a_true_literal(cond) && !a_jump_leaves(body, 0); },
+        _ => { return false; },
+    }
+}
+
+fn a_true_literal(expr: &Expr) -> bool {
+    match expr {
+        Expr::LitBool(value) => { let value = *value; value },
+        _ => false,
+    }
+}
+
+pub fn a_jump_leaves(block: &Block, loops: i64) -> bool {
+    for stmt in block.stmts.iter() {
+        match &stmt.node {
+            Stmt::Break => { if loops == 0 { return true; } },
+            Stmt::For { body, .. } => { if a_jump_leaves(body, loops + 1) { return true; } },
+            Stmt::While { body, .. } => { if a_jump_leaves(body, loops + 1) { return true; } },
+            _ => { for inner in blocks_of_stmt(&stmt.node) { if a_jump_leaves(inner, loops) { return true; } } },
+        }
+    }
+    false
+}
+
+
 // --- check_types.nika ---
 
 pub fn a_number_name(name: &str) -> bool { name == "i8" || name == "i16" || name == "i32" || name == "i64" || name == "isize" || name == "u8" || name == "u16" || name == "u32" || name == "u64" || name == "usize" || name == "f32" || name == "f64" }
@@ -9835,6 +10033,143 @@ fn tuple_parts(ty: &Ty) -> Vec<Ty> {
         Ty::Tuple(parts) => parts.to_owned(),
         _ => vec![],
     }
+}
+
+
+// --- check_walk.nika ---
+
+pub fn child_exprs_of(expr: &Expr) -> Vec<&Expr> {
+    let mut out: Vec<&Expr> = vec![];
+    match expr {
+        Expr::Call { func, args, config } => {
+            let func = nikaia_std::boxed::open(func);
+            out.push(func);
+            for arg in args.iter() { out.push(arg); }
+            for setting in config.iter() { out.push(setting_value(setting)); }
+        },
+        Expr::MethodCall { receiver, args, config, .. } => {
+            let receiver = nikaia_std::boxed::open(receiver);
+            out.push(receiver);
+            for arg in args.iter() { out.push(arg); }
+            for setting in config.iter() { out.push(setting_value(setting)); }
+        },
+        Expr::SafeMethod { receiver, args, config, .. } => {
+            let receiver = nikaia_std::boxed::open(receiver);
+            out.push(receiver);
+            for arg in args.iter() { out.push(arg); }
+            for setting in config.iter() { out.push(setting_value(setting)); }
+        },
+        Expr::Binary { lhs, rhs, .. } => {
+            let lhs = nikaia_std::boxed::open(lhs); let rhs = nikaia_std::boxed::open(rhs);
+            out.push(lhs);
+            out.push(rhs);
+        },
+        Expr::Unary { expr, .. } => { let expr = nikaia_std::boxed::open(expr); out.push(expr) },
+        Expr::Try(inner) => { let inner = nikaia_std::boxed::open(inner); out.push(inner) },
+        Expr::Throw(inner) => { let inner = nikaia_std::boxed::open(inner); out.push(inner) },
+        Expr::Cast { expr, .. } => { let expr = nikaia_std::boxed::open(expr); out.push(expr) },
+        Expr::Field { base, .. } => { let base = nikaia_std::boxed::open(base); out.push(base) },
+        Expr::SafeField { base, .. } => { let base = nikaia_std::boxed::open(base); out.push(base) },
+        Expr::Index { base, index } => {
+            let base = nikaia_std::boxed::open(base); let index = nikaia_std::boxed::open(index);
+            out.push(base);
+            out.push(index);
+        },
+        Expr::Range { start, end, .. } => {
+            let start = nikaia_std::boxed::open(start); let end = nikaia_std::boxed::open(end);
+            out.push(start);
+            out.push(end);
+        },
+        Expr::Tuple(parts) => { for part in parts.iter() { out.push(part); } },
+        Expr::Coalesce { value, fallback } => {
+            let value = nikaia_std::boxed::open(value); let fallback = nikaia_std::boxed::open(fallback);
+            out.push(value);
+            out.push(fallback);
+        },
+        Expr::TryCatch { expr, .. } => { let expr = nikaia_std::boxed::open(expr); out.push(expr) },
+        Expr::If { cond, .. } => { let cond = nikaia_std::boxed::open(cond); out.push(cond) },
+        Expr::Match { value, arms } => {
+            let value = nikaia_std::boxed::open(value);
+            out.push(value);
+            for arm in arms.iter() {
+                if arm.guard.is_some() { out.push(match arm.guard.as_ref() { Some(__nikaia_value) => __nikaia_value, None => return out }); }
+                out.push(match_body(arm));
+            }
+        },
+        Expr::StructLit { fields, .. } => { for field in fields.iter() { if field.value.is_some() { out.push(match field.value.as_ref() { Some(__nikaia_value) => __nikaia_value, None => return out }); } } },
+        Expr::ListLit { items, .. } => { for item in items.iter() { out.push(item); } },
+        Expr::With { base, fields, .. } => {
+            let base = nikaia_std::boxed::open(base);
+            out.push(base);
+            for field in fields.iter() { if field.value.is_some() { out.push(match field.value.as_ref() { Some(__nikaia_value) => __nikaia_value, None => return out }); } }
+        },
+        Expr::Return(value) => {
+            let value = nikaia_std::boxed::open(value);
+            if value.is_some() { out.push(match value { Some(__nikaia_value) => __nikaia_value, None => return out }); }
+        },
+        Expr::Select(arms) => { for arm in arms.iter() { out.push(select_value(arm)); } },
+        _ => { },
+    }
+    out
+}
+
+pub fn blocks_of_expr(expr: &Expr) -> Vec<&Block> {
+    let mut out: Vec<&Block> = vec![];
+    match expr {
+        Expr::Block(block) => {
+            out.push(block);
+            return out;
+        },
+        Expr::Unsafe(block) => {
+            out.push(block);
+            return out;
+        },
+        Expr::Overlap(block) => {
+            out.push(block);
+            return out;
+        },
+        Expr::Closure { body, .. } => {
+            out.push(body);
+            return out;
+        },
+        Expr::Spawn { .. } => return out,
+        Expr::If { then_branch, else_branch, .. } => {
+            out.push(then_branch);
+            if else_branch.is_some() { out.push(match else_branch { Some(__nikaia_value) => __nikaia_value, None => return out }); }
+        },
+        Expr::TryCatch { handler, .. } => out.push(handler),
+        Expr::Select(arms) => { for arm in arms.iter() { out.push(select_body(arm)); } },
+        _ => { },
+    }
+    for child in child_exprs_of(expr) { for block in blocks_of_expr(child) { out.push(block); } }
+    out
+}
+
+fn setting_value(setting: &ConfigArg) -> &Expr { &setting.value }
+
+fn select_value(arm: &SelectArm) -> &Expr { &arm.value }
+
+fn select_body(arm: &SelectArm) -> &Block { &arm.body }
+
+fn match_body(arm: &MatchArm) -> &Expr { &arm.body }
+
+pub fn blocks_of_stmt(stmt: &Stmt) -> Vec<&Block> {
+    let mut out: Vec<&Block> = vec![];
+    match stmt {
+        Stmt::For { body, .. } => out.push(body),
+        Stmt::While { body, .. } => out.push(body),
+        Stmt::Let { value, .. } => return blocks_of_expr(value),
+        Stmt::Comptime { value, .. } => return blocks_of_expr(value),
+        Stmt::Expr(value) => return blocks_of_expr(value),
+        Stmt::Assign { target, value, .. } => {
+            for block in blocks_of_expr(target) { out.push(block); }
+            for block in blocks_of_expr(value) { out.push(block); }
+        },
+        Stmt::Return(value) => { if value.is_some() { return blocks_of_expr(match value { Some(__nikaia_value) => __nikaia_value, None => return out }); } },
+        Stmt::Break => { },
+        Stmt::Continue => { },
+    }
+    out
 }
 
 
@@ -31324,9 +31659,17 @@ pub mod check_numbers {
     #[allow(unused_imports)]
     pub use super::{a_number_that_does_not_fit};
 }
+pub mod check_state {
+    #[allow(unused_imports)]
+    pub use super::{CheckKind, CheckImmutable, CheckLocal, CheckPromises, CheckHanded, CheckGuarded, CheckTaken, CheckRead, CheckPartOut, CheckGive, CheckWayOut, CheckPendingCoalesce, a_path_overlaps, a_path_revives, choices_apart, CheckRepeats, a_body_never_ends, a_jump_leaves};
+}
 pub mod check_types {
     #[allow(unused_imports)]
     pub use super::{a_number_name, view_of_type, viewed_from_type, unviewed_type, copies_as_a_view, value_of_a_copy, is_a_view_of_a_string, a_copy_by_value, moves_away, copies_plainly, holds_an_array, is_a_list_type, is_a_collection_type, is_text_type, is_a_hull, locked_content_of, is_a_handle, locked_content, becomes_shared, way_out_of_a_mismatch, element_walked, elements_walked};
+}
+pub mod check_walk {
+    #[allow(unused_imports)]
+    pub use super::{child_exprs_of, blocks_of_expr, blocks_of_stmt};
 }
 pub mod check_words {
     #[allow(unused_imports)]

@@ -8,6 +8,12 @@ or the specification. A change only to the guide, the notes, the README, the
 website, the tests, the examples or the tooling around them raises nothing and
 has no heading here; `CLAUDE.md` draws the line.
 
+## [0.0.774] — 2026-10-10
+
+**The checker's state begins to be Nikaia (#558, #125).**
+- The small records the `Checker` holds while it walks a body - a name in scope, what was taken or read of a path, a way out, a body that runs again, what a `catch` guarded - are declared in `tools/check_state.nika` with the questions each answers on its own (`overlaps`, `revives`, `apart`, a loop no jump leaves). Their positions are `i64` (ADR-294 D7), their words `String`.
+- The blocks an expression or a statement holds, and the expressions an expression holds, are answered as lists of references by `tools/check_walk.nika` (the walk of `contracts::sync`, in Nikaia).
+
 ## [0.0.773] — 2026-10-10
 
 **`develop` is green under clippy again.**

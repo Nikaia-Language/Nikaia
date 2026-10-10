@@ -1,0 +1,214 @@
+// crates/nikaia-std/src/tools/check_walk.nika
+//
+// **How the checker walks a tree it does not read in full**: the expressions an
+// expression holds directly, and the blocks an expression or a statement holds,
+// moved from `contracts::sync` (ADR-294, #125, #558). The walk of `sync` and the
+// walks of the checker ask the same two questions; the answers are lists of
+// references into the tree, so nothing is copied.
+
+/// The expressions an expression holds directly, outside its blocks: what a
+/// walk descends into. A `spawn` holds none here, being a detached context
+/// (Part I, 5.4).
+pub fn child_exprs_of(expr: ref Expr) -> Vec[ref Expr] {
+    let mut out: Vec[ref Expr] = []
+    match expr {
+        Expr::Call { func, args, config } => {
+            out.push(func)
+            for arg in args {
+                out.push(arg)
+            }
+            for setting in config {
+                out.push(setting_value(setting))
+            }
+        }
+        Expr::MethodCall { receiver, args, config, .. } => {
+            out.push(receiver)
+            for arg in args {
+                out.push(arg)
+            }
+            for setting in config {
+                out.push(setting_value(setting))
+            }
+        }
+        Expr::SafeMethod { receiver, args, config, .. } => {
+            out.push(receiver)
+            for arg in args {
+                out.push(arg)
+            }
+            for setting in config {
+                out.push(setting_value(setting))
+            }
+        }
+        Expr::Binary { lhs, rhs, .. } => {
+            out.push(lhs)
+            out.push(rhs)
+        }
+        Expr::Unary { expr, .. } => out.push(expr),
+        Expr::Try(inner) => out.push(inner),
+        Expr::Throw(inner) => out.push(inner),
+        Expr::Cast { expr, .. } => out.push(expr),
+        Expr::Field { base, .. } => out.push(base),
+        Expr::SafeField { base, .. } => out.push(base),
+        Expr::Index { base, index } => {
+            out.push(base)
+            out.push(index)
+        }
+        Expr::Range { start, end, .. } => {
+            out.push(start)
+            out.push(end)
+        }
+        Expr::Tuple(parts) => {
+            for part in parts {
+                out.push(part)
+            }
+        }
+        Expr::Coalesce { value, fallback } => {
+            out.push(value)
+            out.push(fallback)
+        }
+        Expr::TryCatch { expr, .. } => out.push(expr),
+        Expr::If { cond, .. } => out.push(cond),
+        Expr::Match { value, arms } => {
+            out.push(value)
+            for arm in arms {
+                if arm.guard != null {
+                    out.push(arm.guard ?? return out)
+                }
+                out.push(match_body(arm))
+            }
+        }
+        Expr::StructLit { fields, .. } => {
+            for field in fields {
+                if field.value != null {
+                    out.push(field.value ?? return out)
+                }
+            }
+        }
+        Expr::ListLit { items, .. } => {
+            for item in items {
+                out.push(item)
+            }
+        }
+        Expr::With { base, fields, .. } => {
+            out.push(base)
+            for field in fields {
+                if field.value != null {
+                    out.push(field.value ?? return out)
+                }
+            }
+        }
+        Expr::Return(value) => {
+            if value != null {
+                out.push(value ?? return out)
+            }
+        }
+        Expr::Select(arms) => {
+            for arm in arms {
+                out.push(select_value(arm))
+            }
+        }
+        else => {}
+    }
+    return out
+}
+
+/// Every block an expression holds, including the body of a lambda passed as
+/// an argument.
+///
+/// A trailing lambda runs *during* the call it is given to - `.and_modify fn {
+/// … }` is not deferred - so what it calls, the function around it calls. The
+/// one shape that is different is `spawn`, whose body runs later and elsewhere;
+/// it is a detached context (Part I, 5.4) and is not walked here.
+pub fn blocks_of_expr(expr: ref Expr) -> Vec[ref Block] {
+    let mut out: Vec[ref Block] = []
+    match expr {
+        // An `unsafe` block is part of the function that writes it
+        // (ADR-302 D3): it makes no boundary of its own, so what it calls,
+        // the function calls.
+        Expr::Block(block) => {
+            out.push(block)
+            return out
+        }
+        Expr::Unsafe(block) => {
+            out.push(block)
+            return out
+        }
+        Expr::Overlap(block) => {
+            out.push(block)
+            return out
+        }
+        Expr::Closure { body, .. } => {
+            out.push(body)
+            return out
+        }
+        Expr::Spawn { .. } => return out,
+        Expr::If { then_branch, else_branch, .. } => {
+            out.push(then_branch)
+            if else_branch != null {
+                out.push(else_branch ?? return out)
+            }
+        }
+        Expr::TryCatch { handler, .. } => out.push(handler),
+        // A `select` arm's body runs in this function once its value won.
+        Expr::Select(arms) => {
+            for arm in arms {
+                out.push(select_body(arm))
+            }
+        }
+        else => {}
+    }
+    // **Through every expression that holds others** (#494): a block under
+    // `+`, a cast, `??` or a field is the function's as much as one under a
+    // call.
+    for child in child_exprs_of(expr) {
+        for block in blocks_of_expr(child) {
+            out.push(block)
+        }
+    }
+    return out
+}
+
+fn setting_value(setting: ref ConfigArg) -> ref Expr {
+    return setting.value
+}
+
+fn select_value(arm: ref SelectArm) -> ref Expr {
+    return arm.value
+}
+
+fn select_body(arm: ref SelectArm) -> ref Block {
+    return arm.body
+}
+
+fn match_body(arm: ref MatchArm) -> ref Expr {
+    return arm.body
+}
+
+/// Every block a statement holds: the body of a loop, and the blocks of the
+/// expressions it holds.
+pub fn blocks_of_stmt(stmt: ref Stmt) -> Vec[ref Block] {
+    let mut out: Vec[ref Block] = []
+    match stmt {
+        Stmt::For { body, .. } => out.push(body),
+        Stmt::While { body, .. } => out.push(body),
+        Stmt::Let { value, .. } => return blocks_of_expr(value),
+        Stmt::Comptime { value, .. } => return blocks_of_expr(value),
+        Stmt::Expr(value) => return blocks_of_expr(value),
+        Stmt::Assign { target, value, .. } => {
+            for block in blocks_of_expr(target) {
+                out.push(block)
+            }
+            for block in blocks_of_expr(value) {
+                out.push(block)
+            }
+        }
+        Stmt::Return(value) => {
+            if value != null {
+                return blocks_of_expr(value ?? return out)
+            }
+        }
+        Stmt::Break => {}
+        Stmt::Continue => {}
+    }
+    return out
+}

@@ -39,6 +39,30 @@ use crate::contracts::{FieldContract, FnContract, Ledger, send, ty, ty::Ty};
 use crate::fold::Constant;
 use crate::parser::Parsed;
 use crate::types::SHAPE_BOUNDS;
+use nikaia_std::tools::check_state::{
+    CheckGive as Give, CheckGuarded as Guarded, CheckHanded as Handed, CheckImmutable as Immutable,
+    CheckKind as Kind, CheckLocal as Local, CheckPartOut as PartOut,
+    CheckPendingCoalesce as PendingCoalesce, CheckPromises as Promises, CheckRead as Read,
+    CheckRepeats as Repeats, CheckTaken as Taken, CheckWayOut as WayOut, a_body_never_ends,
+    a_path_overlaps, a_path_revives, choices_apart,
+};
+
+/// A path through the choices of a body: which arm of which `if` or `match`
+/// ([ADR-293](../../docs/specification/adr/adr-293.md) D19).
+type Choices = Vec<(i64, i64)>;
+
+/// How a lent `??` opens its option, as the emitter is told.
+fn opened_text(opened: &str) -> &'static str {
+    match opened {
+        ".as_deref()" => ".as_deref()",
+        _ => ".as_ref()",
+    }
+}
+
+/// A binding that nothing here refuses a change to, with a number of its own.
+fn local_free(name: String, ty: Ty) -> Local {
+    Local::free(name, ty, a_new_binding() as i64)
+}
 use winnow_grammar::Symbol as Ident;
 
 /// The types Part I 2.2 offers, which is what an `as` may name
@@ -3044,173 +3068,10 @@ struct OpenNumber {
     written: Vec<(usize, Literals, bool)>,
 }
 
-/// A name in scope: what it is called, the type it holds, and - where this
-/// checker could work it out - the constant integer it stands for.
-///
-/// **Only a `let` ever fills the third**, and only an immutable one whose value
-/// folded ([`Checker::constant_of`]). A parameter, a `for` binding, a `match`
-/// arm's name and a lambda's argument all name something no compile-time
-/// evaluation reaches, so they carry `None` and the fold stops at them - which
-/// is the fail-closed direction the refusal needs (ADR-010 D1): a name this
-/// checker cannot evaluate makes the whole expression unevaluable, and an
-/// unevaluable expression is never refused.
-struct Local {
-    name: String,
-    /// **A `let mut`** (Part I 2.1): what a supervisor's child may not capture
-    /// (`NK1229`), because the next attempt would not start fresh.
-    written_mut: bool,
-    ty: Ty,
-    constant: Option<build_time::Integer>,
-    /// **The binding is a view the emitter lent**, which a `for` over a place
-    /// is ([ADR-094](../../docs/specification/adr/adr-094.md) D4).
-    ///
-    /// One reader: a **cast** over it. `for n in NS { n as i64 }` reaches the
-    /// language below as `n as i64` where `n` is a `&i32`, and `casting &i32
-    /// as i64 is invalid` is a sentence about a noun the program does not
-    /// contain ([Part III C.1](../../docs/specification/30-nikaia-tooling.md)).
-    ///
-    /// On the binding and not in a map, for the reason `immutable` gives one
-    /// field down: the **scope** is the one `scope` already keeps, so a `let n
-    /// = 5` inside the loop stops being a view exactly where it stops being
-    /// the answer.
-    lent: bool,
-    /// Where the binding was written and what kind it is, when it did **not**
-    /// say `mut` — `None` for one a change to is nobody's business here.
-    ///
-    /// It lives on the binding rather than in a map of its own so that the
-    /// **scope** is the one `scope` already keeps: a `let` inside a block stops
-    /// being the answer when the block closes, and an outer `mut` name is the
-    /// answer again. A parallel map would have had to be pushed and popped at
-    /// twenty-eight places, and getting one of them wrong is a *correct
-    /// program refused* ([Part III
-    /// C.4](../../docs/specification/30-nikaia-tooling.md)).
-    immutable: Option<Immutable>,
-    /// **A parameter whose declaration wrote `mut`**, which is already a
-    /// `&mut T` in the lowering ([ADR-094](../../docs/specification/adr/adr-094.md)
-    /// D3).
-    ///
-    /// Not the same question as `immutable` being `None`. A `let mut` is a
-    /// *value*, and the `&mut` a call writes in front of one is the reference
-    /// that call means; this is the binding where the reference is already
-    /// there, so a second one would be `&mut &mut T` — and `rustc` refuses it
-    /// one step earlier than that, because a `&mut` may only be taken of a
-    /// binding that is itself `mut`. It said so about a file nobody wrote —
-    /// *cannot borrow `connection` as mutable* — which is [Part III
-    /// C.1](../../docs/specification/30-nikaia-tooling.md).
-    ///
-    /// **A bare name and nothing further in.** `&mut c.field` for a `mut c` is
-    /// the reference the call wants, so this answers a question about the whole
-    /// binding rather than about any place rooted at it.
-    ///
-    /// On the binding for `lent`'s reason: the scope is the one `scope` already
-    /// keeps, so a `let connection = …` shadowing a `mut connection` parameter
-    /// stops being the answer where it stops being the binding.
-    changing: bool,
-    /// **What the build worked out this name is**, whole — a `comptime`'s
-    /// value, where there is one.
-    ///
-    /// `constant` above is the fold's and is an integer, which was the whole of
-    /// what a build-time value could be. It is not any more: text, a list and a
-    /// `struct` are values too, and a `comptime` that reads another one needs
-    /// the value rather than the number it would have been. Kept beside
-    /// `constant` rather than replacing it, because the fold asks a narrower
-    /// question — *which integer type did a declaration pin* — that this does
-    /// not answer.
-    built: Option<build_time::Value>,
-    /// **The text literal a `let` bound this name to**, where it did — for the
-    /// one sentence that has to say so: `let s = "x"` and then `Person { name:
-    /// s }` is refused, and a reader asks why the compiler that builds `"x"`
-    /// into a `String` on that line does not do the same through `s`
-    /// ([ADR-282](../../docs/specification/adr/adr-282.md) D25).
-    literal: Option<String>,
-    /// Where the `let` stands, for a binding whose value was an **empty list**
-    /// and whose element type nothing has said yet
-    /// ([ADR-135](../../docs/specification/adr/adr-135.md) D2).
-    ///
-    /// On the binding rather than in a map, for the reason `immutable` gives:
-    /// the scope is the one `scope` already keeps, so an inner `let xs = []`
-    /// and an outer `xs` are two questions and not one.
-    empty_list: Option<usize>,
-    /// **A number no annotation typed, whose uses will**
-    /// ([ADR-285](../../docs/specification/adr/adr-285.md) D23): the `let` it
-    /// was bound at, which names its entry in `Checker::open_numbers`.
-    open_number: Option<usize>,
-    /// **Which binding this is**, of all the ones a name has had: a number no
-    /// other binding gets. A `for (k, v) in seen` inside the life of an outer
-    /// `k` binds another `k`, and a read of it is not a read of the one that
-    /// was handed over (`NK2105`). By name alone the two were one.
-    id: usize,
-}
-
 /// A number no other binding gets, for [`Local::id`].
 fn a_new_binding() -> usize {
     static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-}
-
-/// A binding that did not say `mut`: where it was written, and which of the two
-/// kinds it is.
-///
-/// The two are one rule reached from two sides — *what is changed says `mut`* —
-/// and they are two codes because the way out is written in a different place
-/// and a reader is doing a different thing. `NK1138` is a **parameter**'s
-/// ([ADR-094](../../docs/specification/adr/adr-094.md) D3), where the word also
-/// decides what the caller sees; `NK1139` is a **`let`**'s, which [Part I
-/// 2.1](../../docs/specification/10-nikaia-light.md) states outright and which
-/// `rustc` had been answering instead.
-#[derive(Clone)]
-struct Immutable {
-    at: Span,
-    kind: Kind,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Kind {
-    Parameter,
-    Let,
-}
-
-impl Local {
-    /// A binding nothing here refuses a change to: `self`, an option, a `for`
-    /// binding, a pattern's name. Each of those is either not a place a
-    /// program assigns to or one whose `mut` is a question of its own, and
-    /// silence is what [Part III
-    /// C.4](../../docs/specification/30-nikaia-tooling.md) asks for.
-    /// The same binding again, for the one frame walked twice (a constructor's
-    /// parameters, checked once as written and once as `Type::new`).
-    fn again(local: &Local) -> Self {
-        Local {
-            written_mut: local.written_mut,
-            name: local.name.clone(),
-            ty: local.ty.clone(),
-            constant: local.constant,
-            lent: local.lent,
-            built: local.built.clone(),
-            literal: local.literal.clone(),
-            immutable: local.immutable.clone(),
-            changing: local.changing,
-            empty_list: local.empty_list,
-            open_number: local.open_number,
-            id: local.id,
-        }
-    }
-
-    fn free(name: String, ty: Ty) -> Self {
-        Local {
-            written_mut: false,
-            literal: None,
-            name,
-            ty,
-            constant: None,
-            lent: false,
-            changing: false,
-            built: None,
-            immutable: None,
-            empty_list: None,
-            open_number: None,
-            id: a_new_binding(),
-        }
-    }
 }
 
 struct Checker<'a> {
@@ -3562,7 +3423,7 @@ struct Checker<'a> {
     /// they sit in different arms of one choice.
     branch: Choices,
     /// The next number to give a choice: one per `if` and per `match` walked.
-    next_choice: usize,
+    next_choice: i64,
     /// Every read of a name or a part of one, in the order the walk met them
     /// (`NK2702`'s and `NK2105`'s reads, [`Read`]).
     reads_on_paths: Vec<Read>,
@@ -3660,7 +3521,7 @@ struct Checker<'a> {
     /// assignment's target, and the operand of a `&`.
     reading_only: bool,
     /// How many reads the walk has met so far: each read's place in the order.
-    read_seq: usize,
+    read_seq: i64,
     /// The `let`s in the body being walked whose value was an **empty list**
     /// and whose element type nothing has said yet
     /// ([ADR-135](../../docs/specification/adr/adr-135.md) D2), by the `let`'s
@@ -3841,37 +3702,6 @@ struct Checker<'a> {
     checked: Checked,
 }
 
-/// What a lambda's body was seen to do
-/// ([ADR-277](../../docs/specification/adr/adr-277.md) D7).
-#[derive(Debug, Clone, Copy)]
-struct Handed {
-    pauses: bool,
-    fails: bool,
-    /// Whether the walk is inside the guarded half of a `catch` written **in
-    /// this lambda's body**.
-    ///
-    /// Not [`Checker::caught`], which also answers *yes* for a `catch` around
-    /// the call the lambda is handed to, and that `catch` does nothing for the
-    /// lambda: the callee runs it, and a type without `throws` has promised the
-    /// callee it never fails. A `catch` inside the body is the other way round
-    /// — the failure is handled before it leaves the lambda, which is exactly
-    /// what `NK2606`'s own help tells the reader to write, so a call it guards
-    /// is not one the lambda was seen to fail with.
-    caught: bool,
-    /// What the type it was handed to allows, kept beside what it was seen to
-    /// do so that the one message about a mismatch is the one that is said.
-    promised: Promises,
-}
-
-/// What a function type **allows** the code it names to do (D2), which is the
-/// reading a declaration already has: without `sync` it may pause, without
-/// `throws` it cannot fail.
-#[derive(Debug, Clone, Copy)]
-struct Promises {
-    may_pause: bool,
-    may_fail: bool,
-}
-
 /// One argument as [`Checker::the_compiler_writes_the_reference`] reads it:
 /// where it stands in the call, what was written there, the type that was
 /// found, and the one the parameter wants. Four values that only ever travel
@@ -3887,77 +3717,6 @@ struct Argument<'a> {
     want: &'a Ty,
 }
 
-/// What the guarded expression of a `catch` turned out to hold.
-///
-/// Two answers and not one, because *nothing can fail here* and *nothing here
-/// could be looked up* are different facts and only the first may be acted on.
-/// [Part III C.4](../../../docs/specification/30-nikaia-tooling.md): a call no
-/// ledger describes says nothing about whether it throws, and refusing a
-/// `catch` over one would refuse a program that is right. The refusal fires on
-/// **known not to fail**, never on *not known to fail* - which is
-/// [`Checker::may_fail_here`]'s own standard, read from the other end.
-#[derive(Default)]
-struct Guarded {
-    /// A call the ledger describes, whose contract carries a `throws`.
-    fallible: bool,
-    /// Something this compiler could not look up, or a nested `catch` - either
-    /// way, no answer, and the refusal stays quiet.
-    unanswered: bool,
-    /// The error types the described calls say they throw, which is what the
-    /// handler's `error` is when there is one of them (#501).
-    thrown: BTreeSet<String>,
-}
-
-/// Whether a body's last statement is a loop no jump leaves
-/// ([ADR-276](../../../docs/specification/adr/adr-276.md)).
-///
-/// [ADR-276](../../../docs/specification/adr/adr-276.md) D6: a function that
-/// genuinely never returns — an accept loop, an event loop, a supervisor — had
-/// to end with a `return 0` that cannot be reached, and a reader of that line
-/// could not tell dead code from a mistake.
-///
-/// **The literal `true` only**, never a name that happens to be true: the
-/// equivalence is D1's and it is about the written form. `emit` makes exactly
-/// this shape Rust's `loop`, which is `!` and fits any declared type
-/// ([ADR-276](../../../docs/specification/adr/adr-276.md)) — so the two halves
-/// agree by construction, and the checker could not have claimed this before
-/// that record, because `while true { }` is `()` below and the refusal would
-/// only have moved to `rustc`.
-///
-/// **And no `break` bound to this loop**, which is what
-/// [ADR-276](../../../docs/specification/adr/adr-276.md) added to the question:
-/// before it, the condition was the whole test. The walk over-approximates — it
-/// descends into a lambda, where a `break` is not bound to this loop at all —
-/// and that is the safe direction: a false *"a jump leaves it"* asks for the
-/// `return` this record removes, which is where every program already is, while
-/// a false *"nothing leaves it"* would let a body fall off its end and hand
-/// `rustc` a file nobody wrote.
-fn never_ends(body: &Block) -> bool {
-    let Some(last) = body.stmts.last() else {
-        return false;
-    };
-    let Stmt::While { cond, body } = &last.node else {
-        return false;
-    };
-    matches!(cond, Expr::LitBool(true)) && !a_jump_leaves(body, 0)
-}
-
-/// Whether a `break` in this block is bound to the loop **around** it rather
-/// than to one written inside.
-///
-/// A `continue` is not one: it starts the loop's next turn and never leaves.
-fn a_jump_leaves(block: &Block, loops: usize) -> bool {
-    block.stmts.iter().any(|stmt| match &stmt.node {
-        Stmt::Break => loops == 0,
-        Stmt::For { body, .. } | Stmt::While { body, .. } => a_jump_leaves(body, loops + 1),
-        other => {
-            let mut inner: Vec<&Block> = Vec::new();
-            crate::contracts::sync::visit_stmt_blocks(other, &mut |b| inner.push(b));
-            inner.iter().any(|b| a_jump_leaves(b, loops))
-        }
-    })
-}
-
 /// **What a `?.` reaches**, which Part I 3.5 calls a *member*
 /// ([ADR-278](../../../docs/specification/adr/adr-278.md)).
 ///
@@ -3969,125 +3728,13 @@ enum Reached<'a> {
     Method(&'a str),
 }
 
-/// **Something taken**: a sequence walked (`NK2702`) or data handed to what
-/// keeps it (`NK2105`).
-struct Taken {
-    /// A name, or a part of one: `p.name` ([ADR-293](../../docs/specification/adr/adr-293.md) D32).
-    path: String,
-    ty: Ty,
-    /// The bytes the statement that took it starts and ends at.
-    from: usize,
-    at: usize,
-    /// **Where in that statement**: the order the walk read it in, so a later
-    /// read in the same statement is after it (ADR-293 D31).
-    seq: usize,
-    /// The branch it was taken in.
-    choices: Choices,
-    /// Where a branch that left the function ends, for a taking inside it:
-    /// nothing after that is on its path (ADR-293 D30).
-    until: Option<usize>,
-    /// What took it, in words (`NK2105`).
-    to: String,
-    /// Which binding of the path's first name was taken ([`Local::id`]): a
-    /// read of another binding of the same name is not a read of it.
-    binding: Option<usize>,
-}
-
-/// **One read**: of what, in which statement, on which path, in which order.
-struct Read {
-    path: String,
-    at: usize,
-    choices: Choices,
-    seq: usize,
-    /// Which binding of the path's first name it read ([`Local::id`]).
-    binding: Option<usize>,
-}
-
-/// **A part taken out of a `mut` parameter** ([ADR-094](../../docs/specification/adr/adr-094.md)
-/// D7, `NK2108`): the arm of a `match` over the parameter bound it and handed
-/// it to something that keeps it, so the parameter is missing it until an
-/// assignment gives it back.
-struct PartOut {
-    /// The parameter, or the place in it, that was matched: `e`, `e.kind`.
-    subject: String,
-    /// The name the arm bound the part to.
-    part: String,
-    /// Which binding that is ([`Local::id`]).
-    binding: usize,
-    /// The hand-over that took it, in [`Checker::handed`].
-    handed: usize,
-}
-
-/// **An assignment**, where it stands: what gives a part back
-/// ([`Checker::parts_out`]).
-struct Give {
-    path: String,
-    at: usize,
-    choices: Choices,
-}
-
 /// One report per place a part is missing at: the name, the place, the way out taken and the parts.
-type PartsMissing<'a> = (
-    &'a str,
-    (usize, usize),
-    Option<&'a WayOut>,
-    Vec<&'a PartOut>,
-);
-
-/// **A way out of the function, or a call that can fail**, where it stands:
-/// what a part taken out of a `mut` parameter may not be missing at
-/// ([`Checker::parts_out`]).
-struct WayOut {
-    /// `"return"`, `"throw"`, or `"fails"` for a call that can.
-    how: &'static str,
-    /// The call, for `"fails"`.
-    word: String,
-    at: usize,
-    seq: usize,
-    choices: Choices,
-    span: Span,
-}
+type PartsMissing<'a> = (&'a str, (i64, i64), Option<&'a WayOut>, Vec<&'a PartOut>);
 
 /// An expression's address, which is what tells two reads of one name apart
 /// in one statement (ADR-293 D31).
 fn address(expr: &Expr) -> usize {
     expr as *const Expr as usize
-}
-
-/// A `??` whose left side may be lent rather than taken
-/// ([`Checker::pending_coalesces`]).
-struct PendingCoalesce {
-    /// The `??`, by statement and shape: what the emitter looks it up by.
-    key: (usize, String),
-    /// The read its left side is, by address, for the hand-over.
-    left: usize,
-    /// The left side's type, `T?`.
-    ty: Ty,
-    span: Span,
-    /// How the option is opened where it is lent.
-    opened: &'static str,
-}
-
-/// Whether reading `read` touches what taking `taken` took: the same path, a
-/// part of it (`p.name` after `p`), or the whole it was part of (`p` after
-/// `p.name`).
-fn overlaps(read: &str, taken: &str) -> bool {
-    read == taken
-        || read
-            .strip_prefix(taken)
-            .is_some_and(|rest| rest.starts_with('.'))
-        || taken
-            .strip_prefix(read)
-            .is_some_and(|rest| rest.starts_with('.'))
-}
-
-/// Whether assigning `written` gives `taken` a value again: the same path, or
-/// the whole it is a part of.
-fn revives(written: &str, taken: &str) -> bool {
-    written == taken
-        || taken
-            .strip_prefix(written)
-            .is_some_and(|rest| rest.starts_with('.'))
 }
 
 /// How a key goes into the brackets of a map whose keys are owned
@@ -4105,88 +3752,6 @@ pub enum KeyForm {
     /// be a number or a view: `index::key` lends the one and passes the other
     /// through (0.0.235).
     Either,
-}
-
-/// A path through the choices of a body: which arm of which `if` or `match`
-/// ([ADR-293](../../docs/specification/adr/adr-293.md) D19).
-type Choices = Vec<(usize, usize)>;
-
-/// Whether two places are in different arms of one choice, so that no run
-/// reaches both.
-fn apart(a: &Choices, b: &Choices) -> bool {
-    a.iter().any(|(choice, arm)| {
-        b.iter()
-            .any(|(other, taken)| other == choice && taken != arm)
-    })
-}
-
-/// A body that may run more than once, around a sequence being taken
-/// ([ADR-293](../../docs/specification/adr/adr-293.md) D19).
-struct Repeats {
-    /// Where the body's own names begin in `Checker::scope`: a name bound in a
-    /// frame before this is from outside it.
-    frame: usize,
-    /// `"loop"` or `"lambda"`, for the sentence.
-    what: &'static str,
-    /// The names the body assigns, any of which it may give a new sequence
-    /// before the next turn takes it - a loop only.
-    revived: BTreeSet<String>,
-    /// Whether a `break` or a `return` is anywhere in the body, which may end
-    /// the loop on the turn that took it - a loop only. Over-approximated, in
-    /// the direction that refuses less.
-    leaves: bool,
-}
-
-impl Repeats {
-    fn a_loop(parsed: &Parsed, frame: usize, body: &Block) -> Repeats {
-        let mut revived = BTreeSet::new();
-        let mut leaves = false;
-        what_a_loop_does(parsed, body, &mut revived, &mut leaves);
-        Repeats {
-            frame,
-            what: "loop",
-            revived,
-            leaves,
-        }
-    }
-
-    fn a_lambda(frame: usize) -> Repeats {
-        Repeats {
-            frame,
-            what: "lambda",
-            revived: BTreeSet::new(),
-            leaves: false,
-        }
-    }
-
-    /// Whether taking `name` here could have left nothing for the next turn.
-    fn takes_again(&self, name: &str) -> bool {
-        !(self.leaves || self.revived.contains(name))
-    }
-}
-
-/// The names a loop's body assigns, and whether anything in it leaves.
-fn what_a_loop_does(
-    parsed: &Parsed,
-    block: &Block,
-    revived: &mut BTreeSet<String>,
-    leaves: &mut bool,
-) {
-    for stmt in &block.stmts {
-        match &stmt.node {
-            Stmt::Break | Stmt::Return(_) => *leaves = true,
-            Stmt::Assign {
-                target: Expr::Variable(name),
-                ..
-            } => {
-                revived.insert(parsed.text(*name).to_string());
-            }
-            _ => {}
-        }
-        crate::contracts::sync::visit_stmt_blocks(&stmt.node, &mut |inner| {
-            what_a_loop_does(parsed, inner, revived, leaves)
-        });
-    }
 }
 
 impl<'a> Checker<'a> {
@@ -5249,7 +4814,7 @@ impl<'a> Checker<'a> {
                 // flag is set around both rather than around the block alone.
                 let named = self.parsed.text(rule.name).to_string();
                 let outer_action = self.inside_an_action.replace(named);
-                self.scope.push(frame.iter().map(Local::again).collect());
+                self.scope.push(frame.iter().map(Local::clone).collect());
                 self.folds_in(grammar, &alt.pattern.node, &alt.pattern.span);
                 self.scope.pop();
                 let Some(action) = &alt.action else {
@@ -5452,7 +5017,7 @@ impl<'a> Checker<'a> {
         match pattern {
             ast::Pattern::Bind { name, pat } => {
                 let ty = self.pattern_type(&pat.node, rules);
-                out.push(Local::free(self.parsed.text(*name).to_string(), ty));
+                out.push(local_free(self.parsed.text(*name).to_string(), ty));
                 self.bindings_of(&pat.node, rules, out);
             }
             ast::Pattern::Seq(parts) | ast::Pattern::Choice(parts) => {
@@ -5663,14 +5228,14 @@ impl<'a> Checker<'a> {
                 },
                 None => Ty::Unknown,
             };
-            frame.push(Local::free("self".to_string(), ty));
+            frame.push(local_free("self".to_string(), ty));
         }
         for arg in args {
             let name = self.parsed.text(arg.name).to_string();
             self.nameable(&name, &arg.span, "a parameter");
             frame.push(Local {
                 written_mut: false,
-                id: a_new_binding(),
+                id: a_new_binding() as i64,
                 literal: None,
                 name,
                 ty: self.declared(&arg.ty, &arg.span).erase(&parameters),
@@ -5705,7 +5270,7 @@ impl<'a> Checker<'a> {
             self.a_computed_default(option);
         }
         for option in config {
-            frame.push(Local::free(
+            frame.push(local_free(
                 self.parsed.text(option.name).to_string(),
                 // Not `declared`: an option has no span of its own, and a
                 // caret on the wrong line is worse than no message. Its default
@@ -5719,8 +5284,8 @@ impl<'a> Checker<'a> {
         // frame, `return args` was `NK1117` in every driver. Its type is the
         // statement's, which this checker does not see, so it is not guessed.
         if let Some(spread) = spread {
-            let local = Local::free(self.parsed.text(*spread).to_string(), Ty::Unknown);
-            self.unknown_bound.insert(local.id);
+            let local = local_free(self.parsed.text(*spread).to_string(), Ty::Unknown);
+            self.unknown_bound.insert(local.id as usize);
             frame.push(local);
         }
 
@@ -5771,7 +5336,7 @@ impl<'a> Checker<'a> {
         // place is refused there too (`NK1131`, #576). Read against the scope
         // still standing, as the numbers below are.
         if expected.is_some()
-            && !never_ends(body)
+            && !a_body_never_ends(body)
             && let Some(Stmt::Expr(value)) = body.stmts.last().map(|s| &s.node)
             && let Some(at) = tail_span
             && !self.hands_back_a_view_of_the_subject(value)
@@ -5805,7 +5370,7 @@ impl<'a> Checker<'a> {
         // answers to the declared type exactly as a `return` does - unless the
         // body **cannot get there**
         // ([ADR-276](../../../docs/specification/adr/adr-276.md)).
-        let ends = !never_ends(body);
+        let ends = !a_body_never_ends(body);
         if let (Some(expected), Some(span)) = (&expected, tail_span.filter(|_| ends)) {
             // **A tail is a `return` written without the word**, so it owes the
             // same `&`: `fn text(ref self) -> ref String { self.text }` and the
@@ -8882,7 +8447,7 @@ impl<'a> Checker<'a> {
         let asked = self.at_a_write_door && !mutable.contains(&name);
         Local {
             written_mut: false,
-            id: a_new_binding(),
+            id: a_new_binding() as i64,
             literal: None,
             name: self.parsed.text(name).to_string(),
             ty,
@@ -9239,7 +8804,7 @@ impl<'a> Checker<'a> {
         self.changed.push(name.to_string());
         let Some(at) = self
             .binding(name)
-            .and_then(|local| local.immutable.clone())
+            .and_then(|local| local.immutable)
             .filter(|at| !self.said_mut.contains(&at.at.at()))
         else {
             return;
@@ -10021,7 +9586,7 @@ impl<'a> Checker<'a> {
             // given to them and held to the type they come to.
             let open = self
                 .binding(&name)
-                .and_then(|local| self.open_elements.get(&local.id).copied())
+                .and_then(|local| self.open_elements.get(&(local.id as usize)).copied())
                 .map(|at| self.open_root(at));
             // **An empty list's first `push` of a number makes its elements
             // one open number** (#497, ADR-285 D34), as a list written in
@@ -10050,7 +9615,7 @@ impl<'a> Checker<'a> {
                     },
                 );
                 self.open_number_given(span.at(), value, span);
-                self.open_elements.insert(id, span.at());
+                self.open_elements.insert(id as usize, span.at());
             } else if let (Some(number), "push", [pushed], [value]) =
                 (open, entry, found.as_slice(), args)
             {
@@ -11050,7 +10615,7 @@ impl<'a> Checker<'a> {
         match expr {
             Expr::Variable(name) => {
                 let local = self.binding(self.parsed.text(*name))?;
-                let at = self.open_comptimes.get(&local.id)?;
+                let at = self.open_comptimes.get(&(local.id as usize))?;
                 Some((local.name.clone(), *at))
             }
             Expr::Binary { lhs, rhs, .. } => self
@@ -11150,7 +10715,7 @@ impl<'a> Checker<'a> {
             Expr::Variable(name) => {
                 if let Some(at) = self
                     .binding(self.parsed.text(*name))
-                    .and_then(|local| local.open_number)
+                    .and_then(|local| local.open_number.map(|n| n as usize))
                 {
                     out.push(self.open_root(at));
                 }
@@ -11204,7 +10769,7 @@ impl<'a> Checker<'a> {
             return None;
         }
         let local = self.binding(self.parsed.text(*name))?;
-        self.open_elements.get(&local.id).copied()
+        self.open_elements.get(&(local.id as usize)).copied()
     }
 
     /// **The constant an element of an immutable list of literals is**, where
@@ -11217,7 +10782,7 @@ impl<'a> Checker<'a> {
             return None;
         };
         let local = self.binding(self.parsed.text(*name))?;
-        let elements = self.list_constants.get(&local.id)?;
+        let elements = self.list_constants.get(&(local.id as usize))?;
         let at = self.constant_of(index)?;
         if at.value.negative {
             return None;
@@ -11269,7 +10834,7 @@ impl<'a> Checker<'a> {
         if let Expr::Variable(name) = list
             && let Some(number) = self
                 .binding(self.parsed.text(*name))
-                .and_then(|local| self.open_elements.get(&local.id).copied())
+                .and_then(|local| self.open_elements.get(&(local.id as usize)).copied())
             && let Ty::Named { name, args, .. } = value_of_a_copy(want.unseen())
             && matches!(name.as_str(), "Vec" | "Array")
             && let Some(ty) = args.first().and_then(integer_named)
@@ -11305,7 +10870,7 @@ impl<'a> Checker<'a> {
                 let Some(value) = &local.constant else {
                     return;
                 };
-                if !self.open_comptimes.contains_key(&local.id) {
+                if !self.open_comptimes.contains_key(&(local.id as usize)) {
                     return;
                 }
                 let digits = nikaia_std::tools::integers::integer_text(value);
@@ -12125,7 +11690,7 @@ impl<'a> Checker<'a> {
                     self.unknown_bound.insert(id);
                 }
                 self.bind_local(Local {
-                    id,
+                    id: id as i64,
                     name,
                     ty: bound,
                     constant,
@@ -12138,8 +11703,8 @@ impl<'a> Checker<'a> {
                     // A `let` binds a number where one folded; the whole value
                     // is a `comptime`'s, which is the one that *must* fold.
                     built: None,
-                    empty_list: pending,
-                    open_number: open,
+                    empty_list: pending.map(|n| n as i64),
+                    open_number: open.map(|n| n as i64),
                     literal: match (ty, value) {
                         (None, Expr::LitStr { text, .. }) => Some(text.clone()),
                         _ => None,
@@ -12219,7 +11784,7 @@ impl<'a> Checker<'a> {
                 if let Some(path) = self.place_path(target) {
                     self.gives.push(Give {
                         path: path.clone(),
-                        at: span.at(),
+                        at: span.at() as i64,
                         choices: self.branch.clone(),
                     });
                     self.written_at.push((path, span.at()));
@@ -12292,7 +11857,7 @@ impl<'a> Checker<'a> {
                     let open = match target {
                         Expr::Variable(name) => self
                             .binding(self.parsed.text(*name))
-                            .and_then(|local| local.open_number)
+                            .and_then(|local| local.open_number.map(|n| n as usize))
                             .map(|at| self.open_root(at)),
                         Expr::Index { .. } => {
                             self.open_element_of(target).map(|at| self.open_root(at))
@@ -12427,8 +11992,11 @@ impl<'a> Checker<'a> {
                     span,
                     "A `while` loop repeats while a `bool` is `true`.",
                 );
-                self.repeats
-                    .push(Repeats::a_loop(self.parsed, self.scope.len(), body));
+                self.repeats.push(Repeats::a_loop(
+                    &self.parsed.interner,
+                    self.scope.len() as i64,
+                    body,
+                ));
                 self.scope.push(Vec::new());
                 // **The body and not the condition.** A `break` written in the
                 // condition is bound to this very loop in the language below,
@@ -12502,7 +12070,7 @@ impl<'a> Checker<'a> {
                     frame.push(Local {
                         written_mut: false,
                         lent: lent && !copied && !a_view,
-                        ..Local::free(name, element)
+                        ..local_free(name, element)
                     });
                 }
                 // **A range's binding is a use of the numbers it counts
@@ -12518,7 +12086,7 @@ impl<'a> Checker<'a> {
                     self.open_numbers_in(end, &mut open);
                     self.open_numbers_joined(&open);
                     if let (Some(first), Some(local)) = (open.first(), frame.first_mut()) {
-                        local.open_number = Some(self.open_root(*first));
+                        local.open_number = Some(self.open_root(*first) as i64);
                     }
                     // **Between two literals the binding is a number of its
                     // own** (D1, D3): `for k in 0..<55` counts in the type its
@@ -12542,7 +12110,7 @@ impl<'a> Checker<'a> {
                                 written: Vec::new(),
                             },
                         );
-                        local.open_number = Some(span.at());
+                        local.open_number = Some(span.at() as i64);
                         self.open_number_given(span.at(), start, span);
                         self.open_number_given(span.at(), end, span);
                     }
@@ -12556,11 +12124,12 @@ impl<'a> Checker<'a> {
                 {
                     match iter {
                         Expr::Variable(name) => {
-                            if let Some(at) = self
-                                .binding(self.parsed.text(*name))
-                                .and_then(|list| self.open_elements.get(&list.id).copied())
+                            if let Some(at) =
+                                self.binding(self.parsed.text(*name)).and_then(|list| {
+                                    self.open_elements.get(&(list.id as usize)).copied()
+                                })
                             {
-                                local.open_number = Some(self.open_root(at));
+                                local.open_number = Some(self.open_root(at) as i64);
                             }
                         }
                         Expr::ListLit { items, .. }
@@ -12579,7 +12148,7 @@ impl<'a> Checker<'a> {
                                     written: Vec::new(),
                                 },
                             );
-                            local.open_number = Some(span.at());
+                            local.open_number = Some(span.at() as i64);
                             for item in items {
                                 self.open_number_given(span.at(), item, span);
                             }
@@ -12590,8 +12159,11 @@ impl<'a> Checker<'a> {
                 for local in &frame {
                     self.nameable(&local.name.clone(), span, "a `for` binding");
                 }
-                self.repeats
-                    .push(Repeats::a_loop(self.parsed, self.scope.len(), body));
+                self.repeats.push(Repeats::a_loop(
+                    &self.parsed.interner,
+                    self.scope.len() as i64,
+                    body,
+                ));
                 self.scope.push(frame);
                 self.loops += 1;
                 self.block(body);
@@ -12726,7 +12298,7 @@ impl<'a> Checker<'a> {
             || self.number_shaped(expr)
             || matches!(expr, Expr::Variable(n) if self
                 .binding(self.parsed.text(*n))
-                .is_some_and(|l| self.open_comptimes.contains_key(&l.id)))
+                .is_some_and(|l| self.open_comptimes.contains_key(&(l.id as usize))))
             || self.a_member_of_an_open_argument(expr)
             // `xs ?? 0` and `xs ?? return` over a `T?` nothing typed: the
             // number's uses, or the jump, leave the type to what the left side
@@ -12773,7 +12345,7 @@ impl<'a> Checker<'a> {
         let of_an_unknown = matches!(expr, Expr::Field { base, .. } | Expr::MethodCall { receiver: base, .. }
             if matches!(&**base, Expr::Variable(n) if self
                 .binding(self.parsed.text(*n))
-                .is_some_and(|l| self.unknown_bound.contains(&l.id))));
+                .is_some_and(|l| self.unknown_bound.contains(&(l.id as usize)))));
         if said || per_call || of_an_unknown {
             self.unknown_said += 1;
             return;
@@ -12980,7 +12552,10 @@ impl<'a> Checker<'a> {
                 // ([ADR-135](../../docs/specification/adr/adr-135.md)): an
                 // empty list takes its element type from its first use, so a
                 // use - any use - is what says one exists.
-                if let Some(at) = self.binding(name).and_then(|local| local.empty_list) {
+                if let Some(at) = self
+                    .binding(name)
+                    .and_then(|local| local.empty_list.map(|n| n as usize))
+                {
                     self.empty_lists.remove(&at);
                 }
                 match self.lookup(name) {
@@ -13167,7 +12742,7 @@ impl<'a> Checker<'a> {
                         self.past_a_boundary("`select` arm", |me| me.expr(&arm.value, span));
                     let frame = match arm.binding {
                         Some(name) => {
-                            vec![Local::free(self.parsed.text(name).to_string(), raced)]
+                            vec![local_free(self.parsed.text(name).to_string(), raced)]
                         }
                         None => Vec::new(),
                     };
@@ -13483,7 +13058,7 @@ impl<'a> Checker<'a> {
                         .map(|local| match parts.get(&local.name) {
                             Some(ty) => {
                                 let text = owned_text.contains(&local.name);
-                                let mut bound = Local::free(local.name, ty.clone());
+                                let mut bound = local_free(local.name, ty.clone());
                                 bound.lent = lent_parts && (!self.copied(ty) || text);
                                 bound
                             }
@@ -13491,7 +13066,7 @@ impl<'a> Checker<'a> {
                         })
                         .collect();
                     self.scope.push(frame);
-                    self.branch.push((choice, taken));
+                    self.branch.push((choice, taken as i64));
                     let from = self.taken_so_far();
                     let changed_from = self.changed.len();
                     // **The guard is walked inside the arm's scope** (D2): it
@@ -14778,7 +14353,7 @@ impl<'a> Checker<'a> {
                         let ty = given.get(at).cloned().unwrap_or(Ty::Unknown);
                         let local = self.lambda_parameter(*p, mutable, ty, span);
                         if local.ty.is_unknown() {
-                            self.unknown_bound.insert(local.id);
+                            self.unknown_bound.insert(local.id as usize);
                         }
                         local
                     })
@@ -14786,7 +14361,8 @@ impl<'a> Checker<'a> {
                 for local in &frame {
                     self.nameable(&local.name.clone(), span, "a lambda's argument");
                 }
-                self.repeats.push(Repeats::a_lambda(self.scope.len()));
+                self.repeats
+                    .push(Repeats::a_lambda(self.scope.len() as i64));
                 self.scope.push(frame);
                 // Part I 3.3: a lambda is a closure below, and a jump does not
                 // leave one.
@@ -15181,7 +14757,7 @@ impl<'a> Checker<'a> {
                     Expr::Index { .. } | Expr::MethodCall { .. } => read_now,
                     Expr::Variable(name) => self
                         .binding(self.parsed.text(*name))
-                        .is_some_and(|local| self.map_views.contains(&local.id)),
+                        .is_some_and(|local| self.map_views.contains(&(local.id as usize))),
                     _ => false,
                 };
                 // **A fallback that jumps takes its takings with it**
@@ -15234,11 +14810,11 @@ impl<'a> Checker<'a> {
                 if matches!(&**value, Expr::Variable(_) | Expr::Field { .. }) {
                     match self.a_coalesce_that_may_lend(&left, fallback, &other) {
                         Some(opened) => self.pending_coalesces.push(PendingCoalesce {
-                            key: (span.at(), argument_shape(expr)),
-                            left: address(value),
+                            key: (span.at() as i64, argument_shape(expr)),
+                            left: address(value) as i64,
                             ty: left.clone(),
                             span: *span,
-                            opened,
+                            opened: opened.to_string(),
                         }),
                         None => self.hands_over(value, &left, "given to `??`", span),
                     }
@@ -15610,7 +15186,7 @@ impl<'a> Checker<'a> {
                 // fails*, because what a handler's own failure does is
                 // [ADR-292](../../../docs/specification/adr/adr-292.md)'s
                 // question and this refusal does not need it answered.
-                let enclosing = self.guarded.replace(Guarded::default());
+                let enclosing = self.guarded.replace(Guarded::nothing());
                 let answers = self.expr(expr, span);
                 let guarded = std::mem::replace(&mut self.guarded, enclosing);
                 if self.guarded.is_some() {
@@ -15620,7 +15196,7 @@ impl<'a> Checker<'a> {
                 if let (Some(handed), Some(was)) = (&mut self.handed_over, lambda_outer) {
                     handed.caught = was;
                 }
-                let guarded = guarded.unwrap_or_default();
+                let guarded = guarded.unwrap_or_else(Guarded::nothing);
                 // **`error` is what the guarded calls throw** (Part I 7.1,
                 // #501): `fs::read_to_string(…) catch { … {error} … }` binds an
                 // `io::IoError`, as the ledger records the call. One type, and
@@ -15646,7 +15222,7 @@ impl<'a> Checker<'a> {
                 };
                 self.nothing_here_can_fail(guarded, span);
                 self.scope
-                    .push(vec![Local::free("error".to_string(), caught)]);
+                    .push(vec![local_free("error".to_string(), caught)]);
                 let arriving = self.several_arrive(expr);
                 let one = self.the_one_error(expr);
                 let several = std::mem::replace(&mut self.caught_several, arriving);
@@ -16882,7 +16458,7 @@ impl<'a> Checker<'a> {
                         }
                         _ => Ty::Unknown,
                     };
-                    Local::free(name, element)
+                    local_free(name, element)
                 })
                 .collect();
             self.scope.push(frame);
@@ -16928,9 +16504,9 @@ impl<'a> Checker<'a> {
             |ty: &Ty| matches!(ty, Ty::Named { name, .. } if name == "String" || name == "str");
         match expr {
             Expr::LitStr { .. } => true,
-            Expr::Variable(name) => self
-                .binding(self.parsed.text(*name))
-                .is_some_and(|local| text(&local.ty) || self.text_paths.contains(&local.id)),
+            Expr::Variable(name) => self.binding(self.parsed.text(*name)).is_some_and(|local| {
+                text(&local.ty) || self.text_paths.contains(&(local.id as usize))
+            }),
             Expr::LitInterpolated { parts } => {
                 crate::emit::interpolated_holes(parts)
                     .iter()
@@ -16938,7 +16514,7 @@ impl<'a> Checker<'a> {
                         Expr::Variable(name) => {
                             self.binding(self.parsed.text(*name)).is_some_and(|local| {
                                 !matches!(&local.ty, Ty::Named { name, .. } if name == "fs::Path")
-                                    || self.text_paths.contains(&local.id)
+                                    || self.text_paths.contains(&(local.id as usize))
                             })
                         }
                         Expr::LitInt { .. } | Expr::LitStr { .. } => true,
@@ -19933,21 +19509,22 @@ impl<'a> Checker<'a> {
         if !matches!(given, Expr::Coalesce { .. }) {
             return false;
         }
-        let key = (span.at(), argument_shape(given));
+        let key = (span.at() as i64, argument_shape(given));
         let Some(at) = self.pending_coalesces.iter().position(|p| p.key == key) else {
             return false;
         };
         let pending = self.pending_coalesces.remove(at);
-        self.checked
-            .lent_coalesces
-            .insert(pending.key, pending.opened);
+        self.checked.lent_coalesces.insert(
+            (pending.key.0 as usize, pending.key.1),
+            opened_text(&pending.opened),
+        );
         true
     }
 
     /// The same for a `??` of text, where the position is a comparison
     /// (issue #98).
     fn a_pending_coalesce_of_text_is_lent(&mut self, given: &Expr, span: &Span) -> bool {
-        let key = (span.at(), argument_shape(given));
+        let key = (span.at() as i64, argument_shape(given));
         let of_text = self
             .pending_coalesces
             .iter()
@@ -19978,7 +19555,10 @@ impl<'a> Checker<'a> {
     /// is taken (ADR-279 D5).
     fn coalesces_not_lent_are_taken(&mut self) {
         for pending in std::mem::take(&mut self.pending_coalesces) {
-            let Some(&at) = self.read_index.get(&(pending.left, pending.span.at())) else {
+            let Some(&at) = self
+                .read_index
+                .get(&(pending.left as usize, pending.span.at()))
+            else {
                 continue;
             };
             let (path, seq) = (
@@ -19998,7 +19578,7 @@ impl<'a> Checker<'a> {
         self.hands_over_path(name.to_string(), &ty, self.read_seq, to, span);
     }
 
-    fn hands_over_path(&mut self, path: String, ty: &Ty, seq: usize, to: &str, span: &Span) {
+    fn hands_over_path(&mut self, path: String, ty: &Ty, seq: i64, to: &str, span: &Span) {
         // A task's body is `NK2101`'s: what it uses it took with it already.
         if !self.task_bindings.is_empty() {
             return;
@@ -20025,18 +19605,18 @@ impl<'a> Checker<'a> {
             .repeats
             .iter()
             .rev()
-            .take_while(|r| r.frame > bound)
+            .take_while(|r| r.frame > bound as i64)
             .find(|r| r.takes_again(&root))
         else {
             return;
         };
-        let again = match around.what {
+        let again = match around.what.as_str() {
             "loop" => {
                 "the next time round the loop it would be handed over again, but it's already gone"
             }
             _ => "a lambda may run more than once, and the second run would find it gone",
         };
-        let what = around.what;
+        let what = around.what.as_str();
         self.checked.findings.push(Finding {
             code: "NK2105",
             severity: Severity::Error,
@@ -20129,7 +19709,7 @@ impl<'a> Checker<'a> {
         let binding = self.binding(&path).map(|local| local.id);
         self.reads_on_paths.push(Read {
             path,
-            at: span.at(),
+            at: span.at() as i64,
             choices: self.branch.clone(),
             seq: self.read_seq,
             binding,
@@ -20154,15 +19734,15 @@ impl<'a> Checker<'a> {
     }
 
     /// A taking, where it stands.
-    fn taken(&self, path: String, ty: Ty, seq: usize, to: &str, span: &Span) -> Taken {
+    fn taken(&self, path: String, ty: Ty, seq: i64, to: &str, span: &Span) -> Taken {
         let binding = self
             .binding(path.split('.').next().unwrap_or_default())
             .map(|local| local.id);
         Taken {
             path,
             ty,
-            from: span.at(),
-            at: span.stop(),
+            from: span.at() as i64,
+            at: span.stop() as i64,
             seq,
             choices: self.branch.clone(),
             until: None,
@@ -20179,21 +19759,23 @@ impl<'a> Checker<'a> {
     /// taking stood in; not past a branch that left the function; and touching
     /// what was taken. `None` where an assignment gave it back first - in the
     /// same statement too, since `name = f(name)` writes after it reads.
-    fn first_read_after(&self, taken: &Taken) -> Option<(usize, String)> {
+    fn first_read_after(&self, taken: &Taken) -> Option<(i64, String)> {
         let read = self
             .reads_on_paths
             .iter()
             .filter(|read| {
-                overlaps(&read.path, &taken.path)
+                a_path_overlaps(&read.path, &taken.path)
                     && read.binding == taken.binding
-                    && !apart(&taken.choices, &read.choices)
+                    && !choices_apart(&taken.choices, &read.choices)
                     && taken.until.is_none_or(|end| read.at < end)
                     && (read.at >= taken.at || (read.at == taken.from && read.seq > taken.seq))
             })
             .min_by_key(|read| (read.at, read.seq))?;
         let used = read.at;
         let given_back = self.written_at.iter().any(|(written, when)| {
-            revives(written, &taken.path) && *when >= taken.from && *when <= used
+            a_path_revives(written, &taken.path)
+                && *when as i64 >= taken.from
+                && *when as i64 <= used
         });
         (!given_back).then(|| (used, read.path.clone()))
     }
@@ -20217,10 +19799,10 @@ impl<'a> Checker<'a> {
             return;
         }
         for walked in &mut self.walked[from.0..] {
-            walked.until.get_or_insert(span.stop());
+            walked.until.get_or_insert(span.stop() as i64);
         }
         for handed in &mut self.handed[from.1..] {
-            handed.until.get_or_insert(span.stop());
+            handed.until.get_or_insert(span.stop() as i64);
         }
     }
 
@@ -20232,9 +19814,9 @@ impl<'a> Checker<'a> {
             return;
         }
         self.ways_out.push(WayOut {
-            how,
+            how: how.to_string(),
             word: word.to_string(),
-            at: span.at(),
+            at: span.at() as i64,
             seq: self.read_seq,
             choices: self.branch.clone(),
             span: *span,
@@ -20273,7 +19855,7 @@ impl<'a> Checker<'a> {
         let Some(frame) = self.scope.last() else {
             return;
         };
-        let found: Vec<(String, usize)> = parts
+        let found: Vec<(String, i64)> = parts
             .keys()
             .filter_map(|name| {
                 let local = frame.iter().find(|local| local.name == *name)?;
@@ -20293,7 +19875,7 @@ impl<'a> Checker<'a> {
                 subject: path.to_string(),
                 part,
                 binding,
-                handed: handed_from + at,
+                handed: (handed_from + at) as i64,
             });
         }
         if !any {
@@ -20409,24 +19991,24 @@ impl<'a> Checker<'a> {
         // One report per place the parts are missing at, naming all of them.
         let mut reports: Vec<PartsMissing<'_>> = Vec::new();
         for out in &outs {
-            let Some(taken) = self.handed.get(out.handed) else {
+            let Some(taken) = self.handed.get(out.handed as usize) else {
                 continue;
             };
             if taken.binding != Some(out.binding) {
                 continue;
             }
             let here = (taken.from, taken.seq);
-            let mut ahead: Vec<((usize, usize), Option<&WayOut>)> = ways
+            let mut ahead: Vec<((i64, i64), Option<&WayOut>)> = ways
                 .iter()
                 .filter(|way| {
                     (way.at, way.seq) >= here
-                        && !apart(&taken.choices, &way.choices)
+                        && !choices_apart(&taken.choices, &way.choices)
                         && taken.until.is_none_or(|end| way.at < end)
                 })
                 .map(|way| ((way.at, way.seq), Some(way)))
                 .collect();
             if taken.until.is_none() {
-                ahead.push(((usize::MAX, 0), None));
+                ahead.push(((i64::MAX, 0), None));
             }
             ahead.sort_by_key(|(position, _)| *position);
             for (position, way) in ahead {
@@ -20435,9 +20017,9 @@ impl<'a> Checker<'a> {
                     None => &Vec::new(),
                 };
                 let given_back = gives.iter().any(|give| {
-                    (give.at, usize::MAX) > here
-                        && (give.at, usize::MAX) <= position
-                        && (revives(&give.path, &out.subject) || give.path == out.part)
+                    (give.at, i64::MAX) > here
+                        && (give.at, i64::MAX) <= position
+                        && (a_path_revives(&give.path, &out.subject) || give.path == out.part)
                         && give
                             .choices
                             .iter()
@@ -20465,7 +20047,7 @@ impl<'a> Checker<'a> {
 
     fn a_part_is_missing(&self, parts: &[&PartOut], way: Option<&WayOut>) -> Finding {
         let out = parts[0];
-        let taken = &self.handed[out.handed];
+        let taken = &self.handed[out.handed as usize];
         let subject = &out.subject;
         let names: Vec<String> = parts.iter().map(|p| format!("`{}`", p.part)).collect();
         let part = match names.as_slice() {
@@ -20473,7 +20055,7 @@ impl<'a> Checker<'a> {
             [first @ .., last] => format!("{} and {last}", first.join(", ")),
             [] => String::new(),
         };
-        let from = Span::new(taken.from, taken.at);
+        let from = Span::new(taken.from as usize, taken.at as usize);
         let (message, span, label) = match way {
             Some(way) if way.how == "fails" => (
                 format!(
@@ -20574,13 +20156,13 @@ impl<'a> Checker<'a> {
                 true => format!("You're using `{name}` again, but it was {to}."),
                 false => format!("You're using `{read}`, but `{name}` was {to}."),
             };
-            if !said.insert(used) {
+            if !said.insert(used as usize) {
                 continue;
             }
             findings.push(Finding {
                 code: "NK2105",
                 severity: Severity::Error,
-                span: Span::new(used, used),
+                span: Span::new(used as usize, used as usize),
                 message,
                 notes: vec![
                     format!(
@@ -20634,7 +20216,7 @@ impl<'a> Checker<'a> {
             .repeats
             .iter()
             .rev()
-            .take_while(|r| r.frame > bound)
+            .take_while(|r| r.frame > bound as i64)
             .find(|r| r.takes_again(name))
         else {
             return;
@@ -20643,7 +20225,7 @@ impl<'a> Checker<'a> {
             Ty::Seq { item, .. } => item.text(),
             _ => "?".to_string(),
         };
-        let (again, help) = match around.what {
+        let (again, help) = match around.what.as_str() {
             "loop" => (
                 "the next time round the loop would use it again, but it's already used up",
                 format!(
@@ -20707,7 +20289,7 @@ impl<'a> Checker<'a> {
             let (name, ty) = (taken.path, taken.ty);
             // Once per site: a name walked twice and read three times is one
             // mistake, and three carets on it is three readings of the same line.
-            if !said.insert(used) {
+            if !said.insert(used as usize) {
                 continue;
             }
             let item = match &ty {
@@ -20717,7 +20299,7 @@ impl<'a> Checker<'a> {
             findings.push(Finding {
                 code: "NK2702",
                 severity: Severity::Error,
-                span: Span::new(used, used),
+                span: Span::new(used as usize, used as usize),
                 message: format!("`{name}` is a sequence, and it was already used up."),
                 notes: vec![
                     format!(
@@ -23915,7 +23497,7 @@ impl<'a> Checker<'a> {
                 let frame = names
                     .iter()
                     .zip(params)
-                    .map(|(n, ty)| Local::free(self.parsed.text(*n).to_string(), ty.clone()))
+                    .map(|(n, ty)| local_free(self.parsed.text(*n).to_string(), ty.clone()))
                     .collect();
                 self.scope.push(frame);
                 self.expr(&call, span);
@@ -26403,7 +25985,7 @@ impl<'a> Checker<'a> {
     fn bind_with(&mut self, name: String, ty: Ty, constant: Option<build_time::Integer>) {
         self.bind_local(Local {
             written_mut: false,
-            id: a_new_binding(),
+            id: a_new_binding() as i64,
             literal: None,
             name,
             ty,
@@ -26419,7 +26001,7 @@ impl<'a> Checker<'a> {
 
     fn bind_local(&mut self, local: Local) {
         if local.ty.is_unknown() {
-            self.unknown_bound.insert(local.id);
+            self.unknown_bound.insert(local.id as usize);
         }
         if let Some(frame) = self.scope.last_mut() {
             frame.push(local);
@@ -26716,13 +26298,14 @@ impl<'a> Checker<'a> {
                     span,
                 );
                 if local.ty.is_unknown() {
-                    self.unknown_bound.insert(local.id);
+                    self.unknown_bound.insert(local.id as usize);
                 }
                 local
             })
             .collect();
 
-        self.repeats.push(Repeats::a_lambda(self.scope.len()));
+        self.repeats
+            .push(Repeats::a_lambda(self.scope.len() as i64));
         self.scope.push(frame);
         // The other door into a lambda's body, and it needs the same boundary
         // as the one in `expr`: which of the two a lambda arrives through is
@@ -27851,7 +27434,7 @@ impl<'a> Checker<'a> {
         // it had just been computed.
         self.bind_local(Local {
             written_mut: false,
-            id,
+            id: id as i64,
             literal: None,
             name: bound,
             ty: held,
@@ -28482,7 +28065,7 @@ impl<'a> Checker<'a> {
     fn pattern_bindings(&self, pattern: &MatchPattern) -> Vec<Local> {
         self.pattern_names(pattern)
             .into_iter()
-            .map(|name| Local::free(name, Ty::Unknown))
+            .map(|name| local_free(name, Ty::Unknown))
             .collect()
     }
 

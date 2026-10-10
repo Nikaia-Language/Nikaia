@@ -1,0 +1,367 @@
+// crates/nikaia-std/src/tools/check_state.nika
+//
+// **What the checker keeps while it walks a body**, declared in Nikaia
+// (ADR-294, #125; the owner's direction on #558: the `Checker`'s state is a
+// Nikaia struct, as directly as possible). These are the small records its
+// fields hold - a name in scope, what was taken or read of a path, a way out,
+// a loop that may run again - and the questions that need nothing else to be
+// answered. The Rust `Checker` holds them; a method that moves holds the whole
+// state as one field.
+//
+// **Positions are `i64`**: an expression's key is a number here, never an
+// address, and Nikaia has no `usize` (ADR-294 D7). A statement's words
+// (`"loop"`, `"return"`) are `String`, not a `&'static str`.
+
+use std::collections
+
+/// Which of the two ways a binding comes to be one that did not say `mut`.
+///
+/// They are one rule reached from two sides - *what is changed says `mut`* -
+/// and two codes, because the way out is written in a different place:
+/// `NK1138` is a **parameter**'s (ADR-094 D3), `NK1139` is a **`let`**'s
+/// (Part I 2.1).
+pub enum CheckKind {
+    Parameter,
+    Let,
+}
+
+/// A binding that did not say `mut`: where it was written, and which kind it is.
+pub struct CheckImmutable {
+    pub at: Span,
+    pub kind: CheckKind,
+}
+
+/// A name in scope: what it is called, the type it holds, and - where this
+/// checker could work it out - the constant integer it stands for.
+///
+/// **Only a `let` ever fills `constant`**, and only an immutable one whose value
+/// folded. A parameter, a `for` binding, a `match` arm's name and a lambda's
+/// argument all name something no compile-time evaluation reaches, so they
+/// carry `null` and the fold stops at them - the fail-closed direction the
+/// refusal needs (ADR-010 D1).
+pub struct CheckLocal {
+    pub name: String,
+    /// **A `let mut`** (Part I 2.1): what a supervisor's child may not capture
+    /// (`NK1229`), because the next attempt would not start fresh.
+    pub written_mut: bool,
+    pub ty: Ty,
+    pub constant: Integer?,
+    /// **The binding is a view the emitter lent**, which a `for` over a place
+    /// is (ADR-094 D4). One reader: a cast over it.
+    pub lent: bool,
+    /// Where the binding was written and what kind it is, when it did **not**
+    /// say `mut`. On the binding rather than in a map so that the scope is the
+    /// one `scope` already keeps.
+    pub immutable: CheckImmutable?,
+    /// **A parameter whose declaration wrote `mut`**, which is already a
+    /// `&mut T` in the lowering (ADR-094 D3): a second reference would be
+    /// `&mut &mut T`.
+    pub changing: bool,
+    /// **What the build worked out this name is**, whole - a `comptime`'s
+    /// value, where there is one.
+    pub built: BuildValue?,
+    /// **The text literal a `let` bound this name to**, for the one sentence
+    /// that has to say so (ADR-282 D25).
+    pub literal: String?,
+    /// Where the `let` stands, for a binding whose value was an **empty list**
+    /// and whose element type nothing has said yet (ADR-135 D2).
+    pub empty_list: i64?,
+    /// **A number no annotation typed, whose uses will** (ADR-285 D23): the
+    /// `let` it was bound at.
+    pub open_number: i64?,
+    /// **Which binding this is**, of all the ones a name has had: a number no
+    /// other binding gets. A read of another `k` is not a read of the one that
+    /// was handed over (`NK2105`).
+    pub id: i64,
+}
+
+impl CheckLocal {
+    /// A binding nothing here refuses a change to: `self`, an option, a `for`
+    /// binding, a pattern's name. `id` is a number no other binding has.
+    pub fn free(name: String, ty: Ty, id: i64) -> CheckLocal {
+        return CheckLocal {
+            name: name,
+            written_mut: false,
+            ty: ty,
+            constant: null,
+            lent: false,
+            immutable: null,
+            changing: false,
+            built: null,
+            literal: null,
+            empty_list: null,
+            open_number: null,
+            id: id,
+        }
+    }
+}
+
+/// What a function type **allows** the code it names to do (ADR-277 D2): without
+/// `sync` it may pause, without `throws` it cannot fail.
+pub struct CheckPromises {
+    pub may_pause: bool,
+    pub may_fail: bool,
+}
+
+/// What a lambda's body was seen to do (ADR-277 D7), kept beside what the type
+/// it was handed to allows, so that the one message about a mismatch is the one
+/// that is said.
+pub struct CheckHanded {
+    pub pauses: bool,
+    pub fails: bool,
+    /// Whether the walk is inside the guarded half of a `catch` written **in
+    /// this lambda's body**.
+    pub caught: bool,
+    pub promised: CheckPromises,
+}
+
+/// What the guarded expression of a `catch` turned out to hold: two answers
+/// and not one, because *nothing can fail here* and *nothing here could be
+/// looked up* are different facts and only the first may be acted on.
+pub struct CheckGuarded {
+    /// A call the ledger describes, whose contract carries a `throws`.
+    pub fallible: bool,
+    /// Something this compiler could not look up, or a nested `catch`.
+    pub unanswered: bool,
+    /// The error types the described calls say they throw (#501).
+    pub thrown: collections::BTreeSet[String],
+}
+
+impl CheckGuarded {
+    pub fn nothing() -> CheckGuarded {
+        return CheckGuarded { fallible: false, unanswered: false, thrown: collections::BTreeSet() }
+    }
+}
+
+/// **Something taken**: a sequence walked (`NK2702`) or data handed to what
+/// keeps it (`NK2105`).
+pub struct CheckTaken {
+    /// A name, or a part of one: `p.name` (ADR-293 D32).
+    pub path: String,
+    pub ty: Ty,
+    /// The bytes the statement that took it starts and ends at.
+    pub from: i64,
+    pub at: i64,
+    /// **Where in that statement**: the order the walk read it in (ADR-293 D31).
+    pub seq: i64,
+    /// The branch it was taken in.
+    pub choices: Vec[(i64, i64)],
+    /// Where a branch that left the function ends, for a taking inside it
+    /// (ADR-293 D30).
+    pub until: i64?,
+    /// What took it, in words (`NK2105`).
+    pub to: String,
+    /// Which binding of the path's first name was taken: a read of another
+    /// binding of the same name is not a read of it.
+    pub binding: i64?,
+}
+
+/// **One read**: of what, in which statement, on which path, in which order.
+pub struct CheckRead {
+    pub path: String,
+    pub at: i64,
+    pub choices: Vec[(i64, i64)],
+    pub seq: i64,
+    pub binding: i64?,
+}
+
+/// **A part taken out of a `mut` parameter** (ADR-094 D7, `NK2108`): the arm of
+/// a `match` over the parameter bound it and handed it to something that keeps
+/// it, so the parameter is missing it until an assignment gives it back.
+pub struct CheckPartOut {
+    /// The parameter, or the place in it, that was matched: `e`, `e.kind`.
+    pub subject: String,
+    /// The name the arm bound the part to.
+    pub part: String,
+    /// Which binding that is.
+    pub binding: i64,
+    /// The hand-over that took it.
+    pub handed: i64,
+}
+
+/// **An assignment**, where it stands: what gives a part back.
+pub struct CheckGive {
+    pub path: String,
+    pub at: i64,
+    pub choices: Vec[(i64, i64)],
+}
+
+/// **A way out of the function, or a call that can fail**, where it stands:
+/// what a part taken out of a `mut` parameter may not be missing at.
+pub struct CheckWayOut {
+    /// `"return"`, `"throw"`, or `"fails"` for a call that can.
+    pub how: String,
+    /// The call, for `"fails"`.
+    pub word: String,
+    pub at: i64,
+    pub seq: i64,
+    pub choices: Vec[(i64, i64)],
+    pub span: Span,
+}
+
+/// A `??` whose left side may be lent rather than taken.
+pub struct CheckPendingCoalesce {
+    /// The `??`, by statement and shape: what the emitter looks it up by.
+    pub key: (i64, String),
+    /// The read its left side is, for the hand-over.
+    pub left: i64,
+    /// The left side's type, `T?`.
+    pub ty: Ty,
+    pub span: Span,
+    /// How the option is opened where it is lent.
+    pub opened: String,
+}
+
+/// Whether reading `read` touches what taking `taken` took: the same path, a
+/// part of it (`p.name` after `p`), or the whole it was part of (`p` after
+/// `p.name`).
+pub fn a_path_overlaps(read: ref String, taken: ref String) -> bool {
+    if read == taken {
+        return true
+    }
+    if read.starts_with(taken) && (read.strip_prefix(taken) ?? "").starts_with(".") {
+        return true
+    }
+    return taken.starts_with(read) && (taken.strip_prefix(read) ?? "").starts_with(".")
+}
+
+/// Whether assigning `written` gives `taken` a value again: the same path, or
+/// the whole it is a part of.
+pub fn a_path_revives(written: ref String, taken: ref String) -> bool {
+    if written == taken {
+        return true
+    }
+    return taken.starts_with(written) && (taken.strip_prefix(written) ?? "").starts_with(".")
+}
+
+/// Whether two places are in different arms of one choice, so that no run
+/// reaches both.
+pub fn choices_apart(a: ref Vec[(i64, i64)], b: ref Vec[(i64, i64)]) -> bool {
+    for mine in a {
+        for theirs in b {
+            if theirs.0 == mine.0 && theirs.1 != mine.1 {
+                return true
+            }
+        }
+    }
+    return false
+}
+
+/// A body that may run more than once, around a sequence being taken
+/// (ADR-293 D19).
+pub struct CheckRepeats {
+    /// Where the body's own names begin in the scope: a name bound in a frame
+    /// before this is from outside it.
+    pub frame: i64,
+    /// `"loop"` or `"lambda"`, for the sentence.
+    pub what: String,
+    /// The names the body assigns, any of which it may give a new sequence
+    /// before the next turn takes it - a loop only.
+    pub revived: collections::BTreeSet[String],
+    /// Whether a `break` or a `return` is anywhere in the body, which may end
+    /// the loop on the turn that took it - a loop only. Over-approximated, in
+    /// the direction that refuses less.
+    pub leaves: bool,
+}
+
+impl CheckRepeats {
+    pub fn a_loop(words: ref winnow_grammar::InternerContext, frame: i64, body: ref Block) -> CheckRepeats {
+        let mut found = CheckRepeats { frame: frame, what: "loop".clone(), revived: collections::BTreeSet(), leaves: false }
+        what_a_loop_does(words, body, found)
+        return found
+    }
+
+    pub fn a_lambda(frame: i64) -> CheckRepeats {
+        return CheckRepeats { frame: frame, what: "lambda".clone(), revived: collections::BTreeSet(), leaves: false }
+    }
+
+    /// Whether the body takes `name` again on its next turn.
+    pub fn takes_again(ref self, name: ref String) -> bool {
+        return !(self.leaves || self.revived.contains(name))
+    }
+}
+
+fn what_a_loop_does(words: ref winnow_grammar::InternerContext, block: ref Block, mut found: CheckRepeats) {
+    for stmt in block.stmts {
+        match stmt.node {
+            Stmt::Break => {
+                found.leaves = true
+            }
+            Stmt::Return(_) => {
+                found.leaves = true
+            }
+            Stmt::Assign { target, .. } => {
+                match target {
+                    Expr::Variable(name) => {
+                        found.revived.insert(words.resolve(name).clone())
+                    }
+                    else => {}
+                }
+            }
+            else => {}
+        }
+        for inner in blocks_of_stmt(stmt.node) {
+            what_a_loop_does(words, inner, found)
+        }
+    }
+}
+
+/// Whether a body's last statement is a loop no jump leaves (ADR-276).
+///
+/// **The literal `true` only**, never a name that happens to be true: the
+/// equivalence is about the written form. **And no `break` bound to this
+/// loop.** The walk over-approximates - it descends into a lambda, where a
+/// `break` is not bound to this loop at all - and that is the safe direction.
+pub fn a_body_never_ends(body: ref Block) -> bool {
+    if body.stmts.len() == 0 {
+        return false
+    }
+    let last = body.stmts[body.stmts.len() - 1]
+    match last.node {
+        Stmt::While { cond, body } => {
+            return a_true_literal(cond) && !a_jump_leaves(body, 0)
+        }
+        else => {
+            return false
+        }
+    }
+}
+
+fn a_true_literal(expr: ref Expr) -> bool {
+    return match expr {
+        Expr::LitBool(value) => value,
+        else => false,
+    }
+}
+
+/// Whether a `break` in this block is bound to the loop **around** it rather
+/// than to one written inside. A `continue` is not one.
+pub fn a_jump_leaves(block: ref Block, loops: i64) -> bool {
+    for stmt in block.stmts {
+        match stmt.node {
+            Stmt::Break => {
+                if loops == 0 {
+                    return true
+                }
+            }
+            Stmt::For { body, .. } => {
+                if a_jump_leaves(body, loops + 1) {
+                    return true
+                }
+            }
+            Stmt::While { body, .. } => {
+                if a_jump_leaves(body, loops + 1) {
+                    return true
+                }
+            }
+            else => {
+                for inner in blocks_of_stmt(stmt.node) {
+                    if a_jump_leaves(inner, loops) {
+                        return true
+                    }
+                }
+            }
+        }
+    }
+    return false
+}

@@ -111,6 +111,8 @@ COMPILER_NIKA = {
     "build_eval.nika": "build_time: the evaluator of a build-time expression - calls, loops, text, structs, variants and a grammar run (0.0.760)",
     "bounds_matched.nika": "bounds: what a grammar alternative's bindings matched, and what a callee's ledger entry ensures (0.0.763)",
     "proofs_book.nika": "proofs: nikaia.proofs as text, read back and rendered (0.0.763)",
+    "check_state.nika": "check: the records the checker's state holds - a name in scope, what was taken or read of a path, a way out, a body that repeats - and the questions each answers (0.0.774)",
+    "check_walk.nika": "check: the expressions and the blocks an expression or a statement holds, for the checker's walks (0.0.774)",
 }
 
 
