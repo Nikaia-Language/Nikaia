@@ -62,6 +62,7 @@ implementation.
 
 | ADR | Decides | Status | Built |
 | :--- | :--- | :--- | :--- |
+| [340](adr-340.md) | Every `Expr` node carries a `u32` id the parser gave it, unique within a parsed file; a clone keeps its id, a node the compiler builds takes a new one; two trees that differ only in ids are equal; the id replaces the address keys, the ordinals and `at` as a key, so the code that keys on an expression can be written in Nikaia. | Accepted | no |
 | [339](adr-339.md) | A grammar says where a match was (`span(p)`, `here`) and whether a line break precedes it (`same_line`, recorded by the generated parser by position); `///` is a rule, a stray one a parse error; no grammar declares a state or an `extern rule`, a lexical rule and an action that may fail do what those did. | Accepted | no |
 | [338](adr-338.md) | `std` is the core the language stands on; JSON, TOML, CSV, HTML, HTTP/1.1's text half and the database protocol are official packages (`nikaia_json` …), versioned on their own, shipped with the toolchain, listed in `std` and taken in by their first `use`. | Accepted | no |
 | [337](adr-337.md) | `nikaia fmt` writes one style with no options (a tab per level and nothing aligned, `{` at the line's end, width 100, trailing `,` where broken), keeps every comment where it was, leaves a `dsl` body as written, never changes what a file lowers to, and `--check` reports for CI. | Accepted | no |
