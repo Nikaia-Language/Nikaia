@@ -107,6 +107,22 @@ impl Counter {
     }
 }
 
+pub enum Shape {
+    Circle(f64),
+    Rect { w: f64, h: f64 },
+    Empty,
+}
+
+pub extern fn shape(n: i64) -> Shape sync {
+    if n == 0 {
+        return Shape::Circle(1.5)
+    }
+    if n == 1 {
+        return Shape::Rect { w: 2.0, h: 3.0 }
+    }
+    return Shape::Empty
+}
+
 pub extern fn find(key: ref String) -> i64? sync {
     if key == \"seven\" {
         return 7
@@ -419,6 +435,24 @@ int main(void) {
     status = calc_Counter_last(counter, &kept, &present);
     printf("last %d %d %lld\n", status, present, (long long)kept);
     calc_Counter_free(counter);
+    calc_Shape *shape = NULL;
+    calc_shape(1, &shape);
+    calc_Shape_Kind kind = CALC_SHAPE_EMPTY;
+    status = calc_Shape_kind(shape, &kind);
+    double w = 0.0, h = 0.0;
+    calc_Shape_Rect_w(shape, &w);
+    calc_Shape_Rect_h(shape, &h);
+    printf("rect %d %d %.1f %.1f\n", status, kind == CALC_SHAPE_RECT, w, h);
+    calc_Shape_free(shape);
+    calc_shape(0, &shape);
+    double r = 0.0;
+    status = calc_Shape_Circle_0(shape, &r);
+    double untouched = 7.0;
+    int wrong = calc_Shape_Rect_w(shape, &untouched);
+    char said[128];
+    calc_last_error((uint8_t *)said, sizeof said, &written);
+    printf("circle %d %.1f wrong %d %.1f %.*s\n", status, r, wrong, untouched, (int)written, said);
+    calc_Shape_free(shape);
     return CALC_OK;
 }
 "#;
@@ -718,7 +752,7 @@ fn a_c_program_calls_the_library() {
     assert!(ran.status.success(), "{}", said(&ran));
     assert_eq!(
         String::from_utf8_lossy(&ran.stdout),
-        "new 0 1\nbump 0 7\nsteps 2\ncount 7\nname 0 clicks\nlight 1\nsum 17\nsame twice -5\nno handle -1\nfree 0 0 0\nnot found 0 1\nfound 0 1\ncount of 4\ncount of null -1\nlength of null 4\nlength of empty 0\nfind 0 1 7\nfind none 0 0 99\nnearest none 0 0 9.0\nnearest 0 1 1.0 2.0\nlast none 0 0 99\nlast 0 1 3\n"
+        "new 0 1\nbump 0 7\nsteps 2\ncount 7\nname 0 clicks\nlight 1\nsum 17\nsame twice -5\nno handle -1\nfree 0 0 0\nnot found 0 1\nfound 0 1\ncount of 4\ncount of null -1\nlength of null 4\nlength of empty 0\nfind 0 1 7\nfind none 0 0 99\nnearest none 0 0 9.0\nnearest 0 1 1.0 2.0\nlast none 0 0 99\nlast 0 1 3\nrect 0 1 2.0 3.0\ncircle 0 1.5 wrong -1 7.0 the Shape holds `Circle`, not `Rect`\n"
     );
 
     std::fs::write(root.join("callback.c"), CALLBACK_CALLER).expect("the caller");
@@ -942,6 +976,14 @@ assert calc.length_of(None) == 4 and calc.length_of("") == 0
 assert calc.find("seven") == 7 and calc.find("six") is None
 assert calc.nearest(0) is None and (calc.nearest(1).x, calc.nearest(1).y) == (1.0, 2.0)
 assert calc.waited(0) is None and calc.waited(1) == 1
+rect = calc.shape(1)
+assert rect.kind == calc.Shape_Kind.Rect and (rect.Rect_w, rect.Rect_h) == (2.0, 3.0)
+try:
+    calc.shape(0).Rect_w
+    raise AssertionError("no exception")
+except calc.ArgumentError as error:
+    assert "holds `Circle`" in str(error), error
+assert calc.shape(0).Circle_0 == 1.5 and calc.shape(2).kind == calc.Shape_Kind.Empty
 assert calc.count_up(10, lambda i: i < 3) == 3
 # A stream is a generator (ADR-284 D20, D21): read to its end, or stopped.
 import itertools
@@ -1075,6 +1117,10 @@ const last = new calc.Counter("last");
 assert.strictEqual(last.last(), null);
 last.bump(3);
 assert.strictEqual(last.last(), 3);
+const rect = calc.shape(1);
+assert.deepStrictEqual([rect.kind, rect.Rect_w, rect.Rect_h], [calc.Shape_Kind.Rect, 2, 3]);
+assert.throws(() => calc.shape(0).Rect_w, (error) => error.code === "CALC_E_ARGUMENT" && error.message.includes("holds `Circle`"));
+assert.strictEqual(calc.shape(0).Circle_0, 1.5);
 assert.strictEqual(calc.count_up(10, (i) => i < 3), 3);
 const seen = [];
 calc.words("one two", (word, light) => seen.push([word, light]));

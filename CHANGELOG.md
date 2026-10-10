@@ -8,6 +8,19 @@ or the specification. A change only to the guide, the notes, the README, the
 website, the tests, the examples or the tooling around them raises nothing and
 has no heading here; `CLAUDE.md` draws the line.
 
+## [0.0.726] — 2026-10-10
+
+**A handle to an `enum` with payload is read through `_kind` and a getter per
+field** (ADR-284 D31, #88).
+- A `pub enum` with payload that an entry point names is a handle, freed by
+  `_free`. `<prefix>_<Type>_kind` writes its variant as the C `enum`
+  `<prefix>_<Type>_Kind` (`<PREFIX>_<TYPE>_<VARIANT>`), and
+  `<prefix>_<Type>_<Variant>_<field>` reads a field, a positional one numbered
+  from `0`. On a handle holding another variant a getter is `E_ARGUMENT`, its
+  out-parameter untouched, and `last_error` names the variant it holds.
+- The Python binding makes the kind an `IntEnum` and the getters properties;
+  the Node binding a frozen object and getters.
+
 ## [0.0.725] — 2026-10-10
 
 **A C library's absent number is built: the value, then `bool *present`**

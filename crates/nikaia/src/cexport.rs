@@ -34,7 +34,7 @@
 
 use anyhow::Result;
 
-use crate::ast::{Item, Type};
+use crate::ast::{Item, Type, VariantFields};
 use crate::modules::Program;
 
 mod node;
@@ -397,6 +397,9 @@ fn mirror(record: &Record, records: &[Record], plains: &[Plain]) -> String {
 struct Plain {
     name: String,
     variants: Vec<String>,
+    /// What its C constants start with after the prefix: its name, or for
+    /// the kind of an `enum` with payload that enum's (D31).
+    stem: String,
 }
 
 fn plain_enums(parsed: &crate::parser::Parsed) -> Vec<Plain> {
@@ -416,6 +419,7 @@ fn plain_enums(parsed: &crate::parser::Parsed) -> Vec<Plain> {
                         .iter()
                         .map(|variant| parsed.text(variant.name).to_string())
                         .collect(),
+                    stem: parsed.text(*name).to_uppercase(),
                 })
             }
             _ => None,
@@ -615,6 +619,11 @@ struct Entry<'a> {
     ret_type: Option<&'a Type>,
     /// A getter reads its field rather than calling anything.
     getter: bool,
+    /// A getter of an enum's variant: the variant, and the pattern that binds
+    /// the field as `__nikaia_v` (D31).
+    of_variant: Option<(String, String)>,
+    /// `_kind` of an enum, which writes the kind `plains[at]` (D31).
+    kind_of: Option<usize>,
 }
 
 impl Entry<'_> {
@@ -636,10 +645,27 @@ impl Entry<'_> {
 }
 
 /// A `pub struct` of the entry file C holds as a handle (ADR-284 D5), with
-/// its `pub` fields, each of which gets a getter.
+/// its `pub` fields, each of which gets a getter - or a `pub enum` with
+/// payload, read through `_kind` and a getter per field of each variant (D31).
 struct Handled<'a> {
     name: String,
     fields: Vec<(String, &'a Type)>,
+    /// An enum's variants, each with the pattern that tells it, and its
+    /// fields: the getter's name, the pattern that binds the field as
+    /// `__nikaia_v`, and its type. Empty for a struct.
+    variants: Vec<Shown<'a>>,
+}
+
+struct Shown<'a> {
+    name: String,
+    pattern: String,
+    fields: Vec<(String, String, &'a Type)>,
+}
+
+impl Handled<'_> {
+    fn is_enum(&self) -> bool {
+        !self.variants.is_empty()
+    }
 }
 
 fn handled_structs(parsed: &crate::parser::Parsed) -> Vec<Handled<'_>> {
@@ -661,10 +687,95 @@ fn handled_structs(parsed: &crate::parser::Parsed) -> Vec<Handled<'_>> {
                     .filter(|field| field.is_public)
                     .map(|field| (parsed.text(field.name).to_string(), &field.ty))
                     .collect(),
+                variants: Vec::new(),
             }),
+            Item::Enum {
+                name,
+                variants,
+                is_public: true,
+                ..
+            } if variants
+                .iter()
+                .any(|variant| !matches!(variant.fields, VariantFields::Unit)) =>
+            {
+                let ty = parsed.text(*name).to_string();
+                let variants = variants
+                    .iter()
+                    .map(|variant| {
+                        let name = parsed.text(variant.name).to_string();
+                        let path = format!("{ty}::{}", crate::emit::escaped(&name));
+                        let (pattern, fields) = match &variant.fields {
+                            VariantFields::Unit => (path.clone(), Vec::new()),
+                            VariantFields::Tuple(types) => (
+                                format!("{path}(..)"),
+                                types
+                                    .iter()
+                                    .enumerate()
+                                    .map(|(at, field)| {
+                                        let places: Vec<&str> = (0..types.len())
+                                            .map(|other| match other == at {
+                                                true => "__nikaia_v",
+                                                false => "_",
+                                            })
+                                            .collect();
+                                        (
+                                            format!("{name}_{at}"),
+                                            format!("{path}({})", places.join(", ")),
+                                            field,
+                                        )
+                                    })
+                                    .collect(),
+                            ),
+                            VariantFields::Named(named) => (
+                                format!("{path} {{ .. }}"),
+                                named
+                                    .iter()
+                                    .map(|field| {
+                                        let label = parsed.text(field.name);
+                                        (
+                                            format!("{name}_{label}"),
+                                            format!(
+                                                "{path} {{ {}: __nikaia_v, .. }}",
+                                                crate::emit::escaped(label)
+                                            ),
+                                            &field.ty,
+                                        )
+                                    })
+                                    .collect(),
+                            ),
+                        };
+                        Shown {
+                            name,
+                            pattern,
+                            fields,
+                        }
+                    })
+                    .collect();
+                Some(Handled {
+                    name: ty,
+                    fields: Vec::new(),
+                    variants,
+                })
+            }
             _ => None,
         })
         .collect()
+}
+
+/// What an entry hands back: its result's shape, or the kind `_kind` writes
+/// (D31). `Some(None)` is a result that does not cross.
+fn result_of(
+    entry: &Entry,
+    parsed: &crate::parser::Parsed,
+    plains: &[Plain],
+    handles: &[Handled],
+    records: &[Record],
+) -> Option<Option<Out>> {
+    match (entry.kind_of, entry.ret_type) {
+        (Some(at), _) => Some(Some(Out::Choice(at))),
+        (None, Some(ty)) => Some(handed(parsed, plains, handles, records, ty)),
+        (None, None) => None,
+    }
 }
 
 /// Every `extern` function and method the program's own files declare.
@@ -706,6 +817,8 @@ fn entries<'a>(program: &'a Program) -> Result<Vec<Entry<'a>>> {
                 args,
                 ret_type: ret_type.as_ref(),
                 getter: false,
+                of_variant: None,
+                kind_of: None,
             });
             Ok(())
         };
@@ -862,9 +975,25 @@ pub fn export(
     // order** (D7): every variant of every error `enum` the entry file
     // declares and an entry point throws.
     let codes = variant_codes(program, &found);
-    let plains = plain_enums(parsed);
+    let mut plains = plain_enums(parsed);
     let handles = handled_structs(parsed);
     let records = records(parsed, &plains)?;
+    // **The kind of each `enum` with payload** C holds is a C `enum` of its
+    // own, `<prefix>_<Type>_Kind`, its values `<PREFIX>_<TYPE>_<VARIANT>`
+    // (D31), and a Rust `enum` the wrapper hands it back through.
+    let kinds: Vec<Option<usize>> = handles
+        .iter()
+        .map(|handle| {
+            handle.is_enum().then(|| {
+                plains.push(Plain {
+                    name: format!("{}_Kind", handle.name),
+                    variants: handle.variants.iter().map(|v| v.name.clone()).collect(),
+                    stem: handle.name.to_uppercase(),
+                });
+                plains.len() - 1
+            })
+        })
+        .collect();
     // The enums and the handles an entry point names, which the header declares.
     let mut crossing = vec![false; plains.len()];
     let mut held = vec![false; handles.len()];
@@ -888,9 +1017,15 @@ pub fn export(
             }
         }
     }
-    // **A getter per `pub` field** of every handle (D5).
+    // **A getter per `pub` field** of every handle (D5), and of an enum
+    // `_kind` and a getter per field of each variant (D31).
     let mut all = found;
-    for (handle, _) in handles.iter().zip(&held).filter(|(_, held)| **held) {
+    for ((handle, _), kind) in handles
+        .iter()
+        .zip(&held)
+        .zip(&kinds)
+        .filter(|((_, held), _)| **held)
+    {
         for (field, ty) in &handle.fields {
             all.push(Entry {
                 owner: Some(handle.name.clone()),
@@ -899,7 +1034,65 @@ pub fn export(
                 args: &[],
                 ret_type: Some(ty),
                 getter: true,
+                of_variant: None,
+                kind_of: None,
             });
+        }
+        let Some(kind) = *kind else { continue };
+        let ty = &handle.name;
+        let arms: Vec<String> = handle
+            .variants
+            .iter()
+            .map(|variant| {
+                format!(
+                    "{} => ({ty}_Kind::{}, \"{}\"),",
+                    variant.pattern,
+                    crate::emit::escaped(&variant.name),
+                    variant.name
+                )
+            })
+            .collect();
+        rust.push_str(&format!(
+            "\n/// The kinds of `{ty}`, as `{prefix}_{ty}_kind` writes them (ADR-284 D31).\n\
+             #[allow(non_camel_case_types, dead_code)]\n\
+             #[derive(Clone, Copy)]\n\
+             enum {ty}_Kind {{ {} }}\n\
+             \n\
+             #[allow(non_snake_case, dead_code)]\n\
+             fn __nikaia_kind_{ty}(value: &{ty}) -> ({ty}_Kind, &'static str) {{\n    \
+             match value {{ {} }}\n\
+             }}\n",
+            handle
+                .variants
+                .iter()
+                .map(|variant| crate::emit::escaped(&variant.name).into_owned())
+                .collect::<Vec<_>>()
+                .join(", "),
+            arms.join(" ")
+        ));
+        all.push(Entry {
+            owner: Some(ty.clone()),
+            name: "kind".to_string(),
+            receiver: Some(Hold::Shared),
+            args: &[],
+            ret_type: None,
+            getter: true,
+            of_variant: None,
+            kind_of: Some(kind),
+        });
+        for variant in &handle.variants {
+            for (getter, pattern, field) in &variant.fields {
+                all.push(Entry {
+                    owner: Some(ty.clone()),
+                    name: getter.clone(),
+                    receiver: Some(Hold::Shared),
+                    args: &[],
+                    ret_type: Some(field),
+                    getter: true,
+                    of_variant: Some((variant.name.clone(), pattern.clone())),
+                    kind_of: None,
+                });
+            }
         }
     }
     // **Every `pub extern struct` is in the header**, as C lays it out (D14).
@@ -1252,8 +1445,8 @@ pub fn export(
                 None => return Err(not_yet(&written, &format!("parameter `{param}`"))),
             }
         }
-        let result = match entry.ret_type {
-            Some(ty) => match handed(parsed, &plains, &handles, &records, ty) {
+        let result = match result_of(entry, parsed, &plains, &handles, &records) {
+            Some(made) => match made {
                 Some(Out::Value(shape)) => {
                     rust_params.push(format!("out: *mut {}", shape.rust));
                     c_params.push(format!("{} *out", shape.c));
@@ -1324,7 +1517,26 @@ pub fn export(
             None => None,
         };
         let name = crate::emit::escaped(&entry.name);
+        // **A getter of a variant** answers `E_ARGUMENT` on a handle that
+        // holds another, and `last_error` names the one it holds (D31).
+        if let (Some((variant, pattern)), Some(owner)) = (&entry.of_variant, &entry.owner) {
+            checks.push_str(&format!(
+                "    if !matches!(&*__nikaia_self, {pattern}) {{\n        \
+                 __nikaia_failed(format!(\"the {owner} holds `{{}}`, not `{variant}`\", __nikaia_kind_{owner}(&__nikaia_self).1));\n        \
+                 return -1;\n    \
+                 }}\n"
+            ));
+        }
         let call = match (&entry.owner, entry.receiver, entry.getter) {
+            (Some(owner), _, true) if entry.kind_of.is_some() => {
+                format!("__nikaia_kind_{owner}(&__nikaia_self).0")
+            }
+            (_, _, true) if entry.of_variant.is_some() => {
+                let (_, pattern) = entry.of_variant.as_ref().expect("a variant's getter");
+                format!(
+                    "match &*__nikaia_self {{ {pattern} => __nikaia_v.clone(), _ => unreachable!(\"checked above\") }}"
+                )
+            }
             (_, _, true) => format!("__nikaia_self.{name}.clone()"),
             (_, Some(_), false) => format!("__nikaia_self.{name}({})", call_args.join(", ")),
             (Some(owner), None, false) => format!("{owner}::{name}({})", call_args.join(", ")),
@@ -1631,7 +1843,7 @@ pub fn export(
             .map(|(number, variant)| {
                 format!(
                     "    {upper}_{}_{} = {number}",
-                    plain.name.to_uppercase(),
+                    plain.stem,
                     variant.to_uppercase()
                 )
             })
@@ -1963,9 +2175,7 @@ impl Python {
         }
         // What comes back, through the out-parameter.
         let mut after: Vec<String> = Vec::new();
-        let result = entry
-            .ret_type
-            .and_then(|ty| handed(parsed, plains, handles, records, ty));
+        let result = result_of(entry, parsed, plains, handles, records).flatten();
         let call = |args: &[String]| format!("_lib.{symbol}({})", args.join(", "));
         let body_call: String;
         match &result {

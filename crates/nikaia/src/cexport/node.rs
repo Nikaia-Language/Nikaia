@@ -20,8 +20,8 @@
 // thread, whose `cancel()` is the ticket (D9, D19). Only the entry points (D29).
 
 use super::{
-    ByValue, Entry, Handled, In, LEDGER_DIGEST, Lent, Out, Part, Plain, Record, handed,
-    records_in_order, taken,
+    ByValue, Entry, Handled, In, LEDGER_DIGEST, Lent, Out, Part, Plain, Record, records_in_order,
+    result_of, taken,
 };
 
 /// The N-API module of one library, gathered entry by entry.
@@ -318,9 +318,7 @@ impl Node {
         }
         let takes = position;
         // What comes back, through the out-parameter.
-        let result = entry
-            .ret_type
-            .and_then(|ty| handed(parsed, plains, handles, records, ty));
+        let result = result_of(entry, parsed, plains, handles, records).flatten();
         let call = |args: &[String]| format!("{symbol}({})", args.join(", "));
         let mut body: Vec<String> = Vec::new();
         // The C type of the value and how it is made a JavaScript one, for
