@@ -1386,7 +1386,6 @@ fn walked<'a>(
         read_a_map: false,
         map_read_sites: BTreeSet::new(),
         map_views: BTreeSet::new(),
-        hole: None,
         last_resolved: None,
         receiver_name: None,
         receiver_from_text: false,
@@ -1729,21 +1728,6 @@ pub enum Narrowing {
 /// counts where its last statement is one of the four, which is the shape an
 /// arm written `=> { throw NotFound }` still has.
 impl Checker<'_> {}
-
-/// **Where a text literal stands, as the emitter will find it.** A hole of an
-/// f-string is parsed on its own, so a literal inside one has an offset into
-/// the hole and not into the file - and two holes, or a hole and the file's own
-/// text, would share it. Inside a hole the key is the offset mixed with the
-/// statement and the hole's text, above every offset a file can have.
-pub fn text_key(hole: Option<&(usize, String)>, at: usize) -> usize {
-    use std::hash::{Hash, Hasher};
-    let Some((statement, text)) = hole else {
-        return at;
-    };
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    (statement, text, at).hash(&mut hasher);
-    (hasher.finish() as usize) | (1 << (usize::BITS - 1))
-}
 
 /// **The call a named function stands for where a function value is kept**:
 /// `double` put in a field is `fn(__nikaia_arg0) { double(__nikaia_arg0) }`.
@@ -2984,9 +2968,6 @@ struct Checker<'a> {
     /// holds, as the read itself is, and a `??` on the name is the `??` on
     /// the read.
     map_views: BTreeSet<usize>,
-    /// The statement and the text of the f-string hole being walked, for
-    /// `text_at`.
-    hole: Option<(usize, String)>,
     /// The ledger key the last method call resolved to, for the arm around it
     /// (ADR-293 D24).
     last_resolved: Option<String>,
@@ -12075,9 +12056,7 @@ impl<'a> Checker<'a> {
             // literal's — so what is new here is the **operand**: it has to be
             // a struct this compiler can name, because what it lowers to is
             // Rust's `Point { x: 1, ..p }` and the type is written there.
-            Expr::With {
-                base, fields, at, ..
-            } => {
+            Expr::With { base, fields, .. } => {
                 let found = self.expr(base, span);
                 let Ty::Named {
                     name,
@@ -12157,7 +12136,9 @@ impl<'a> Checker<'a> {
                 // struct's name in a functional update and this node does not
                 // carry one, so the answer travels under the byte the `with`
                 // stands at rather than being worked out twice.
-                self.checked.with_types.insert(*at as usize, name.clone());
+                self.checked
+                    .with_types
+                    .insert(value_node(expr), name.clone());
                 found
             }
 
@@ -12664,11 +12645,9 @@ impl<'a> Checker<'a> {
                         None => self.hands_over(value, &left, "given to `??`", span),
                     }
                 }
-                if let (Ty::Nullable(inner), Expr::LitStr { at, .. }) = (&left, &**fallback) {
+                if let (Ty::Nullable(inner), Expr::LitStr { .. }) = (&left, &**fallback) {
                     if **inner == Ty::view("str") {
-                        self.checked
-                            .view_fallbacks
-                            .insert(self.text_at(*at as usize));
+                        self.checked.view_fallbacks.insert(value_node(fallback));
                     }
                     // **A map's text, read, is a view of it** (ADR-293 D28): the
                     // map hands out its `String` and keeps it, so the literal
@@ -12678,9 +12657,7 @@ impl<'a> Checker<'a> {
                     // wanted the map's reference: `rustc`'s words, about a file
                     // nobody wrote.
                     if **inner == Ty::named("String") && from_a_map {
-                        self.checked
-                            .view_fallbacks
-                            .insert(self.text_at(*at as usize));
+                        self.checked.view_fallbacks.insert(value_node(fallback));
                         return Ty::view("str");
                     }
                     // **And a list's** (#342, ADR-279 D12): `ys[1] ?? "none"`
@@ -12690,9 +12667,7 @@ impl<'a> Checker<'a> {
                         && !from_a_map
                         && matches!(&**value, Expr::Index { .. })
                     {
-                        self.checked
-                            .view_fallbacks
-                            .insert(self.text_at(*at as usize));
+                        self.checked.view_fallbacks.insert(value_node(fallback));
                         self.checked
                             .lent_list_reads
                             .insert((span.at(), argument_shape(expr)));
@@ -14005,7 +13980,7 @@ impl<'a> Checker<'a> {
         }
 
         for hole in brace_groups(text) {
-            let Ok(parsed) = self.parsed.hole(&hole) else {
+            let Ok(parsed) = self.parsed.hole(span.start, &hole) else {
                 continue;
             };
             if !self.s.names_something_here(&self.world, &parsed) {
@@ -14087,13 +14062,6 @@ impl<'a> Checker<'a> {
                 })
                 .collect();
             self.s.scope.push(frame);
-            // An f-string's holes, which the emitter walks the same way.
-            let outer = match literal {
-                Expr::LitInterpolated { .. } => {
-                    self.hole.replace((span.at(), argument_shape(hole)))
-                }
-                _ => self.hole.clone(),
-            };
             let held = self.expr(hole, span);
             if let Expr::Variable(name, _) = hole {
                 collections.insert(self.parsed.text(*name).to_string(), held.clone());
@@ -14103,7 +14071,6 @@ impl<'a> Checker<'a> {
             if matches!(literal, Expr::LitInterpolated { .. }) {
                 self.a_pending_coalesce_is_lent(hole, span);
             }
-            self.hole = outer;
             self.s.scope.pop();
             if let Some(spec) = specs.get(index) {
                 self.a_collection_in_a_hole(hole, &held, spec.as_deref(), span);
@@ -18887,7 +18854,6 @@ impl<'a> Checker<'a> {
                     {
                         *expr = Expr::LitStr {
                             text: build_time::written(content),
-                            at: 0,
                             id: crate::ast::NodeId::fresh(),
                         };
                     }
@@ -19316,8 +19282,8 @@ impl<'a> Checker<'a> {
             .iter()
             .zip(founds)
             .map(|(item, found)| match (item, holds_text) {
-                (Expr::LitStr { at, .. }, true) => {
-                    self.checked.owned_texts.insert(self.text_at(*at as usize));
+                (Expr::LitStr { .. }, true) => {
+                    self.checked.owned_texts.insert(value_node(item));
                     Ty::named("String")
                 }
                 _ => found,
@@ -19934,10 +19900,6 @@ impl<'a> Checker<'a> {
         Some((*result).unwrap_or_else(|| Ty::named("()")))
     }
 
-    fn text_at(&self, at: usize) -> usize {
-        text_key(self.hole.as_ref(), at)
-    }
-
     fn text_literal(&mut self, want: &Ty, value: &Expr, owned: bool) -> Option<Ty> {
         let text = Ty::named("String");
         match (want, value) {
@@ -19971,9 +19933,9 @@ impl<'a> Checker<'a> {
                 self.checked.byte_literals.insert(value_node(value));
                 Some(Ty::named("u8"))
             }
-            (_, Expr::LitStr { at, .. }) if *want == text => {
+            (_, Expr::LitStr { .. }) if *want == text => {
                 if owned {
-                    self.checked.owned_texts.insert(self.text_at(*at as usize));
+                    self.checked.owned_texts.insert(value_node(value));
                 }
                 Some(text)
             }
@@ -20234,7 +20196,7 @@ impl<'a> Checker<'a> {
             Ty::Named {
                 name, args: wanted, ..
             },
-            Expr::ListLit { items, at, .. },
+            Expr::ListLit { items, .. },
         ) = (want, value)
         else {
             return None;
@@ -20261,7 +20223,7 @@ impl<'a> Checker<'a> {
                 self.a_list_the_wrong_length_for_its_array(items.len(), n, span, Counted::Written);
                 return Some(want.clone());
             }
-            self.checked.array_literals.insert(*at as usize);
+            self.checked.array_literals.insert(value_node(value));
         }
         // What the walk agreed this container's elements are - `Vec[E]`'s `E`,
         // and `Unknown` where they said nothing, which is the silence every
@@ -22223,7 +22185,6 @@ impl<'a> Checker<'a> {
             )),
             args: vec![Expr::LitStr {
                 text: build_time::written(content.trim()),
-                at: 0,
                 id: crate::ast::NodeId::fresh(),
             }],
             config: Vec::new(),

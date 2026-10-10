@@ -8,6 +8,13 @@ or the specification. A change only to the guide, the notes, the README, the
 website, the tests, the examples or the tooling around them raises nothing and
 has no heading here; `CLAUDE.md` draws the line.
 
+## [0.0.781] — 2026-10-10
+
+**The key `at` stood for on a list, a text literal and a `with` is the node's id (ADR-340 D4, #558, step 4).**
+- `Checked::array_literals`, `owned_texts`, `view_fallbacks` and `with_types` are keyed on `value_node`, the id. `ListLit` and `LitStr` lose their `at`; `With` keeps its `at` as the place a message points at.
+- `check::text_key`, the hash of a statement, a hole's text and an offset that told a literal inside an `f"…"` hole from one in the file, and the `hole` state both the checker and the emitter kept for it, are gone.
+- `Parsed::hole` takes the id of the template it is a hole of: one template's hole is parsed once and read the same by every reader, and the same text in another template has nodes of its own.
+
 ## [0.0.780] — 2026-10-10
 
 **The host callbacks `node_of` are gone: the tier pass and the bounds walks name a node by its id (ADR-340, #558, step 5).**

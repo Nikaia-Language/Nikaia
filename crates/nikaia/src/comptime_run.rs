@@ -772,12 +772,10 @@ fn literal_of(value: &Value, parsed: &Parsed) -> Option<Expr> {
         )),
         Value::Text(text) => Some(Expr::LitStr {
             text: crate::build_time::written(text),
-            at: 0,
             id: crate::ast::NodeId::fresh(),
         }),
         Value::List(items) => Some(Expr::ListLit {
             items: all(items)?,
-            at: 0,
             id: crate::ast::NodeId::fresh(),
         }),
         Value::Tuple(parts) => Some(Expr::Tuple(all(parts)?, crate::ast::NodeId::fresh())),

@@ -138,9 +138,9 @@ fn a_hole_takes_ids_the_file_has_not_given() {
         .into_iter()
         .collect();
 
-    let hole = parsed.hole("total + 1").expect("a hole");
-    let again = parsed.hole("total + 1").expect("a hole");
-    let other = parsed.hole("total * 2").expect("a hole");
+    let hole = parsed.hole(7, "total + 1").expect("a hole");
+    let again = parsed.hole(7, "total + 1").expect("a hole");
+    let other = parsed.hole(7, "total * 2").expect("a hole");
     let ids = ids_in(&format!("{hole:#?}"));
     assert!(!ids.is_empty());
     assert!(
@@ -157,6 +157,16 @@ fn a_hole_takes_ids_the_file_has_not_given() {
         others.iter().all(|id| !ids.contains(id)),
         "two holes do not share one"
     );
+
+    // The same text in another template is another hole: what is recorded
+    // about one is not read at the other.
+    let elsewhere = parsed.hole(8, "total + 1").expect("a hole");
+    let apart = ids_in(&format!("{elsewhere:#?}"));
+    assert!(
+        apart.iter().all(|id| !ids.contains(id)),
+        "{apart:?} / {ids:?}"
+    );
+    assert_eq!(hole, elsewhere, "and the trees are equal (D3)");
 }
 
 /// A program the text-tier pass rewrites: a value of either kind is handed

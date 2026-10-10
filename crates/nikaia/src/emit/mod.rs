@@ -1470,9 +1470,6 @@ struct Emitter<'p> {
     copied_reads: std::collections::BTreeSet<(usize, String)>,
     /// `check::Checked::text_in_lists`.
     text_in_lists: std::collections::BTreeSet<(usize, String)>,
-    /// The f-string hole being written, whose literals are keyed by
-    /// `check::text_key`.
-    hole: std::cell::RefCell<Option<(usize, String)>>,
     /// The statements whose keeps are already declared, because a `throws`
     /// body declares them before its `Ok(` rather than inside it.
     preluded: std::cell::RefCell<HashSet<usize>>,
@@ -2913,7 +2910,6 @@ impl<'p> Emitter<'p> {
             flat_reads: propagation.flat_reads,
             copied_reads: propagation.copied_reads,
             text_in_lists: propagation.text_in_lists,
-            hole: std::cell::RefCell::new(None),
             wrappers: std::cell::RefCell::new(Vec::new()),
             holding: std::cell::RefCell::new(None),
             hold_args: std::cell::RefCell::new(None),
@@ -5626,6 +5622,7 @@ impl<'p> Emitter<'p> {
         name: &str,
         context: Option<&Symbol>,
         content: &str,
+        site: u32,
         depth: usize,
         flow: Flow<'_>,
     ) -> Result<()> {
@@ -5703,7 +5700,7 @@ impl<'p> Emitter<'p> {
             "{{\n{pad}let mut __html = String::with_capacity({});\n",
             template::literal_length(&segments)
         ));
-        self.template_segments(out, &segments, depth + 1, flow)?;
+        self.template_segments(out, site, &segments, depth + 1, flow)?;
         out.push(&format!("{pad}__html\n{close}}}"));
         Ok(())
     }
@@ -5712,6 +5709,7 @@ impl<'p> Emitter<'p> {
     fn template_segments(
         &self,
         out: &mut Out,
+        site: u32,
         segments: &[template::Segment],
         depth: usize,
         flow: Flow<'_>,
@@ -5726,7 +5724,7 @@ impl<'p> Emitter<'p> {
                 template::Segment::Hole { expr, .. } => {
                     // Parsed as Nikaia and emitted as Nikaia: a hole holds an
                     // expression of this language, not a foreign one.
-                    let parsed = self.parsed.hole(expr).map_err(|e| {
+                    let parsed = self.parsed.hole(site, expr).map_err(|e| {
                         refused_at!(
                             flow.statement,
                             "The template hole `{{{expr}}}` can't be read. {e}"
@@ -5754,7 +5752,7 @@ impl<'p> Emitter<'p> {
                     // iterate. `.iter()` reads the same through any number of
                     // references.
                     out.push(&format!("{pad}for {binding} in {collection}.iter() {{\n"));
-                    self.template_segments(out, body, depth + 1, flow)?;
+                    self.template_segments(out, site, body, depth + 1, flow)?;
                     out.push(&format!("{pad}}}\n"));
                 }
             }
@@ -8484,7 +8482,15 @@ impl<'p> Emitter<'p> {
                     Some(package) => format!("{}::{}", self.text(*package), self.text(*target)),
                     None => self.text(*target).to_string(),
                 };
-                self.template(out, &name, context.as_ref(), content, depth, flow)?
+                self.template(
+                    out,
+                    &name,
+                    context.as_ref(),
+                    content,
+                    crate::ast::id_of(expr),
+                    depth,
+                    flow,
+                )?
             }
             Expr::Path(segments, _) => {
                 let path: Vec<&str> = segments.iter().map(|s| self.text(*s)).collect();
@@ -8962,8 +8968,10 @@ impl<'p> Emitter<'p> {
             // to hand over: the same three values are `vec![…]` in one position
             // and `[…]` in the other, and nothing in the source distinguishes
             // them.
-            Expr::ListLit { items, at, .. } => {
-                let array = self.array_literals.contains(&(*at as usize));
+            Expr::ListLit { items, .. } => {
+                let array = self
+                    .array_literals
+                    .contains(&crate::check::value_node(expr));
                 out.push(match array {
                     true => "[",
                     false => "vec![",
@@ -9398,7 +9406,11 @@ impl<'p> Emitter<'p> {
             Expr::With {
                 base, fields, at, ..
             } => {
-                let Some(owner) = self.with_types.get(&(*at as usize)).cloned() else {
+                let Some(owner) = self
+                    .with_types
+                    .get(&crate::check::value_node(expr))
+                    .cloned()
+                else {
                     return Err(refused_at!(
                         *at as usize,
                         "The type of this `with` is unknown. This is a compiler bug: the \
@@ -9991,7 +10003,7 @@ impl<'p> Emitter<'p> {
                     || a_declared_variant
                     || a_declared_constructor
                     || a_struct_written
-                    || matches!(&**fallback, Expr::LitStr { at, .. } if self.view_fallbacks.contains(&self.text_at(*at as usize)))
+                    || matches!(&**fallback, Expr::LitStr { .. } if self.view_fallbacks.contains(&crate::check::value_node(fallback)))
                     || self
                         .view_coalesces
                         .contains(&(flow.statement, crate::check::argument_shape(expr)));
@@ -12853,10 +12865,8 @@ impl<'p> Emitter<'p> {
             // it is constructed there, as `[1, 2]` is `vec![1, 2]` where a
             // `Vec` is wanted: a literal is a constant being built, not text
             // the program had being copied.
-            Expr::LitStr {
-                text: literal, at, ..
-            } => {
-                match self.owned_texts.contains(&self.text_at(*at as usize)) {
+            Expr::LitStr { text: literal, .. } => {
+                match self.owned_texts.contains(&crate::check::value_node(expr)) {
                     true => out.push(&format!("String::from(\"{literal}\")")),
                     false => out.push(&format!("\"{literal}\"")),
                 }
@@ -12889,10 +12899,6 @@ impl<'p> Emitter<'p> {
             }
             _ => Err(anyhow!("not a string literal")),
         }
-    }
-
-    fn text_at(&self, at: usize) -> usize {
-        crate::check::text_key(self.hole.borrow().as_ref(), at)
     }
 
     /// The future a kept function that may pause hands back: one that crosses
@@ -12938,16 +12944,12 @@ impl<'p> Emitter<'p> {
                         continue;
                     };
                     let expr = hole_as_read(self.parsed, *place, expr);
-                    let key = (flow.statement, crate::check::argument_shape(&expr));
-                    let outer = self.hole.replace(Some(key));
                     let named = names.get(hole).copied().unwrap_or(false);
                     out.push(match named {
                         true => "std::convert::AsRef::<std::ffi::OsStr>::as_ref(&(",
                         false => "std::ffi::OsStr::new(&std::string::ToString::to_string(&(",
                     });
-                    let written = self.expr(out, &expr, depth, flow);
-                    self.hole.replace(outer);
-                    written?;
+                    self.expr(out, &expr, depth, flow)?;
                     out.push(match named {
                         true => "))",
                         false => ")))",
@@ -12981,11 +12983,7 @@ impl<'p> Emitter<'p> {
             let expr = hole_as_read(self.parsed, hole, expr);
             let expr: &Expr = &expr;
             out.push(", ");
-            let hole = (flow.statement, crate::check::argument_shape(expr));
-            let outer = self.hole.replace(Some(hole));
-            let written = self.expr(out, expr, depth, flow);
-            self.hole.replace(outer);
-            written?;
+            self.expr(out, expr, depth, flow)?;
         }
         Ok(())
     }
@@ -14401,7 +14399,7 @@ impl<'p> Emitter<'p> {
                 // **A literal is a view already** (ADR-282 D5): lent to a
                 // `&str` it is written as it is, and a `&` in front of it would
                 // be a `&&str` the language below has to see through.
-                && !matches!(arg, Expr::LitStr { at, .. } if !self.owned_texts.contains(&self.text_at(*at as usize)));
+                && !matches!(arg, Expr::LitStr { .. } if !self.owned_texts.contains(&crate::check::value_node(arg)));
             // **And `&mut` for a parameter the callee declared `mut`** (D3),
             // which is the one of the three states the *author* wrote rather
             // than the inference. The two maps are disjoint by construction:
@@ -15889,7 +15887,12 @@ pub(crate) fn literal_expressions_bound(
         Expr::Dsl { content, .. } => match template::split(content.trim()) {
             Ok(segments) => template_holes_bound(&segments)
                 .into_iter()
-                .filter_map(|(hole, bound)| parsed.hole(&hole).ok().map(|expr| (expr, bound)))
+                .filter_map(|(hole, bound)| {
+                    parsed
+                        .hole(crate::ast::id_of(expr), &hole)
+                        .ok()
+                        .map(|expr| (expr, bound))
+                })
                 .collect(),
             Err(_) => Vec::new(),
         },
@@ -15986,7 +15989,7 @@ pub(crate) fn literal_expressions(parsed: &Parsed, expr: &Expr) -> Vec<Expr> {
         Expr::Dsl { content, .. } => match template::split(content.trim()) {
             Ok(segments) => template_holes(&segments)
                 .iter()
-                .filter_map(|hole| parsed.hole(hole).ok())
+                .filter_map(|hole| parsed.hole(crate::ast::id_of(expr), hole).ok())
                 .collect(),
             Err(_) => Vec::new(),
         },

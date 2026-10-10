@@ -422,16 +422,16 @@ pub enum Expr {
     /// takes its element type from the first use that needs one (D2), which is
     /// [ADR-285](../../../docs/specification/adr/adr-285.md)'s rule for a
     /// number literal one level up.
-    /// `at` is the byte the `[` stands at, and it is the one expression here
-    /// that carries a position. **`Array[T, N]` is what needs it**
+    ///
+    /// **`Array[T, N]` is what needs its id**
     /// ([ADR-152](../../../docs/specification/adr/adr-152.md) D4): whether a
     /// literal is laid out inline or allocated is decided by its *use*, the
     /// use is known to the checker and the lowering is the emitter's, so the
-    /// answer has to be handed over - and a statement's byte is not enough,
-    /// because one statement may hold a list and an array both.
+    /// answer has to be handed over - under the node's id
+    /// ([ADR-340](../../../docs/specification/adr/adr-340.md) D4), which
+    /// tells it from every other list of the statement.
     ListLit {
         items: Vec[Expr],
-        at: u32,
         id: node_id::NodeId,
     },
     /// `"…"` - Kap 2.5. **Inert text.** A `{` is a brace and nothing else, so
@@ -439,14 +439,13 @@ pub enum Expr {
     /// means. The body is kept as written, escapes and all, for the same
     /// reason `LitChar` is.
     ///
-    /// **`at` is the byte the opening quote stands at**, for `ListLit`'s
-    /// reason ([ADR-282](../../../docs/specification/adr/adr-282.md) D4):
-    /// whether the literal stays a view of static text or becomes text of its
-    /// own is decided by its *use*, the use is the checker's and the lowering
-    /// is the emitter's, and one statement may hold both kinds.
+    /// **Whether it stays a view of static text or becomes text of its own**
+    /// ([ADR-282](../../../docs/specification/adr/adr-282.md) D4) is decided by
+    /// its *use*, the use is the checker's and the lowering is the emitter's,
+    /// and one statement may hold both kinds: the answer travels under the
+    /// node's id, as `ListLit`'s does.
     LitStr {
         text: String,
-        at: u32,
         id: node_id::NodeId,
     },
     /// `f"… {expr} …"` - Kap 2.5. **Text with code in it**, and the `f` is what
@@ -586,13 +585,14 @@ pub enum Expr {
     /// `fields` is the same `Vec<FieldInit>` a `StructLit` carries and every
     /// rule about naming a field is the one a literal already has.
     ///
-    /// **`at` is here because the language below needs a name this node does
-    /// not carry.** Rust's functional update is `Point { x: 1, ..p }` — the
-    /// type is written — and the operand's type is the checker's answer rather
-    /// than the parser's. So the checker records it under this byte and the
-    /// emitter reads it back, which is the handover a `comptime`'s value
-    /// already makes ([ADR-296](../../../docs/specification/adr/adr-296.md) D17:
-    /// the emitter is told, it does not work it out).
+    /// **The language below needs a name this node does not carry.** Rust's
+    /// functional update is `Point { x: 1, ..p }` — the type is written — and
+    /// the operand's type is the checker's answer rather than the parser's. So
+    /// the checker records it under this node's id and the emitter reads it
+    /// back, which is the handover a `comptime`'s value already makes
+    /// ([ADR-296](../../../docs/specification/adr/adr-296.md) D17: the emitter
+    /// is told, it does not work it out). `at` is the byte the `with` stands at,
+    /// read as a place for a message.
     With {
         base: Expr,
         fields: Vec[FieldInit],

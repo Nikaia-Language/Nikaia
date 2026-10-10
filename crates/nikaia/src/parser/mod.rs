@@ -384,7 +384,7 @@ pub struct Parsed {
     /// same tree into the same interner every time, so the second answer is
     /// the first one copied. Only what parsed is kept; a hole that does not is
     /// said by whoever asks, in their own words, every time.
-    holes: std::sync::Mutex<std::collections::HashMap<String, ast::Expr>>,
+    holes: std::sync::Mutex<std::collections::HashMap<(u32, String), ast::Expr>>,
     /// **The next id this file has not given**
     /// ([ADR-340](../../../docs/specification/adr/adr-340.md) D1): where the
     /// parse of the file stopped counting, and where a hole parsed later
@@ -395,18 +395,22 @@ pub struct Parsed {
 }
 
 impl Parsed {
-    /// One hole of an interpolated string or a template, parsed into this
-    /// file's interner ([`parse_expression`]), once per text
-    /// ([`Parsed::holes`]).
-    pub fn hole(&self, text: &str) -> Result<ast::Expr> {
-        if let Some(expr) = self.holes.lock().expect("a hole parse panicked").get(text) {
+    /// One hole of a template, parsed into this file's interner
+    /// ([`parse_expression`]), once per text **at one site**
+    /// ([`Parsed::holes`]): `site` is the id of the literal the hole is in
+    /// ([`crate::ast::id_of`]), so two templates that write the same hole have
+    /// nodes of their own, and every reader of one template reads the same
+    /// ones ([ADR-340](../../../docs/specification/adr/adr-340.md) D1, D2).
+    pub fn hole(&self, site: u32, text: &str) -> Result<ast::Expr> {
+        let key = (site, text.to_string());
+        if let Some(expr) = self.holes.lock().expect("a hole parse panicked").get(&key) {
             return Ok(expr.clone());
         }
         // **The ids' lock first, then the cache asked again**: two readers of
         // one hole must get the same ids, and the one that parses second would
         // otherwise parse it with numbers of its own.
         let mut next = self.next_id.lock().expect("a hole parse panicked");
-        if let Some(expr) = self.holes.lock().expect("a hole parse panicked").get(text) {
+        if let Some(expr) = self.holes.lock().expect("a hole parse panicked").get(&key) {
             return Ok(expr.clone());
         }
         let (expr, after) = parse_expression_from(&self.interner, text, *next)?;
@@ -414,7 +418,7 @@ impl Parsed {
         self.holes
             .lock()
             .expect("a hole parse panicked")
-            .insert(text.to_string(), expr.clone());
+            .insert(key, expr.clone());
         Ok(expr)
     }
 
@@ -3187,7 +3191,7 @@ grammar! {
         // byte cannot tell two literals in one statement apart.
         rule list_lit -> Expr @=
             "[" items:list_items? "]" -> {
-                Expr::ListLit { items: items.unwrap_or_default(), at: crate::ast::offset(_span.start), id: _state.user().id() }
+                Expr::ListLit { items: items.unwrap_or_default(), id: _state.user().id() }
             }
 
         rule list_items -> Vec<Expr> =
@@ -3898,7 +3902,7 @@ grammar! {
         // `@=` for the position, as `list_lit` has it and for its reason: what
         // the literal lowers to is its use's answer (ADR-282 D4).
         rule str_lit -> Expr @=
-            s:STRING -> { Expr::LitStr { text: s, at: crate::ast::offset(_span.start), id: _state.user().id() } }
+            s:STRING -> { Expr::LitStr { text: s, id: _state.user().id() } }
 
         // Its own rule rather than an alternative inside `str_lit`, and the
         // reason is the error message: a rule whose body is one sequence
