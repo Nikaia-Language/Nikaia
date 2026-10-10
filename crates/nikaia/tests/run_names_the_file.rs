@@ -9,14 +9,15 @@ mod common;
 
 use std::process::Command;
 
-/// A program whose lowering `rustc` still refuses: a lambda's parameter has no
-/// type in the checker yet (#497), so `x + x` over text is written as it
-/// stands. When that gap is closed this needs another such program, or none.
-/// (It was `String::from`, which is `NK1171` since #509.)
+/// A program whose lowering `rustc` still refuses: a shift past the width of
+/// a `u8` is not asked by the checker, and the language below refuses it as
+/// an overflow. When that gap is closed this needs another such program, or
+/// none. (It was a lambda's untyped parameter, which is `NK1245` since #497,
+/// and `String::from` before that, `NK1171` since #509.)
 const REFUSED_BELOW: &str = "fn main() {\n\
-     \x20   let twice = fn(x) { x + x }\n\
-     \x20   let s = twice(\"a\")\n\
-     \x20   println(f\"{s}\")\n\
+     \x20   let a: u8 = 1\n\
+     \x20   let b = a << 9\n\
+     \x20   println(f\"{b}\")\n\
      }\n";
 
 #[test]
@@ -40,7 +41,7 @@ fn a_backend_refusal_names_the_file_that_was_run() {
         .lines()
         .find(|line| line.trim_start().starts_with("-->"))
         .unwrap_or_else(|| panic!("no location in:\n{said}"));
-    assert!(arrow.contains("written.nika:2:"), "{said}");
+    assert!(arrow.contains("written.nika:3:"), "{said}");
     assert!(
         !arrow.contains("/run/"),
         "the cache's copy is named:\n{said}"

@@ -1521,6 +1521,9 @@ fn walked<'a>(
         open_elements: std::collections::HashMap::new(),
         lambda_expected: None,
         unknown_said: 0,
+        open_calls: std::collections::HashMap::new(),
+        unknown_bound: BTreeSet::new(),
+        dsl_drivers: crate::dsl::drivers(parsed).into_iter().collect(),
         list_constants: std::collections::HashMap::new(),
         open_comptimes: BTreeMap::new(),
         overflowed: BTreeSet::new(),
@@ -3660,6 +3663,20 @@ struct Checker<'a> {
     /// `return` against a declared `fn(i64) -> i64`, a field of one, an
     /// annotated `let`. Set just before such a lambda is walked, taken by it.
     lambda_expected: Option<Ty>,
+    /// **A generic call that hands back the number it was given** (#497):
+    /// `hand(7)` for `fn hand[T](x: T) -> T` is as open as the `7`, so its
+    /// value is the arguments' open number. Keyed by the call's arguments
+    /// (`args.as_ptr()`), holding which of them bind the result.
+    open_calls: std::collections::HashMap<usize, Vec<usize>>,
+    /// **The `let`s whose value had no known type** (#497), by
+    /// [`Local::id`]: that value was refused where it was made, or stood
+    /// back for (an open part, a reflected field), so reading the name again
+    /// is the same cause and is not refused twice.
+    unknown_bound: BTreeSet<usize>,
+    /// The functions that take a DSL's parameters as `...args: Self::dsl`
+    /// (ADR-296 D5), by name: what one hands back is the statement's
+    /// parameters, a type of each call site's own.
+    dsl_drivers: BTreeSet<String>,
     /// How many `NK1245`s this walk has said (or stood back for): an
     /// expression that is unknown only because a part inside it was is not
     /// refused again.
@@ -5637,10 +5654,9 @@ impl<'a> Checker<'a> {
         // frame, `return args` was `NK1117` in every driver. Its type is the
         // statement's, which this checker does not see, so it is not guessed.
         if let Some(spread) = spread {
-            frame.push(Local::free(
-                self.parsed.text(*spread).to_string(),
-                Ty::Unknown,
-            ));
+            let local = Local::free(self.parsed.text(*spread).to_string(), Ty::Unknown);
+            self.unknown_bound.insert(local.id);
+            frame.push(local);
         }
 
         let expected = ret_type
@@ -9465,6 +9481,19 @@ impl<'a> Checker<'a> {
     /// an argument it has to put a `&` in front of is found under `set`,
     /// because `set` is what is written on the line.
     fn call_on(&mut self, on: Ty, method: Ident, args: &[Expr], entry: &str, span: &Span) -> Ty {
+        // **`full()` is `Error`'s own, on every type that implements it**
+        // (Part I 7.1, #497): the `impl` writes `message` and the trait
+        // provides the long form, which no entry of the type's names.
+        if entry == "full"
+            && args.is_empty()
+            && let Ty::Named { name, .. } = &on
+            && self.implements_error(name)
+        {
+            self.reached_method(None);
+            self.method_pauses(method, false, span);
+            self.method_propagates(method, false, span);
+            return Ty::named("String");
+        }
         // **An error, one of several, answers `Error`'s methods** (ADR-280
         // D30); what only one member has is reached through a `match`.
         if let Some(members) = several_errors(&on) {
@@ -9629,6 +9658,16 @@ impl<'a> Checker<'a> {
             if let Some(bound) = self.bound_that_answers(name, entry) {
                 return self.call_on(bound, method, args, entry, span);
             }
+            // **A `Seen[T]` is the `T` it stamps** (ADR-281 D26, #497): the
+            // stamp is erased below, so `seen.len()` is the list's `len`.
+            if let Ty::Named {
+                name, args: held, ..
+            } = &on
+                && name == "Seen"
+                && let [held] = held.as_slice()
+            {
+                return self.call_on(held.clone(), method, args, entry, span);
+            }
             // Unless the type is a **parameter**, where nothing will ever
             // describe it and saying so now is the whole of `NK1126`.
             self.nothing_says_what_a_parameter_can_do(name, Reached::Method(entry), span);
@@ -9790,7 +9829,14 @@ impl<'a> Checker<'a> {
         // `HashMap[&str, Stats]` against `&HashMap[$K, $V]` binds `$V`
         // to `Stats`, so `-> Entry[$V]` is an `Entry[Stats]` and the
         // next call in the chain has something to bind from in turn.
-        let bound = bindings(contract, &on);
+        let mut bound = bindings(contract, &on);
+        // **And a generic type of the program's own binds its parameters by
+        // position** (#497): `h.seen()` on a `Holder[i64]`, for `impl
+        // Holder[T] { fn seen(ref self) -> ref T }`, is a `ref i64`, as the
+        // field `h.value` is.
+        for (name, ty) in self.arguments_of(&on) {
+            bound.entry(name).or_insert(ty);
+        }
 
         // The arguments are walked **after** the contract is in hand,
         // which is what lets a lambda's parameters have types (ADR-288).
@@ -9838,7 +9884,36 @@ impl<'a> Checker<'a> {
                 .binding(&name)
                 .and_then(|local| self.open_elements.get(&local.id).copied())
                 .map(|at| self.open_root(at));
-            if let (Some(number), "push", [pushed], [value]) = (open, entry, found.as_slice(), args)
+            // **An empty list's first `push` of a number makes its elements
+            // one open number** (#497, ADR-285 D34), as a list written in
+            // numbers has: `let mut xs = Vec()` then `xs.push(10)` is a list
+            // of whatever integer the uses of `xs[0]` ask for.
+            if open.is_none()
+                && let ("push", [pushed], [value]) = (entry, found.as_slice(), args)
+                && pushed.is_unknown()
+                && self.number_shaped(value)
+                && let Some(local) = self.binding(&name)
+                && matches!(&local.ty, Ty::Named { name, args, .. }
+                    if name == "Vec" && matches!(args.as_slice(), [] | [Ty::Unknown]))
+            {
+                let id = local.id;
+                self.open_numbers.insert(
+                    span.at(),
+                    OpenNumber {
+                        name: name.clone(),
+                        element: true,
+                        at: *span,
+                        joined: span.at(),
+                        asks: Vec::new(),
+                        given: Vec::new(),
+                        derived: Vec::new(),
+                        written: Vec::new(),
+                    },
+                );
+                self.open_number_given(span.at(), value, span);
+                self.open_elements.insert(id, span.at());
+            } else if let (Some(number), "push", [pushed], [value]) =
+                (open, entry, found.as_slice(), args)
             {
                 if let Some(ty) = integer_named(&value_of_a_copy(pushed.unseen())) {
                     if let Some(number) = self.open_numbers.get_mut(&number) {
@@ -9950,7 +10025,6 @@ impl<'a> Checker<'a> {
         // The receiver first (ADR-288), then whatever the arguments can still
         // say (ADR-295 D2) - `or_insert` on a map that bound `$V` already has
         // its answer, and `bind` does not overwrite one.
-        let mut bound = bound;
         for (name, ty) in from_arguments(contract, &found) {
             bound.entry(name).or_insert(ty);
         }
@@ -10947,6 +11021,16 @@ impl<'a> Checker<'a> {
                     out.push(self.open_root(at));
                 }
             }
+            Expr::Call { args, .. } => {
+                for &at in self
+                    .open_calls
+                    .get(&(args.as_ptr() as usize))
+                    .into_iter()
+                    .flatten()
+                {
+                    self.open_numbers_in(&args[at], out);
+                }
+            }
             // **A choice between numbers is one number** (D1): each branch's
             // value is the `if`'s.
             Expr::If { .. } | Expr::Match { .. } => {
@@ -11000,7 +11084,7 @@ impl<'a> Checker<'a> {
             return None;
         }
         let at = usize::try_from(at.value.magnitude).ok()?;
-        elements.get(at).map(|c| Constant::of(c.value.clone()))
+        elements.get(at).map(|c| Constant::of(c.value))
     }
 
     /// **A value that is nothing but numbers**: literals and open numbers,
@@ -11013,6 +11097,10 @@ impl<'a> Checker<'a> {
                 .binding(self.parsed.text(*name))
                 .is_some_and(|local| local.open_number.is_some()),
             Expr::Index { .. } => self.open_element_of(expr).is_some(),
+            Expr::Call { args, .. } => self
+                .open_calls
+                .get(&(args.as_ptr() as usize))
+                .is_some_and(|at| at.iter().all(|&at| self.number_shaped(&args[at]))),
             Expr::If { .. } | Expr::Match { .. } => number_branches(expr).is_some_and(|tails| {
                 !tails.is_empty() && tails.iter().all(|tail| self.number_shaped(tail))
             }),
@@ -11593,7 +11681,7 @@ impl<'a> Checker<'a> {
                         } if args.is_empty() => INTEGERS.iter().copied().find(|n| *n == name),
                         _ => None,
                     });
-                if let (Some(t), Expr::Closure { .. }) = (ty, value) {
+                if let (Some(t), Expr::Closure { .. } | Expr::ListLit { .. }) = (ty, value) {
                     self.lambda_expected = Some(Ty::from_ast(self.parsed, t));
                 }
                 let found = self.expr(value, span);
@@ -11893,6 +11981,9 @@ impl<'a> Checker<'a> {
                     && self.made_from_text(value)
                 {
                     self.text_paths.insert(id);
+                }
+                if bound.is_unknown() || self.a_drivers_row(value) {
+                    self.unknown_bound.insert(id);
                 }
                 self.bind_local(Local {
                     id,
@@ -12490,7 +12581,21 @@ impl<'a> Checker<'a> {
             || self.number_shaped(expr)
             || matches!(expr, Expr::Variable(n) if self
                 .binding(self.parsed.text(*n))
-                .is_some_and(|l| self.open_comptimes.contains_key(&l.id)));
+                .is_some_and(|l| self.open_comptimes.contains_key(&l.id)))
+            || self.a_member_of_an_open_argument(expr)
+            // `xs ?? 0` and `xs ?? return` over a `T?` nothing typed: the
+            // number's uses, or the jump, leave the type to what the left side
+            // holds - an open number of a list or map, a channel's element.
+            || matches!(expr, Expr::Coalesce { fallback, .. }
+                if self.number_shaped(fallback) || self.jumps(fallback))
+            // `asset("…")` is the bytes of a file, and the `comptime` it
+            // stands in says what they are read as (ADR-310 D3).
+            || matches!(expr, Expr::Call { func, .. }
+                if matches!(&**func, Expr::Variable(n) if self.parsed.text(*n) == ASSET));
+        // **A name is asked where it is bound**: a `let`'s value, a loop's
+        // sequence, the place a lambda stands, a declared parameter. Whatever
+        // left it without a type was said there, or stood back for.
+        let said = matches!(expr, Expr::Variable(_));
         let structural = matches!(
             expr,
             Expr::Binary { .. }
@@ -12498,6 +12603,7 @@ impl<'a> Checker<'a> {
                 | Expr::If { .. }
                 | Expr::Block(_)
                 | Expr::Match { .. }
+                | Expr::Select(_)
                 | Expr::Return(_)
                 | Expr::Throw(_)
                 | Expr::TryCatch { .. }
@@ -12507,7 +12613,24 @@ impl<'a> Checker<'a> {
         ) || matches!(expr, Expr::Call { func, .. }
             if matches!(&**func, Expr::Variable(n) if self.parsed.text(*n) == "panic"))
             || matches!(expr, Expr::MethodCall { method, .. }
-                if self.parsed.text(*method) == "of" && self.unrolling.is_none());
+                if self.parsed.text(*method) == "of" && self.unrolling.is_none())
+            || matches!(expr, Expr::Field { name, .. }
+                if self.parsed.text(*name) == "default" && self.unrolling.is_none());
+        // **A driver's parameters are each call site's own type** (ADR-296
+        // D5): `db.prepare(query; id: 501)` is a row of what that call gave,
+        // known where it is lowered, as `field.of(value)` is where it is
+        // unrolled.
+        let per_call = self.a_drivers_row(expr);
+        // A member of a value that has no known type is unknown because of
+        // that value, whose own refusal (or reason not to) was said.
+        let of_an_unknown = matches!(expr, Expr::Field { base, .. } | Expr::MethodCall { receiver: base, .. }
+            if matches!(&**base, Expr::Variable(n) if self
+                .binding(self.parsed.text(*n))
+                .is_some_and(|l| self.unknown_bound.contains(&l.id))));
+        if said || per_call || of_an_unknown {
+            self.unknown_said += 1;
+            return;
+        }
         if open || structural {
             return;
         }
@@ -12544,6 +12667,36 @@ impl<'a> Checker<'a> {
             ),
             labels: Vec::new(),
         });
+    }
+
+    /// **What a DSL driver hands back** (ADR-296 D5): `db.prepare(query; id:
+    /// 501)`, the parameters that call gave, as a type of that call's own.
+    fn a_drivers_row(&self, expr: &Expr) -> bool {
+        match expr {
+            Expr::MethodCall { method, .. } => self.dsl_drivers.contains(self.parsed.text(*method)),
+            Expr::Call { func, .. } => matches!(&**func, Expr::Variable(n)
+                if self.dsl_drivers.contains(self.parsed.text(*n))),
+            _ => false,
+        }
+    }
+
+    /// **A member of a value of a generic type whose argument nothing has
+    /// typed yet** (#497): `Holder { value: 21 }.value` is the `21`, whose
+    /// type its uses decide, as `hand(7)` is; `(spawn fn { 21 * 2 }).join()`
+    /// is the task's open number. Every other way to an unknown argument
+    /// passes through a part that was refused itself.
+    fn a_member_of_an_open_argument(&self, expr: &Expr) -> bool {
+        let base = match expr {
+            Expr::Field { base, .. } | Expr::Index { base, .. } => base,
+            Expr::MethodCall { receiver, .. } => receiver,
+            _ => return false,
+        };
+        let Expr::Variable(name) = &**base else {
+            return false;
+        };
+        self.binding(self.parsed.text(*name)).is_some_and(
+            |local| matches!(&local.ty, Ty::Named { args, .. } if args.iter().any(Ty::is_unknown)),
+        )
     }
 
     fn value_of(&mut self, expr: &Expr, span: &Span) -> Ty {
@@ -12814,6 +12967,11 @@ impl<'a> Checker<'a> {
                     let ty = self.past_a_boundary("`select` arm", |me| me.block(&arm.body));
                     self.scope.pop();
                     if self.block_leaves(&arm.body) {
+                        continue;
+                    }
+                    // An arm of no known type is an open number beside the
+                    // others (`=> { -1 }`), or was refused itself (#497).
+                    if ty.is_unknown() {
                         continue;
                     }
                     match &result {
@@ -14388,7 +14546,11 @@ impl<'a> Checker<'a> {
                     .enumerate()
                     .map(|(at, p)| {
                         let ty = given.get(at).cloned().unwrap_or(Ty::Unknown);
-                        self.lambda_parameter(*p, mutable, ty, span)
+                        let local = self.lambda_parameter(*p, mutable, ty, span);
+                        if local.ty.is_unknown() {
+                            self.unknown_bound.insert(local.id);
+                        }
+                        local
                     })
                     .collect();
                 for local in &frame {
@@ -14989,6 +15151,11 @@ impl<'a> Checker<'a> {
                 // classes into Nikaia, #125). A view beside it is the other
                 // impl, whose answer stays the reference.
                 match left {
+                    // **What the left side holds is not known, and the
+                    // fallback says it** (#497): `rx.recv() ?? "none"` over a
+                    // channel nothing typed is text, because both sides are
+                    // one value's.
+                    Ty::Nullable(inner) if inner.is_unknown() && !other.is_unknown() => other,
                     Ty::Nullable(inner) if !other.is_a_view() => value_of_a_copy(*inner),
                     Ty::Nullable(inner) => *inner,
                     _ => Ty::Unknown,
@@ -15363,6 +15530,17 @@ impl<'a> Checker<'a> {
                         && !crate::dsl::is_deferred("html", content) =>
                     {
                         Ty::named(ty::TEXT)
+                    }
+                    // **A statement with `:name` holes is its own text**
+                    // (ADR-296 D5, #497): it reaches its driver as written,
+                    // and the values arrive beside it.
+                    Expr::Dsl {
+                        target,
+                        package: None,
+                        context: None,
+                        content,
+                    } if crate::dsl::is_deferred(self.parsed.text(*target), content) => {
+                        Ty::view("str")
                     }
                     _ => Ty::Unknown,
                 }
@@ -17354,11 +17532,43 @@ impl<'a> Checker<'a> {
         // parameters are typed from the signature (ADR-288), so the signature
         // has to reach them unsubstituted.
         let bound = from_arguments(contract, &found);
+        self.a_call_that_hands_its_number_back(contract, &bound, args);
         // …and what the arguments tell a **bound** (ADR-295 D16), which is the
         // same binding read for the other question a type parameter raises.
         self.a_bound_the_argument_does_not_meet(&key, &bound, span);
         let result = constructed.unwrap_or_else(|| ty::substitute(&result, &bound));
         self.stamped_through(contract, &found, result)
+    }
+
+    /// **A generic call whose result only an open number binds** (#497):
+    /// `hand(7)` for `fn hand[T](x: T) -> T` hands back the `7`, whose type
+    /// its uses decide (ADR-285 D1), so the call is that open number.
+    fn a_call_that_hands_its_number_back(
+        &mut self,
+        contract: &FnContract,
+        bound: &BTreeMap<String, Ty>,
+        args: &[Expr],
+    ) {
+        let Some(signature) = &contract.signature else {
+            return;
+        };
+        let Some(Ty::Var { name, .. }) = &signature.result else {
+            return;
+        };
+        if bound.get(name).is_some_and(|ty| !ty.is_unknown()) {
+            return;
+        }
+        let at: Vec<usize> = signature
+            .arguments()
+            .iter()
+            .enumerate()
+            .filter(|(_, (_, ty))| matches!(ty, Ty::Var { name: n, .. } if n == name))
+            .map(|(at, _)| at)
+            .filter(|&at| at < args.len())
+            .collect();
+        if !at.is_empty() && at.iter().all(|&at| self.number_shaped(&args[at])) {
+            self.open_calls.insert(args.as_ptr() as usize, at);
+        }
     }
 
     /// The count and the types of what a call passes, against what it takes.
@@ -22412,7 +22622,27 @@ impl<'a> Checker<'a> {
         let mut agreed = Ty::Unknown;
         let mut kind: Option<(&'static str, String)> = None;
         let mut said = false;
-        let founds: Vec<Ty> = items.iter().map(|item| self.expr(item, span)).collect();
+        // **A lambda in a list of a declared `fn` type takes that type**
+        // (#497), as one bound by an annotated `let` does:
+        // `let fs: Vec[fn(i64) -> i64] = [fn(x) { x * 2 }]`.
+        let element = self
+            .lambda_expected
+            .take()
+            .and_then(|declared| match declared {
+                Ty::Named { name, args, .. } if name == "Vec" => args.into_iter().next(),
+                _ => None,
+            });
+        let founds: Vec<Ty> = items
+            .iter()
+            .map(|item| {
+                if matches!(item, Expr::Closure { .. }) {
+                    self.lambda_expected = element.clone().filter(|ty| matches!(ty, Ty::Fn { .. }));
+                }
+                let found = self.expr(item, span);
+                self.lambda_expected = None;
+                found
+            })
+            .collect();
         for (item, ty) in items.iter().zip(&founds) {
             self.hands_over(item, ty, "put into a list", span);
         }
@@ -22557,6 +22787,19 @@ impl<'a> Checker<'a> {
             args: vec![agreed],
             view: false,
         }
+    }
+
+    /// Whether this program writes `impl Error for` the type, in this file or
+    /// another of the package.
+    fn implements_error(&self, ty: &str) -> bool {
+        std::iter::once(self.parsed)
+            .chain(self.beside.iter().copied())
+            .any(|unit| {
+                unit.program.items.iter().any(|item| {
+                    matches!(&item.node, Item::Impl { trait_name: Some(trait_name), target, .. }
+                        if unit.text(*trait_name) == "Error" && unit.text(target.name) == ty)
+                })
+            })
     }
 
     /// `NK1161`: a `throw` of something that is not an error (Part I 7.1).
@@ -25566,6 +25809,9 @@ impl<'a> Checker<'a> {
     }
 
     fn bind_local(&mut self, local: Local) {
+        if local.ty.is_unknown() {
+            self.unknown_bound.insert(local.id);
+        }
         if let Some(frame) = self.scope.last_mut() {
             frame.push(local);
         }
@@ -25854,12 +26100,16 @@ impl<'a> Checker<'a> {
             .iter()
             .enumerate()
             .map(|(at, p)| {
-                self.lambda_parameter(
+                let local = self.lambda_parameter(
                     *p,
                     mutable,
                     given.get(at).cloned().unwrap_or(Ty::Unknown),
                     span,
-                )
+                );
+                if local.ty.is_unknown() {
+                    self.unknown_bound.insert(local.id);
+                }
+                local
             })
             .collect();
 

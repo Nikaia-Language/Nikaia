@@ -8,6 +8,22 @@ or the specification. A change only to the guide, the notes, the README, the
 website, the tests, the examples or the tooling around them raises nothing and
 has no heading here; `CLAUDE.md` draws the line.
 
+## [0.0.740] — 2026-10-10
+
+**More of what failing closed refused is typed, or asked where it belongs**
+(ADR-286 D41, #497).
+- Typed: a method of a generic type of the program's own binds its parameters
+  from the receiver (`h.seen()` on a `Holder[i64]`); `Vec()` whose first
+  `push` is a number holds one open number; `x ?? "none"` over a `T?` nothing
+  typed is the fallback's type; a lambda in a list of a declared `fn` type takes
+  it; a `dsl` statement with `:name` holes is its text; `full()` on a type with
+  `impl Error`; a `Seen[T]` answers `T`'s methods; a `select` arm of no type
+  does not unsettle the others.
+- Asked where it belongs: a name where it is bound, not where it is read; what
+  a number nothing typed passes through (`hand(7)`, `Holder { value: 21 }`,
+  a task's `join()`, `xs ?? 0`); `asset("…")`, by its `comptime`; a DSL
+  driver's `Self::dsl`, at each call site.
+
 ## [0.0.739] — 2026-10-10
 
 **`NK1245` waits for the other refusals** (ADR-286 D41, #497).

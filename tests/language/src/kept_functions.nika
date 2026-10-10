@@ -25,7 +25,7 @@ struct KeptFunctionsJob { name: String, step: fn(i64) -> i64 }
 
 test "a kept function that may pause is awaited" {
     let job = KeptFunctionsJob { name: "tick", step: fn(n) {
-        time::sleep(time::Duration::from_millis(1))
+        time::sleep(1.millis())
         n + 1
     } }
     let line = f"{job.name} {job.step(41)}"
@@ -49,7 +49,7 @@ test "a kept parameter is stored in a field" {
 // A pausing function held in a `let` is awaited where it is called.
 test "a pausing function in a let is awaited" {
     let step: fn(i64) -> i64 = fn(n) {
-        time::sleep(time::Duration::from_millis(1))
+        time::sleep(1.millis())
         n * 3
     }
     let line = f"{step(5)}"

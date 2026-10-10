@@ -88,6 +88,10 @@ pub use winnow_grammar;
 /// `include!` rather than `mod text;` so that the file keeps reading as what it
 /// is - the compiler's output, committed - rather than as something written by
 /// hand here.
+///
+/// `question_mark` is allowed for the reason it is in `tools` below: `?? return
+/// null` is lowered as a `match`, which is how the language writes a `?`.
+#[allow(clippy::question_mark)]
 pub mod text {
     /// The language's word for one character, which the lowered file writes.
     #[allow(unused_imports)]
