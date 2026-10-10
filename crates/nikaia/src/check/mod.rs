@@ -48,7 +48,7 @@ use nikaia_std::tools::check_patterns::pattern_names;
 use nikaia_std::tools::check_scope::{resolve_call, resolve_method};
 use nikaia_std::tools::check_shapes::{
     an_element_beneath, catches_everything, constructed, element_below, is_fixed, is_growable,
-    plainly_a_value, roots_in_a_binding, rust_constant_type, slice_element,
+    roots_in_a_binding, rust_constant_type, slice_element,
 };
 pub use nikaia_std::tools::check_state::{
     CheckFinding as Finding, CheckLabel as Label, CheckSeverity as Severity,
@@ -1346,8 +1346,6 @@ fn walked<'a>(
         parsed,
         beside,
         reads,
-        said_rings: BTreeSet::new(),
-        computing_default: false,
         raised: (None, None),
         computes,
         option_values: Vec::new(),
@@ -1356,14 +1354,9 @@ fn walked<'a>(
         inside_a_comptime: false,
         literal_receivers: Vec::new(),
         at_a_write_door: false,
-        set_receiver: None,
-        stamped_condition: None,
-        inside_a_door: false,
         stored_frames: Vec::new(),
-        inside_an_action: None,
         rule_results: BTreeMap::new(),
         pushed_into: None,
-        inside_a_sync_function: None,
         fields_by_base: std::cell::OnceCell::new(),
         task_bindings: Vec::new(),
         said_mut: BTreeSet::new(),
@@ -1378,11 +1371,7 @@ fn walked<'a>(
         fallible_methods: BTreeSet::new(),
         pausing_methods: BTreeSet::new(),
         settled_methods: BTreeSet::new(),
-        handed_over: None,
         paused_args: Vec::new(),
-        in_parallel: None,
-        scoped_task: false,
-        inside_unsafe: false,
         moved_into_a_task: Vec::new(),
         walked: Vec::new(),
         branch: Vec::new(),
@@ -1409,7 +1398,6 @@ fn walked<'a>(
         parts_out: Vec::new(),
         gives: Vec::new(),
         ways_out: Vec::new(),
-        repeats: Vec::new(),
         reading_only: false,
         read_seq: 0,
         empty_lists: BTreeMap::new(),
@@ -1519,6 +1507,18 @@ fn walked<'a>(
                 .collect(),
             run_code: BTreeSet::new(),
             dsl_drivers: crate::dsl::drivers(parsed).into_iter().collect(),
+            said_rings: BTreeSet::new(),
+            computing_default: false,
+            set_receiver: None,
+            stamped_condition: None,
+            inside_a_door: false,
+            inside_an_action: None,
+            inside_a_sync_function: None,
+            handed_over: None,
+            in_parallel: None,
+            scoped_task: false,
+            inside_unsafe: false,
+            repeats: Vec::new(),
         },
     };
     checker.collect_types();
@@ -2773,16 +2773,6 @@ struct Checker<'a> {
     /// **What this build may read while it builds** (ADR-310), carried beside
     /// the files for the same reason: no ledger can say it.
     reads: &'a Reads,
-    /// The rings of constants this walk has already reported, by their members.
-    ///
-    /// Every constant in a ring is circular, and each would report the same
-    /// loop from a different corner — which is one mistake said as many times
-    /// as it has members.
-    said_rings: BTreeSet<Vec<String>>,
-    /// **The option whose default is being computed** (ADR-318 D7): a
-    /// refusal's way out for it is a `T?`, not a `let` in place of a
-    /// `comptime` it never was.
-    computing_default: bool,
     /// **The bounds the `comptime` being computed raised**
     /// ([ADR-321](../../docs/specification/adr/adr-321.md) D11): steps and
     /// bytes, each where it named one; the workshop's otherwise.
@@ -2912,42 +2902,11 @@ struct Checker<'a> {
     /// established. The difference is the answer.
     pausing_methods: BTreeSet<(usize, String)>,
     settled_methods: BTreeSet<(usize, String)>,
-    /// **What the lambda being walked has been seen to do**
-    /// ([ADR-277](../../docs/specification/adr/adr-277.md) D7).
-    ///
-    /// A function type carries two promises and the defaults are the
-    /// language's: without `sync` the code may pause, without `throws` it
-    /// cannot fail. A lambda handed to one has to keep them, and *keeping* is
-    /// a question about its body — so the body is walked with this in hand and
-    /// the calls it makes put their answers in it.
-    ///
-    /// **It does not cross a boundary.** A lambda written inside another one
-    /// is a function of its own: what its body does happens when *its* callee
-    /// runs it, not when this one does. So [`Checker::past_a_boundary`] clears
-    /// it and puts the outer one back, the way it does with the loop count.
-    ///
-    /// `None` where nothing is being asked — outside a lambda, and inside one
-    /// whose parameter's type nothing describes.
-    handed_over: Option<Handed>,
     /// The lambdas of the call being walked that paused and were handed to a
     /// `std` entry, by their shape
     /// ([ADR-233](../../docs/specification/adr/adr-233.md) D1). Filled by
     /// [`Self::arguments_given`] and emptied by the call that asked.
     paused_args: Vec<String>,
-    /// **Inside a lambda handed to a walk of a `Par[T]`**, the length of the
-    /// scope where it began: a name bound below it is one every core shares
-    /// ([ADR-235](../../docs/specification/adr/adr-235.md) D2). `None`
-    /// elsewhere.
-    in_parallel: Option<usize>,
-    /// **The parallel context is a task of `task::scope`** (Part II 12.7)
-    /// rather than a `par_iter()` walk: the same rules, said of a task.
-    scoped_task: bool,
-    /// Whether what is being walked stands inside one.
-    ///
-    /// It reaches inward the way `caught` and `in_lambda` do, and it stops at
-    /// nothing: a lambda written inside an `unsafe` block runs later, and D3
-    /// asks about where the **call** is written rather than about when it runs.
-    inside_unsafe: bool,
     /// **What a task took with it** (`NK2101`): the name, its type, and the byte
     /// the `spawn`'s statement starts at.
     ///
@@ -3057,16 +3016,6 @@ struct Checker<'a> {
     parts_out: Vec<PartOut>,
     gives: Vec<Give>,
     ways_out: Vec<WayOut>,
-    /// **The loops and lambdas around the expression being walked**, innermost
-    /// last ([ADR-293](../../docs/specification/adr/adr-293.md) D19): where each
-    /// begins in `scope`, and what would let a sequence taken inside it be
-    /// taken again.
-    ///
-    /// A sequence declared outside a loop and taken inside it is taken on the
-    /// first turn and gone on the second, and a lambda may be run more than
-    /// once by whatever it is handed to. Both are one statement in the source,
-    /// which is why the per-statement order `walked` reads cannot see them.
-    repeats: Vec<Repeats>,
     /// A read that does not take what it reads
     /// ([ADR-293](../../docs/specification/adr/adr-293.md) D19): an
     /// assignment's target, and the operand of a `&`.
@@ -3161,64 +3110,16 @@ struct Checker<'a> {
     /// the emitter writes `mut` itself for a fold's accumulator and refusing
     /// there would refuse a program that compiles.
     at_a_write_door: bool,
-    /// The name the `set` being typed was called on, for `NK2205`'s message
-    /// ([ADR-281](../../docs/specification/adr/adr-281.md) D25).
-    ///
-    /// The rule wants the receiver's **name** and the argument's **type**, and
-    /// those are known in two different places: the name where the method call
-    /// is walked, the types after `arguments_given` has run. Carried rather
-    /// than passed, the way the door flags beside it are.
-    set_receiver: Option<String>,
-    /// Where the condition this stands under was read from a lock, if it was
-    /// ([ADR-281](../../docs/specification/adr/adr-281.md) D25's second shape).
-    ///
-    /// `if stand > 100 { kasse.set(0) }` stores a plain value; the **decision**
-    /// is the stale thing. A `while`, a `match` and a nested `if` are
-    /// conditions alike, which is why this is a flag over a block rather than a
-    /// question asked of one statement.
-    stamped_condition: Option<usize>,
-    /// Whether what is being walked is **inside a door's block** — `access`,
-    /// `update`, `access_all` or `update_all`
-    /// ([ADR-281](../../docs/specification/adr/adr-281.md) D10).
-    ///
-    /// `at_a_write_door` above is the narrower question `NK1138` and `NK1141`
-    /// ask; this is the one `NK2203` asks, because *a lock taken while a lock
-    /// is held* is about **any** door being open and not about which
-    /// ([ADR-281](../../docs/specification/adr/adr-281.md) D28).
-    ///
-    /// `get` and `set` are doors and are **not** here, and D10 says why: while
-    /// the lock is open in either of them no code of the program's runs, so
-    /// there is nothing that could take a second one.
-    inside_a_door: bool,
     /// The lambdas being walked on their way into a function field, innermost
     /// last (ADR-230 D1): every method call resolved inside one is recorded in
     /// each.
     stored_frames: Vec<StoredCode>,
-    /// The rule whose action is being walked, for
-    /// [ADR-296](../../docs/specification/adr/adr-296.md) D35's refusal - which
-    /// needs the rule's name, because a grammar is a page of rules and a caret
-    /// on a call inside one is not enough to find it.
-    inside_an_action: Option<String>,
     /// **Each rule of the grammar being walked, with the type it declares**
     /// (#500): what a binding `t:term` holds is `term`'s result.
     rule_results: BTreeMap<String, Ty>,
     /// **The name of an empty list a `push` is being walked on** (#523): its
     /// first use gives it its element type.
     pushed_into: Option<String>,
-    /// The name of the enclosing function, where its declaration **writes**
-    /// `sync` ([ADR-288](../../docs/specification/adr/adr-288.md) D4: an
-    /// assertion is checked, never overwritten).
-    ///
-    /// It is here because `NK2202` cannot see a **method** call: `contracts::sync`
-    /// deliberately does not resolve one, on the ground that the type checker is
-    /// the only thing that knows what `tx.send(1)` goes to
-    /// ([ADR-288](../../docs/specification/adr/adr-288.md)) — and the type
-    /// checker is here. Without it a `sync` function that sends on a channel
-    /// lowered to an ordinary `fn` with an `.await` inside it, which is not Rust
-    /// (Part III, C.1). Found by
-    /// [ADR-149](../../docs/specification/adr/adr-149.md) D2, and reachable
-    /// before it through `TaskHandle::join`.
-    inside_a_sync_function: Option<String>,
     /// **The fields of every type in `own` and `library`, by the type's own
     /// name** ([`ty::base`]): what a cleanup or a teardown a type holds is
     /// asked through. Built the first time it is asked, once per walk, rather
@@ -3997,12 +3898,12 @@ impl<'a> Checker<'a> {
                 // ([ADR-296](../../docs/specification/adr/adr-296.md)) - so the
                 // flag is set around both rather than around the block alone.
                 let named = self.parsed.text(rule.name).to_string();
-                let outer_action = self.inside_an_action.replace(named);
+                let outer_action = self.s.inside_an_action.replace(named);
                 self.s.scope.push(frame.iter().map(Local::clone).collect());
                 self.folds_in(grammar, &alt.pattern.node, &alt.pattern.span);
                 self.s.scope.pop();
                 let Some(action) = &alt.action else {
-                    self.inside_an_action = outer_action;
+                    self.s.inside_an_action = outer_action;
                     continue;
                 };
                 let outer = std::mem::replace(&mut self.s.expected, expected.clone());
@@ -4010,7 +3911,7 @@ impl<'a> Checker<'a> {
                 let tail_span = action.stmts.last().map(|s| s.span);
                 let tail = self.block(action);
                 self.s.scope.pop();
-                self.inside_an_action = outer_action;
+                self.s.inside_an_action = outer_action;
                 if let (Some(expected), Some(span)) = (&expected, tail_span) {
                     self.expect(&tail, expected, span, "returns", |found, want| {
                         format!("This action builds `{found}`, but its rule returns `{want}`.")
@@ -4128,7 +4029,7 @@ impl<'a> Checker<'a> {
             _ => return None,
         };
         let (key, contract) = self.resolve(&name)?;
-        self.a_pausing_call_in_an_action(&key, &contract, span);
+        self.s.a_pausing_call_in_an_action(&key, &contract, span);
         contract
             .signature
             .as_ref()
@@ -4310,9 +4211,10 @@ impl<'a> Checker<'a> {
         let outer_current = self.current.replace(key);
         let outer_sync = match is_sync {
             true => self
+                .s
                 .inside_a_sync_function
                 .replace(self.current.clone().unwrap_or_default()),
-            false => self.inside_a_sync_function.take(),
+            false => self.s.inside_a_sync_function.take(),
         };
 
         // **Inside its own body a type parameter is a type**
@@ -4574,7 +4476,7 @@ impl<'a> Checker<'a> {
         self.s.type_parameters = outer_declared;
         self.s.borrowing_self = outer_borrowing;
         self.current = outer_current;
-        self.inside_a_sync_function = outer_sync;
+        self.s.inside_a_sync_function = outer_sync;
         self.s.run_code = outer_run_code;
     }
 
@@ -5971,7 +5873,7 @@ impl<'a> Checker<'a> {
         }
         // **A field that holds a function is called as one** here too
         // (#533): `x?.apply(1)` is `(x.apply)(1)` on what is inside.
-        let inside = self.inside_a_door;
+        let inside = self.s.inside_a_door;
         let reached = match self.a_called_field(&inner, receiver, *method, args, inside, span) {
             Some(result) => result,
             None => self.call_on(*inner, *method, args, &written, span),
@@ -6283,14 +6185,14 @@ impl<'a> Checker<'a> {
         {
             return;
         }
-        self.computing_default = true;
+        self.s.computing_default = true;
         let declared_ty = crate::comptime_run::as_built(ty.clone());
         let (value, said) =
             match self.compiled_build_time_value(default, &declared_ty, &name, &span) {
                 Some(outcome) => outcome,
                 None => self.build_time_value(default, &name, &span),
             };
-        self.computing_default = false;
+        self.s.computing_default = false;
         if said {
             return;
         }
@@ -6766,185 +6668,6 @@ impl<'a> Checker<'a> {
         Some(self.parsed.unaliased(&name))
     }
 
-    /// **`NK2203`: a lock taken while a lock is held**
-    /// ([ADR-281](../../docs/specification/adr/adr-281.md) D28, D29).
-    ///
-    /// Part II 12.3 called manual nesting an anti-pattern and *"often a
-    /// compile-time error"*; D2 makes *often* into **always**, and with that no
-    /// program exists in which a lock's two representations behave differently
-    /// — which is the whole reason the switch may pick one.
-    ///
-    /// **Written one inside the other, or reached through a chain of calls**,
-    /// and the second is what needs the column: `contracts::locks` propagates
-    /// *touches a lock* over the call graph, so a callee three deep is the same
-    /// answer as one written here.
-    ///
-    /// **`Holds` and nothing else.** `Undecided` is not permission
-    /// ([ADR-010](../../docs/specification/adr/adr-010.md) D1) and not a
-    /// refusal either, because Stage 0 knows the type of rather less than half
-    /// of what a program writes, and refusing on doubt is [Part III
-    /// C.4](../../docs/specification/30-nikaia-tooling.md)'s correct program
-    /// refused. What a silent `Undecided` costs is the runtime check, which is
-    /// where every program already is.
-    ///
-    /// **A `println` is one of these**, and that is the case
-    /// [ADR-288](../../docs/specification/adr/adr-288.md) D21 was written about:
-    /// it never pauses, so `sync` says nothing about it, and it takes standard
-    /// output's own lock while yours is open. Two conditions and not one.
-    fn a_lock_inside_a_lock(&mut self, called: &str, holds: crate::contracts::Lock, span: &Span) {
-        if !self.inside_a_door || !holds.holds() {
-            return;
-        }
-        // A method by the name the program wrote, not by its ledger key:
-        // `access`, not `SharedMut::access`.
-        let method = called.rsplit("::").next().unwrap_or(called);
-        let written = match called.chars().next().is_some_and(char::is_uppercase) {
-            true => method,
-            false => called,
-        };
-        self.s.findings.push(Finding {
-            severity: Severity::Error,
-            span: *span,
-            code: "NK2203".to_string(),
-            message: format!("`{written}` takes a lock, but you're already holding one here."),
-            notes: vec![
-                "This block runs while a lock is held, so taking a second lock inside it \
-                 can deadlock."
-                    .to_string(),
-            ],
-            help: Some(
-                "Take both locks at once with `access_all(a, b) fn(x, y) { … }`, or \
-                 compute the value before the block and pass it in."
-                    .to_string(),
-            ),
-            labels: vec![Label {
-                span: *span,
-                word: method.to_string(),
-                text: "takes a second lock".to_string(),
-                main: true,
-            }],
-        });
-    }
-
-    /// **`NK2201`: I/O while holding locked data**
-    /// ([ADR-288](../../docs/specification/adr/adr-288.md) D21,
-    /// [ADR-281](../../docs/specification/adr/adr-281.md) D35).
-    ///
-    /// ADR-288 D21 split *no I/O while holding locked data* in two — what
-    /// **pauses** is `NK2202`'s and what **takes a lock** is `NK2203`'s — and
-    /// left the third case as a question: *is there I/O that does neither?*
-    ///
-    /// There is exactly one, and it is not a call. `fs::Mapped` is a file held
-    /// as memory, so `mapped[i]` is a **page fault**: a disk read with nothing
-    /// in the source to hang a `touches` on, which neither suspends nor takes a
-    /// lock. Inside an open door that is a disk read with the lock held, and
-    /// before this nothing said a word.
-    ///
-    /// **Read off the type's own column, never a list of names**
-    /// ([ADR-281](../../docs/specification/adr/adr-281.md) D34): a type whose
-    /// `touches` names a file says so in the ledger, and a second such type
-    /// needs a line there and nothing here.
-    ///
-    /// **Silence is not a claim.** A type with no `touches` recorded is one
-    /// nobody answered for, and refusing on that would refuse correct programs
-    /// ([Part III C.4](../../docs/specification/30-nikaia-tooling.md)).
-    fn io_inside_a_door(&mut self, on: &Ty, what: &str, span: &Span) {
-        if !self.inside_a_door {
-            return;
-        }
-        let Ty::Named { name, .. } = on else {
-            return;
-        };
-        // **By the last segment**, which is what the index site above does and
-        // for the same reason: a `std` type carries its module in the ledger's
-        // key since [ADR-313](../../docs/specification/adr/adr-313.md) D3, while
-        // a signature writes `-> Mapped` — so `fs::Mapped` and `Mapped` are the
-        // one type reached from two sides.
-        let base = crate::contracts::ty::base(name);
-        let touched = self
-            .world
-            .library
-            .types
-            .iter()
-            .filter(|(key, _)| crate::contracts::ty::base(key) == base)
-            .any(|(_, contract)| contract.touches.iter().any(|t| t.starts_with("file")));
-        if !touched {
-            return;
-        }
-        self.s.findings.push(Finding {
-            severity: Severity::Error,
-            span: *span,
-            code: "NK2201".to_string(),
-            message: format!(
-                "{} reads a file, but you're holding a lock here.",
-                sentence(what)
-            ),
-            notes: vec![
-                format!(
-                    "`{name}` is a file mapped into memory, so reading it can wait on the \
-                     disk, and a block that holds a lock must never wait."
-                ),
-                "This wait doesn't show up as a pause or a second lock, which is why it \
-                 gets its own message."
-                    .to_string(),
-            ],
-            help: Some(
-                "Read what you need before taking the lock, and pass the value in.".to_string(),
-            ),
-            labels: Vec::new(),
-        });
-    }
-
-    /// **`NK1141`: an `update` block hands a value back**
-    /// ([ADR-281](../../docs/specification/adr/adr-281.md) D12).
-    ///
-    /// `update` used to take the value by value and put back what the block
-    /// returned; D1 hands it the address instead, so *there is nothing to
-    /// return*. Without this the old shape — `kasse.update fn(old) { old + 1 }`
-    /// — lowers to a closure whose value is an `i64` where `()` is wanted, and
-    /// the answer comes from `rustc` about a file nobody wrote
-    /// ([Part III C.1](../../docs/specification/30-nikaia-tooling.md)).
-    ///
-    /// **Asked of the shape and not of the type**, and only where the shape
-    /// says so outright: a last statement that is a call, a method call or an
-    /// assignment is left alone, because whether *those* come to a value is a
-    /// question this walk would have to type the call to answer, and answering
-    /// it wrongly refuses a correct program (C.4). What is refused is a last
-    /// statement that can only be a value — a name, a literal, an operator, a
-    /// field — and a `return` that carries one.
-    fn an_update_block_returns_nothing(&mut self, body: &Block, span: &Span) {
-        let hands_back = body.stmts.iter().any(|stmt| match &stmt.node {
-            Stmt::Return(Some(_)) => true,
-            Stmt::Expr(value) => {
-                // The last statement is the block's value; an expression
-                // statement anywhere else is evaluated and dropped.
-                std::ptr::eq(stmt, body.stmts.last().expect("there is one"))
-                    && plainly_a_value(value)
-            }
-            _ => false,
-        });
-        if !hands_back {
-            return;
-        }
-        self.s.findings.push(Finding {
-            severity: Severity::Error,
-            span: *span,
-            code: "NK1141".to_string(),
-            message: "An `update` changes the value in place, so it has nothing to return."
-                .to_string(),
-            notes: vec![
-                "The block gets the value itself and changes it where it is, so a value \
-                 it returns would go nowhere."
-                    .to_string(),
-            ],
-            help: Some(
-                "Change it instead: write `fn(mut v) { v += 1 }`, not `fn(v) { v + 1 }`."
-                    .to_string(),
-            ),
-            labels: Vec::new(),
-        });
-    }
-
     /// One lambda parameter, bound — and refusable where it is changed without
     /// `mut` ([ADR-281](../../docs/specification/adr/adr-281.md) D12).
     ///
@@ -7122,7 +6845,7 @@ impl<'a> Checker<'a> {
     fn a_value_with_a_cleanup_dying(&mut self, name: &str, ty: &Ty, span: &Span) -> Option<bool> {
         let (owner, fails) = self.cleanup_of(ty)?;
         self.a_settle_in_this_function(fails);
-        self.a_cleanup_that_may_pause(name, span);
+        self.s.a_cleanup_that_may_pause(name, span);
         let is = match ty.unseen() {
             Ty::Named { name, .. }
                 if crate::contracts::ty::base(&name) == crate::contracts::ty::base(&owner) =>
@@ -7155,72 +6878,6 @@ impl<'a> Checker<'a> {
             });
         }
         Some(fails)
-    }
-
-    /// **`NK2107`: a lambda that runs on several cores at once changes a name
-    /// they all share** (Part II 12.6,
-    /// [ADR-235](../../docs/specification/adr/adr-235.md) D2).
-    ///
-    /// Every core runs the lambda on its own share of the elements, so a name
-    /// bound outside it is one they would all write at once - a data race,
-    /// which the language below refuses in its own words about a file nobody
-    /// wrote (Part III, C.1). Asked at **both** settings of
-    /// `user_parallelism`: at `no` the walk is one loop and the write would
-    /// work, and a program that means something different at the two settings
-    /// is what the setting promises never to make.
-    fn a_shared_name_changed_in_parallel(&mut self, name: &str, span: &Span) {
-        let Some(depth) = self.in_parallel else {
-            return;
-        };
-        let declared = self
-            .s
-            .scope
-            .iter()
-            .rposition(|frame| frame.iter().any(|local| local.name == name));
-        if declared.is_none_or(|at| at >= depth) {
-            return;
-        }
-        // **A scope's task** is the same race, said of tasks (Part II 12.7).
-        let (message, note, help) = match self.scoped_task {
-            true => (
-                format!(
-                    "You're changing `{name}` in a task of `task::scope`, and the scope's \
-                     tasks all share `{name}`."
-                ),
-                format!(
-                    "A scope's tasks run at the same time, each on a core of its own, so \
-                     they would write `{name}` at once."
-                ),
-                format!(
-                    "Give each task a value of its own and combine them after the scope, or \
-                     keep `{name}` in a `SharedMut` and change it through `update`."
-                ),
-            ),
-            false => (
-                format!(
-                    "You're changing `{name}` in a lambda that runs on several cores at once, \
-                     and they all share `{name}`."
-                ),
-                format!(
-                    "`par_iter()` splits the elements across all cores and runs the lambda \
-                     on each part at the same time, so every core would write `{name}` at once."
-                ),
-                format!(
-                    "Return a value from the lambda and combine the results afterwards, with \
-                     `map` and then `collect` or `count`, or keep `{name}` in a `SharedMut` \
-                     and change it through `update`."
-                ),
-            ),
-        };
-        self.s.findings.push(Finding {
-            severity: Severity::Error,
-            span: *span,
-            code: "NK2107".to_string(),
-            message,
-            notes: vec![note],
-            help: Some(help),
-            labels: Vec::new(),
-        });
     }
 
     /// **What is changed says `mut`** — `NK1138` for a parameter
@@ -7878,14 +7535,16 @@ impl<'a> Checker<'a> {
         if walks_a_failing_step {
             self.a_walk_of_a_failing_sequence(method, span);
         }
-        self.a_pausing_method_in_a_sync_body(&key, &contract, span);
-        self.a_call_that_may_pause(
+        self.s
+            .a_pausing_method_in_a_sync_body(&key, &contract, span);
+        self.s.a_call_that_may_pause(
             self.parsed.text(method),
             !contract.sync_claim.is_sync() || walks_a_pausing_step,
             unpromised(&contract) && !walks_a_pausing_step,
             span,
         );
-        self.a_pausing_call_in_an_action(self.parsed.text(method), &contract, span);
+        self.s
+            .a_pausing_call_in_an_action(self.parsed.text(method), &contract, span);
         // A method call is a written call, so the rule reaches it too
         // (`NK2605`) - and here the receiver's type was known and a
         // ledger described the method, which is the only case this
@@ -7920,18 +7579,18 @@ impl<'a> Checker<'a> {
         // **A lambda handed to a walk of a `Par[T]` runs on several cores at
         // once** (Part II 12.6, ADR-235 D2): what it may do is asked while it
         // is walked, and a lambda inside it is inside it too.
-        let outer_parallel = self.in_parallel;
-        let outer_scoped = self.scoped_task;
+        let outer_parallel = self.s.in_parallel;
+        let outer_scoped = self.s.scoped_task;
         if matches!(&on, Ty::Seq { parallel: true, .. }) {
-            self.in_parallel = outer_parallel.or(Some(self.s.scope.len()));
-            self.scoped_task = false;
+            self.s.in_parallel = outer_parallel.or(Some(self.s.scope.len() as i64));
+            self.s.scoped_task = false;
         }
         // **A task of `task::scope` runs beside the others** (Part II 12.7):
         // asked as a walk's lambda is, at both settings, so the program means
         // the same at each.
         if key == "task::Scope::spawn" {
-            self.in_parallel = outer_parallel.or(Some(self.s.scope.len()));
-            self.scoped_task = true;
+            self.s.in_parallel = outer_parallel.or(Some(self.s.scope.len() as i64));
+            self.s.scoped_task = true;
         }
         let found = self.arguments_given(
             args,
@@ -7940,8 +7599,8 @@ impl<'a> Checker<'a> {
             Some(&contract),
             span,
         );
-        self.in_parallel = outer_parallel;
-        self.scoped_task = outer_scoped;
+        self.s.in_parallel = outer_parallel;
+        self.s.scoped_task = outer_scoped;
         // **The element type an empty list's first `push` gives it** (#523):
         // `let mut rows = Vec()` then `rows.push((fragment, tally.n))` makes
         // `rows` a list of what was pushed, for every read after.
@@ -8025,7 +7684,8 @@ impl<'a> Checker<'a> {
         let pausing_lambda = args.iter().find(|arg| {
             matches!(arg, Expr::Closure { .. }) && paused_here.contains(&argument_shape(arg))
         });
-        self.a_set_that_reads_what_it_writes(&on, entry, &found, span);
+        self.s
+            .a_set_that_reads_what_it_writes(&on, entry, &found, span);
         // **A literal where the receiver says text is wanted** (ADR-293 D21):
         // `m.insert("a", 1)` on a map of `String` keys wants `$K`, which the
         // receiver binds and the per-argument check below does not see. A
@@ -8190,7 +7850,7 @@ impl<'a> Checker<'a> {
         self.settled_methods.remove(&written);
         self.pausing_methods.insert(written);
         let callee = key.to_string();
-        self.a_call_that_may_pause(&callee, true, false, span);
+        self.s.a_call_that_may_pause(&callee, true, false, span);
         result
     }
 
@@ -9965,7 +9625,7 @@ impl<'a> Checker<'a> {
                         _ => "one of its parts is changed here",
                     };
                     self.a_changed_binding_says_mut(&root, how, *span);
-                    self.a_shared_name_changed_in_parallel(&root, span);
+                    self.s.a_shared_name_changed_in_parallel(&root, span);
                 }
                 // **A write through the brackets is unchanged**
                 // ([ADR-293](../../docs/specification/adr/adr-293.md) D2):
@@ -10154,7 +9814,7 @@ impl<'a> Checker<'a> {
                     span,
                     "A `while` loop repeats while a `bool` is `true`.",
                 );
-                self.repeats.push(Repeats::a_loop(
+                self.s.repeats.push(Repeats::a_loop(
                     &self.parsed.interner,
                     self.s.scope.len() as i64,
                     body,
@@ -10169,7 +9829,7 @@ impl<'a> Checker<'a> {
                 self.block(body);
                 self.loops -= 1;
                 self.s.scope.pop();
-                self.repeats.pop();
+                self.s.repeats.pop();
                 Ty::Tuple(Vec::new())
             }
 
@@ -10323,7 +9983,7 @@ impl<'a> Checker<'a> {
                     self.s
                         .nameable(&local.name.clone(), span, "a `for` binding");
                 }
-                self.repeats.push(Repeats::a_loop(
+                self.s.repeats.push(Repeats::a_loop(
                     &self.parsed.interner,
                     self.s.scope.len() as i64,
                     body,
@@ -10333,7 +9993,7 @@ impl<'a> Checker<'a> {
                 self.block(body);
                 self.loops -= 1;
                 self.s.scope.pop();
-                self.repeats.pop();
+                self.s.repeats.pop();
                 Ty::Tuple(Vec::new())
             }
 
@@ -10703,7 +10363,7 @@ impl<'a> Checker<'a> {
                         // is unknown (ADR-277). Where it has spoken, the
                         // general refusal would be a second finding about one
                         // mistake.
-                        if !self.withdrawn_automatic_name(name, span) {
+                        if !self.s.withdrawn_automatic_name(name, span) {
                             self.s.nothing_declares_it(&self.world, expr, span);
                         }
                         Ty::Unknown
@@ -10796,9 +10456,9 @@ impl<'a> Checker<'a> {
             // changes is that a call to an `extern` name is allowed here, which
             // is the whole of what the word buys.
             Expr::Unsafe(block) => {
-                let outer = std::mem::replace(&mut self.inside_unsafe, true);
+                let outer = std::mem::replace(&mut self.s.inside_unsafe, true);
                 let value = self.block(block);
-                self.inside_unsafe = outer;
+                self.s.inside_unsafe = outer;
                 value
             }
 
@@ -10897,9 +10557,9 @@ impl<'a> Checker<'a> {
                 // second shape). It reaches inward and **accumulates**: a
                 // nested `if` under a stamped one is still under it, and a
                 // plain condition inside does not clear the outer one.
-                let outer_condition = self.stamped_condition;
+                let outer_condition = self.s.stamped_condition;
                 if cond_ty.is_seen() {
-                    self.stamped_condition = Some(span.at());
+                    self.s.stamped_condition = Some(span.at() as i64);
                 }
                 let choice = self.next_choice;
                 self.next_choice += 1;
@@ -10959,7 +10619,7 @@ impl<'a> Checker<'a> {
                     // An `if` with no `else` is a statement's worth of value.
                     None => Ty::Unknown,
                 };
-                self.stamped_condition = outer_condition;
+                self.s.stamped_condition = outer_condition;
                 branches
             }
 
@@ -11042,9 +10702,9 @@ impl<'a> Checker<'a> {
                         false => typed,
                     };
                 // **A `match` is a condition too** (ADR-281 D25).
-                let outer_condition = self.stamped_condition;
+                let outer_condition = self.s.stamped_condition;
                 if on.is_seen() {
-                    self.stamped_condition = Some(span.at());
+                    self.s.stamped_condition = Some(span.at() as i64);
                 }
                 let mut result: Option<Ty> = None;
                 let mut agree = true;
@@ -11266,7 +10926,7 @@ impl<'a> Checker<'a> {
                         Some(_) => agree = false,
                     }
                 }
-                self.stamped_condition = outer_condition;
+                self.s.stamped_condition = outer_condition;
                 self.a_match_over_several_error_types(value, arms, span);
                 // **`match error { … }` is a `match` over the type that
                 // arrived**, where exactly one does. The binding itself is
@@ -11687,7 +11347,7 @@ impl<'a> Checker<'a> {
                 // door flags above are, and the rule itself runs in `call_on`
                 // where the arguments have been typed.
                 let outer_receiver = std::mem::replace(
-                    &mut self.set_receiver,
+                    &mut self.s.set_receiver,
                     match receiver.as_ref() {
                         Expr::Variable(name) => Some(self.parsed.text(*name).to_string()),
                         _ => Some("this lock".to_string()),
@@ -11702,23 +11362,24 @@ impl<'a> Checker<'a> {
                         _ => None,
                     },
                 );
-                self.a_door_that_is_not_written(&on, &written, span);
+                self.s.a_door_that_is_not_written(&on, &written, span);
                 // **`NK2203`, the method half**: which entry `other.get()` goes
                 // to is the type checker's answer (ADR-288), so it is asked
                 // here where the receiver's type is in hand.
-                if self.inside_a_door
+                if self.s.inside_a_door
                     && let Ty::Named { name, .. } = &on
                 {
                     let key = format!("{name}::{written}");
                     if let Some((key, contract)) = self.method(&key) {
                         let (key, holds) = (key.clone(), contract.touches_a_lock);
-                        self.a_lock_inside_a_lock(&key, holds, span);
+                        self.s.a_lock_inside_a_lock(&key, &holds, span);
                     }
                 }
                 // **And a method on a mapping reads the file**
                 // ([ADR-281](../../docs/specification/adr/adr-281.md) D35):
                 // `mapped.lines()` walks pages that are not there yet.
-                self.io_inside_a_door(&on, &format!("`{written}`"), span);
+                self.s
+                    .io_inside_a_door(&self.world, &on, &format!("`{written}`"), span);
                 // **`update`'s block is a write door's**
                 // ([ADR-281](../../docs/specification/adr/adr-281.md) D12), and
                 // that is where a parameter without `mut` is refused. Set
@@ -11727,7 +11388,7 @@ impl<'a> Checker<'a> {
                 let at_a_door =
                     self.parsed.text(*method) == "update" && locked_content_of(&on).is_some();
                 if at_a_door && let Some(Expr::Closure { params, body, .. }) = args.last() {
-                    self.an_update_block_returns_nothing(body, span);
+                    self.s.an_update_block_returns_nothing(body, span);
                     self.an_update_block_reads_what_it_writes(params, body, span);
                 }
                 let outer_door = std::mem::replace(&mut self.at_a_write_door, at_a_door);
@@ -11738,7 +11399,7 @@ impl<'a> Checker<'a> {
                     && locked_content_of(&on).is_some();
                 // Kept for the stamp below, since `call_on` takes `on` by value.
                 let on_for_the_stamp = on.clone();
-                let outer_inside = std::mem::replace(&mut self.inside_a_door, holding);
+                let outer_inside = std::mem::replace(&mut self.s.inside_a_door, holding);
                 // **D3**: a method that changes its subject, called on a
                 // parameter. Asked of the `mutates` column (D3's own, recorded
                 // because the ledger's `&T` cannot spell `&mut`), and only
@@ -11762,7 +11423,7 @@ impl<'a> Checker<'a> {
                             &format!("changed here, by `{name}`"),
                             *span,
                         );
-                        self.a_shared_name_changed_in_parallel(&root, span);
+                        self.s.a_shared_name_changed_in_parallel(&root, span);
                         // **An element a call changes is a place** (0.0.250):
                         // `by_bucket[b].push(x)` writes through the index, and
                         // the read `*get(…)` it was written as cannot be
@@ -11799,7 +11460,7 @@ impl<'a> Checker<'a> {
                         .insert((span.at(), argument_shape(receiver)));
                     self.receiver_name = outer_named;
                     self.at_a_write_door = outer_door;
-                    self.inside_a_door = outer_inside;
+                    self.s.inside_a_door = outer_inside;
                     return on;
                 }
                 // **A field that holds a function is called as one**:
@@ -11810,7 +11471,7 @@ impl<'a> Checker<'a> {
                 {
                     self.receiver_name = outer_named;
                     self.at_a_write_door = outer_door;
-                    self.inside_a_door = outer_inside;
+                    self.s.inside_a_door = outer_inside;
                     return result;
                 }
                 // **A copy of a slice is a list** (ADR-282 D9): `to_owned`
@@ -11835,7 +11496,7 @@ impl<'a> Checker<'a> {
                         .insert((span.at(), argument_shape(receiver)));
                     self.receiver_name = outer_named;
                     self.at_a_write_door = outer_door;
-                    self.inside_a_door = outer_inside;
+                    self.s.inside_a_door = outer_inside;
                     return Ty::Named {
                         name: "Vec".to_string(),
                         args: vec![item.clone()],
@@ -11895,8 +11556,8 @@ impl<'a> Checker<'a> {
                 }
                 self.receiver_name = outer_named;
                 self.at_a_write_door = outer_door;
-                self.inside_a_door = outer_inside;
-                self.set_receiver = outer_receiver;
+                self.s.inside_a_door = outer_inside;
+                self.s.set_receiver = outer_receiver;
                 // **A walk over views of values that copy yields the values**
                 // ([ADR-231](../../docs/specification/adr/adr-231.md) D1): a
                 // view of an `i64` is a reference below, and a number read
@@ -12295,7 +11956,7 @@ impl<'a> Checker<'a> {
                             // C.4](../../docs/specification/30-nikaia-tooling.md).
                             let owns_it = matches!(&found, Ty::Named { name, view: false, .. }
                                 if name == "Vec" || name == "List")
-                                || (self.inside_an_action.is_some() && !found.is_a_view());
+                                || (self.s.inside_an_action.is_some() && !found.is_a_view());
                             if slice_element(&want).is_some() && owns_it && !self.inside_a_comptime
                             {
                                 self.s
@@ -12513,14 +12174,15 @@ impl<'a> Checker<'a> {
                     self.s
                         .nameable(&local.name.clone(), span, "a lambda's argument");
                 }
-                self.repeats
+                self.s
+                    .repeats
                     .push(Repeats::a_lambda(self.s.scope.len() as i64));
                 self.s.scope.push(frame);
                 // Part I 3.3: a lambda is a closure below, and a jump does not
                 // leave one.
                 self.past_a_boundary("lambda", |me| me.block(body));
                 self.s.scope.pop();
-                self.repeats.pop();
+                self.s.repeats.pop();
                 // And it is of the type the place declares.
                 match declared {
                     Some(fn_type @ Ty::Fn { .. }) if !given.is_empty() || params.is_empty() => {
@@ -13170,7 +12832,8 @@ impl<'a> Checker<'a> {
                 let key = self.expr(index, span);
                 // **An index of a mapping is a page fault**
                 // ([ADR-281](../../docs/specification/adr/adr-281.md) D35).
-                self.io_inside_a_door(&on, "this index", span);
+                self.s
+                    .io_inside_a_door(&self.world, &on, "this index", span);
                 // A type seen through is indexed as what it holds (#497):
                 // `data[0..<7]` on an `fs::Mapped` is a slice of its text.
                 let on = match self.seen_through(&on) {
@@ -13333,6 +12996,7 @@ impl<'a> Checker<'a> {
                 // for a `catch` around the call the lambda is handed to. Put
                 // back at the same moment, so the handler's own calls count.
                 let lambda_outer = self
+                    .s
                     .handed_over
                     .as_mut()
                     .map(|handed| std::mem::replace(&mut handed.caught, true));
@@ -13352,7 +13016,7 @@ impl<'a> Checker<'a> {
                     self.guard_has_no_answer();
                 }
                 self.caught = outer;
-                if let (Some(handed), Some(was)) = (&mut self.handed_over, lambda_outer) {
+                if let (Some(handed), Some(was)) = (&mut self.s.handed_over, lambda_outer) {
                     handed.caught = was;
                 }
                 let guarded = guarded.unwrap_or_else(Guarded::nothing);
@@ -13464,12 +13128,12 @@ impl<'a> Checker<'a> {
                 //
                 // A **scope**'s tasks are the other way round and are not this:
                 // a scope waits for them, so they run during the call.
-                let outer_inside = std::mem::replace(&mut self.inside_a_door, false);
+                let outer_inside = std::mem::replace(&mut self.s.inside_a_door, false);
                 // A task's body is an `async` block below (ADR-055 §6), which
                 // is a function too: `break` may not leave it either.
                 let value = self.past_a_boundary("task", |me| me.block(body));
                 self.s.scope.pop();
-                self.inside_a_door = outer_inside;
+                self.s.inside_a_door = outer_inside;
                 let bound = self.task_bindings.pop().unwrap_or_default();
                 // **After** the walk, because the question needs both halves of
                 // what the walk found: the types of what the body bound, and
@@ -13668,55 +13332,6 @@ impl<'a> Checker<'a> {
             )),
             labels: Vec::new(),
         });
-    }
-
-    /// **`a`, `b` and `c` were a lambda's arguments, and are not** (`NK1117`).
-    ///
-    /// [ADR-277](../../../../docs/specification/adr/adr-277.md) D2 withdrew the
-    /// three automatic names. Without this, `xs.map fn { a.id }` - the idiom that
-    /// existed until that record - lowers to `|| { a.id }` and `rustc` says
-    /// *cannot find value `a`* about a file nobody wrote, which is the one thing
-    /// Part III C.1 forbids. A form that was in the specification deserves a
-    /// sentence, which is the same ground [ADR-277](../../../../docs/specification/adr/adr-277.md)
-    /// stands on for `fn: …`.
-    ///
-    /// **This is not the mechanism that was removed.** That one read a lambda's
-    /// *arity* off which of the three its body mentioned, and every lambda in the
-    /// language depended on it. This reads nothing: it is a message at the place a
-    /// name was used and nothing declares it, and a lambda that declares `a` for
-    /// itself never reaches it.
-    ///
-    /// Keyed on the three names, and **only** on them. A general "this expression
-    /// names something nothing declares" is a much wider claim than the statement
-    /// rule above makes, and this checker does not make it yet
-    /// (issue #141).
-    /// Hands back whether it said anything, so the general refusal can stand
-    /// aside for it.
-    fn withdrawn_automatic_name(&mut self, name: &str, span: &Span) -> bool {
-        // **Only inside a lambda**, where the three names used to mean
-        // something: a stray `a` in `main` is the general refusal's, and a
-        // note about lambdas there would explain the wrong mistake.
-        let in_a_lambda = self.repeats.iter().any(|r| r.what == "lambda");
-        if !matches!(name, "a" | "b" | "c") || !in_a_lambda {
-            return false;
-        }
-        self.s.findings.push(Finding {
-            severity: Severity::Error,
-            span: *span,
-            code: "NK1117".to_string(),
-            message: format!("`{name}` isn't declared anywhere."),
-            notes: vec![
-                "A lambda's arguments have to be named: `a`, `b` and `c` are no longer \
-                 there automatically."
-                    .to_string(),
-            ],
-            help: Some(format!(
-                "Name the argument: `fn ({name}) {{ … }}`, or better, a name that says \
-                 what it is: `fn (user) {{ user.id }}`."
-            )),
-            labels: Vec::new(),
-        });
-        true
     }
 
     /// Every integer literal a constant expression is made of, recorded as
@@ -14725,7 +14340,7 @@ impl<'a> Checker<'a> {
         // D6 is D1 widened, so the same question is asked of this block.
         // D6 is D1 widened, so the same two questions are asked of this block.
         if matches!(door, MultiLock::Writing) {
-            self.an_update_block_returns_nothing(body, span);
+            self.s.an_update_block_returns_nothing(body, span);
             self.an_update_block_reads_what_it_writes(params, body, span);
         }
         let outer_door = std::mem::replace(
@@ -14733,7 +14348,7 @@ impl<'a> Checker<'a> {
             matches!(door, MultiLock::Writing),
         );
         // Both kinds hold their locks open across the block, so both are one.
-        let outer_inside = std::mem::replace(&mut self.inside_a_door, true);
+        let outer_inside = std::mem::replace(&mut self.s.inside_a_door, true);
         // **Nothing is asked of this block's promises**
         // ([ADR-277](../../docs/specification/adr/adr-277.md) D7), and that is
         // deliberate rather than an omission: `access_all` and `update_all` are
@@ -14754,7 +14369,7 @@ impl<'a> Checker<'a> {
             span,
         );
         self.at_a_write_door = outer_door;
-        self.inside_a_door = outer_inside;
+        self.s.inside_a_door = outer_inside;
         match door {
             // What a lambda hands back is not written down (ADR-288 D13) — but
             // that it came **out of a lock** is
@@ -14900,7 +14515,7 @@ impl<'a> Checker<'a> {
         // and ADR-288 D21 is where it was pinned down: it never pauses, so
         // `sync` says nothing about it, and it takes standard output's own lock
         // while yours is open.
-        if self.inside_a_door
+        if self.s.inside_a_door
             && let Some(name) = self.free_callee(func)
         {
             let holds = self
@@ -14911,7 +14526,7 @@ impl<'a> Checker<'a> {
                 .or_else(|| self.world.library.functions.get(&name))
                 .map(|c| c.touches_a_lock)
                 .unwrap_or(crate::contracts::Lock::No);
-            self.a_lock_inside_a_lock(&name, holds, span);
+            self.s.a_lock_inside_a_lock(&name, &holds, span);
         }
         // **The callee is named and resolved before the arguments are walked**
         // ([ADR-288](../../docs/specification/adr/adr-288.md), the free half).
@@ -14995,7 +14610,7 @@ impl<'a> Checker<'a> {
         // ([ADR-302](../../docs/specification/adr/adr-302.md) D3), and this is
         // where that is asked: the name is in hand and the block is a flag the
         // walk carries.
-        self.a_foreign_call_outside_unsafe(&name, span);
+        self.s.a_foreign_call_outside_unsafe(&name, span);
 
         // **A type is constructed by its anonymous constructor**
         // ([ADR-140](../../docs/specification/adr/adr-140.md) D2), so a written
@@ -15146,7 +14761,8 @@ impl<'a> Checker<'a> {
             self.checked
                 .paused_scopes
                 .insert((span.at(), argument_shape(body)));
-            self.a_call_that_may_pause("task::scope", true, false, span);
+            self.s
+                .a_call_that_may_pause("task::scope", true, false, span);
         }
         if resolved
             .as_ref()
@@ -15277,13 +14893,13 @@ impl<'a> Checker<'a> {
             );
         }
         self.may_fail_here(&key, &contract, span);
-        self.a_call_that_may_pause(
+        self.s.a_call_that_may_pause(
             &name,
             !contract.sync_claim.is_sync(),
             unpromised(&contract),
             span,
         );
-        self.a_pausing_call_in_an_action(&name, &contract, span);
+        self.s.a_pausing_call_in_an_action(&name, &contract, span);
         // `Stats(first)` is the anonymous constructor of Kap 4.2, which the
         // lowering names `Stats::new` - and which hands back the type it is on,
         // whatever its declaration says about `Self`.
@@ -16396,7 +16012,7 @@ impl<'a> Checker<'a> {
             // say — its own help names this `catch` as the way out. The
             // question is `handed.caught`, not `self.caught`, because only the
             // first stops at the lambda's edge.
-            if let Some(handed) = self.handed_over.as_mut().filter(|h| !h.caught) {
+            if let Some(handed) = self.s.handed_over.as_mut().filter(|h| !h.caught) {
                 handed.fails = true;
                 // **And `NK2606` is then the whole message.** Where the type
                 // the lambda was handed to declares no failure, the function
@@ -16427,7 +16043,7 @@ impl<'a> Checker<'a> {
         // the two facts are *this is not a
         // function* and *these calls belong to this entry*, and only the first
         // of them is this refusal's.
-        if self.inside_an_action.is_some() {
+        if self.s.inside_an_action.is_some() {
             return;
         }
         // A `test` or a `bench` body is the other place with no function to
@@ -16627,230 +16243,6 @@ impl<'a> Checker<'a> {
             self.tears_down(field, seen)
                 .map(|how| format!("through its `{}` field, {how}", field.text()))
         })
-    }
-
-    /// **What a lambda's body was seen to do, one call at a time**
-    /// ([ADR-277](../../docs/specification/adr/adr-277.md) D7).
-    ///
-    /// The failing half is recorded in [`Self::may_fail_here`], where every
-    /// written call already has its callee's contract in hand. This is the
-    /// pausing half, and it needs its own line because only the *method* path
-    /// records pausing for the emitter — a free call's `.await` is written from
-    /// the name, which the emitter can resolve itself (ADR-288).
-    ///
-    /// **And `NK2202` inside a door** (Part II 12.2,
-    /// [ADR-233](../../docs/specification/adr/adr-233.md) D3): a door's block
-    /// runs with the lock open, and a pause there holds the lock for as long
-    /// as the wait takes. `callee` is the call's name as the message says it.
-    fn a_call_that_may_pause(&mut self, callee: &str, pauses: bool, unpromised: bool, span: &Span) {
-        if !pauses {
-            return;
-        }
-        let pause = Pause {
-            what: format!("`{callee}`"),
-            unpromised: unpromised.then(|| callee.to_string()),
-            before_walk: format!(
-                "Call `{callee}` before the walk and pass the values in, or walk with \
-                 `iter()`, whose lambda may pause."
-            ),
-            before_door: format!(
-                "Call `{callee}` before taking the lock and pass its value in, or after \
-                 it with what the block returned."
-            ),
-        };
-        self.a_pause(pause, span);
-    }
-
-    /// **A value's cleanup is a pause where the value dies**
-    /// ([ADR-297](../../docs/specification/adr/adr-297.md) D3): the same rules
-    /// as a written call, and the message names the value.
-    fn a_cleanup_that_may_pause(&mut self, name: &str, span: &Span) {
-        let pause = Pause {
-            what: format!("the cleanup of `{name}`"),
-            unpromised: None,
-            before_walk: format!(
-                "Create `{name}` outside the walk and pass it in, or walk with `iter()`, \
-                 whose lambda may pause."
-            ),
-            before_door: format!(
-                "Create `{name}` before taking the lock, so it's cleaned up after the \
-                 lock is released, or close it there yourself."
-            ),
-        };
-        self.a_pause(pause, span);
-    }
-
-    fn a_pause(&mut self, pause: Pause, span: &Span) {
-        let Pause {
-            what,
-            unpromised,
-            before_walk,
-            before_door,
-        } = pause;
-        // **Another package's function that does not pause and never said so**
-        // (ADR-288 D28) is refused as one that may, and the message says which
-        // of the two it is: *can pause* would send the reader looking for a
-        // pause that is not there.
-        let (pauses, why) = match &unpromised {
-            Some(callee) => (
-                "doesn't promise that it never pauses",
-                Some(not_promised_note(callee)),
-            ),
-            None => ("can pause", None),
-        };
-        if let Some(handed) = &mut self.handed_over {
-            handed.pauses = true;
-        }
-        // **`NK2209` in a lambda that runs on several cores at once**
-        // (Part II 12.6, ADR-235 D2): a core is not given up, so a pause there
-        // holds one for as long as the wait takes.
-        // **A pausing task of `task::scope` is polled by the scope itself**
-        // (ADR-328 D10): its pause is the scope's, so it is not refused here.
-        if self.in_parallel.is_some() && !self.scoped_task {
-            self.s.findings.push(Finding {
-                severity: Severity::Error,
-                span: *span,
-                code: "NK2209".to_string(),
-                message: format!(
-                    "{} {pauses}, but this runs on several cores at once.",
-                    sentence(&what)
-                ),
-                notes: std::iter::once(
-                    "A `par_iter()` lambda runs on every core at once, and a core that waits \
-                     holds up its share of the work, so the lambda must never pause."
-                        .to_string(),
-                )
-                .chain(why.clone())
-                .collect(),
-                help: Some(before_walk),
-                labels: Vec::new(),
-            });
-        }
-        if !self.inside_a_door {
-            return;
-        }
-        self.s.findings.push(Finding {
-            severity: Severity::Error,
-            span: *span,
-            code: "NK2202".to_string(),
-            message: format!(
-                "{} {pauses}, but you're holding a lock here.",
-                sentence(&what)
-            ),
-            notes: std::iter::once(
-                "While the lock is held, every other task that needs the value waits, so \
-                 a pause here makes all of them wait too."
-                    .to_string(),
-            )
-            .chain(why)
-            .collect(),
-            help: Some(before_door),
-            labels: Vec::new(),
-        });
-    }
-
-    /// **`NK2209`: a call that can pause, inside a grammar's action**
-    /// ([ADR-296](../../docs/specification/adr/adr-296.md) D35).
-    ///
-    /// The demand [ADR-292](../../docs/specification/adr/adr-292.md) makes of an
-    /// `overlap` branch and Part II 12.6 of a `par_iter` lambda, in the place a
-    /// parser needs it: a parse that can be cut into pieces and run on several
-    /// cores at once ([ADR-296](../../docs/specification/adr/adr-296.md)) is one
-    /// whose steps do not wait on the world.
-    ///
-    /// **Asked where both call paths meet**, so the free call and the method
-    /// call are answered by one rule - and **only where the ledger answered**,
-    /// which is every other `sync` rule's convention
-    /// ([Part III C.4](../../../docs/specification/30-nikaia-tooling.md)): a
-    /// callee nothing describes is not refused, because a refusal on a guess is
-    /// a correct program refused.
-    ///
-    /// Without it the emitter wrote `.await` inside the synchronous parser the
-    /// `grammar!` macro generates, and the backend answered about it.
-    fn a_pausing_call_in_an_action(&mut self, callee: &str, contract: &FnContract, span: &Span) {
-        if contract.sync_claim.is_sync() {
-            return;
-        }
-        let Some(rule) = self.inside_an_action.clone() else {
-            return;
-        };
-        let (pauses, why) = match unpromised(contract) {
-            true => (
-                "doesn't promise that it never pauses",
-                Some(not_promised_note(callee)),
-            ),
-            false => ("can pause", None),
-        };
-        self.s.findings.push(Finding {
-            severity: Severity::Error,
-            span: *span,
-            code: "NK2209".to_string(),
-            message: format!("The action of `{rule}` calls `{callee}`, which {pauses}."),
-            notes: std::iter::once(
-                "A grammar's actions may never pause: a parser works on text that's \
-                 already there, which is what lets `@frame` parse in parallel."
-                    .to_string(),
-            )
-            .chain(why)
-            .collect(),
-            help: Some(
-                "Read what the parser needs before parsing and pass it in, or process the \
-                 result after the parse."
-                    .to_string(),
-            ),
-            labels: Vec::new(),
-        });
-    }
-
-    /// **`NK2202` for a method call** — the half `contracts::sync` cannot do
-    /// ([ADR-288](../../docs/specification/adr/adr-288.md) D4,
-    /// [ADR-149](../../docs/specification/adr/adr-149.md) D2).
-    ///
-    /// That analysis resolves a **free** call by name and stops at a method, on
-    /// the ground that only a type checker knows what `tx.send(1)` goes to
-    /// ([ADR-288](../../docs/specification/adr/adr-288.md)) — and it is right
-    /// about that, which is why the rule is here instead. What it cost while
-    /// nothing asked it: a function declaring `sync` and calling a pausing
-    /// method lowered to an ordinary `fn` with an `.await` in its body, and the
-    /// backend answered about a file nobody wrote (Part III, C.1).
-    ///
-    /// **Only where the ledger answered**, which is every other `sync` rule's
-    /// convention ([Part III C.4](../../../docs/specification/30-nikaia-tooling.md)):
-    /// a callee nothing describes is not refused, because a refusal on a guess
-    /// is a correct program refused. An unresolved receiver never reaches here.
-    fn a_pausing_method_in_a_sync_body(
-        &mut self,
-        callee: &str,
-        contract: &FnContract,
-        span: &Span,
-    ) {
-        if contract.sync_claim.is_sync() {
-            return;
-        }
-        let Some(caller) = self.inside_a_sync_function.clone() else {
-            return;
-        };
-        let (pauses, why) = match unpromised(contract) {
-            true => (
-                "doesn't promise that it never pauses",
-                not_promised_note(callee),
-            ),
-            false => ("can pause", format!("`{callee}` isn't `sync`.")),
-        };
-        self.s.findings.push(Finding {
-            severity: Severity::Error,
-            span: *span,
-            code: "NK2202".to_string(),
-            message: format!("`{caller}` is `sync`, but it calls `{callee}`, which {pauses}."),
-            notes: vec![
-                "A `sync` function promises never to pause or do I/O.".to_string(),
-                why,
-            ],
-            help: Some(format!(
-                "Remove `sync` from `{caller}`, or move the call out of it."
-            )),
-            labels: Vec::new(),
-        });
     }
 
     /// Where a method call stands in ADR-023 D8's propagation, for the emitter
@@ -17238,6 +16630,7 @@ impl<'a> Checker<'a> {
             return;
         };
         let Some(around) = self
+            .s
             .repeats
             .iter()
             .rev()
@@ -17413,7 +16806,7 @@ impl<'a> Checker<'a> {
     /// stands (`NK2108`). Not inside a lambda: its `return` leaves the lambda,
     /// and what it calls is the lambda's.
     fn a_way_out(&mut self, how: &'static str, word: &str, span: &Span) {
-        if self.repeats.iter().any(|r| r.what == "lambda") {
+        if self.s.repeats.iter().any(|r| r.what == "lambda") {
             return;
         }
         self.ways_out.push(WayOut {
@@ -17442,7 +16835,7 @@ impl<'a> Checker<'a> {
         parts: &BTreeMap<String, Ty>,
         handed_from: usize,
     ) {
-        if self.repeats.iter().any(|r| r.what == "lambda") {
+        if self.s.repeats.iter().any(|r| r.what == "lambda") {
             return;
         }
         let Some(frame) = self.s.scope.last() else {
@@ -17807,6 +17200,7 @@ impl<'a> Checker<'a> {
             return;
         };
         let Some(around) = self
+            .s
             .repeats
             .iter()
             .rev()
@@ -18052,7 +17446,7 @@ impl<'a> Checker<'a> {
     /// used to compile and count the failures as lines, because the entry said
     /// `-> i64` and nothing asked what a step of the receiver does.
     fn a_walk_of_a_failing_sequence(&mut self, method: Ident, span: &Span) {
-        if self.throwing || self.caught || self.inside_an_action.is_some() {
+        if self.throwing || self.caught || self.s.inside_an_action.is_some() {
             return;
         }
         let Some(function) = self.current.clone() else {
@@ -18092,7 +17486,8 @@ impl<'a> Checker<'a> {
             self.checked.pausing_loops.insert(span.at());
             // A lambda around the loop pauses with it, and a door around it
             // is held across the wait (ADR-233 D1, D3).
-            self.a_call_that_may_pause("a step of this `for`", true, false, span);
+            self.s
+                .a_call_that_may_pause("a step of this `for`", true, false, span);
         }
     }
 
@@ -19510,7 +18905,8 @@ impl<'a> Checker<'a> {
         ) {
             crate::comptime_run::Computed::Value(computed) => Some((Some(computed), false)),
             crate::comptime_run::Computed::Forbidden { callee, because } => {
-                self.a_body_that_may_not_run_at_build_time(&callee, because, span);
+                self.s
+                    .a_body_that_may_not_run_at_build_time(&callee, because, span);
                 Some((None, true))
             }
             crate::comptime_run::Computed::Stopped(detail) => {
@@ -19537,7 +18933,12 @@ impl<'a> Checker<'a> {
             .lines()
             .find_map(|line| line.strip_prefix("nikaia-build-time: "))
         {
-            return self.a_build_time_run_over_its_bound(bound, over, span);
+            return self.s.a_build_time_run_over_its_bound(
+                bound,
+                over,
+                crate::comptime_run::VALUE_FN,
+                span,
+            );
         }
         let line = said
             .lines()
@@ -19603,7 +19004,7 @@ impl<'a> Checker<'a> {
             code: "NK1152".to_string(),
             message: format!("`{bound}` stopped while the program was built: {why}."),
             notes,
-            help: Some(match self.computing_default {
+            help: Some(match self.s.computing_default {
                 true => "Fix it as you would fix the program stopping there, or make the option \
                          a `T?` and compute the value in the body."
                     .to_string(),
@@ -19612,61 +19013,6 @@ impl<'a> Checker<'a> {
                     .to_string(),
             }),
             labels,
-        });
-    }
-
-    /// **A build-time run past its budget or its call depth**
-    /// ([ADR-321](../../docs/specification/adr/adr-321.md) D7): the bound, the
-    /// `comptime`, and the path of calls it was in when it stopped.
-    fn a_build_time_run_over_its_bound(&mut self, bound: &str, over: &str, span: &Span) {
-        let (what, path) = over.split_once('|').unwrap_or((over, ""));
-        let (what, path) = (what.trim(), path.trim());
-        let (kind, limit) = what.split_once(' ').unwrap_or((what, ""));
-        let message = match kind {
-            "memory" => format!(
-                "`{bound}` held more than {limit} bytes at once while the program was built."
-            ),
-            "depth" => {
-                format!("`{bound}` went more than {limit} calls deep while the program was built.")
-            }
-            _ => format!("`{bound}` took more than {limit} steps while the program was built."),
-        };
-        let mut notes = Vec::new();
-        if !path.is_empty() {
-            let shown: Vec<String> = path
-                .split(" > ")
-                .map(|step| match step {
-                    "…" => step.to_string(),
-                    // The value function is the `comptime` itself.
-                    crate::comptime_run::VALUE_FN => format!("`{bound}`"),
-                    _ => format!("`{step}`"),
-                })
-                .collect();
-            notes.push(format!("It was in {}.", shown.join(" > ")));
-        }
-        notes.push(match kind {
-            "memory" => {
-                "What it holds is counted as it asks for it, the same on every machine.".to_string()
-            }
-            _ => "Each turn of a loop and each call is a step, and the count is the same on \
-                  every machine."
-                .to_string(),
-        });
-        self.s.findings.push(Finding {
-            severity: Severity::Error,
-            span: *span,
-            code: "NK1152".to_string(),
-            message,
-            notes,
-            help: Some(match self.computing_default {
-                true => "Look for a loop or a recursion that does not end, or make the option a \
-                         `T?` and compute the value in the body."
-                    .to_string(),
-                false => "Look for a loop or a recursion that does not end, or compute the value \
-                          while the program runs, with `let` instead of `comptime`."
-                    .to_string(),
-            }),
-            labels: Vec::new(),
         });
     }
 
@@ -19708,7 +19054,8 @@ impl<'a> Checker<'a> {
             Ok(value) => (Some(value), false),
             Err(build_time::Refusal::Unevaluable) => (None, false),
             Err(build_time::Refusal::NotAllowed { callee, because }) => {
-                self.a_body_that_may_not_run_at_build_time(&callee, &because, span);
+                self.s
+                    .a_body_that_may_not_run_at_build_time(&callee, &because, span);
                 (None, true)
             }
             Err(build_time::Refusal::TooDeep { callee }) => {
@@ -19721,11 +19068,12 @@ impl<'a> Checker<'a> {
                 (None, true)
             }
             Err(build_time::Refusal::Circular { ring }) => {
-                self.a_constant_built_from_itself(bound, &ring, span);
+                self.s.a_constant_built_from_itself(bound, &ring, span);
                 (None, true)
             }
             Err(build_time::Refusal::NotHere { what, why, way_out }) => {
-                self.a_build_time_body_that_is_not_here(bound, &what, &why, &way_out, span);
+                self.s
+                    .a_build_time_body_that_is_not_here(bound, &what, &why, &way_out, span);
                 (None, true)
             }
             Err(build_time::Refusal::MayNotRead { path, why }) => {
@@ -19865,102 +19213,6 @@ impl<'a> Checker<'a> {
             )),
             false,
         )
-    }
-
-    /// **`NK1168`: a constant worked out from itself.**
-    ///
-    /// The cost of making a constant behave like the item it is: once
-    /// `comptime A = B * 2` may stand above `comptime B = 21`, the ring
-    /// `comptime A = B` beside `comptime B = A` becomes writable — and it has
-    /// no base case to reach, so nothing would end it.
-    ///
-    /// **Not the call depth** ([ADR-287](../../docs/specification/adr/adr-287.md)
-    /// D4's neighbour), which catches a recursion that *would* terminate if the
-    /// stack were deeper and says so. This one never would, and the message
-    /// names the ring rather than a limit that has nothing to do with it.
-    fn a_constant_built_from_itself(&mut self, bound: &str, ring: &[String], span: &Span) {
-        // **One ring, one error.** Every constant in it is circular and each
-        // would report the same loop from a different corner — which is one
-        // mistake said as many times as it has members.
-        let mut sorted: Vec<String> = ring.to_vec();
-        sorted.sort();
-        sorted.dedup();
-        if !self.said_rings.insert(sorted) {
-            return;
-        }
-        let named: Vec<String> = ring.iter().map(|name| format!("`{name}`")).collect();
-        self.s.findings.push(Finding {
-            severity: Severity::Error,
-            span: *span,
-            code: "NK1168".to_string(),
-            // **The constant on this line**, which is the one the reader
-            // declared; the ring below says where it goes.
-            message: format!("`{bound}` depends on itself."),
-            notes: vec![format!(
-                "The chain is {}, and a `comptime` has to be computable while the \
-                 program is built.",
-                named.join(" → ")
-            )],
-            help: Some(
-                "Give one of them a value that doesn't depend on the others, or make it \
-                 a `let` so it's computed while the program runs."
-                    .to_string(),
-            ),
-            labels: Vec::new(),
-        });
-    }
-
-    /// **`NK1127`, with the wall it met named** rather than a catalogue of what
-    /// does work.
-    ///
-    /// The generic note is right for a shape this evaluator does not read —
-    /// the reader wants to know what it *does* read. It is the wrong answer for
-    /// `"a".to_uppercase()`, where the shape is understood and the body is
-    /// Rust: no amount of rewriting the line helps, and a list of working forms
-    /// invites the reader to go looking for the one that does.
-    ///
-    /// **Three walls, three sentences.** `std`'s body is not this language's; a
-    /// function in another file of this program is not in the file this walk
-    /// reads; a method is not a shape it reads at all. Each ends somewhere
-    /// different, and only the last is the catalogue's business.
-    fn a_build_time_body_that_is_not_here(
-        &mut self,
-        bound: &str,
-        what: &str,
-        why: &str,
-        way_out: &str,
-        span: &Span,
-    ) {
-        self.s.findings.push(Finding {
-            severity: Severity::Error,
-            span: *span,
-            code: "NK1127".to_string(),
-            // **The binding's name and not the callee's**, which is the same
-            // sentence the generic `NK1127` writes: one code, one headline, and
-            // the reader's own name in it. What it met is the note's.
-            message: format!("`{bound}` can't be computed while the program is built."),
-            // **One note, written per wall.** The sentence about `sync` belongs
-            // to the three walls that are about a **body** and not to the one
-            // about text, so it lives in each `why` rather than under all of
-            // them — a note that does not apply is one the reader has to rule
-            // out.
-            notes: vec![format!("`{what}`: {why}.")],
-            // **The wall's way out, and then the one every `comptime` has.**
-            // The second half is the generic refusal's own sentence, with the
-            // reader's name in it: a value meant to be computed while the
-            // program runs was never a constant (ADR-287 D4).
-            help: Some(match self.computing_default {
-                true => format!(
-                    "{}. Or make `{bound}` a `T?` and compute it in the body.",
-                    sentence(way_out)
-                ),
-                false => format!(
-                    "{}. Or write `let {bound} = …` to compute it while the program runs.",
-                    sentence(way_out)
-                ),
-            }),
-            labels: Vec::new(),
-        });
     }
 
     /// **`[1, 2, 3]`**, and what its type is
@@ -20625,9 +19877,9 @@ impl<'a> Checker<'a> {
             // was set above for the call's own block.
             let holds = self.world.own.code_locks.get(&key).copied();
             if let Some(holds) = holds {
-                let own = std::mem::replace(&mut self.inside_a_door, outer_inside);
-                self.a_lock_inside_a_lock(&key, holds, span);
-                self.inside_a_door = own;
+                let own = std::mem::replace(&mut self.s.inside_a_door, outer_inside);
+                self.s.a_lock_inside_a_lock(&key, &holds, span);
+                self.s.inside_a_door = own;
             }
         }
         self.checked.field_calls.insert(
@@ -21417,40 +20669,6 @@ impl<'a> Checker<'a> {
                 Counted::Computed => format!(
                     "Change the array's declared length to match, or make the body produce \
                      {had}."
-                ),
-            }),
-            labels: Vec::new(),
-        });
-    }
-
-    /// `NK1152`: a build-time body the rule forbids
-    /// ([ADR-287](../../docs/specification/adr/adr-287.md) D13, D14).
-    ///
-    /// **Not `NK1127`**, which says *this compiler cannot evaluate it*. Here it
-    /// can: the shape is understood, the body is in hand, and the ledger says
-    /// the call may not be made while the program is built. Two claims, two
-    /// codes, because a reader does two different things about them — wait for
-    /// a stage, or change the callee.
-    fn a_body_that_may_not_run_at_build_time(&mut self, callee: &str, because: &str, span: &Span) {
-        self.s.findings.push(Finding {
-            severity: Severity::Error,
-            span: *span,
-            code: "NK1152".to_string(),
-            message: format!("You can't call `{callee}` while the program is built."),
-            notes: vec![
-                because.to_string(),
-                "At build time only functions that never pause and touch nothing outside \
-                 the program can run."
-                    .to_string(),
-            ],
-            help: Some(match self.computing_default {
-                true => format!(
-                    "Make `{callee}` `sync` so it touches nothing outside the program, or \
-                     make the option a `T?` and call it in the body."
-                ),
-                false => format!(
-                    "Call it while the program runs, with `let` instead of `comptime`, or \
-                     make `{callee}` `sync` so it touches nothing outside the program."
                 ),
             }),
             labels: Vec::new(),
@@ -22483,7 +21701,8 @@ impl<'a> Checker<'a> {
             })
             .collect();
 
-        self.repeats
+        self.s
+            .repeats
             .push(Repeats::a_lambda(self.s.scope.len() as i64));
         self.s.scope.push(frame);
         // The other door into a lambda's body, and it needs the same boundary
@@ -22491,17 +21710,17 @@ impl<'a> Checker<'a> {
         // whether the callee's signature typed its parameters, and that has
         // nothing to do with what a `break` in it may reach.
         let (tail, seen) = self.past_a_boundary("lambda", |me| {
-            me.handed_over = Some(Handed {
+            me.s.handed_over = Some(Handed {
                 pauses: false,
                 fails: false,
                 caught: false,
                 promised,
             });
             let tail = me.block(body);
-            (tail, me.handed_over.take())
+            (tail, me.s.handed_over.take())
         });
         self.s.scope.pop();
-        self.repeats.pop();
+        self.s.repeats.pop();
         let paused = seen.as_ref().is_some_and(|seen| seen.pauses);
         if let Some(seen) = seen {
             self.s
@@ -22533,16 +21752,16 @@ impl<'a> Checker<'a> {
         // reason the loop count does: what a body written *inside* this one
         // does happens when its own callee runs it. `lambda` sets its own
         // accumulator inside the walk and reads it back there.
-        let handed = self.handed_over.take();
+        let handed = self.s.handed_over.take();
         // **And the enclosing `sync` stops here too.** What is inside this body
         // is a body of its own — a lambda, an `overlap` branch, a `select` arm —
         // and what *it* may do is said by its own type rather than by the
         // declaration around it ([ADR-277](../../docs/specification/adr/adr-277.md)
         // D2, whose `NK2206` is the rule for a lambda).
-        let promised = self.inside_a_sync_function.take();
+        let promised = self.s.inside_a_sync_function.take();
         let value = walk(self);
-        self.inside_a_sync_function = promised;
-        self.handed_over = handed;
+        self.s.inside_a_sync_function = promised;
+        self.s.handed_over = handed;
         self.loops = loops;
         self.barrier = barrier;
         value
@@ -22654,190 +21873,6 @@ impl<'a> Checker<'a> {
                      `v += n`, `v.push(e)`, `if v > 100 { v = 0 }`."
                         .to_string(),
                 ),
-                labels: Vec::new(),
-            });
-        }
-    }
-
-    /// **`NK1143`: a call to an `extern` name outside an `unsafe` block**
-    /// ([ADR-302](../../docs/specification/adr/adr-302.md) D3).
-    ///
-    /// That is the whole of what the word buys, and it is why it is a word
-    /// rather than an attribute on the declaration: the boundary is visible
-    /// **at the call**, in the body somebody reads, rather than in a file
-    /// beside it.
-    ///
-    /// **This compiler's refusal and not the language below's.** Rust makes the
-    /// functions of an `extern` block `unsafe fn`, so the program would be
-    /// refused either way — with a message about a generated file, which is
-    /// [Part III C.1](../../../docs/specification/30-nikaia-tooling.md)'s class.
-    ///
-    /// **Only a name this file declared.** A Nikaia function and a C
-    /// declaration are both ledger entries, and only one of them is this; the
-    /// set comes from the item tree, so a name nothing here declared is not
-    /// this refusal's business.
-    fn a_foreign_call_outside_unsafe(&mut self, name: &str, span: &Span) {
-        if self.inside_unsafe || !self.s.foreign_names.contains(name) {
-            return;
-        }
-        self.s.findings.push(Finding {
-            severity: Severity::Error,
-            span: *span,
-            code: "NK1143".to_string(),
-            message: format!(
-                "`{name}` is a C function, so calling it has to happen inside an `unsafe` block."
-            ),
-            notes: vec![
-                "C isn't memory-safe, so every call into it is marked where it happens."
-                    .to_string(),
-                "Everything inside the block is still checked as usual.".to_string(),
-            ],
-            help: Some(format!("Write `unsafe {{ {name}(…) }}`.")),
-            labels: Vec::new(),
-        });
-    }
-
-    /// **`NK2208`: the lowering of a door, written as a door**
-    /// ([ADR-281](../../docs/specification/adr/adr-281.md) D26).
-    ///
-    /// `kasse.set(neu; after: stand)` lowers to `set_after(neu, stand)`, and
-    /// what is below is reachable by name from above: `kasse.set_after(a, b)`
-    /// is a Rust method that exists, takes two arguments, and hands back a
-    /// `Result`. Nothing in the ledger describes it, so nothing would refuse it
-    /// and nothing would write the `?` — the failure would be **dropped**, and
-    /// `rustc` would then warn about an unused `Result` in a file nobody wrote
-    /// (Part III C.1).
-    ///
-    /// **So it is refused by name**, which is the cheap half of D5's *one
-    /// door*: a program has one way to ask for a compare-and-store, the message
-    /// says what it is, and the stamp discipline has no second entrance. The
-    /// receiver has to be a lock — `set_after` on a type of the program's own
-    /// is that program's own method and nothing to do with this.
-    fn a_door_that_is_not_written(&mut self, on: &Ty, written: &str, span: &Span) {
-        if written != "set_after" {
-            return;
-        }
-        let Ty::Named { name, .. } = on else {
-            return;
-        };
-        if !is_hull(name) {
-            return;
-        }
-        let container = match &self.set_receiver {
-            Some(name) => name.clone(),
-            None => "this lock".to_string(),
-        };
-        self.s.findings.push(Finding {
-            severity: Severity::Error,
-            span: *span,
-            code: "NK2208".to_string(),
-            message: format!("`{container}` has no `set_after`. Write `set(…; after: …)` instead."),
-            notes: vec![
-                "`set` with `after:` compares and stores while holding the lock once.".to_string(),
-                "Written like this, a failure would be silently dropped.".to_string(),
-            ],
-            help: Some(format!(
-                "Write `{container}.set(neu; after: seen)`, where `seen` is the value you \
-                 read from the lock."
-            )),
-            labels: Vec::new(),
-        });
-    }
-
-    /// **`NK2205`: a `set` given a stamped value, or standing under a stamped
-    /// condition** ([ADR-281](../../docs/specification/adr/adr-281.md) D25).
-    ///
-    /// `kasse.set(stand + 100)` is a read-modify-write through two doors: the
-    /// lock is taken once to read and once to store, and anything may happen
-    /// between. It is refused **whether `stand` was read on the line above, in
-    /// another function, or in another request** — which is what the stamp
-    /// buys, since the value carries where it came from and no analysis has to
-    /// follow it.
-    ///
-    /// **The second shape is the condition.** `if stand > 100 { kasse.set(0) }`
-    /// stores a plain value, and the *decision* is the stale thing. A `while`,
-    /// a `match` and a nested `if` are conditions alike.
-    ///
-    /// **There is no way around either** (D4): no `.value`, no `overwrite`, no
-    /// word that takes a stamp off. `set` is for a starting value, a
-    /// configuration that arrived from outside, a reset an operator asked for —
-    /// and `set(neu; after: seen)` is the one door for a stamped one, which is
-    /// D5 and is not built.
-    ///
-    /// **It used to ask a narrower question**: whether the argument contained a
-    /// `get` **on the same container**, which caught the one line and nothing
-    /// else. The stamp is what widened it, and widened it without an analysis.
-    fn a_set_that_reads_what_it_writes(
-        &mut self,
-        on: &Ty,
-        written: &str,
-        found: &[Ty],
-        span: &Span,
-    ) {
-        // **`set(after)` is not `set`**, and that is D5's whole point: the
-        // witness covers both shapes, so neither is refused there. It is the
-        // ledger's name that decides rather than a flag, because the name is
-        // what already says which operation this is.
-        if written != "set" {
-            return;
-        }
-        let Ty::Named { name, .. } = on else {
-            return;
-        };
-        if !is_hull(name) {
-            return;
-        }
-        let container = self
-            .set_receiver
-            .clone()
-            .unwrap_or_else(|| "this lock".to_string());
-
-        // **The value**, wherever it was read.
-        if found.iter().any(|ty| ty.is_seen()) {
-            self.s.findings.push(Finding {
-                severity: Severity::Error,
-                span: *span,
-                code: "NK2205".to_string(),
-                message: format!(
-                    "This `set` stores a value that was read from `{container}` earlier, so the \
-                     lock is taken twice."
-                ),
-                notes: vec![
-                    "A value read from a lock is out of date as soon as the lock is released: \
-                     anything can change between the read and the store."
-                        .to_string(),
-                    "This is found wherever the value was read: on the line above, in another \
-                     function, or in another request."
-                        .to_string(),
-                ],
-                help: Some(format!(
-                    "Write `{container}.update fn(mut v) {{ … }}`, which reads and changes the \
-                     value while holding the lock."
-                )),
-                labels: Vec::new(),
-            });
-            return;
-        }
-
-        // **And the decision.** The value stored is plain; what is stale is the
-        // condition this stands under.
-        if let Some(at) = self.stamped_condition {
-            let _ = at;
-            self.s.findings.push(Finding {
-                severity: Severity::Error,
-                span: *span,
-                code: "NK2205".to_string(),
-                message: format!(
-                    "This `set` depends on a condition read from `{container}` earlier, so the \
-                     lock is taken twice."
-                ),
-                notes: vec![
-                    "What the lock held may have changed before this line runs.".to_string(),
-                ],
-                help: Some(format!(
-                    "Write `{container}.update fn(mut v) {{ … }}` and make the decision inside \
-                     the lock."
-                )),
                 labels: Vec::new(),
             });
         }
@@ -25327,27 +24362,11 @@ fn brace_groups(text: &str) -> Vec<String> {
     nikaia_std::tools::check_words::brace_groups(text)
 }
 
-/// A pause the checker was told of, in the words its refusals use: what
-/// pauses, and the way out of a walk and of a door.
 /// **Whether an entry is another package's `sync` that was never promised**
 /// ([ADR-288](../../docs/specification/adr/adr-288.md) D28): the one reading of
 /// *may pause* that is not a pause.
 fn unpromised(contract: &FnContract) -> bool {
     contract.sync_claim == crate::contracts::Sync::Unpromised
-}
-
-/// What a refusal adds about such an entry: whose it is, and that the word is
-/// missing there rather than a pause here.
-fn not_promised_note(callee: &str) -> String {
-    nikaia_std::tools::check_words::not_promised_note(callee)
-}
-
-struct Pause {
-    what: String,
-    /// The callee, where it is another package's and never promised `sync`.
-    unpromised: Option<String>,
-    before_walk: String,
-    before_door: String,
 }
 
 /// Where a pattern stands, for what the lowering of a boxed part reaches

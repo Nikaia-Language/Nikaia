@@ -127,6 +127,9 @@ COMPILER_NIKA = {
     "check_shapes.nika": "check: the shape of an expression, a pattern or a type - where a place roots, what a `const` is called, whether a block leaves (0.0.775)",
     "check_lookups.nika": "check: what a name in an expression stands for, and how the checker learns what the program and `std` declare (0.0.775)",
     "check_boundary.nika": "check: what a declared type is called below, what a field of a `const` may be, where a `??` lends (0.0.775)",
+    "check_pauses.nika": "check: a call that may pause where a lock is held, a lambda runs on every core, a grammar acts or a function is `sync` (0.0.776)",
+    "check_doors.nika": "check: a lock inside a lock, a file read under a lock, a name shared by cores, a `set` that reads what it writes (0.0.776)",
+    "check_buildtime2.nika": "check: a `comptime` that the build may not run, ran past a bound or depends on itself (0.0.776)",
 }
 
 

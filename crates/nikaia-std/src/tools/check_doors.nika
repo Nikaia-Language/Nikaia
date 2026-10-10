@@ -1,0 +1,197 @@
+// crates/nikaia-std/src/tools/check_doors.nika
+//
+// **Refusals about a lock held, a read that waits and a name shared by cores**
+// (ADR-005 §1 Group B, `NK22xx`, `NK2107`), moved from the compiler's checker
+// (ADR-294, #125, #558).
+
+impl CheckState {
+    /// `NK2203`: a lock taken while one is held. `called` is the name the
+    /// program wrote, or the ledger's key of a method.
+    pub fn a_lock_inside_a_lock(ref mut self, called: ref String, holds: ref Lock, span: ref Span) sync {
+        if !self.inside_a_door || !holds.holds() {
+            return
+        }
+        // A method by the name the program wrote, not by its ledger key:
+        // `access`, not `SharedMut::access`.
+        let parts: Vec[ref String] = called.split("::").collect()
+        let method = parts[parts.len() - 1].clone()
+        let letters: Vec[scalar] = called.chars().collect()
+        let mut written = called.clone()
+        if letters.len() > 0 && letters[0].to_ascii_lowercase() != letters[0] {
+            written = method.clone()
+        }
+        self.findings.push(CheckFinding { severity: CheckSeverity::Error, span: span.clone(), code: "NK2203".clone(), message: f"`{written}` takes a lock, but you're already holding one here.", notes: ["This block runs while a lock is held, so taking a second lock inside it can deadlock.".clone()], help: "Take both locks at once with `access_all(a, b) fn(x, y) { … }`, or compute the value before the block and pass it in.".clone(), labels: [CheckLabel { span: span.clone(), word: method, text: "takes a second lock".clone(), main: true }] })
+    }
+
+    /// `NK2201`: a read of a mapped file while a lock is held. A block that
+    /// holds a lock must never wait, and this wait doesn't show up as a pause
+    /// or a second lock, which is why it gets its own message.
+    pub fn io_inside_a_door(ref mut self, world: ref CheckWorld, on: ref Ty, what: ref String, span: ref Span) sync {
+        if !self.inside_a_door {
+            return
+        }
+        let name = match on {
+            Ty::Named { name, .. } => name.clone(),
+            else => return,
+        }
+        // **By the last segment**, which is what the index site does and for the
+        // same reason: a `std` type carries its module in the ledger's key since
+        // ADR-313 D3, while a signature writes `-> Mapped` - so `fs::Mapped` and
+        // `Mapped` are the one type reached from two sides.
+        let base = a_type_base(name)
+        let mut touched = false
+        for (entry_name, entry_value) in world.library.types {
+            if a_type_base(entry_name) == base && touches_a_file(entry_value) {
+                touched = true
+            }
+        }
+        if !touched {
+            return
+        }
+        self.findings.push(check_refusal("NK2201", span, f"{capitalised(what)} reads a file, but you're holding a lock here.", [f"`{name}` is a file mapped into memory, so reading it can wait on the disk, and a block that holds a lock must never wait.", "This wait doesn't show up as a pause or a second lock, which is why it gets its own message.".clone()], "Read what you need before taking the lock, and pass the value in.".clone()))
+    }
+
+    /// `NK1141`: an `update` block that hands a value back.
+    pub fn an_update_block_returns_nothing(ref mut self, body: ref Block, span: ref Span) sync {
+        let mut hands_back = false
+        let mut at = 0
+        while at < body.stmts.len() {
+            match body.stmts[at].node {
+                Stmt::Return(value) => {
+                    if value != null {
+                        hands_back = true
+                    }
+                }
+                // The last statement is the block's value; an expression
+                // statement anywhere else is evaluated and dropped.
+                Stmt::Expr(value) => {
+                    if at == body.stmts.len() - 1 && plainly_a_value(value) {
+                        hands_back = true
+                    }
+                }
+                else => {}
+            }
+            at = at + 1
+        }
+        if !hands_back {
+            return
+        }
+        self.findings.push(check_refusal("NK1141", span, "An `update` changes the value in place, so it has nothing to return.".clone(), ["The block gets the value itself and changes it where it is, so a value it returns would go nowhere.".clone()], "Change it instead: write `fn(mut v) { v += 1 }`, not `fn(v) { v + 1 }`.".clone()))
+    }
+
+    /// `NK2107`: a name declared outside a lambda that runs on several cores (or
+    /// in a `task::scope`) and changed inside it: every core would write it at
+    /// once. `in_parallel` is the depth of the scope the lambda began at.
+    pub fn a_shared_name_changed_in_parallel(ref mut self, name: ref String, span: ref Span) sync {
+        let depth = self.in_parallel ?? return
+        let mut declared: i64 = -1
+        let mut frame_at = 0
+        while frame_at < self.scope.len() {
+            for local in self.scope[frame_at] {
+                if local.name == name {
+                    declared = frame_at
+                }
+            }
+            frame_at = frame_at + 1
+        }
+        if declared < 0 || declared >= depth {
+            return
+        }
+        // **A scope's task** is the same race, said of tasks (Part II 12.7).
+        let mut message: String = f"You're changing `{name}` in a lambda that runs on several cores at once, and they all share `{name}`."
+        let mut note: String = f"`par_iter()` splits the elements across all cores and runs the lambda on each part at the same time, so every core would write `{name}` at once."
+        let mut help: String = f"Return a value from the lambda and combine the results afterwards, with `map` and then `collect` or `count`, or keep `{name}` in a `SharedMut` and change it through `update`."
+        if self.scoped_task {
+            message = f"You're changing `{name}` in a task of `task::scope`, and the scope's tasks all share `{name}`."
+            note = f"A scope's tasks run at the same time, each on a core of its own, so they would write `{name}` at once."
+            help = f"Give each task a value of its own and combine them after the scope, or keep `{name}` in a `SharedMut` and change it through `update`."
+        }
+        self.findings.push(check_refusal("NK2107", span, message, [note], help))
+    }
+
+    /// `NK1117`: `a`, `b` or `c` used inside a lambda, where they used to be the
+    /// automatic arguments. **Only inside a lambda**, where the three names used
+    /// to mean something: a stray `a` in `main` is the general refusal's, and a
+    /// note about lambdas there would explain the wrong mistake. Whether it said
+    /// anything.
+    pub fn withdrawn_automatic_name(ref mut self, name: ref String, span: ref Span) -> bool sync {
+        let mut in_a_lambda = false
+        for around in self.repeats {
+            if around.what == "lambda" {
+                in_a_lambda = true
+            }
+        }
+        if (name != "a" && name != "b" && name != "c") || !in_a_lambda {
+            return false
+        }
+        self.findings.push(check_refusal("NK1117", span, f"`{name}` isn't declared anywhere.", ["A lambda's arguments have to be named: `a`, `b` and `c` are no longer there automatically.".clone()], f"Name the argument: `fn ({name}) {{ … }}`, or better, a name that says what it is: `fn (user) {{ user.id }}`."))
+        return true
+    }
+
+    /// `NK1143`: a call into C outside an `unsafe` block.
+    pub fn a_foreign_call_outside_unsafe(ref mut self, name: ref String, span: ref Span) sync {
+        if self.inside_unsafe || !self.foreign_names.contains(name) {
+            return
+        }
+        self.findings.push(check_refusal("NK1143", span, f"`{name}` is a C function, so calling it has to happen inside an `unsafe` block.", ["C isn't memory-safe, so every call into it is marked where it happens.".clone(), "Everything inside the block is still checked as usual.".clone()], f"Write `unsafe {{ {name}(…) }}`."))
+    }
+
+    /// `NK2208`: `set_after`, which is written `set(…; after: …)`.
+    pub fn a_door_that_is_not_written(ref mut self, on: ref Ty, written: ref String, span: ref Span) sync {
+        if written != "set_after" {
+            return
+        }
+        let held = match on {
+            Ty::Named { name, .. } => name.clone(),
+            else => return,
+        }
+        if !is_a_hull(held) {
+            return
+        }
+        let container = self.set_receiver?.clone() ?? "this lock".clone()
+        self.findings.push(check_refusal("NK2208", span, f"`{container}` has no `set_after`. Write `set(…; after: …)` instead.", ["`set` with `after:` compares and stores while holding the lock once.".clone(), "Written like this, a failure would be silently dropped.".clone()], f"Write `{container}.set(neu; after: seen)`, where `seen` is the value you read from the lock."))
+    }
+
+    /// `NK2205`: a `set` of a value, or under a condition, that was read from the
+    /// lock earlier. **`set(after)` is not `set`**: the witness covers both
+    /// shapes, so neither is refused there. It is the ledger's name that decides
+    /// rather than a flag.
+    pub fn a_set_that_reads_what_it_writes(ref mut self, on: ref Ty, written: ref String, found: ref Vec[Ty], span: ref Span) sync {
+        if written != "set" {
+            return
+        }
+        let held = match on {
+            Ty::Named { name, .. } => name.clone(),
+            else => return,
+        }
+        if !is_a_hull(held) {
+            return
+        }
+        let container = self.set_receiver?.clone() ?? "this lock".clone()
+        // **The value**, wherever it was read.
+        let mut stale = false
+        for ty in found {
+            if ty.is_seen() {
+                stale = true
+            }
+        }
+        if stale {
+            self.findings.push(check_refusal("NK2205", span, f"This `set` stores a value that was read from `{container}` earlier, so the lock is taken twice.", ["A value read from a lock is out of date as soon as the lock is released: anything can change between the read and the store.".clone(), "This is found wherever the value was read: on the line above, in another function, or in another request.".clone()], f"Write `{container}.update fn(mut v) {{ … }}`, which reads and changes the value while holding the lock."))
+            return
+        }
+        // **And the decision.** The value stored is plain; what is stale is the
+        // condition this stands under.
+        if self.stamped_condition != null {
+            self.findings.push(check_refusal("NK2205", span, f"This `set` depends on a condition read from `{container}` earlier, so the lock is taken twice.", ["What the lock held may have changed before this line runs.".clone()], f"Write `{container}.update fn(mut v) {{ … }}` and make the decision inside the lock."))
+        }
+    }
+}
+
+fn touches_a_file(contract: ref TypeContract) -> bool {
+    for touch in contract.touches {
+        if touch.starts_with("file") {
+            return true
+        }
+    }
+    return false
+}

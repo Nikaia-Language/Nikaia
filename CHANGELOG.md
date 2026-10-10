@@ -8,6 +8,12 @@ or the specification. A change only to the guide, the notes, the README, the
 website, the tests, the examples or the tooling around them raises nothing and
 has no heading here; `CLAUDE.md` draws the line.
 
+## [0.0.776] — 2026-10-10
+
+**The checker's refusals about pauses, locks and build-time runs are Nikaia**
+- check: the refusals for a call that may pause, a lock held, a name shared by cores and a `comptime` the build may not run moved into `tools/check_pauses.nika`, `check_doors.nika` and `check_buildtime2.nika` (#558, #125).
+- A resolved contract is no longer compared by address in the checker.
+
 ## [0.0.775] — 2026-10-10
 
 **The checker's state, its scope and the refusals that need only these are Nikaia (#558, #125).**

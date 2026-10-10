@@ -583,4 +583,103 @@ pub struct CheckState {
     /// (ADR-296 D5), by name: what one hands back is the statement's
     /// parameters, a type of each call site's own.
     pub dsl_drivers: collections::BTreeSet[String],
+    /// The rings of constants this walk has already reported, by their members.
+    ///
+    /// Every constant in a ring is circular, and each would report the same
+    /// loop from a different corner — which is one mistake said as many times
+    /// as it has members.
+    pub said_rings: collections::BTreeSet[Vec[String]],
+    /// **The option whose default is being computed** (ADR-318 D7): a
+    /// refusal's way out for it is a `T?`, not a `let` in place of a
+    /// `comptime` it never was.
+    pub computing_default: bool,
+    /// **What the lambda being walked has been seen to do**
+    /// ([ADR-277](../../docs/specification/adr/adr-277.md) D7).
+    ///
+    /// A function type carries two promises and the defaults are the
+    /// language's: without `sync` the code may pause, without `throws` it
+    /// cannot fail. A lambda handed to one has to keep them, and *keeping* is
+    /// a question about its body — so the body is walked with this in hand and
+    /// the calls it makes put their answers in it.
+    ///
+    /// **It does not cross a boundary.** A lambda written inside another one
+    /// is a function of its own: what its body does happens when *its* callee
+    /// runs it, not when this one does. So [`Checker::past_a_boundary`] clears
+    /// it and puts the outer one back, the way it does with the loop count.
+    ///
+    /// `None` where nothing is being asked — outside a lambda, and inside one
+    /// whose parameter's type nothing describes.
+    pub handed_over: CheckHanded?,
+    /// **Inside a lambda handed to a walk of a `Par[T]`**, the length of the
+    /// scope where it began: a name bound below it is one every core shares
+    /// ([ADR-235](../../docs/specification/adr/adr-235.md) D2). `None`
+    /// elsewhere.
+    pub in_parallel: i64?,
+    /// **The parallel context is a task of `task::scope`** (Part II 12.7)
+    /// rather than a `par_iter()` walk: the same rules, said of a task.
+    pub scoped_task: bool,
+    /// Whether what is being walked stands inside one.
+    ///
+    /// It reaches inward the way `caught` and `in_lambda` do, and it stops at
+    /// nothing: a lambda written inside an `unsafe` block runs later, and D3
+    /// asks about where the **call** is written rather than about when it runs.
+    pub inside_unsafe: bool,
+    /// **The loops and lambdas around the expression being walked**, innermost
+    /// last ([ADR-293](../../docs/specification/adr/adr-293.md) D19): where each
+    /// begins in `scope`, and what would let a sequence taken inside it be
+    /// taken again.
+    ///
+    /// A sequence declared outside a loop and taken inside it is taken on the
+    /// first turn and gone on the second, and a lambda may be run more than
+    /// once by whatever it is handed to. Both are one statement in the source,
+    /// which is why the per-statement order `walked` reads cannot see them.
+    pub repeats: Vec[CheckRepeats],
+    /// The name the `set` being typed was called on, for `NK2205`'s message
+    /// ([ADR-281](../../docs/specification/adr/adr-281.md) D25).
+    ///
+    /// The rule wants the receiver's **name** and the argument's **type**, and
+    /// those are known in two different places: the name where the method call
+    /// is walked, the types after `arguments_given` has run. Carried rather
+    /// than passed, the way the door flags beside it are.
+    pub set_receiver: String?,
+    /// Where the condition this stands under was read from a lock, if it was
+    /// ([ADR-281](../../docs/specification/adr/adr-281.md) D25's second shape).
+    ///
+    /// `if stand > 100 { kasse.set(0) }` stores a plain value; the **decision**
+    /// is the stale thing. A `while`, a `match` and a nested `if` are
+    /// conditions alike, which is why this is a flag over a block rather than a
+    /// question asked of one statement.
+    pub stamped_condition: i64?,
+    /// Whether what is being walked is **inside a door's block** — `access`,
+    /// `update`, `access_all` or `update_all`
+    /// ([ADR-281](../../docs/specification/adr/adr-281.md) D10).
+    ///
+    /// `at_a_write_door` above is the narrower question `NK1138` and `NK1141`
+    /// ask; this is the one `NK2203` asks, because *a lock taken while a lock
+    /// is held* is about **any** door being open and not about which
+    /// ([ADR-281](../../docs/specification/adr/adr-281.md) D28).
+    ///
+    /// `get` and `set` are doors and are **not** here, and D10 says why: while
+    /// the lock is open in either of them no code of the program's runs, so
+    /// there is nothing that could take a second one.
+    pub inside_a_door: bool,
+    /// The rule whose action is being walked, for
+    /// [ADR-296](../../docs/specification/adr/adr-296.md) D35's refusal - which
+    /// needs the rule's name, because a grammar is a page of rules and a caret
+    /// on a call inside one is not enough to find it.
+    pub inside_an_action: String?,
+    /// The name of the enclosing function, where its declaration **writes**
+    /// `sync` ([ADR-288](../../docs/specification/adr/adr-288.md) D4: an
+    /// assertion is checked, never overwritten).
+    ///
+    /// It is here because `NK2202` cannot see a **method** call: `contracts::sync`
+    /// deliberately does not resolve one, on the ground that the type checker is
+    /// the only thing that knows what `tx.send(1)` goes to
+    /// ([ADR-288](../../docs/specification/adr/adr-288.md)) — and the type
+    /// checker is here. Without it a `sync` function that sends on a channel
+    /// lowered to an ordinary `fn` with an `.await` inside it, which is not Rust
+    /// (Part III, C.1). Found by
+    /// [ADR-149](../../docs/specification/adr/adr-149.md) D2, and reachable
+    /// before it through `TaskHandle::join`.
+    pub inside_a_sync_function: String?,
 }

@@ -1,0 +1,117 @@
+// crates/nikaia-std/src/tools/check_pauses.nika
+//
+// **Refusals about a call that may pause where nothing may** - inside a lock,
+// in a lambda that runs on every core, in a grammar's action, in a `sync`
+// body (ADR-005 §1 Group B, `NK2202`, `NK2209`) - moved from the compiler's
+// checker (ADR-294, #125, #558).
+
+/// What may pause, and the way out in each place it is refused.
+pub struct CheckPause {
+    /// How the sentence names it: `` `f` `` or ``the cleanup of `x` ``.
+    pub what: String,
+    /// The callee, for another package's function that does not pause and never
+    /// said so (ADR-288 D28); `null` where it can pause.
+    pub unpromised: String?,
+    /// The way out in a lambda that runs on several cores.
+    pub before_walk: String,
+    /// The way out inside a lock.
+    pub before_door: String,
+}
+
+impl CheckState {
+    /// A call that may pause, where a lock is held, a walk runs on every core or
+    /// a lambda is handed over.
+    pub fn a_call_that_may_pause(ref mut self, callee: ref String, pauses: bool, unpromised: bool, span: ref Span) sync {
+        if !pauses {
+            return
+        }
+        let mut because: String? = null
+        if unpromised {
+            because = callee.clone()
+        }
+        let pause = CheckPause { what: f"`{callee}`", unpromised: because, before_walk: f"Call `{callee}` before the walk and pass the values in, or walk with `iter()`, whose lambda may pause.", before_door: f"Call `{callee}` before taking the lock and pass its value in, or after it with what the block returned." }
+        self.a_pause(pause, span)
+    }
+
+    /// A cleanup that may pause.
+    pub fn a_cleanup_that_may_pause(ref mut self, name: ref String, span: ref Span) sync {
+        let pause = CheckPause { what: f"the cleanup of `{name}`", unpromised: null, before_walk: f"Create `{name}` outside the walk and pass it in, or walk with `iter()`, whose lambda may pause.", before_door: f"Create `{name}` before taking the lock, so it's cleaned up after the lock is released, or close it there yourself." }
+        self.a_pause(pause, span)
+    }
+
+    /// `NK2209` and `NK2202`: a pause where a core is held up or a lock is held.
+    fn a_pause(ref mut self, pause: ref CheckPause, span: ref Span) {
+        // **Another package's function that does not pause and never said so**
+        // (ADR-288 D28) is refused as one that may, and the message says which
+        // of the two it is: *can pause* would send the reader looking for a
+        // pause that is not there.
+        let mut pauses: String = "can pause"
+        let mut notes: Vec[String] = []
+        let mut why: String = ""
+        if pause.unpromised != null {
+            pauses = "doesn't promise that it never pauses".clone()
+            why = not_promised_note(pause.unpromised ?? "")
+        }
+        self.note_a_pause()
+        // **`NK2209` in a lambda that runs on several cores at once** (Part II
+        // 12.6, ADR-235 D2): a core is not given up, so a pause there holds one
+        // for as long as the wait takes. **A pausing task of `task::scope` is
+        // polled by the scope itself** (ADR-328 D10), so it is not refused here.
+        if self.in_parallel != null && !self.scoped_task {
+            let mut parallel: Vec[String] = ["A `par_iter()` lambda runs on every core at once, and a core that waits holds up its share of the work, so the lambda must never pause.".clone()]
+            if pause.unpromised != null {
+                parallel.push(why.clone())
+            }
+            self.findings.push(check_refusal("NK2209", span, f"{capitalised(pause.what)} {pauses}, but this runs on several cores at once.", parallel, pause.before_walk.clone()))
+        }
+        if !self.inside_a_door {
+            return
+        }
+        notes.push("While the lock is held, every other task that needs the value waits, so a pause here makes all of them wait too.".clone())
+        if pause.unpromised != null {
+            notes.push(why)
+        }
+        self.findings.push(check_refusal("NK2202", span, f"{capitalised(pause.what)} {pauses}, but you're holding a lock here.", notes, pause.before_door.clone()))
+    }
+
+    /// The lambda being handed to a type is seen to pause.
+    fn note_a_pause(ref mut self) {
+        if self.handed_over != null {
+            let mut held = self.handed_over?.clone() ?? return
+            held.pauses = true
+            self.handed_over = held
+        }
+    }
+
+    /// `NK2209`: a call in a grammar's action that may pause. A grammar's
+    /// actions may never pause: a parser works on text that's already there,
+    /// which is what lets `@frame` parse in parallel.
+    pub fn a_pausing_call_in_an_action(ref mut self, callee: ref String, contract: ref FnContract, span: ref Span) sync {
+        if contract.sync_claim.is_sync() {
+            return
+        }
+        let rule = self.inside_an_action?.clone() ?? return
+        let mut notes: Vec[String] = ["A grammar's actions may never pause: a parser works on text that's already there, which is what lets `@frame` parse in parallel.".clone()]
+        let mut pauses: String = "can pause"
+        if contract.sync_claim == Sync::Unpromised {
+            pauses = "doesn't promise that it never pauses".clone()
+            notes.push(not_promised_note(callee))
+        }
+        self.findings.push(check_refusal("NK2209", span, f"The action of `{rule}` calls `{callee}`, which {pauses}.", notes, "Read what the parser needs before parsing and pass it in, or process the result after the parse.".clone()))
+    }
+
+    /// `NK2202`: a call in a `sync` function that may pause.
+    pub fn a_pausing_method_in_a_sync_body(ref mut self, callee: ref String, contract: ref FnContract, span: ref Span) sync {
+        if contract.sync_claim.is_sync() {
+            return
+        }
+        let caller = self.inside_a_sync_function?.clone() ?? return
+        let mut pauses: String = "can pause"
+        let mut why: String = f"`{callee}` isn't `sync`."
+        if contract.sync_claim == Sync::Unpromised {
+            pauses = "doesn't promise that it never pauses".clone()
+            why = not_promised_note(callee)
+        }
+        self.findings.push(check_refusal("NK2202", span, f"`{caller}` is `sync`, but it calls `{callee}`, which {pauses}.", ["A `sync` function promises never to pause or do I/O.".clone(), why], f"Remove `sync` from `{caller}`, or move the call out of it."))
+    }
+}

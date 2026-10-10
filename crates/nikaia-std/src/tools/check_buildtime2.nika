@@ -1,0 +1,109 @@
+// crates/nikaia-std/src/tools/check_buildtime2.nika
+//
+// **Refusals about a `comptime` that the build may not, or could not, run**
+// (`NK1127`, `NK1152`, `NK1168`) - moved from the compiler's checker
+// (ADR-294, #125, #558).
+
+impl CheckState {
+    /// `NK1152`: a call at build time that the build may not make, said with
+    /// what the build gave as the reason. What the way out is depends on whether
+    /// the option's default is being computed (ADR-318 D7).
+    pub fn a_body_that_may_not_run_at_build_time(ref mut self, callee: ref String, because: ref String, span: ref Span) sync {
+        let mut help: String = f"Call it while the program runs, with `let` instead of `comptime`, or make `{callee}` `sync` so it touches nothing outside the program."
+        if self.computing_default {
+            help = f"Make `{callee}` `sync` so it touches nothing outside the program, or make the option a `T?` and call it in the body."
+        }
+        self.findings.push(check_refusal("NK1152", span, f"You can't call `{callee}` while the program is built.", [because.clone(), "At build time only functions that never pause and touch nothing outside the program can run.".clone()], help))
+    }
+
+    /// `NK1152`: a `comptime` that ran past a bound of the build - memory,
+    /// depth or steps. `over` is what the sub-program said, `kind limit | path`,
+    /// and `value_fn` the name the `comptime` itself runs under, which the path
+    /// shows as the binding.
+    pub fn a_build_time_run_over_its_bound(ref mut self, bound: ref String, over: ref String, value_fn: ref String, span: ref Span) sync {
+        let mut what: String = over.trim()
+        let mut path: String = ""
+        let bar = over.find("|")
+        if bar != null {
+            let at = bar ?? 0
+            what = over[0..<at].trim()
+            path = over[at + 1..<over.len()].trim()
+        }
+        let mut kind: String = what.clone()
+        let mut limit: String = ""
+        let space = what.find(" ")
+        if space != null {
+            let at = space ?? 0
+            kind = what[0..<at].clone()
+            limit = what[at + 1..<what.len()].clone()
+        }
+        let mut message: String = f"`{bound}` took more than {limit} steps while the program was built."
+        let mut note: String = "Each turn of a loop and each call is a step, and the count is the same on every machine."
+        if kind == "memory" {
+            message = f"`{bound}` held more than {limit} bytes at once while the program was built."
+            note = "What it holds is counted as it asks for it, the same on every machine.".clone()
+        } else if kind == "depth" {
+            message = f"`{bound}` went more than {limit} calls deep while the program was built."
+        }
+        let mut notes: Vec[String] = []
+        if path.len() > 0 {
+            let mut shown: Vec[String] = []
+            for step in path.split(" > ").collect() {
+                if step == "…" {
+                    shown.push(step.clone())
+                } else if step == value_fn {
+                    // The value function is the `comptime` itself.
+                    shown.push(f"`{bound}`")
+                } else {
+                    shown.push(f"`{step}`")
+                }
+            }
+            notes.push(f"It was in {shown.join(" > ")}.")
+        }
+        notes.push(note)
+        let mut help: String = "Look for a loop or a recursion that does not end, or compute the value while the program runs, with `let` instead of `comptime`."
+        if self.computing_default {
+            help = "Look for a loop or a recursion that does not end, or make the option a `T?` and compute the value in the body.".clone()
+        }
+        self.findings.push(check_refusal("NK1152", span, message, notes, help))
+    }
+
+    /// `NK1168`: a `comptime` that depends on itself. **One ring, one error**:
+    /// every constant in it is circular and each would report the same loop from
+    /// a different corner.
+    pub fn a_constant_built_from_itself(ref mut self, bound: ref String, ring: ref Vec[String], span: ref Span) sync {
+        let mut sorted: Vec[String] = ring.clone()
+        sorted.sort()
+        let mut unique: Vec[String] = []
+        for name in sorted {
+            if unique.len() == 0 || unique[unique.len() - 1] != name {
+                unique.push(name.clone())
+            }
+        }
+        if self.said_rings.contains(unique) {
+            return
+        }
+        self.said_rings.insert(unique)
+        let mut named: Vec[String] = []
+        for name in ring {
+            named.push(f"`{name}`")
+        }
+        // **The constant on this line**, which is the one the reader declared;
+        // the ring says where it goes.
+        self.findings.push(check_refusal("NK1168", span, f"`{bound}` depends on itself.", [f"The chain is {named.join(" → ")}, and a `comptime` has to be computable while the program is built."], "Give one of them a value that doesn't depend on the others, or make it a `let` so it's computed while the program runs.".clone()))
+    }
+
+    /// `NK1127`: a `comptime` whose value needs something the build does not
+    /// have. **One note, written per wall**, so that a sentence about `sync`
+    /// lives in the walls it belongs to.
+    pub fn a_build_time_body_that_is_not_here(ref mut self, bound: ref String, what: ref String, why: ref String, way_out: ref String, span: ref Span) sync {
+        // **The wall's way out, and then the one every `comptime` has**: a value
+        // meant to be computed while the program runs was never a constant
+        // (ADR-287 D4).
+        let mut help: String = f"{capitalised(way_out)}. Or write `let {bound} = …` to compute it while the program runs."
+        if self.computing_default {
+            help = f"{capitalised(way_out)}. Or make `{bound}` a `T?` and compute it in the body."
+        }
+        self.findings.push(check_refusal("NK1127", span, f"`{bound}` can't be computed while the program is built.", [f"`{what}`: {why}."], help))
+    }
+}

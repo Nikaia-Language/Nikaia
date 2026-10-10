@@ -9906,6 +9906,75 @@ fn did_not_build(found: &CheckFinding) -> bool {
 }
 
 
+// --- check_buildtime2.nika ---
+
+impl CheckState {
+    // sync (Part II, 12.1): pure CPU, cannot pause. Checked before
+    // this was written - see `contracts::sync`.
+    pub fn a_body_that_may_not_run_at_build_time(&mut self, callee: &str, because: &str, span: &Span) {
+        let mut help: String = format!("Call it while the program runs, with `let` instead of `comptime`, or make `{}` `sync` so it touches nothing outside the program.", callee);
+        if self.computing_default { help = format!("Make `{}` `sync` so it touches nothing outside the program, or make the option a `T?` and call it in the body.", callee); }
+        self.findings.push(check_refusal("NK1152", span, format!("You can't call `{}` while the program is built.", callee), vec![because.to_owned(), "At build time only functions that never pause and touch nothing outside the program can run.".to_owned()], Some(help)));
+    }
+    // sync (Part II, 12.1): pure CPU, cannot pause. Checked before
+    // this was written - see `contracts::sync`.
+    pub fn a_build_time_run_over_its_bound(&mut self, bound: &str, over: &str, value_fn: &str, span: &Span) {
+        let mut what: &str = over.trim();
+        let mut path: &str = "";
+        let bar = nikaia_std::search::find(&over, &"|", 0);
+        if bar.is_some() {
+            let at = nikaia_std::index::or(bar, || 0);
+            what = nikaia_std::index::get(&over, nikaia_std::index::at(0..at)).trim();
+            path = nikaia_std::index::get(&over, nikaia_std::index::at(at + 1..)).trim();
+        }
+        let mut kind: String = what.to_owned();
+        let mut limit: String = String::from("");
+        let space = nikaia_std::search::find(&what, &" ", 0);
+        if space.is_some() {
+            let at = nikaia_std::index::or(space, || 0);
+            kind = nikaia_std::index::get(&what, nikaia_std::index::at(0..at)).to_owned();
+            limit = nikaia_std::index::get(&what, nikaia_std::index::at(at + 1..)).to_owned();
+        }
+        let mut message: String = format!("`{}` took more than {} steps while the program was built.", bound, limit);
+        let mut note: String = String::from("Each turn of a loop and each call is a step, and the count is the same on every machine.");
+        if kind == "memory" {
+            message = format!("`{}` held more than {} bytes at once while the program was built.", bound, limit);
+            note = "What it holds is counted as it asks for it, the same on every machine.".to_owned();
+        } else if kind == "depth" { message = format!("`{}` went more than {} calls deep while the program was built.", bound, limit); }
+        let mut notes: Vec<String> = vec![];
+        if !path.is_empty() {
+            let mut shown: Vec<String> = vec![];
+            for step in path.split(" > ").collect::<Vec<_>>() { if step == "…" { shown.push(step.to_owned()); } else if step == value_fn { shown.push(format!("`{}`", bound)); } else { shown.push(format!("`{}`", step)); } }
+            notes.push(format!("It was in {}.", shown.join(" > ")));
+        }
+        notes.push(note);
+        let mut help: String = String::from("Look for a loop or a recursion that does not end, or compute the value while the program runs, with `let` instead of `comptime`.");
+        if self.computing_default { help = "Look for a loop or a recursion that does not end, or make the option a `T?` and compute the value in the body.".to_owned(); }
+        self.findings.push(check_refusal("NK1152", span, message, notes, Some(help)));
+    }
+    // sync (Part II, 12.1): pure CPU, cannot pause. Checked before
+    // this was written - see `contracts::sync`.
+    pub fn a_constant_built_from_itself(&mut self, bound: &str, ring: &[String], span: &Span) {
+        let mut sorted: Vec<String> = ring.to_owned();
+        sorted.sort();
+        let mut unique: Vec<String> = vec![];
+        for name in sorted.iter() { if unique.is_empty() || *nikaia_std::index::get(&unique, nikaia_std::index::at(unique.len() as i64 - 1)) != *name { unique.push(name.to_owned()); } }
+        if self.said_rings.contains(&unique) { return; }
+        self.said_rings.insert(unique);
+        let mut named: Vec<String> = vec![];
+        for name in ring.iter() { named.push(format!("`{}`", name)); }
+        self.findings.push(check_refusal("NK1168", span, format!("`{}` depends on itself.", bound), vec![format!("The chain is {}, and a `comptime` has to be computable while the program is built.", named.join(" → "))], Some("Give one of them a value that doesn't depend on the others, or make it a `let` so it's computed while the program runs.".to_owned())));
+    }
+    // sync (Part II, 12.1): pure CPU, cannot pause. Checked before
+    // this was written - see `contracts::sync`.
+    pub fn a_build_time_body_that_is_not_here(&mut self, bound: &str, what: &str, why: &str, way_out: &str, span: &Span) {
+        let mut help: String = format!("{}. Or write `let {} = …` to compute it while the program runs.", capitalised(way_out), bound);
+        if self.computing_default { help = format!("{}. Or make `{}` a `T?` and compute it in the body.", capitalised(way_out), bound); }
+        self.findings.push(check_refusal("NK1127", span, format!("`{}` can't be computed while the program is built.", bound), vec![format!("`{}`: {}.", what, why)], Some(help)));
+    }
+}
+
+
 // --- check_calls.nika ---
 
 pub fn call_arguments(signature: &Signature) -> Vec<(String, Ty)> {
@@ -10257,6 +10326,130 @@ pub fn a_type_base(name: &str) -> String {
 // sync (Part II, 12.1): pure CPU, cannot pause. Checked before
 // this was written - see `contracts::sync`.
 pub fn a_part_one_type(name: &str) -> bool { a_number_name(name) || name == "bool" || name == "char" || name == "scalar" || name == "String" || name == "str" }
+
+
+// --- check_doors.nika ---
+
+impl CheckState {
+    // sync (Part II, 12.1): pure CPU, cannot pause. Checked before
+    // this was written - see `contracts::sync`.
+    pub fn a_lock_inside_a_lock(&mut self, called: &str, holds: &Lock, span: &Span) {
+        if !self.inside_a_door || !holds.holds() { return; }
+        let parts: Vec<&str> = called.split("::").collect::<Vec<_>>();
+        let method = (*nikaia_std::index::get(&parts, nikaia_std::index::at(parts.len() as i64 - 1))).to_owned();
+        let letters: Vec<scalar> = nikaia_std::list::chars(called.chars());
+        let mut written = called.to_owned();
+        if !letters.is_empty() && (*nikaia_std::index::get(&letters, 0)).to_ascii_lowercase() != *nikaia_std::index::get(&letters, 0) { written = method.to_owned(); }
+        self.findings.push(CheckFinding { severity: CheckSeverity::Error, span: span.clone(), code: "NK2203".to_owned(), message: format!("`{}` takes a lock, but you're already holding one here.", written), notes: vec!["This block runs while a lock is held, so taking a second lock inside it can deadlock.".to_owned()], help: Some("Take both locks at once with `access_all(a, b) fn(x, y) { … }`, or compute the value before the block and pass it in.".to_owned()), labels: vec![CheckLabel { span: span.clone(), word: method, text: "takes a second lock".to_owned(), main: true }] });
+    }
+    // sync (Part II, 12.1): pure CPU, cannot pause. Checked before
+    // this was written - see `contracts::sync`.
+    pub fn io_inside_a_door(&mut self, world: &CheckWorld<'_>, on: &Ty, what: &str, span: &Span) {
+        if !self.inside_a_door { return; }
+        let name = match on {
+            Ty::Named { name, .. } => name.to_owned(),
+            _ => return,
+        };
+        let base = a_type_base(&name);
+        let mut touched = false;
+        for (entry_name, entry_value) in world.library.types.iter() { if a_type_base(entry_name) == base && touches_a_file(entry_value) { touched = true; } }
+        if !touched { return; }
+        self.findings.push(check_refusal("NK2201", span, format!("{} reads a file, but you're holding a lock here.", capitalised(what)), vec![format!("`{}` is a file mapped into memory, so reading it can wait on the disk, and a block that holds a lock must never wait.", name), "This wait doesn't show up as a pause or a second lock, which is why it gets its own message.".to_owned()], Some("Read what you need before taking the lock, and pass the value in.".to_owned())));
+    }
+    // sync (Part II, 12.1): pure CPU, cannot pause. Checked before
+    // this was written - see `contracts::sync`.
+    pub fn an_update_block_returns_nothing(&mut self, body: &Block, span: &Span) {
+        let mut hands_back = false;
+        let mut at: i64 = 0;
+        while at < body.stmts.len() as i64 {
+            match &nikaia_std::index::get(&body.stmts, nikaia_std::index::at(at)).node {
+                Stmt::Return(value) => { if value.is_some() { hands_back = true; } },
+                Stmt::Expr(value) => { if at == body.stmts.len() as i64 - 1 && plainly_a_value(value) { hands_back = true; } },
+                _ => { },
+            }
+            at = at + 1;
+        }
+        if !hands_back { return; }
+        self.findings.push(check_refusal("NK1141", span, "An `update` changes the value in place, so it has nothing to return.".to_owned(), vec!["The block gets the value itself and changes it where it is, so a value it returns would go nowhere.".to_owned()], Some("Change it instead: write `fn(mut v) { v += 1 }`, not `fn(v) { v + 1 }`.".to_owned())));
+    }
+    // sync (Part II, 12.1): pure CPU, cannot pause. Checked before
+    // this was written - see `contracts::sync`.
+    pub fn a_shared_name_changed_in_parallel(&mut self, name: &str, span: &Span) {
+        let depth = match self.in_parallel { Some(__nikaia_value) => __nikaia_value, None => return };
+        let mut declared: i64 = -1;
+        let mut frame_at: i64 = 0;
+        while frame_at < self.scope.len() as i64 {
+            for local in (*nikaia_std::index::get(&self.scope, nikaia_std::index::at(frame_at))).iter() { if local.name == name { declared = frame_at; } }
+            frame_at = frame_at + 1;
+        }
+        if declared < 0 || declared >= depth { return; }
+        let mut message: String = format!("You're changing `{}` in a lambda that runs on several cores at once, and they all share `{}`.", name, name);
+        let mut note: String = format!("`par_iter()` splits the elements across all cores and runs the lambda on each part at the same time, so every core would write `{}` at once.", name);
+        let mut help: String = format!("Return a value from the lambda and combine the results afterwards, with `map` and then `collect` or `count`, or keep `{}` in a `SharedMut` and change it through `update`.", name);
+        if self.scoped_task {
+            message = format!("You're changing `{}` in a task of `task::scope`, and the scope's tasks all share `{}`.", name, name);
+            note = format!("A scope's tasks run at the same time, each on a core of its own, so they would write `{}` at once.", name);
+            help = format!("Give each task a value of its own and combine them after the scope, or keep `{}` in a `SharedMut` and change it through `update`.", name);
+        }
+        self.findings.push(check_refusal("NK2107", span, message, vec![note], Some(help)));
+    }
+    // sync (Part II, 12.1): pure CPU, cannot pause. Checked before
+    // this was written - see `contracts::sync`.
+    pub fn withdrawn_automatic_name(&mut self, name: &str, span: &Span) -> bool {
+        let mut in_a_lambda = false;
+        for around in self.repeats.iter() { if around.what == "lambda" { in_a_lambda = true; } }
+        if name != "a" && name != "b" && name != "c" || !in_a_lambda { return false; }
+        self.findings.push(check_refusal("NK1117", span, format!("`{}` isn't declared anywhere.", name), vec!["A lambda's arguments have to be named: `a`, `b` and `c` are no longer there automatically.".to_owned()], Some(format!("Name the argument: `fn ({}) {{ … }}`, or better, a name that says what it is: `fn (user) {{ user.id }}`.", name))));
+        true
+    }
+    // sync (Part II, 12.1): pure CPU, cannot pause. Checked before
+    // this was written - see `contracts::sync`.
+    pub fn a_foreign_call_outside_unsafe(&mut self, name: &str, span: &Span) {
+        if self.inside_unsafe || !self.foreign_names.contains(name) { return; }
+        self.findings.push(check_refusal("NK1143", span, format!("`{}` is a C function, so calling it has to happen inside an `unsafe` block.", name), vec!["C isn't memory-safe, so every call into it is marked where it happens.".to_owned(), "Everything inside the block is still checked as usual.".to_owned()], Some(format!("Write `unsafe {{ {}(…) }}`.", name))));
+    }
+    // sync (Part II, 12.1): pure CPU, cannot pause. Checked before
+    // this was written - see `contracts::sync`.
+    pub fn a_door_that_is_not_written(&mut self, on: &Ty, written: &str, span: &Span) {
+        if written != "set_after" { return; }
+        let held = match on {
+            Ty::Named { name, .. } => name.to_owned(),
+            _ => return,
+        };
+        if !is_a_hull(&held) { return; }
+        let container = nikaia_std::index::or(match self.set_receiver.as_ref() {
+            Some(__nikaia_it) => Some(__nikaia_it.clone()),
+            None => None,
+        }, || "this lock".to_owned().into());
+        self.findings.push(check_refusal("NK2208", span, format!("`{}` has no `set_after`. Write `set(…; after: …)` instead.", container), vec!["`set` with `after:` compares and stores while holding the lock once.".to_owned(), "Written like this, a failure would be silently dropped.".to_owned()], Some(format!("Write `{}.set(neu; after: seen)`, where `seen` is the value you read from the lock.", container))));
+    }
+    // sync (Part II, 12.1): pure CPU, cannot pause. Checked before
+    // this was written - see `contracts::sync`.
+    pub fn a_set_that_reads_what_it_writes(&mut self, on: &Ty, written: &str, found: &[Ty], span: &Span) {
+        if written != "set" { return; }
+        let held = match on {
+            Ty::Named { name, .. } => name.to_owned(),
+            _ => return,
+        };
+        if !is_a_hull(&held) { return; }
+        let container = nikaia_std::index::or(match self.set_receiver.as_ref() {
+            Some(__nikaia_it) => Some(__nikaia_it.clone()),
+            None => None,
+        }, || "this lock".to_owned().into());
+        let mut stale = false;
+        for ty in found.iter() { if ty.is_seen() { stale = true; } }
+        if stale {
+            self.findings.push(check_refusal("NK2205", span, format!("This `set` stores a value that was read from `{}` earlier, so the lock is taken twice.", container), vec!["A value read from a lock is out of date as soon as the lock is released: anything can change between the read and the store.".to_owned(), "This is found wherever the value was read: on the line above, in another function, or in another request.".to_owned()], Some(format!("Write `{}.update fn(mut v) {{ … }}`, which reads and changes the value while holding the lock.", container))));
+            return;
+        }
+        if self.stamped_condition.is_some() { self.findings.push(check_refusal("NK2205", span, format!("This `set` depends on a condition read from `{}` earlier, so the lock is taken twice.", container), vec!["What the lock held may have changed before this line runs.".to_owned()], Some(format!("Write `{}.update fn(mut v) {{ … }}` and make the decision inside the lock.", container)))); }
+    }
+}
+
+fn touches_a_file(contract: &TypeContract) -> bool {
+    for touch in contract.touches.iter() { if touch.starts_with("file") { return true; } }
+    false
+}
 
 
 // --- check_imports.nika ---
@@ -10969,6 +11162,96 @@ fn names_of_bindings(world: &CheckWorld<'_>, bindings: &[winnow_grammar::Symbol]
 }
 
 
+// --- check_pauses.nika ---
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CheckPause {
+    pub what: String,
+    pub unpromised: Option<String>,
+    pub before_walk: String,
+    pub before_door: String,
+}
+
+impl CheckState {
+    // sync (Part II, 12.1): pure CPU, cannot pause. Checked before
+    // this was written - see `contracts::sync`.
+    pub fn a_call_that_may_pause(&mut self, callee: &str, pauses: bool, unpromised: bool, span: &Span) {
+        if !pauses { return; }
+        let mut because: Option<String> = None;
+        if unpromised { because = Some(callee.to_owned()); }
+        let pause = CheckPause { what: format!("`{}`", callee), unpromised: because, before_walk: format!("Call `{}` before the walk and pass the values in, or walk with `iter()`, whose lambda may pause.", callee), before_door: format!("Call `{}` before taking the lock and pass its value in, or after it with what the block returned.", callee) };
+        self.a_pause(&pause, span);
+    }
+    // sync (Part II, 12.1): pure CPU, cannot pause. Checked before
+    // this was written - see `contracts::sync`.
+    pub fn a_cleanup_that_may_pause(&mut self, name: &str, span: &Span) {
+        let pause = CheckPause { what: format!("the cleanup of `{}`", name), unpromised: None, before_walk: format!("Create `{}` outside the walk and pass it in, or walk with `iter()`, whose lambda may pause.", name), before_door: format!("Create `{}` before taking the lock, so it's cleaned up after the lock is released, or close it there yourself.", name) };
+        self.a_pause(&pause, span);
+    }
+    fn a_pause(&mut self, pause: &CheckPause, span: &Span) {
+        let mut pauses: String = String::from("can pause");
+        let mut notes: Vec<String> = vec![];
+        let mut why: String = String::from("");
+        if pause.unpromised.is_some() {
+            pauses = "doesn't promise that it never pauses".to_owned();
+            why = not_promised_note(nikaia_std::index::or(pause.unpromised.as_deref(), || ""));
+        }
+        self.note_a_pause();
+        if self.in_parallel.is_some() && !self.scoped_task {
+            let mut parallel: Vec<String> = vec!["A `par_iter()` lambda runs on every core at once, and a core that waits holds up its share of the work, so the lambda must never pause.".to_owned()];
+            if pause.unpromised.is_some() { parallel.push(why.to_owned()); }
+            self.findings.push(check_refusal("NK2209", span, format!("{} {}, but this runs on several cores at once.", capitalised(&pause.what), pauses), parallel, Some(pause.before_walk.to_owned())));
+        }
+        if !self.inside_a_door { return; }
+        notes.push("While the lock is held, every other task that needs the value waits, so a pause here makes all of them wait too.".to_owned());
+        if pause.unpromised.is_some() { notes.push(why); }
+        self.findings.push(check_refusal("NK2202", span, format!("{} {}, but you're holding a lock here.", capitalised(&pause.what), pauses), notes, Some(pause.before_door.to_owned())));
+    }
+    fn note_a_pause(&mut self) {
+        if self.handed_over.is_some() {
+            let mut held = match match self.handed_over.as_ref() {
+                Some(__nikaia_it) => Some(__nikaia_it.clone()),
+                None => None,
+            } { Some(__nikaia_value) => __nikaia_value, None => return };
+            held.pauses = true;
+            self.handed_over = Some(held);
+        }
+    }
+    // sync (Part II, 12.1): pure CPU, cannot pause. Checked before
+    // this was written - see `contracts::sync`.
+    pub fn a_pausing_call_in_an_action(&mut self, callee: &str, contract: &FnContract, span: &Span) {
+        if contract.sync_claim.is_sync() { return; }
+        let rule = match match self.inside_an_action.as_ref() {
+            Some(__nikaia_it) => Some(__nikaia_it.clone()),
+            None => None,
+        } { Some(__nikaia_value) => __nikaia_value, None => return };
+        let mut notes: Vec<String> = vec!["A grammar's actions may never pause: a parser works on text that's already there, which is what lets `@frame` parse in parallel.".to_owned()];
+        let mut pauses: String = String::from("can pause");
+        if contract.sync_claim == Sync::Unpromised {
+            pauses = "doesn't promise that it never pauses".to_owned();
+            notes.push(not_promised_note(callee));
+        }
+        self.findings.push(check_refusal("NK2209", span, format!("The action of `{}` calls `{}`, which {}.", rule, callee, pauses), notes, Some("Read what the parser needs before parsing and pass it in, or process the result after the parse.".to_owned())));
+    }
+    // sync (Part II, 12.1): pure CPU, cannot pause. Checked before
+    // this was written - see `contracts::sync`.
+    pub fn a_pausing_method_in_a_sync_body(&mut self, callee: &str, contract: &FnContract, span: &Span) {
+        if contract.sync_claim.is_sync() { return; }
+        let caller = match match self.inside_a_sync_function.as_ref() {
+            Some(__nikaia_it) => Some(__nikaia_it.clone()),
+            None => None,
+        } { Some(__nikaia_value) => __nikaia_value, None => return };
+        let mut pauses: String = String::from("can pause");
+        let mut why: String = format!("`{}` isn't `sync`.", callee);
+        if contract.sync_claim == Sync::Unpromised {
+            pauses = "doesn't promise that it never pauses".to_owned();
+            why = not_promised_note(callee);
+        }
+        self.findings.push(check_refusal("NK2202", span, format!("`{}` is `sync`, but it calls `{}`, which {}.", caller, callee, pauses), vec!["A `sync` function promises never to pause or do I/O.".to_owned(), why], Some(format!("Remove `sync` from `{}`, or move the call out of it.", caller))));
+    }
+}
+
+
 // --- check_refusals.nika ---
 
 impl CheckState {
@@ -11670,6 +11953,18 @@ pub struct CheckState {
     pub opaque_handles: collections::BTreeSet<String>,
     pub run_code: collections::BTreeSet<String>,
     pub dsl_drivers: collections::BTreeSet<String>,
+    pub said_rings: collections::BTreeSet<Vec<String>>,
+    pub computing_default: bool,
+    pub handed_over: Option<CheckHanded>,
+    pub in_parallel: Option<i64>,
+    pub scoped_task: bool,
+    pub inside_unsafe: bool,
+    pub repeats: Vec<CheckRepeats>,
+    pub set_receiver: Option<String>,
+    pub stamped_condition: Option<i64>,
+    pub inside_a_door: bool,
+    pub inside_an_action: Option<String>,
+    pub inside_a_sync_function: Option<String>,
 }
 
 
@@ -33730,6 +34025,7 @@ pub mod check_boundary {
     pub use super::{element_of};
 }
 pub mod check_buildtime {}
+pub mod check_buildtime2 {}
 pub mod check_calls {
     #[allow(unused_imports)]
     pub use super::{call_arguments, expected_arguments, receiver_bindings, argument_bindings, walks_by_value, shape_through, a_paused_chain, a_pausing_sequence};
@@ -33738,6 +34034,7 @@ pub mod check_decls {
     #[allow(unused_imports)]
     pub use super::{a_type_base, a_part_one_type};
 }
+pub mod check_doors {}
 pub mod check_imports {}
 pub mod check_literals {
     #[allow(unused_imports)]
@@ -33758,6 +34055,10 @@ pub mod check_numbers {
 pub mod check_patterns {
     #[allow(unused_imports)]
     pub use super::{pattern_names};
+}
+pub mod check_pauses {
+    #[allow(unused_imports)]
+    pub use super::{CheckPause};
 }
 pub mod check_refusals {
     #[allow(unused_imports)]
