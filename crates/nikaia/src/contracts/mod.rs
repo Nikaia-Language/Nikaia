@@ -42,7 +42,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use anyhow::{Result, anyhow};
 
-use crate::ast::{Expr, Item, Stmt};
+use crate::ast::{Expr, Item};
 use crate::contracts::ty::TyOps;
 use crate::emit::{borrowing_structs_beside, holds_view, package_borrowing};
 use crate::parser::Parsed;
@@ -463,14 +463,12 @@ impl LedgerOps for Ledger {
                     // third answer. A C signature says **less** than a Rust
                     // one, not more.
                     Item::Extern { declarations, .. } => {
-                        for declaration in declarations {
-                            let (_, mut contract) =
-                                trait_method(parsed, "", &declaration.node, false);
-                            contract.sync_claim = Sync::Asserted;
-                            contract.fails_with = Vec::new();
-                            ledger
-                                .functions
-                                .insert(parsed.text(declaration.node.name).to_string(), contract);
+                        for declared in nikaia_std::tools::ledger_items::declared_extern(
+                            &parsed.interner,
+                            &parsed.aliases,
+                            declarations,
+                        ) {
+                            ledger.functions.insert(declared.key, declared.contract);
                         }
                     }
                     Item::Trait {
@@ -616,61 +614,12 @@ impl LedgerOps for Ledger {
                     // tree, and seven of the corpus' eight `main`s carried it
                     // into their own set; a type is all it ever needed.
                     Item::Grammar(def) => {
-                        let grammar = parsed.text(def.name).to_string();
-                        for rule in def.rules.iter().filter(|r| r.is_entry) {
-                            let key = format!("{grammar}::{}", parsed.text(rule.name));
-                            ledger.functions.insert(
-                                key,
-                                FnContract {
-                                    // **The grammar's `pub` is each entry's**
-                                    // (ADR-296 D25, #520).
-                                    public: def.public,
-                                    // **Driven in pieces where its body is a
-                                    // `par_fold`** (ADR-296 D19, #521), which a
-                                    // consumer in another package cannot see.
-                                    pieces: rule.alts.iter().any(|alt| {
-                                        matches!(&alt.pattern.node,
-                                            crate::ast::Pattern::Fold(spec) if spec.parallel)
-                                            || matches!(&alt.pattern.node,
-                                                crate::ast::Pattern::Bind { pat, .. }
-                                                    if matches!(&pat.node, crate::ast::Pattern::Fold(spec) if spec.parallel))
-                                    }),
-                                    fails_with: vec![PARSE_ERROR.to_string()],
-                                    // **An action may not pause**
-                                    // ([ADR-296](../../../docs/specification/adr/adr-296.md)
-                                    // D1), so every entry is `sync` — asserted
-                                    // and not inferred, because it is a rule of
-                                    // the language rather than a property of
-                                    // this grammar, and `NK2209` is what
-                                    // happens when an action contradicts it.
-                                    //
-                                    // It is also what takes back the `async`
-                                    // that reaching the entry by **name**
-                                    // ([ADR-140](../../../docs/specification/adr/adr-140.md)
-                                    // D3) had spread through every parsing
-                                    // program: a caller reads this column, and
-                                    // before it there was nothing in it.
-                                    sync_claim: Sync::Asserted,
-                                    signature: Some(Signature {
-                                        // A grammar's rule takes no type
-                                        // parameter, so it declares no bound.
-                                        bounds: Vec::new(),
-                                        mutable: Vec::new(),
-                                        // The input, as every entry takes it: the
-                                        // text to parse. `?` because a mapping, an
-                                        // owned string and a view all reach the
-                                        // parser the same way and no one type is
-                                        // the true one.
-                                        params: vec![(INPUT.to_string(), ty::Ty::Unknown)],
-                                        config: Vec::new(),
-                                        result: rule
-                                            .ret_type
-                                            .as_ref()
-                                            .map(|t| ty::Ty::from_ast(parsed, t)),
-                                    }),
-                                    ..FnContract::empty()
-                                },
-                            );
+                        for declared in nikaia_std::tools::ledger_items::declared_grammar(
+                            &parsed.interner,
+                            &parsed.aliases,
+                            def,
+                        ) {
+                            ledger.functions.insert(declared.key, declared.contract);
                         }
                     }
                     _ => {}
@@ -1029,37 +978,9 @@ pub fn throws_text(throws: &[String]) -> String {
     nikaia_std::tools::ledger_text::throws_text(throws)
 }
 
-/// The types Part I 2.2 offers, by name.
-///
-/// Here rather than beside a diagnostic because two questions read it: whether
-/// `as` names a type this language has ([ADR-285](../../../docs/specification/adr/adr-285.md)
-/// D1), and whether an `impl`'s type argument is a parameter or a type.
-const OFFERED: &[&str] = &[
-    "i32", "i64", "u8", "u32", "u64", "f64", "bool", "char", "scalar", "String", "str", "Self",
-];
-
 /// Every type name this file declares.
 pub fn declared_types(parsed: &Parsed) -> BTreeSet<String> {
-    let mut declared: BTreeSet<String> = BTreeSet::new();
-    for item in &parsed.program.items {
-        match &item.node {
-            Item::Struct { name, .. } | Item::Enum { name, .. } => {
-                declared.insert(parsed.text(*name).to_string());
-            }
-            // **An opaque handle is a type this file declares**
-            // ([ADR-302](../../../docs/specification/adr/adr-302.md) D7). It
-            // has no fields and no constructor, but a declaration is what
-            // `NK1135` asks for and this is one - the block that writes it is
-            // the only place its name comes from.
-            Item::Extern { opaque, .. } => {
-                for handle in opaque {
-                    declared.insert(parsed.text(handle.node.name).to_string());
-                }
-            }
-            _ => {}
-        }
-    }
-    declared
+    nikaia_std::tools::ledger_items::types_this_file_declares(&parsed.program, &parsed.interner)
 }
 
 /// The type parameters an `impl` head declares, in the order it writes them.
@@ -1083,13 +1004,7 @@ pub fn impl_parameters(
     target: &crate::ast::Type,
     declared: &BTreeSet<String>,
 ) -> Vec<String> {
-    target
-        .generics
-        .iter()
-        .filter(|g| g.generics.is_empty() && !g.is_tuple && !g.is_view && !g.is_nullable)
-        .map(|g| parsed.text(g.name).to_string())
-        .filter(|name| !OFFERED.contains(&name.as_str()) && !declared.contains(name))
-        .collect()
+    nikaia_std::tools::ledger_items::impl_parameters(&parsed.interner, target, declared)
 }
 
 /// **An option's default that is not a literal** (ADR-318 D1): the function's
@@ -1308,19 +1223,7 @@ fn argument_text(
 /// A literal, as the grammar once required a default to be: its text is the
 /// value, in this language and the one below.
 pub fn a_literal(expr: &Expr) -> bool {
-    match expr {
-        Expr::LitInt { .. }
-        | Expr::LitFloat(_)
-        | Expr::LitBool(_)
-        | Expr::LitStr { .. }
-        | Expr::LitChar(_)
-        | Expr::LitNull => true,
-        Expr::Unary {
-            op: crate::ast::UnaryOp::Neg,
-            expr,
-        } => matches!(**expr, Expr::LitInt { .. } | Expr::LitFloat(_)),
-        _ => false,
-    }
+    nikaia_std::tools::ledger_items::a_literal(expr)
 }
 
 /// **A computed default is evaluated once, where the function is declared,
@@ -1421,61 +1324,7 @@ fn computed_literal(
 /// A value as the literal both languages spell it the same way, where it has
 /// one.
 pub fn literal_of(value: &crate::build_time::Value) -> Option<String> {
-    use crate::build_time::Value;
-    match value {
-        Value::Int(n) => Some(nikaia_std::tools::integers::integer_text(n)),
-        Value::Float(f) if f.is_finite() => Some(format!("{f:?}")),
-        Value::Bool(b) => Some(b.to_string()),
-        Value::Text(text) => Some(format!("\"{}\"", crate::build_time::written(text))),
-        // **A struct of literals is a literal too** (ADR-318 D3), and spelled
-        // the same in both languages: `Point { x: 1, y: 2 }`.
-        Value::Struct { name, fields } => {
-            let mut written = Vec::with_capacity(fields.len());
-            for (field, held) in fields {
-                written.push(format!("{field}: {}", literal_of(held)?));
-            }
-            Some(format!("{name} {{ {} }}", written.join(", ")))
-        }
-        // **A list of numbers or `bool`s** (ADR-318 D4), written as the
-        // language writes it; it crosses to a call as the view an option of
-        // `ref Vec[T]` takes (`emit`'s `&vec![…]`). A list of anything else has no
-        // form both sides read alike.
-        Value::List(items)
-            if items
-                .iter()
-                .all(|item| matches!(item, Value::Int(_) | Value::Float(_) | Value::Bool(_))) =>
-        {
-            let mut written = Vec::with_capacity(items.len());
-            for item in items {
-                written.push(literal_of(item)?);
-            }
-            Some(format!("[{}]", written.join(", ")))
-        }
-        Value::Variant {
-            ty,
-            variant,
-            payload,
-        } => {
-            if payload.is_empty() {
-                return Some(format!("{ty}::{variant}"));
-            }
-            let mut written = Vec::with_capacity(payload.len());
-            for held in payload {
-                written.push(literal_of(held)?);
-            }
-            Some(format!("{ty}::{variant}({})", written.join(", ")))
-        }
-        // **A `std` type as its constructor over literal parts** (ADR-318
-        // D3, D5): `time::Duration::new(30, 0)`.
-        Value::Constant { constructor, parts } => {
-            let mut written = Vec::with_capacity(parts.len());
-            for held in parts {
-                written.push(literal_of(held)?);
-            }
-            Some(format!("{constructor}({})", written.join(", ")))
-        }
-        _ => None,
-    }
+    nikaia_std::tools::ledger_items::literal_of(value, &|f: f64| format!("{f:?}"))
 }
 
 /// **A `sync` function whose body is one `return e` publishes
@@ -1485,64 +1334,22 @@ pub fn literal_of(value: &crate::build_time::Value) -> Option<String> {
 /// reads the condition back - over the parameters and `result` - so a caller
 /// in another package can rely on what it says.
 fn expression_ensures(ledger: &mut Ledger, units: &[&Parsed]) {
-    const WHOLE: [&str; 5] = ["i32", "i64", "u8", "u32", "u64"];
     for parsed in units.iter().copied() {
         for item in &parsed.program.items {
-            let Item::Fn {
-                name: Some(name),
-                receiver: None,
-                args,
-                config,
-                ret_type: Some(ret),
-                body,
-                ..
-            } = &item.node
-            else {
-                continue;
-            };
-            if !config.is_empty()
-                || !ret.generics.is_empty()
-                || !WHOLE.contains(&parsed.text(ret.name))
-                || body.stmts.len() != 1
-            {
-                continue;
-            }
-            let Stmt::Return(Some(value)) = &body.stmts[0].node else {
-                continue;
-            };
-            let Some(contract) = ledger.functions.get_mut(parsed.text(*name)) else {
-                continue;
-            };
-
-            if !contract.sync_claim.is_sync() || !contract.ensures.is_empty() {
-                continue;
-            }
-            // **The prover's own text of `e`**, which is what a reader reads
-            // back - not the source's, which may abbreviate.
-            let names: BTreeSet<String> = args
-                .iter()
-                .map(|a| parsed.text(a.name).to_string())
-                .collect();
-            let mut nodes = Vec::new();
-            let Some(term) = nikaia_std::tools::prove_terms::lin_term(
-                value,
+            let Some(published) = nikaia_std::tools::ledger_items::expression_ensures(
+                &item.node,
                 &parsed.interner,
-                &|name: &str| names.contains(name),
-                &mut nodes,
+                ledger,
+                &|condition: &str, readable: &BTreeSet<String>| {
+                    crate::prove::reads_back(condition, readable)
+                },
             ) else {
                 continue;
             };
-            let text = nikaia_std::tools::prove_text::term_ledger_text(term, &|at| {
-                nodes[at as usize].clone()
-            });
-            let condition = format!("result == {text}");
-            let mut readable = names;
-            readable.insert("result".to_string());
-            if !crate::prove::reads_back(&condition, &readable) {
-                continue;
+            if let Some(contract) = ledger.functions.get_mut(&published.key) {
+                contract.ensures = vec![published.condition];
+                contract.from = vec!["return".to_string()];
             }
-            contract.ensures = vec![condition];
-            contract.from = vec!["return".to_string()];
         }
     }
 }

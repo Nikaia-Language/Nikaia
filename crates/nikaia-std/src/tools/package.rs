@@ -13319,6 +13319,193 @@ fn is_word_char(c: scalar) -> bool { is_lower(c) || c >= 'A' && c <= 'Z' || c >=
 fn is_lower(c: scalar) -> bool { c >= 'a' && c <= 'z' }
 
 
+// --- ledger_items.nika ---
+
+fn is_offered(name: &str) -> bool { name == "i32" || name == "i64" || name == "u8" || name == "u32" || name == "u64" || name == "f64" || name == "bool" || name == "char" || name == "scalar" || name == "String" || name == "str" || name == "Self" }
+
+pub fn types_this_file_declares(program: &Program, words: &winnow_grammar::InternerContext) -> collections::BTreeSet<String> {
+    let mut declared: collections::BTreeSet<String> = collections::BTreeSet::new();
+    for item in program.items.iter() {
+        match &item.node {
+            Item::Struct { name, .. } => {
+                let name = *name;
+                declared.insert(words.resolve(name).to_owned());
+            },
+            Item::Enum { name, .. } => {
+                let name = *name;
+                declared.insert(words.resolve(name).to_owned());
+            },
+            Item::Extern { opaque, .. } => { for handle in opaque.iter() { declared.insert(words.resolve(handle.node.name).to_owned()); } },
+            _ => { },
+        }
+    }
+    declared
+}
+
+pub fn impl_parameters(words: &winnow_grammar::InternerContext, target: &Type, declared: &collections::BTreeSet<String>) -> Vec<String> {
+    let mut out: Vec<String> = vec![];
+    for slot in target.generics.iter() {
+        if !slot.generics.is_empty() || slot.is_tuple || slot.is_view || slot.is_nullable { continue; }
+        let name = words.resolve(slot.name);
+        if !is_offered(name) && !declared.contains(name) { out.push(name.to_owned()); }
+    }
+    out
+}
+
+pub fn a_literal(expr: &Expr) -> bool {
+    match expr {
+        Expr::LitInt { .. } => true,
+        Expr::LitFloat(_) => true,
+        Expr::LitBool(_) => true,
+        Expr::LitStr { .. } => true,
+        Expr::LitChar(_) => true,
+        Expr::LitNull => true,
+        Expr::Unary { op, expr } => {
+            let expr = nikaia_std::boxed::open(expr);
+            let negated = matches!(op, UnaryOp::Neg);
+            negated && is_a_number(expr)
+        },
+        _ => false,
+    }
+}
+
+fn is_a_number(expr: &Expr) -> bool { matches!(expr, Expr::LitInt { .. } | Expr::LitFloat(_)) }
+
+pub fn declared_extern(words: &winnow_grammar::InternerContext, aliases: &collections::BTreeMap<String, String>, declarations: &[Spanned<TraitMethod>]) -> Vec<DeclaredFn> {
+    let mut out: Vec<DeclaredFn> = vec![];
+    for declaration in declarations.iter() {
+        let mut declared = declared_trait_method(words, aliases, "", &declaration.node, false);
+        declared.contract.sync_claim = Sync::Asserted;
+        declared.contract.fails_with = vec![];
+        out.push(DeclaredFn { key: words.resolve(declaration.node.name).to_owned(), contract: declared.contract });
+    }
+    out
+}
+
+pub fn declared_grammar(words: &winnow_grammar::InternerContext, aliases: &collections::BTreeMap<String, String>, definition: &GrammarDef) -> Vec<DeclaredFn> {
+    let owner = words.resolve(definition.name).to_owned();
+    let mut out: Vec<DeclaredFn> = vec![];
+    for rule in definition.rules.iter() {
+        if !rule.is_entry { continue; }
+        let mut pieces = false;
+        for alt in rule.alts.iter() { if folds_in_parallel(&alt.pattern.node) { pieces = true; } }
+        let mut contract = FnContract::empty();
+        contract.public = definition.public;
+        contract.pieces = pieces;
+        contract.fails_with = vec![String::from("ParseError")];
+        contract.sync_claim = Sync::Asserted;
+        let mut result: Option<Ty> = None;
+        if rule.ret_type.is_some() {
+            let written = match rule.ret_type.as_ref() { Some(__nikaia_value) => __nikaia_value, None => return out };
+            result = Some(written_ty(words, aliases, written));
+        }
+        contract.signature = Some(Signature { bounds: vec![], mutable: vec![], params: vec![(String::from("input"), Ty::Unknown)], config: vec![], result });
+        out.push(DeclaredFn { key: format!("{}::{}", owner, words.resolve(rule.name)), contract });
+    }
+    out
+}
+
+fn folds_in_parallel(pattern: &Pattern) -> bool {
+    match pattern {
+        Pattern::Fold(spec) => spec.parallel,
+        Pattern::Bind { pat, .. } => { let pat = nikaia_std::boxed::open(pat); match &pat.node {
+            Pattern::Fold(spec) => spec.parallel,
+            _ => false,
+        } },
+        _ => false,
+    }
+}
+
+pub fn literal_of(value: &BuildValue, float_text: &impl Fn(f64) -> String) -> Option<String> {
+    match value {
+        BuildValue::Int(n) => return Some(integer_text(n)),
+        BuildValue::Float(f) => {
+            let f = *f;
+            if f.is_finite() { return Some(float_text(f)); }
+            return None;
+        },
+        BuildValue::Bool(b) => {
+            let b = *b;
+            if b { return Some(String::from("true")); }
+            return Some(String::from("false"));
+        },
+        BuildValue::Text(text) => return Some(format!("\"{}\"", as_a_literal(text))),
+        BuildValue::Struct { name, fields } => {
+            let mut written: Vec<String> = vec![];
+            for (field, held) in fields.iter() {
+                let text = match literal_of(held, float_text) { Some(__nikaia_value) => __nikaia_value, None => return None };
+                written.push(format!("{}: {}", field, text));
+            }
+            return Some(format!("{} {{ {} }}", name, written.join(", ")));
+        },
+        BuildValue::List(items) => {
+            for item in items.iter() { if !is_a_scalar_value(item) { return None; } }
+            let mut written: Vec<String> = vec![];
+            for item in items.iter() {
+                let text = match literal_of(item, float_text) { Some(__nikaia_value) => __nikaia_value, None => return None };
+                written.push(text);
+            }
+            return Some(format!("[{}]", written.join(", ")));
+        },
+        BuildValue::Variant { ty, variant, payload } => {
+            if payload.is_empty() { return Some(format!("{}::{}", ty, variant)); }
+            let mut written: Vec<String> = vec![];
+            for held in payload.iter() {
+                let text = match literal_of(held, float_text) { Some(__nikaia_value) => __nikaia_value, None => return None };
+                written.push(text);
+            }
+            return Some(format!("{}::{}({})", ty, variant, written.join(", ")));
+        },
+        BuildValue::Constant { constructor, parts } => {
+            let mut written: Vec<String> = vec![];
+            for held in parts.iter() {
+                let text = match literal_of(held, float_text) { Some(__nikaia_value) => __nikaia_value, None => return None };
+                written.push(text);
+            }
+            return Some(format!("{}({})", constructor, written.join(", ")));
+        },
+        _ => return None,
+    }
+}
+
+fn is_a_scalar_value(value: &BuildValue) -> bool { matches!(value, BuildValue::Int(_) | BuildValue::Float(_) | BuildValue::Bool(_)) }
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PublishedEnsures {
+    pub key: String,
+    pub condition: String,
+}
+
+pub fn expression_ensures(item: &Item, words: &winnow_grammar::InternerContext, ledger: &Ledger, reads_back: &impl Fn(&str, &collections::BTreeSet<String>) -> bool) -> Option<PublishedEnsures> {
+    let (name, receiver, args, config, ret_type, body) = match item {
+        Item::Fn { name, receiver, args, config, ret_type, body, .. } => { let name = *name; (name, receiver, args, config, ret_type, body) },
+        _ => return None,
+    };
+    let symbol = match name { Some(__nikaia_value) => __nikaia_value, None => return None };
+    let ret = match ret_type { Some(__nikaia_value) => __nikaia_value, None => return None };
+    if receiver.is_some() || !config.is_empty() || !ret.generics.is_empty() || body.stmts.len() != 1 { return None; }
+    let answer = words.resolve(ret.name);
+    if !(answer == "i32" || answer == "i64" || answer == "u8" || answer == "u32" || answer == "u64") { return None; }
+    let value = match &nikaia_std::index::get(&body.stmts, 0).node {
+        Stmt::Return(returned) => match returned { Some(__nikaia_value) => __nikaia_value, None => return None },
+        _ => return None,
+    };
+    let key = words.resolve(symbol).to_owned();
+    let contract = match *nikaia_std::index::get(&ledger.functions, &key) { Some(__nikaia_value) => __nikaia_value, None => return None };
+    if !contract.sync_claim.is_sync() || !contract.ensures.is_empty() { return None; }
+    let mut names: collections::BTreeSet<String> = collections::BTreeSet::new();
+    for arg in args.iter() { names.insert(words.resolve(arg.name).to_owned()); }
+    let mut nodes: Vec<SolverTerm> = vec![];
+    let term = match lin_term(value, words, &|candidate| { names.contains(candidate) }, &mut nodes) { Some(__nikaia_value) => __nikaia_value, None => return None };
+    let text = term_ledger_text(term, &|at| { (*nikaia_std::index::get(&nodes, nikaia_std::index::at(at))).clone() });
+    let condition = format!("result == {}", text);
+    let mut readable = names.to_owned();
+    readable.insert(String::from("result"));
+    if !reads_back(&condition, &readable) { return None; }
+    Some(PublishedEnsures { key, condition })
+}
+
+
 // --- ledger_ops.nika ---
 
 pub fn published_entries(ledger: &Ledger, foreign: &collections::BTreeSet<String>) -> Ledger {
@@ -27487,6 +27674,10 @@ pub mod leaves {
 pub mod ledger {
     #[allow(unused_imports)]
     pub use super::{LedgerLine, Refused, LedgerText, LedgerValue, unquote, list, read, touch_of, held_of, class_of, variant_of, signature_of, Spelling, SignatureText, spelled_signature, Spelled, spell};
+}
+pub mod ledger_items {
+    #[allow(unused_imports)]
+    pub use super::{types_this_file_declares, impl_parameters, a_literal, declared_extern, declared_grammar, literal_of, PublishedEnsures, expression_ensures};
 }
 pub mod ledger_ops {
     #[allow(unused_imports)]

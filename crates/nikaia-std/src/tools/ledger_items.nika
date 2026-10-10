@@ -1,0 +1,282 @@
+// crates/nikaia-std/src/tools/ledger_items.nika
+//
+// **What the ledger's item loop reads off a declaration**, moved from the
+// compiler's `contracts` module (ADR-294, #125): the types a file declares,
+// the parameters an `impl` head puts in scope, a literal, the entries an
+// `extern` block and a grammar make, the value a build-time computation comes
+// to as the literal both languages spell alike, and the `ensures` an
+// expression function publishes (ADR-314 D3). The ledger itself, the checker
+// and the workshop that computes a default stay Rust.
+
+use std::collections
+
+/// The types Part I 2.2 offers, by name. Two questions read it: whether `as`
+/// names a type this language has (ADR-285 D1), and whether an `impl`'s type
+/// argument is a parameter or a type.
+fn is_offered(name: ref String) -> bool {
+    return name == "i32" || name == "i64" || name == "u8" || name == "u32" || name == "u64" || name == "f64" || name == "bool" || name == "char" || name == "scalar" || name == "String" || name == "str" || name == "Self"
+}
+
+/// Every type name this file declares.
+pub fn types_this_file_declares(program: ref Program, words: ref winnow_grammar::InternerContext) -> collections::BTreeSet[String] {
+    let mut declared: collections::BTreeSet[String] = collections::BTreeSet()
+    for item in program.items {
+        match item.node {
+            Item::Struct { name, .. } => { declared.insert(words.resolve(name).clone()) },
+            Item::Enum { name, .. } => { declared.insert(words.resolve(name).clone()) },
+            // **An opaque handle is a type this file declares** (ADR-302 D7):
+            // it has no fields and no constructor, but a declaration is what
+            // `NK1135` asks for and this is one.
+            Item::Extern { opaque, .. } => {
+                for handle in opaque {
+                    declared.insert(words.resolve(handle.node.name).clone())
+                }
+            },
+            else => {}
+        }
+    }
+    return declared
+}
+
+/// The type parameters an `impl` head declares, in the order it writes them.
+///
+/// `impl Stack[T]` is `impl<T> Stack<T>` and `impl Stack[i64]` is
+/// `impl Stack<i64>`, and what tells them apart is whether the slot names a
+/// type: a bare name that is neither one of Part I 2.2's types nor one this
+/// package declares stands for a type rather than being one (ADR-295 D4).
+pub fn impl_parameters(words: ref winnow_grammar::InternerContext, target: ref Type, declared: ref collections::BTreeSet[String]) -> Vec[String] {
+    let mut out: Vec[String] = []
+    for slot in target.generics {
+        if slot.generics.len() > 0 || slot.is_tuple || slot.is_view || slot.is_nullable {
+            continue
+        }
+        let name = words.resolve(slot.name)
+        if !is_offered(name) && !declared.contains(name) {
+            out.push(name.clone())
+        }
+    }
+    return out
+}
+
+/// A literal, as the grammar once required a default to be: its text is the
+/// value, in this language and the one below.
+pub fn a_literal(expr: ref Expr) -> bool {
+    return match expr {
+        Expr::LitInt { .. } => true,
+        Expr::LitFloat(_) => true,
+        Expr::LitBool(_) => true,
+        Expr::LitStr { .. } => true,
+        Expr::LitChar(_) => true,
+        Expr::LitNull => true,
+        Expr::Unary { op, expr } => {
+            let negated = match op {
+                UnaryOp::Neg => true,
+                else => false,
+            }
+            negated && is_a_number(expr)
+        },
+        else => false,
+    }
+}
+
+fn is_a_number(expr: ref Expr) -> bool {
+    return match expr {
+        Expr::LitInt { .. } => true,
+        Expr::LitFloat(_) => true,
+        else => false,
+    }
+}
+
+/// **An `extern` block's declarations are entries like any other, and read
+/// unlike a trait method** (ADR-302 D2): `sync`, asserted rather than inferred,
+/// because the body is in another language and C has no suspension point at
+/// all; and no `throws`, which is what a body-less declaration carries anyway.
+/// `touches` and `locks` stay absent, which is D4 and is fail-closed.
+pub fn declared_extern(words: ref winnow_grammar::InternerContext, aliases: ref collections::BTreeMap[String, String], declarations: ref Vec[Spanned[TraitMethod]]) -> Vec[DeclaredFn] {
+    let mut out: Vec[DeclaredFn] = []
+    for declaration in declarations {
+        let mut declared = declared_trait_method(words, aliases, "", declaration.node, false)
+        declared.contract.sync_claim = Sync::Asserted
+        declared.contract.fails_with = []
+        out.push(DeclaredFn { key: words.resolve(declaration.node.name).clone(), contract: declared.contract })
+    }
+    return out
+}
+
+/// **Every `entry` rule of a grammar is an entry** (ADR-296 D25): it is entered
+/// by an ordinary call, so it has an ordinary contract. The grammar's `pub` is
+/// each entry's; it is driven in pieces where its body is a `par_fold`
+/// (D19, #521); it fails with `ParseError` (D38); and an action may not pause
+/// (D1), so every entry is `sync`, asserted. It takes the text to parse, `?`
+/// because a mapping, an owned string and a view all reach the parser the
+/// same way.
+pub fn declared_grammar(words: ref winnow_grammar::InternerContext, aliases: ref collections::BTreeMap[String, String], definition: ref GrammarDef) -> Vec[DeclaredFn] {
+    let owner = words.resolve(definition.name).clone()
+    let mut out: Vec[DeclaredFn] = []
+    for rule in definition.rules {
+        if !rule.is_entry {
+            continue
+        }
+        let mut pieces = false
+        for alt in rule.alts {
+            if folds_in_parallel(alt.pattern.node) {
+                pieces = true
+            }
+        }
+        let mut contract = FnContract::empty()
+        contract.public = definition.public
+        contract.pieces = pieces
+        contract.fails_with = ["ParseError"]
+        contract.sync_claim = Sync::Asserted
+        let mut result: Ty? = null
+        if rule.ret_type != null {
+            let written = rule.ret_type ?? return out
+            result = written_ty(words, aliases, written)
+        }
+        contract.signature = Signature { bounds: [], mutable: [], params: [("input", Ty::Unknown)], config: [], result: result }
+        out.push(DeclaredFn { key: f"{owner}::{words.resolve(rule.name)}", contract: contract })
+    }
+    return out
+}
+
+fn folds_in_parallel(pattern: ref Pattern) -> bool {
+    return match pattern {
+        Pattern::Fold(spec) => spec.parallel,
+        Pattern::Bind { pat, .. } => match pat.node {
+            Pattern::Fold(spec) => spec.parallel,
+            else => false,
+        },
+        else => false,
+    }
+}
+
+/// A build-time value as the literal both languages spell the same way, where
+/// it has one. `float_text` writes a finite float as the language below does.
+pub fn literal_of(value: ref BuildValue, float_text: fn(f64) -> String sync) -> String? {
+    match value {
+        BuildValue::Int(n) => return integer_text(n),
+        BuildValue::Float(f) => {
+            if f.is_finite() {
+                return float_text(f)
+            }
+            return null
+        },
+        BuildValue::Bool(b) => {
+            if b {
+                return "true"
+            }
+            return "false"
+        },
+        BuildValue::Text(text) => return f"\"{as_a_literal(text)}\"",
+        // **A struct of literals is a literal too** (ADR-318 D3), spelled the
+        // same in both languages: `Point { x: 1, y: 2 }`.
+        BuildValue::Struct { name, fields } => {
+            let mut written: Vec[String] = []
+            for (field, held) in fields {
+                let text = literal_of(held, float_text) ?? return null
+                written.push(f"{field}: {text}")
+            }
+            return f"{name} {{ {written.join(", ")} }}"
+        },
+        // **A list of numbers or `bool`s** (ADR-318 D4), written as the
+        // language writes it. A list of anything else has no form both sides
+        // read alike.
+        BuildValue::List(items) => {
+            for item in items {
+                if !is_a_scalar_value(item) {
+                    return null
+                }
+            }
+            let mut written: Vec[String] = []
+            for item in items {
+                let text = literal_of(item, float_text) ?? return null
+                written.push(text)
+            }
+            return f"[{written.join(", ")}]"
+        },
+        BuildValue::Variant { ty, variant, payload } => {
+            if payload.len() == 0 {
+                return f"{ty}::{variant}"
+            }
+            let mut written: Vec[String] = []
+            for held in payload {
+                let text = literal_of(held, float_text) ?? return null
+                written.push(text)
+            }
+            return f"{ty}::{variant}({written.join(", ")})"
+        },
+        // **A `std` type as its constructor over literal parts** (ADR-318 D3,
+        // D5): `time::Duration::new(30, 0)`.
+        BuildValue::Constant { constructor, parts } => {
+            let mut written: Vec[String] = []
+            for held in parts {
+                let text = literal_of(held, float_text) ?? return null
+                written.push(text)
+            }
+            return f"{constructor}({written.join(", ")})"
+        },
+        else => return null,
+    }
+}
+
+fn is_a_scalar_value(value: ref BuildValue) -> bool {
+    return match value {
+        BuildValue::Int(_) => true,
+        BuildValue::Float(_) => true,
+        BuildValue::Bool(_) => true,
+        else => false,
+    }
+}
+
+/// An expression function's published condition.
+pub struct PublishedEnsures {
+    /// The function's key in the ledger.
+    pub key: String,
+    pub condition: String,
+}
+
+/// **A `sync` function whose body is one `return e` publishes
+/// `ensures result == e`** (ADR-314 D3): the expression is the function, as
+/// SPARK reads an expression function. Only a free function returning a whole
+/// number, and only where the prover reads the condition back - over the
+/// parameters and `result` - so a caller in another package can rely on what it
+/// says. The text is the prover's own text of `e`, which is what a reader reads
+/// back, not the source's, which may abbreviate.
+pub fn expression_ensures(item: ref Item, words: ref winnow_grammar::InternerContext, ledger: ref Ledger, reads_back: fn(ref String, ref collections::BTreeSet[String]) -> bool sync) -> PublishedEnsures? {
+    let (name, receiver, args, config, ret_type, body) = match item {
+        Item::Fn { name, receiver, args, config, ret_type, body, .. } => (name, receiver, args, config, ret_type, body),
+        else => return null,
+    }
+    let symbol = name ?? return null
+    let ret = ret_type ?? return null
+    if receiver != null || config.len() != 0 || ret.generics.len() != 0 || body.stmts.len() != 1 {
+        return null
+    }
+    let answer = words.resolve(ret.name)
+    if !(answer == "i32" || answer == "i64" || answer == "u8" || answer == "u32" || answer == "u64") {
+        return null
+    }
+    let value = match body.stmts[0].node {
+        Stmt::Return(returned) => returned ?? return null,
+        else => return null,
+    }
+    let key = words.resolve(symbol).clone()
+    let contract = ledger.functions[key] ?? return null
+    if !contract.sync_claim.is_sync() || contract.ensures.len() != 0 {
+        return null
+    }
+    let mut names: collections::BTreeSet[String] = collections::BTreeSet()
+    for arg in args {
+        names.insert(words.resolve(arg.name).clone())
+    }
+    let mut nodes: Vec[SolverTerm] = []
+    let term = lin_term(value, words, fn(candidate) { names.contains(candidate) }, nodes) ?? return null
+    let text = term_ledger_text(term, fn(at) { nodes[at].clone() })
+    let condition = f"result == {text}"
+    let mut readable = names.clone()
+    readable.insert("result")
+    if !reads_back(condition, readable) {
+        return null
+    }
+    return PublishedEnsures { key: key, condition: condition }
+}

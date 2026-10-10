@@ -8,6 +8,11 @@ or the specification. A change only to the guide, the notes, the README, the
 website, the tests, the examples or the tooling around them raises nothing and
 has no heading here; `CLAUDE.md` draws the line.
 
+## [0.0.750] — 2026-10-10
+
+**More of the toolchain is Nikaia** (ADR-294, #125).
+- `contracts`: the ledger's item loop - what an `extern` block and a grammar enter, the types a file declares, a build-time value as a literal, and an expression function's `ensures` - is `tools/ledger_items.nika`.
+
 ## [0.0.749] — 2026-10-10
 
 **More of the toolchain is Nikaia**
